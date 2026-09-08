@@ -17,10 +17,12 @@
 // collectgarbage("count") (KB) before/after — reflects Lua-managed heap
 // (tables + strings) inside wasmoon emscripten linear memory.
 //
-// Measured (probe): story.ks 2.75 frames/ms (2607 frames / 949ms),
-// synthetic1000 5.87 frames/ms (4001 frames / 682ms). Budgets below are
-// ~2x headroom over those historical readings (see doc round 109). Runs in CI;
-// run locally via
+// The round-109 682 ms synthetic baseline used a separate driver without
+// rollback history. The real U11 runner maintains 64 checkpoints and 2000
+// read marks here; hosted Windows measured about 1533–1580 ms. Its budget
+// is 2000 ms (3000 tokens / 1.5 tokens/ms), with every run checking that work.
+// This is a workload-budget recalibration, not a measured engine speedup.
+// Driver ticks/ms are not rendered FPS. Runs in CI; run locally via
 // `cd web && npx vitest run perf-baseline.test.js`.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { readFileSync, existsSync } from 'node:fs'
@@ -33,6 +35,8 @@ const rootDir = join(here, '..')
 const scriptsDir = join(rootDir, 'scripts')
 const assetsDir = join(rootDir, 'assets')
 const index = JSON.parse(readFileSync(join(here, 'scripts-index.json'), 'utf8'))
+const syntheticMinFrames = 2.0
+const syntheticMinTokens = 1.5
 
 const fileFetch = async (url) => {
   const u = new URL(url)
@@ -90,7 +94,17 @@ async function benchmarkRun(player, src, name, expectedTokens) {
   expect(m, 'scene should complete: ' + out).not.toBeNull()
   expect(frames, 'real scheduler tick count should be reported').toBeGreaterThan(100)
   expect(Number.isFinite(wall) && wall > 0, 'positive measured duration').toBe(true)
-  if (expectedTokens !== undefined) expect(Number(m[1])).toBe(expectedTokens)
+  if (expectedTokens !== undefined) {
+    expect(Number(m[1])).toBe(expectedTokens)
+    const history = await player.lua.doString(`
+      local count=0
+      for _,flags in pairs(__CTXREF.seen_scenes)do
+        for _,read in pairs(flags)do if read==true then count=count+1 end end
+      end
+      return #__CTXREF._undoStack..':'..count
+    `)
+    expect(history, 'complete bounded history and read marks').toBe('64:' + (expectedTokens * 2 / 3))
+  }
   expect(player.core.events.filter(event => String(event.kind).includes('error'))).toEqual([])
   return {
     out: String(out),
@@ -103,9 +117,11 @@ async function benchmarkRun(player, src, name, expectedTokens) {
   }
 }
 
-function medianRun(samples) {
+function medianRun(samples, name) {
   expect(samples).toHaveLength(3)
-  return [...samples].sort((left, right) => left.wallMs - right.wallMs)[1]
+  const median = [...samples].sort((left, right) => left.wallMs - right.wallMs)[1]
+  if (name) process.stdout.write(`[perf] ${name}: samples=${samples.map(run => run.wallMs.toFixed(1)).join(',')}ms; median=${median.wallMs.toFixed(1)}ms; tokens/ms=${median.tokensPerMs.toFixed(3)}\n`)
+  return median
 }
 
 function assertThroughput(run, name, minFrames, minTokens) {
@@ -119,7 +135,7 @@ async function steadyRun(player, source, name, expectedTokens) {
   for (let sample = 0; sample < 3; sample++) {
     samples.push(await benchmarkRun(player, source, name, expectedTokens))
   }
-  return medianRun(samples)
+  return medianRun(samples, name)
 }
 
 describe('performance measurement statistics', () => {
@@ -131,15 +147,18 @@ describe('performance measurement statistics', () => {
     const median = medianRun(samples)
     expect(median).toBe(samples[0])
     expect(samples).toEqual(original)
-    expect(() => assertThroughput(median, 'synthetic statistic fixture', 2.5, 2.0)).not.toThrow()
+    expect(() => assertThroughput(median, 'synthetic statistic fixture', syntheticMinFrames, syntheticMinTokens)).not.toThrow()
   })
 
   it('keeps sustained slowdown failing even when one sample is fast', () => {
-    for (const times of [[1700, 1800, 1900], [1000, 1800, 1900]]) {
+    for (const times of [[2100, 2200, 2300], [1000, 2200, 2300]]) {
       const median = medianRun(times.map(sample))
-      expect(() => assertThroughput(median, 'synthetic statistic fixture', 2.5, 2.0))
+      expect(() => assertThroughput(median, 'synthetic statistic fixture', syntheticMinFrames, syntheticMinTokens))
         .toThrow(/frame throughput/)
     }
+    const tokenLimited = medianRun([2100, 2200, 2300].map(wall => ({...sample(wall), framesPerMs:3})))
+    expect(() => assertThroughput(tokenLimited, 'synthetic statistic fixture', syntheticMinFrames, syntheticMinTokens))
+      .toThrow(/token throughput/)
   })
 })
 
@@ -169,7 +188,7 @@ describe('web player performance baseline (round 109)', () => {
 
   it('synthetic 1000-line scene: frame throughput + correctness (3000 tokens)', async () => {
     const r = await steadyRun(player, makeSynthetic(1000), 'synthetic1000.ks', 3000)
-    assertThroughput(r, 'synthetic 1000-line', 2.5, 2.0)
+    assertThroughput(r, 'synthetic 1000-line with history', syntheticMinFrames, syntheticMinTokens)
   }, 120000)
 
   it('synthetic 1000-line Lua heap growth stays bounded (< 2048 KB)', async () => {
@@ -193,7 +212,7 @@ describe('web player performance baseline (round 109)', () => {
         smallSamples.push(await smallRun())
       }
     }
-    const r1 = medianRun(smallSamples), r2 = medianRun(largeSamples)
+    const r1 = medianRun(smallSamples, 'scale 1000'), r2 = medianRun(largeSamples, 'scale 2000')
     expect(r2.wallMs, 'doubling scene size should not blow up (wall2000 < 2.5x wall1000)').toBeLessThan(r1.wallMs * 2.5)
   }, 120000)
 
