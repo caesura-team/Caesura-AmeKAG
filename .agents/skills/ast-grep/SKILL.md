@@ -1,4 +1,4 @@
-﻿---
+---
 name: ast-grep
 description: 当需要对 Caesura (AmeKAG) 引擎进行 C++ 语法树级别的结构化代码搜索、宏查找、纯虚接口合规性分析或批量 AST 重构时使用。
 ---
