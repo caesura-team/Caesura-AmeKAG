@@ -40,6 +40,33 @@ def sha256(path):
     return digest.hexdigest()
 
 
+def fixture_inventory(root, names):
+    """Hash the complete declared fixture trees, rejecting redirected paths."""
+    root = Path(root).resolve()
+    entries = {}
+    pending = [root / name for name in names]
+    if any(not path.is_dir() for path in pending):
+        raise ValueError("A required fixture directory is missing")
+    files = directories = 0
+    while pending:
+        path = pending.pop()
+        if path.is_symlink() or not path.resolve().is_relative_to(root):
+            raise ValueError("A fixture path is redirected outside its declared tree")
+        relative = path.relative_to(root).as_posix()
+        if path.is_dir():
+            entries[relative] = "DIRECTORY"
+            directories += 1
+            pending.extend(path.iterdir())
+        elif path.is_file():
+            entries[relative] = sha256(path)
+            files += 1
+        else:
+            raise ValueError("A fixture contains an unsupported filesystem entry")
+    content = "".join(f"{name}\0{value}\n" for name, value in sorted(entries.items()))
+    return {"sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+            "files": files, "directories": directories}
+
+
 class Lane:
     def __init__(self, name, source_sha):
         self.name, self.source_sha = name, source_sha.lower()
@@ -229,6 +256,7 @@ class Lane:
             binary = found[0].resolve()
             self.identify_binary(name, binary, "IOSSIMULATOR" if simulator else "IOS")
             binaries[name] = binary
+        test_fixtures = self.prepare_ios_fixtures(build, binaries)
         # Store the actual .app products and the fixture trees beside the C++ binary.
         with tarfile.open(self.evidence / "native-products.tar.gz", "w:gz") as archive:
             for name, binary in binaries.items():
@@ -238,17 +266,91 @@ class Lane:
             "code_signing_allowed": False, "sdl_sha": SDL_SHA, "openssl_sha": OPENSSL_SHA}
         self.save()
         if simulator:
-            fixture_script = build / "tests/sync_caesura_test_assets_Debug.cmake"
-            fixture_text = fixture_script.read_text(encoding="utf-8")
-            match = re.search(r"set\(CAESURA_FIXTURE_TEST_OUTPUT \[\[(.*?)\]\]\)", fixture_text)
-            if not match:
-                raise RuntimeError("CMake did not declare the actual test fixture output directory")
-            test_cwd = Path(match[1]).resolve()
-            if not test_cwd.is_relative_to(build.resolve()) or not test_cwd.is_dir():
-                raise RuntimeError("CMake test fixture directory is not inside the newly built tree")
-            self.receipt["test_fixture"] = {"script": str(fixture_script),
-                "script_sha256": sha256(fixture_script), "directory": str(test_cwd)}
-            self.simulator_tests(binaries["CaesuraTests"], test_cwd)
+            self.simulator_tests(binaries["CaesuraTests"], test_fixtures)
+
+    def fixture_paths(self):
+        script = self.source / "tests/SyncTestAssets.cmake"
+        match = re.search(r"^set\(fixtures\s+([^\r\n)]+)\)$", script.read_text(encoding="utf-8"), re.M)
+        if not match:
+            raise ValueError("Cannot read the canonical fixture list from SyncTestAssets.cmake")
+        names = match[1].split()
+        if not names or len(names) != len(set(names)) or any(name.startswith(other + "/") for name in names for other in names if name != other) or any(
+            not re.fullmatch(r"[A-Za-z0-9_./-]+", name) or any(part in {"", ".", ".."} for part in name.split("/"))
+            for name in names
+        ):
+            raise ValueError("Canonical fixture list contains invalid paths")
+        return names
+
+    def prepare_ios_fixtures(self, build, binaries):
+        # Xcode leaves ${EFFECTIVE_PLATFORM_NAME} in file(GENERATE) output.
+        # Use the verified, newly built target paths with the existing sync routine.
+        build = build.resolve()
+        test_output, app_output = (binaries[name].parent.resolve() for name in ("CaesuraTests", "CaesuraAmeKAG"))
+        for output in (test_output, app_output):
+            if not output.is_relative_to(build) or not output.is_dir() or "${" in str(output) or "$(" in str(output):
+                raise ValueError("An iOS fixture output is not a resolved product directory in this build")
+        generated = build / "tests/sync_caesura_test_assets_Debug.cmake"
+        match = re.search(r"set\(CAESURA_FIXTURE_TEST_OUTPUT \[\[(.*?)\]\]\)", generated.read_text(encoding="utf-8"))
+        if not match:
+            raise ValueError("CMake did not declare its generated test fixture output")
+        script = self.source / "tests/SyncTestAssets.cmake"
+        names = self.fixture_paths()
+        source_inventory = fixture_inventory(self.source, names)
+        self.run("sync-ios-fixtures", ["cmake", f"-DCAESURA_FIXTURE_SOURCE_ROOT={self.source}",
+            f"-DCAESURA_FIXTURE_BUILD_ROOT={build}", f"-DCAESURA_FIXTURE_TEST_OUTPUT={test_output}",
+            f"-DCAESURA_FIXTURE_APP_OUTPUT={app_output}", "-P", script])
+        synchronized = fixture_inventory(test_output, names)
+        if synchronized != source_inventory:
+            raise ValueError("Synchronized iOS test fixture content differs from source")
+        self.receipt["test_fixture"] = {"script": str(script), "script_sha256": sha256(script),
+            "directory": str(test_output), "app_directory": str(app_output), "paths": names,
+            "source_inventory": source_inventory, "synchronized_inventory": synchronized,
+            "generated_script_sha256": sha256(generated), "generated_directory": match[1],
+            "scope": "EAS adaptation using actual products; production Xcode fixture generation is unchanged"}
+        self.save()
+        return test_output
+
+    def deploy_simulator_fixtures(self, fixtures, inventory):
+        try:
+            uuid.UUID(self.simulator)
+        except (ValueError, AttributeError):
+            raise ValueError("A valid newly created simulator UDID is required") from None
+        devices = [device for group in inventory.get("devices", {}).values() for device in group
+                   if device.get("udid") == self.simulator]
+        if len(devices) != 1 or not devices[0].get("dataPath"):
+            raise ValueError("Cannot identify the newly created simulator data directory")
+        expected = (Path.home() / "Library/Developer/CoreSimulator/Devices" / self.simulator / "data").resolve()
+        data = Path(devices[0]["dataPath"]).resolve()
+        if data != expected or data.name != "data" or data.parent.name.casefold() != self.simulator.casefold() or not data.is_dir():
+            raise ValueError("The reported simulator data path does not belong to this job's new UDID")
+        fixtures = Path(fixtures).resolve()
+        names = self.fixture_paths()
+        source_inventory = fixture_inventory(fixtures, names)
+        # Preflight every target before the first copy; never overwrite simulator contents.
+        for name in names:
+            target = data / name
+            if target.exists() or target.is_symlink():
+                raise ValueError("Refusing to overwrite an existing simulator fixture directory")
+            ancestor = target
+            while ancestor != data:
+                if ancestor.is_symlink() or not ancestor.resolve().is_relative_to(data) or (ancestor.exists() and not ancestor.is_dir()):
+                    raise ValueError("A simulator fixture destination is redirected or invalid")
+                ancestor = ancestor.parent
+        proof = {"udid": self.simulator, "source": str(fixtures), "data_path": str(data),
+                 "paths": names, "source_inventory": source_inventory, "status": "COPYING"}
+        self.receipt["simulator_fixture_deployment"] = proof
+        self.save()
+        for name in names:
+            self.run("simulator-copy-" + name.replace("/", "-"),
+                     ["cmake", "-E", "copy_directory", fixtures / name, data / name])
+        proof["deployed_inventory"] = fixture_inventory(data, names)
+        if proof["deployed_inventory"] != source_inventory:
+            proof["status"] = "FAIL"
+            self.save()
+            raise ValueError("Simulator fixture deployment differs from the synchronized source")
+        proof["status"] = "PASS"
+        self.save()
+        return data
 
     def identify_binary(self, name, binary, expected_platform):
         self.run(f"{name}-file", ["file", binary])
@@ -264,7 +366,7 @@ class Lane:
             "platform": expected_platform, "minimum_os": minimum[1]}
         self.save()
 
-    def simulator_tests(self, binary, test_cwd):
+    def simulator_tests(self, binary, test_fixtures):
         _, inventory = self.run("simulator-runtimes", ["xcrun", "simctl", "list", "--json"])
         inventory = json.loads(inventory)
         runtimes = [r for r in inventory["runtimes"] if r.get("isAvailable")
@@ -286,10 +388,14 @@ class Lane:
             raise RuntimeError("simctl create did not return a device UDID")
         self.simulator = udid
         self.receipt["simulator"] = {"udid": udid, "runtime": runtime, "device_type": device_type,
-                                     "test_cwd": str(test_cwd)}
+                                     "test_fixture_directory": str(test_fixtures)}
         self.save()
         self.run("simulator-boot", ["xcrun", "simctl", "boot", udid])
         self.run("simulator-bootstatus", ["xcrun", "simctl", "bootstatus", udid, "-b"], timeout=600)
+        _, created_devices = self.run("simulator-created-device", ["xcrun", "simctl", "list", "devices", "--json"])
+        test_cwd = self.deploy_simulator_fixtures(test_fixtures, json.loads(created_devices))
+        self.receipt["simulator"]["test_cwd"] = str(test_cwd)
+        self.save()
         self.run("simulator-spawn-help", ["xcrun", "simctl", "help", "spawn"])
         _, sdk = self.run("simulator-sdk", ["xcrun", "--sdk", "iphonesimulator", "--show-sdk-path"])
         probe_source = Path(__file__).with_name("simulator_cwd_probe.c")

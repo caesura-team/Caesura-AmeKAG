@@ -28,7 +28,7 @@ iOS Simulator C++ 使用原 profile 的 `macos-debug/cpp` 最低发现门槛作�
 - iOS OpenSSL：沿用现有 CI 的 `3.3.2`，固定 commit `fb7fab9fa6f4869eaa8fbb97e0d593159f03ffe4`。device 使用 `ios64-xcrun`；simulator 使用上游该版本明确提供的 `iossimulator-arm64-xcrun`。
 - iOS 构建目录为 `build/eas-ios-device` 与 `build/eas-ios-simulator`，SDK/架构明确传给 CMake，不复用主机 macOS binary。
 - 三个 lane 都显式关闭本接入未提供 SDK 的 Live2D、FFmpeg、Steam；macOS 沿用 foundation preset，iOS 使用同样边界。真实后端验证不能由本次禁用配置推定。
-- CMake 的测试夹具同步目标负责把 `assets`、`scripts`、`demo`、`tests/audio` 放到测试目标目录。模拟器驱动解析本次生成的 `tests/sync_caesura_test_assets_Debug.cmake` 中 `CAESURA_FIXTURE_TEST_OUTPUT`，以其中实际目录作为 subprocess CWD；先编译并执行一个真正的 IOSSIMULATOR/arm64 CWD 探针，读取 `getcwd()`、检查资源目录可读性，确认映射实际生效才启动 C++ 测试。不凭 `.app` 的位置猜测资源目录。
+- 构建后按已核验 Mach-O 的实际目标目录，显式调用原 `tests/SyncTestAssets.cmake` 同步夹具，避免 Xcode 生成路径中未展开的变量。驱动读取原脚本的完整夹具清单，并核对源与副本的目录/文件 inventory 散列。模拟器启动使用本次新建 UDID 的真实 `dataPath`：仅向这个专属目录复制夹具，不覆盖已有目录；先执行真正的 IOSSIMULATOR/arm64 CWD 探针，核对 `getcwd()` 和资源可读性，再运行原 C++ 测试。这是 EAS 运行适配，未修改生产 Xcode 夹具生成规则。
 - 模拟器 UDID、runtime、device type、测试 CWD 和 Mach-O platform/architecture 留在证据内；只关停/删除本 job 新建的专属 UDID。命令超时由已有 `validation_process.py` 管理其进程树，模拟器另在结束处理里关停，避免遗留通过 CoreSimulator 启动的测试进程。
 
 ## 工件与失败处理
@@ -59,7 +59,7 @@ EAS 提供机器/调度/工件保存，不代替原生测试的通过条件。�
 
 1. 已按 Expo 技能通过 fetch 脚本取得当前官方 schema、syntax 与 pre-packaged jobs 文档。工作流 `1856` bytes，小于官方 `16 KiB` 上限。
 2. 已真实运行技能的原版 `validate.js`。首次在编译官方 schema 阶段因 Ajv `strictTypes` 报错：当前官方 schema 含合法的多类型 `type` 数组，而技能未设置 `allowUnionTypes`。随后仅在该次 Node 运行中给 Ajv 加 `allowUnionTypes=true`，原 `validate.js`、当前 schema 和字段校验保持原样，得到 `✓ .eas/workflows/u2-apple-validation.yml`、exit 0。未修改安装的技能文件。
-3. `python scripts/eas/test_run_apple_validation.py`：7 个工具回归通过；覆盖真实非零进程退出/原始日志、失败回执落盘、实际超时，以及不合法 SHA、dirty checkout、错误 Mach-O 平台和错误架构的拒绝。这些是驱动工具测试，不是 Apple 引擎测试。
+3. 初始 `python scripts/eas/test_run_apple_validation.py` 的7个工具回归通过；覆盖真实非零进程退出/原始日志、失败回执落盘、实际超时，以及不合法SHA、dirty checkout、错误Mach-O平台和错误架构的拒绝。第四次云执行后追加资源同步与模拟器路径回归，现为12/12；这些是驱动工具测试，不是Apple引擎测试。
 4. Python 语法编译与 Git whitespace 检查通过。本地没有启动 Apple/其他原生引擎构建，也没有把 Windows 执行结果当 Apple 证明。
 
 ## 首次云执行与输入传递修正
@@ -81,6 +81,16 @@ EAS 提供机器/调度/工件保存，不代替原生测试的通过条件。�
 最小修复把vendored Metal-cpp头中这两个ErrorDomain改用该头已有的动态弱符号宏；有真实符号时读取它，缺失时为nullptr，不关闭Metal、不自行定义替代常量。Apple官方Metal-cpp说明的ErrorDomain弱链接合同提供依据；当前bgfx上游尚未对这两处采用该宏，因此这是本仓库修复，不标为已合入上游。
 
 同一次构建还发现OpenSSL对象默认使用SDK26.5最低版本而引擎实际最低版本为14.0。驱动现将SDL、引擎、CWD探针和OpenSSL的显式target统一到iOS14.0，并检查实际Mach-O minos。Windows Clang18提取真实vendor宏的IR对照确认两个强外部引用消失而dlsym保留；驱动7项检查和minos正负控制通过。这些本地检查不能代替Apple SDK链接与Simulator复验，下一次EAS改为新的修复源码SHA。
+
+## 第四次云执行与模拟器资源目录修复
+
+[第四次EAS运行01a080c6-6939-7d45-a905-8b721b130764](https://expo.dev/accounts/ailiasdesus-team/projects/caesura-native-validation/workflows/01a080c6-6939-7d45-a905-8b721b130764)验证源码`e56e55a182781be8094fc03f4d5d6ee7dff7f234`。macOS完整profile再次通过：C++1281/1281、Lua147/44、Python17/6/53/57、CTest25通过及唯一预声明AI跳过；源/夹具稳定，云端executor/collector/verifier及下载后的本地strict verifier均退出0。
+
+iOS device和Simulator的完整编译/链接均成功；独立解析工件中的两目标Mach-O，分别为arm64/IOS和arm64/IOSSIMULATOR，minos均14.0.0，原始binary SHA与receipt一致。两lane各1093条OpenSSL编译命令带显式target14.0，旧的最低系统版本警告均为0。Metal弱符号修复在此次实际Simulator链接中生效，但不表示已验证Metal像素。
+
+Simulator在原生CWD探针退出3处失败，C++测试尚未启动。证据显示生成的sync脚本保留字面`Debug${EFFECTIVE_PLATFORM_NAME}`，真实目标目录没有四个夹具树；`simctl spawn`又使用新建模拟器的data目录，不继承宿主subprocess CWD。驱动现按上述实际产物/专属dataPath同步，所有复制命令和源/副本散列写入receipt，保留原生探针及全量C++出口条件。
+
+五项新适配回归先RED；修复后完整12/12 GREEN，包含真实CMake生成路径复现与复制、缺夹具拒绝、错误UDID、已有目标保护、无关模拟器内容保留。原始RUN04、工件散列审查及RED/GREEN在`artifacts/validation/eas-fourth-*`；第四次仍为FAIL，修复后的Simulator C++实际执行待下一次云端验证。下一次保持相同原生源码SHA，上传驱动的独立摘要另行记录，以区分原生源码和编排适配身份。
 
 ## 官方来源
 

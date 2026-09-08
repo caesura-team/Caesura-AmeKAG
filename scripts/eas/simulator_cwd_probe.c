@@ -12,7 +12,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Expected native test fixture directory: %s\n", argv[1]);
         return 3;
     }
-    if (access("assets", R_OK) || access("scripts", R_OK) || access("tests/audio", R_OK)) {
+    if (access("assets", R_OK) || access("scripts", R_OK) || access("demo", R_OK) || access("tests/audio", R_OK)) {
         fprintf(stderr, "Native test fixture directories are missing or unreadable\n");
         return 4;
     }
