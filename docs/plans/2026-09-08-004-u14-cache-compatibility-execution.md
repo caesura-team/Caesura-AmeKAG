@@ -36,3 +36,11 @@ readCache以完整文件内容判断外部改写，缓存解析后的数据，�
 新增纯函数`compiler.bundleSceneKeys(paths)`，制作端及最终包runtime共用：唯一basename保持兼容；冲突项移除本批输入共同目录前缀后保留相对子目录。因此两个demo分别成为`example_game/story.ks`与`template/story.ks`。绝对路径前缀、不能安全归一化的父级路径和重复来源仍被拒绝。Node源码副本也使用同组key复制，两个story不再覆盖。
 
 `artifacts/validation/u14-scene-keys/`保留正式RED及GREEN：Lua bake41/41、全部demo24场景/6资产实际bake成功、Node完整CLI6/6无跳过、Web定向33/33无跳过。两个重名场景都经Wasmoon运行到DONE，并各自与源路径backlog对照；最终copy的语义变异和遗漏callee负控制继续被拒绝。Web运行时查找逻辑没有改动。该实质修改纳入下一次冻结候选完整pipeline。
+
+## 最终本机整合验收
+
+干净候选`c227dcc70490b362c82739696f8a39ea955438b5`的`artifacts/validation/u14/final-pipeline-02.json`已完成全部五阶段：全demo bake、Web build、完整Web、完整Node包CLI、完整Windows Debug profile。Web为37文件、506/506用例、0失败/0跳过，120.81秒；原吞吐、内存和配对缩放预算通过。Node完整CLI6/6通过。全部阶段源码前后摘要稳定。
+
+原生run `7bf04603-ff94-41f7-a0df-4ff3fd4654d8`的11项required检查全部通过：完整Debug构建、C++1292/1292与399003断言、Lua主147/147和隔离45/45、Python17/7/53/57、耦合、注册、CTest25通过/0失败/1预声明外部AI smoke跳过。CTest共273.17秒。dirty=false，source/fixture fingerprint前后相同；collector和严格verifier通过。manifest在`artifacts/validation/u14/evidence/c227dcc70490b362c82739696f8a39ea955438b5/7bf04603-ff94-41f7-a0df-4ff3fd4654d8/windows-debug/manifest.json`。
+
+本机最终验收已通过，组织仓库候选CI和master合并/打包仍单独核验。U2 Expo云端任务与U15后端生命周期继续保持各自证据边界。
