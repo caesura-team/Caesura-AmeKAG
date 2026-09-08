@@ -1,4 +1,5 @@
 name: U2 Apple native validation
+run_name: U2 Apple ${{ inputs.source_sha }}
 
 on:
   workflow_dispatch:
@@ -13,11 +14,11 @@ jobs:
     name: macOS Debug native profile
     type: custom
     runs_on: macos-medium
+    env:
+      CAESURA_SOURCE_SHA: ${{ inputs.source_sha }}
     steps:
       - uses: eas/checkout
       - name: Build and verify the exact source commit
-        env:
-          CAESURA_SOURCE_SHA: ${{ inputs.source_sha }}
         run: python3 scripts/eas/run_apple_validation.py macos
       - uses: eas/upload_artifact
         if: ${{ always() }}
@@ -30,11 +31,11 @@ jobs:
     name: iOS arm64 unsigned compile (no device execution)
     type: custom
     runs_on: macos-medium
+    env:
+      CAESURA_SOURCE_SHA: ${{ inputs.source_sha }}
     steps:
       - uses: eas/checkout
       - name: Compile and identify native iOS products
-        env:
-          CAESURA_SOURCE_SHA: ${{ inputs.source_sha }}
         run: python3 scripts/eas/run_apple_validation.py ios-device
       - uses: eas/upload_artifact
         if: ${{ always() }}
@@ -47,11 +48,11 @@ jobs:
     name: iOS Simulator arm64 unfiltered C++ tests
     type: custom
     runs_on: macos-medium
+    env:
+      CAESURA_SOURCE_SHA: ${{ inputs.source_sha }}
     steps:
       - uses: eas/checkout
       - name: Compile simulator targets and execute native C++ tests
-        env:
-          CAESURA_SOURCE_SHA: ${{ inputs.source_sha }}
         run: python3 scripts/eas/run_apple_validation.py ios-simulator
       - uses: eas/upload_artifact
         if: ${{ always() }}

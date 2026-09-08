@@ -64,6 +64,14 @@ EAS 提供机器/调度/工件保存，不代替原生测试的通过条件。�
 
 ## 官方来源
 
+## 首次云执行与输入传递修正
+
+已创建并绑定`@ailiasdesus-team/caesura-native-validation`。首次运行[01a08072-84a2-7638-85e7-f3efe8f6fc33](https://expo.dev/accounts/ailiasdesus-team/projects/caesura-native-validation/workflows/01a08072-84a2-7638-85e7-f3efe8f6fc33)上传22.4KB编排归档，明确请求源码`9e9cfc07c4455b498ea99d465cc6f560bf1eed32`。
+
+三个job均在构建前的SHA验证阶段失败；原生验证、iOS编译和模拟器测试尚未执行。CLI原始日志显示没有收到有效40位`CAESURA_SOURCE_SHA`。工作流现改为官方文档指定的job级`env`传递手动输入，并在run_name显示源码SHA；保持相同原生检查和失败条件。修正版经相同官方schema严格字段校验通过，下一次云运行需证明输入确已到达。首次失败记录保留，不被后续结果覆盖。
+
+## 官方来源
+
 - [EAS Workflows 当前 JSON Schema](https://api.expo.dev/v2/workflows/schema)：API envelope 的 `data` 才是 JSON Schema。
 - [Expo Workflows syntax](https://github.com/expo/expo/blob/main/docs/pages/eas/workflows/syntax.mdx)：custom Mac workers、手动输入、checkout、失败工件上传及 16 KiB 限制。
 - [Expo pre-packaged jobs](https://github.com/expo/expo/blob/main/docs/pages/eas/workflows/pre-packaged-jobs.mdx)：用于区分本次 custom jobs 与标准 Expo app build jobs。
