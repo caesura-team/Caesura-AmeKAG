@@ -423,7 +423,7 @@ bool takeAsyncEvent(SDL_Event& event) {
 
 TEST_CASE("AsyncLoader SDL ownership: successful event lives until real consumer releases it") {
     ScopedAsyncEvents events;
-    REQUIRE(events.ready);
+    REQUIRE_MESSAGE(events.ready, "SDL event initialization failed: ", SDL_GetError());
     TestPaths::ScopedTempDir dir("async_sdl_success");
     AsyncPayloadProbe probe;
     AsyncLoaderFixture<JobSystem> infra; // joins workers before probe restores hooks
@@ -447,7 +447,7 @@ TEST_CASE("AsyncLoader SDL ownership: successful event lives until real consumer
 
 TEST_CASE("AsyncLoader SDL ownership: filter rejection releases the unqueued payload once") {
     ScopedAsyncEvents events;
-    REQUIRE(events.ready);
+    REQUIRE_MESSAGE(events.ready, "SDL event initialization failed: ", SDL_GetError());
     TestPaths::ScopedTempDir dir("async_sdl_rejected");
     AsyncPayloadProbe probe(false);
     AsyncLoaderFixture<NullJobSystem> infra;
@@ -464,7 +464,7 @@ TEST_CASE("AsyncLoader SDL ownership: filter rejection releases the unqueued pay
 
 TEST_CASE("AsyncLoader SDL ownership: drain transfers results without publishing SDL events") {
     ScopedAsyncEvents events;
-    REQUIRE(events.ready);
+    REQUIRE_MESSAGE(events.ready, "SDL event initialization failed: ", SDL_GetError());
     TestPaths::ScopedTempDir dir("async_direct_drain");
     AsyncPayloadProbe probe;
     AsyncLoaderFixture<JobSystem> infra;
@@ -490,7 +490,7 @@ TEST_CASE("AsyncLoader SDL ownership: drain transfers results without publishing
 
 TEST_CASE("AsyncLoader SDL ownership: shutdown reclaims only its queued payloads") {
     ScopedAsyncEvents events;
-    REQUIRE(events.ready);
+    REQUIRE_MESSAGE(events.ready, "SDL event initialization failed: ", SDL_GetError());
     TestPaths::ScopedTempDir dir("async_sdl_shutdown");
     AsyncPayloadProbe probe;
     AsyncLoaderFixture<NullJobSystem> infra;
@@ -531,7 +531,7 @@ TEST_CASE("AsyncLoader SDL ownership: shutdown reclaims only its queued payloads
 
 TEST_CASE("AsyncLoader SDL ownership: event type is reserved from other SDL users") {
     ScopedAsyncEvents events;
-    REQUIRE(events.ready);
+    REQUIRE_MESSAGE(events.ready, "SDL event initialization failed: ", SDL_GetError());
     AsyncLoaderFixture<NullJobSystem> infra;
     const uint32_t otherType = SDL_RegisterEvents(1);
     REQUIRE(otherType != 0);
@@ -542,7 +542,7 @@ TEST_CASE("AsyncLoader SDL ownership: event type is reserved from other SDL user
 
 TEST_CASE("AsyncLoader U5 SDL: cancellation reclaims only its queued payloads once") {
     ScopedAsyncEvents events;
-    REQUIRE(events.ready);
+    REQUIRE_MESSAGE(events.ready, "SDL event initialization failed: ", SDL_GetError());
     TestPaths::ScopedTempDir dir("async_sdl_cancel");
     AsyncPayloadProbe probe;
     AsyncLoaderFixture<NullJobSystem> infra;
@@ -580,7 +580,7 @@ TEST_CASE("AsyncLoader U5 SDL: cancellation reclaims only its queued payloads on
 
 TEST_CASE("AsyncLoader U5 SDL: reentrant filter cancellation preserves the fresh event") {
     ScopedAsyncEvents events;
-    REQUIRE(events.ready);
+    REQUIRE_MESSAGE(events.ready, "SDL event initialization failed: ", SDL_GetError());
     TestPaths::ScopedTempDir dir("async_sdl_reentrant_cancel");
     AsyncLoader* loader = nullptr;
     int freshId = -1;

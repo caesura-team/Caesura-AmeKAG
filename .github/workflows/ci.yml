@@ -74,6 +74,13 @@ jobs:
             Write-Host "lua.exe not found - skipping static contract check"
           }
 
+      - name: Expo validation driver unit tests
+        if: matrix.config == 'Debug'
+        shell: pwsh
+        run: |
+          python -X utf8 scripts/eas/test_run_apple_validation.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Test coverage check (no orphan tests)
         shell: pwsh
         run: |
@@ -202,6 +209,9 @@ jobs:
 
       - name: Configure
         run: cmake -B build -S . -DCMAKE_BUILD_TYPE=Debug -DCAESURA_ENABLE_FFMPEG=OFF -DBX_CONFIG_DEBUG=1 -DCMAKE_PREFIX_PATH="$(brew --prefix openssl@3)"
+
+      - name: Expo validation driver unit tests
+        run: python3 scripts/eas/test_run_apple_validation.py
 
       - name: Build
         run: |

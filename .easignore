@@ -1,0 +1,20 @@
+# EAS receives only orchestration files. Jobs fetch the exact public source SHA.
+/*
+!/.easignore
+!/app.json
+!/eas.json
+!/package.json
+!/.eas/
+/.eas/*
+!/.eas/workflows/
+/.eas/workflows/*
+!/.eas/workflows/u2-apple-validation.yml
+!/scripts/
+/scripts/*
+!/scripts/validation_process.py
+!/scripts/eas/
+/scripts/eas/*
+!/scripts/eas/run_apple_validation.py
+!/scripts/eas/simulator_cwd_probe.c
+**/__pycache__/
+**/*.pyc
