@@ -4,8 +4,8 @@
 -- the fields needed to *return* to that point: the scene, the token index
 -- of the line the player just finished, the variable tables, the visible
 -- text state, layer transforms and the backlog length. Rolling back pops the
--- newest snapshot, restores those fields, and re-spawns the scheduler
--- coroutine at the saved position (same mechanism as [load]).
+-- newest snapshot, restores those fields, and resumes at the saved next
+-- execution position only after another click.
 --
 -- Constraint set (documented in docs/plans/rollback):
 --   * snapshots are pushed only on click-advance, never across a [choice]
@@ -18,7 +18,7 @@ local snapshot = {}
 
 -- Field whitelist. emb/eval in strict mode replace the f/sf/tf/mp/variables
 -- tables by reference, so restore MUST swap the whole table, never merge.
-local DEEP_COPY_KEYS = { "f", "sf", "tf", "mp", "variables" }
+local DEEP_COPY_KEYS = { "f", "sf", "tf", "lf", "mp", "variables" }
 local REF_KEYS = { "tokens", "macros", "characters", "backlog" }
 
 -- Local deep copy (system.table_deep_copy is a module-local; keep this
@@ -159,6 +159,11 @@ function snapshot.capture(ctx)
     local snap = {
         scene = ctx.current_scene or ctx.currentScene or "",
         token_index = ctx.token_index,
+        -- Completed [ch]/[text] already advanced _resume_index. An explicit
+        -- [p] is suspended inside its handler and must re-enter that wait so
+        -- the next click still performs its page-clear continuation.
+        resume_index = ctx._executing_index or ctx._resume_index or ctx.token_index,
+        resume_page_wait = ctx._executing_command == "p",
         call_stack = deep_copy(ctx.call_stack),
         _seen_blocks = pack_seen(ctx.seen_scenes),
         backlog_len = type(ctx.backlog) == "table" and #ctx.backlog or 0,
@@ -169,7 +174,8 @@ function snapshot.capture(ctx)
         waiting_input = ctx.waiting_input,
         text_state = copy_text_state(text_state),
         reveal = (type(ctx.reveal) == "table") and {
-            total = ctx.reveal.total, elapsed = ctx.reveal.total or 0,
+            total = ctx.reveal.total,
+            elapsed = (ctx.reveal.total or 0) * math.max(0, tonumber(ctx.text_speed) or 50),
             -- [typewriter sound] (t201): restore marks the whole line
             -- revealed (no typewriter replay); seal the SE boundary at
             -- total so a rollback cannot fire a burst of SEs.
@@ -197,6 +203,8 @@ function snapshot.restore(ctx, snap)
     ctx.label_index = nil  -- security: a rollback across a [call] span must
     -- not reuse the callee's label index (stale cross-scene jump hazard)
     ctx.token_index = snap.token_index or 1
+    ctx._resume_index = snap.resume_index or ctx.token_index
+    ctx._executing_index, ctx._executing_command = nil, nil
     ctx.call_stack = deep_copy(snap.call_stack)
     ctx.seen_scenes = snap._seen_blocks and unpack_seen(snap._seen_blocks)
         or deep_copy(snap.seen_scenes) or {}
@@ -213,7 +221,7 @@ function snapshot.restore(ctx, snap)
     ctx.waiting_input = snap.waiting_input
 
     for _, k in ipairs(DEEP_COPY_KEYS) do
-        ctx[k] = deep_copy(snap[k]) or ctx[k]
+        ctx[k] = deep_copy(snap[k]) or (k == "lf" and {} or ctx[k])
     end
     for _, k in ipairs(REF_KEYS) do
         if snap[k] ~= nil then ctx[k] = snap[k] end
@@ -221,16 +229,22 @@ function snapshot.restore(ctx, snap)
 
     -- Text state: swap the whole table; reveal forced complete (no replay).
     if snap.text_state then
-        ctx.text_state = snap.text_state
+        ctx.text_state = copy_text_state(snap.text_state)
         ctx.textCursorX = snap.text_state.cursor_x
         ctx.textCursorY = snap.text_state.cursor_y
     end
-    ctx.reveal = snap.reveal
+    ctx.reveal = deep_copy(snap.reveal)
+    if ctx.reveal then
+        ctx.reveal.elapsed = (ctx.reveal.total or 0) * math.max(0, tonumber(ctx.text_speed) or 50)
+        ctx.reveal.last_shown = ctx.reveal.total or 0
+        text_scene.get_state(ctx).reveal_chars = ctx.reveal.total or 0
+    end
 
     if snap.layers then require("layers").restore_snapshot(snap.layers) end
 
     -- Audio: stop the voice line (SE/BGM cannot be un-played; documented).
-    if backend and backend.audio_stop then
+    local backend = require("backend")
+    if backend.audio_stop then
         pcall(function() backend.audio_stop("voice") end)
     end
     return true

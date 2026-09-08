@@ -39,6 +39,7 @@ local tests = {
     "test_layer_restore",
     "test_transient_restore",
     "test_wait_restore_edges",
+    "test_rollback_session",
     "test_bench_dispatch",
     "test_math_cmds",
     "test_character_cmds",

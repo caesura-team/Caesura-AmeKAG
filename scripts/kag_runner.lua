@@ -183,6 +183,7 @@ local function finish_session(retain_context)
     changing_session = true
     owner._session_active = false
     owner.stop_flag = true
+    owner._rollback_waiting = nil
     local closed, close_error = close_scheduler_coroutine()
     local cancelled, cancel_error = pcall(cancel_session_work, owner)
     local presentation = package.loaded["kag.presentation"]
@@ -591,6 +592,40 @@ end
 
 local auto_advance_ms = 0  -- accumulated ms before auto-mode advances
 
+local function commit_rollback(owner, snap)
+    if owner ~= ctx or owner._undoStack[#owner._undoStack] ~= snap then
+        return false, "rollback-owner-expired"
+    end
+    changing_session = true
+    owner._session_active = false
+    owner.stop_flag = true
+    owner._rollback_waiting = nil
+    local closed, close_error = close_scheduler_coroutine()
+    local cancelled, cancel_error = pcall(cancel_session_work, owner)
+    owner._pendingRollback = nil
+    owner.waiting_input = false
+    if not closed or not cancelled then
+        changing_session = false
+        return false, not closed and close_error or cancel_error
+    end
+    local called, restored = pcall(require("kag.snapshot").restore, owner, snap)
+    if not called or not restored then
+        changing_session = false
+        return false, called and "restore-failed" or restored
+    end
+    table.remove(owner._undoStack)
+    owner.stop_flag = false
+    owner._rollback_waiting = true
+    owner.waiting_input = true
+    auto_advance_ms = 0
+    spawn_scheduler(owner._resume_index)
+    changing_session = false
+    if snap.resume_page_wait then
+        return resume_scheduler("rollback")
+    end
+    return true, "rolled-back"
+end
+
 local function discard_failed_restore(prepared, reason)
     local called, discarded, discard_error = pcall(
         require("kag.presentation").discard, prepared._presentation)
@@ -649,6 +684,10 @@ function kag_runner.update(dt)
     if ctx and ctx._pendingRestore then
         return commit_restore(ctx, ctx._pendingRestore)
     end
+    if ctx and ctx._pendingRollback then
+        if scheduler_running() then return false, "rollback-pending" end
+        return commit_rollback(ctx, ctx._pendingRollback)
+    end
     if not kag_co and ctx and ctx._gesture_history_co then
         kag_runner.pump_gesture_overlay(ctx)
     end
@@ -667,6 +706,7 @@ function kag_runner.update(dt)
         if not allowed then return false, reason end
         close_scheduler_coroutine()
         ctx._pendingSceneReload = nil
+        ctx._rollback_waiting = nil
         ctx.stop_flag = false
         ctx.waiting_input = false
         ctx.reveal = nil
@@ -750,6 +790,9 @@ function kag_runner.update(dt)
     -- EXCEPT in auto mode, which advances after a short delay (like a
     -- visual-novel auto-play button).
     if ctx and ctx.waiting_input then
+        -- New overlays and operations still receive frames above, while the
+        -- historical click point remains held even with auto/skip enabled.
+        if ctx._rollback_waiting then return false, "waiting-input" end
         if ctx.skip_mode then
             if ctx.skip_mode == "seen" then
                 -- Read-skip: only advance past text this scene already saw.
@@ -807,16 +850,6 @@ function kag_runner.update(dt)
     local status = kag_co and coroutine.status(kag_co) or "dead"
     if status == "dead" then
         close_scheduler_coroutine()
-        if ctx._pendingRollback then
-            -- Rollback: a snapshot was already restored into ctx by
-            -- rollback(); re-spawn the scheduler at the saved position.
-            -- rollback() set stop_flag to end the old coroutine; clear it
-            -- or scheduler.run returns immediately and the script halts.
-            ctx._pendingRollback = nil
-            ctx.stop_flag = false
-            spawn_scheduler(ctx.token_index)
-            return resume_scheduler("update", delta_ms)
-        end
         if ctx._scene_changed then
             -- A cross-scene switch is processed BEFORE the deferred
             -- [select]/[button] pending-jump: the choice label target is
@@ -948,8 +981,8 @@ function kag_runner.render()
 end
 
 -- ── kag_runner.rollback() → boolean ─────────────────────────────────────────
--- Pop the newest snapshot and restore ctx to it. The running coroutine is
--- stopped via stop_flag; update() re-spawns it at the saved token.
+-- Close old execution before restoring the newest click point. An inline
+-- [rollback] cannot close itself: enqueue it for the next host update.
 
 function kag_runner.rollback()
     if changing_session then return false, "session-changing" end
@@ -959,14 +992,22 @@ function kag_runner.rollback()
     end
     -- Can't roll back while a choice menu is open (stack cleared on choice).
     if ctx._choiceMode then return false, "choice-open" end
-    local snap = table.remove(ctx._undoStack)
-    if not require("kag.snapshot").restore(ctx, snap) then
-        return false, "restore-failed"
+    if ctx._pendingRollback then return false, "rollback-pending" end
+    local snap = ctx._undoStack[#ctx._undoStack]
+    if type(snap) ~= "table" then return false, "invalid-snapshot" end
+    local index = snap.resume_index or snap.token_index
+    if type(index) ~= "number" or index < 1 or index % 1 ~= 0 then
+        return false, "invalid-resume-index"
     end
-    ctx.stop_flag = true
-    ctx._pendingRollback = true
-    ctx.waiting_input = false
-    return true
+    local overlay = ctx._gesture_history_co
+    local overlay_busy = overlay and (coroutine.status(overlay) == "running"
+        or coroutine.status(overlay) == "normal")
+    if scheduler_running() or overlay_busy then
+        ctx._pendingRollback = snap
+        ctx.stop_flag = true
+        return true, "rollback-pending"
+    end
+    return commit_rollback(ctx, snap)
 end
 
 -- ── kag_runner.on_click() ────────────────────────────────────────────────────
@@ -975,6 +1016,7 @@ end
 
 function kag_runner.on_click()
     if changing_session then return false, "session-changing" end
+    if ctx and ctx._pendingRollback then return false, "rollback-pending" end
     -- History/backlog overlay owns the pointer while open: ignore clicks so
     -- the overlay coroutine is not batch-resumed underneath. (Checked first:
     -- the guard must hold even when no coroutine is running yet.)
@@ -1035,10 +1077,12 @@ function kag_runner.on_click()
         end
     end
 
+    ctx._rollback_waiting = nil
     ctx.waiting_input = false
     -- Batch resume through all non-blocking tokens until next [p]
     local count = 0
-    while kag_co and coroutine.status(kag_co) ~= "dead" and not ctx.waiting_input and count < 200 do
+    while kag_co and coroutine.status(kag_co) ~= "dead" and not ctx.waiting_input
+        and not ctx._pendingRollback and count < 200 do
         local resumed, resume_reason = resume_scheduler("click")
         if not resumed then
             return false, resume_reason
