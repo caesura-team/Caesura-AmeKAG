@@ -43,9 +43,11 @@
 //  Exit: 0 = packaged, 1 = any step failed.
 // ==============================================================================
 
-import { existsSync, readdirSync, statSync, copyFileSync, cpSync,
+import { existsSync, readdirSync, statSync, copyFileSync,
          mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
+import { luaLiteralValue } from '../web/lua-value.js'
+import { copyDirectorySync } from './copy_tree.mjs'
 import { join, resolve, dirname, basename, relative, isAbsolute } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
@@ -217,6 +219,7 @@ const STAGE = mkdtempSync(join(tmpdir(), 'caesura-pkg-'))
 // handler too.
 process.once('exit', () => { try { rmSync(STAGE, { recursive: true, force: true }) } catch { /* temp cleanup */ } })
 let BUNDLE = ''
+let BAKED_SCENE_PATHS = []
 try {
   let baked = [...KAGS_DISPLAY]
   if (ENTRY) {
@@ -230,6 +233,7 @@ try {
       baked = [es, ...baked]
     }
   }
+  BAKED_SCENE_PATHS = baked
   const rr = spawnSync(LUA_PATH, [join(ROOT, 'scripts', 'ks_bake.lua'), ...baked, '--web', STAGE], { cwd: ROOT, stdio: 'inherit' })
   if (rr.status !== 0) {
     pkg('FAIL: ks_bake web bundle failed')
@@ -256,7 +260,7 @@ if (!NO_WEB_BUILD) {
   const ROOT_STORY = join(ROOT, 'cache', 'story', 'story.lua')
   if (!existsSync(ROOT_STORY)) {
     pkg('  cache/story/story.lua missing -- baking demo bundle first')
-    const br = spawnSync(LUA_PATH, [join(ROOT, 'scripts', 'ks_bake.lua'), '--dir', 'demo', '--web', join(ROOT, 'cache', 'story')], { stdio: 'inherit' })
+    const br = spawnSync(LUA_PATH, [join(ROOT, 'scripts', 'ks_bake.lua'), '--dir', 'demo', '--web', 'cache/story'], { cwd: ROOT, stdio: 'inherit' })
     if (br.status !== 0) {
       pkg('FATAL: demo bundle bake failed (cache/story/story.lua); aborting instead of rebuilding web/dist without it')
       process.exit(1)
@@ -306,9 +310,9 @@ if (existsSync(join(WEB_DIST, 'sw.js'))) copyFileSync(join(WEB_DIST, 'sw.js'), j
 else if (existsSync(join(ROOT, 'web', 'sw.js'))) copyFileSync(join(ROOT, 'web', 'sw.js'), join(OUT_PATH, 'sw.js'))
 if (existsSync(join(WEB_DIST, 'manifest.webmanifest'))) copyFileSync(join(WEB_DIST, 'manifest.webmanifest'), join(OUT_PATH, 'manifest.webmanifest'))
 else if (existsSync(join(ROOT, 'web', 'manifest.webmanifest'))) copyFileSync(join(ROOT, 'web', 'manifest.webmanifest'), join(OUT_PATH, 'manifest.webmanifest'))
-if (existsSync(join(WEB_DIST, 'web-assets'))) cpSync(join(WEB_DIST, 'web-assets'), join(OUT_PATH, 'web-assets'), { recursive: true })
+if (existsSync(join(WEB_DIST, 'web-assets'))) copyDirectorySync(join(WEB_DIST, 'web-assets'), join(OUT_PATH, 'web-assets'))
 else pkg('WARN: ' + join(WEB_DIST, 'web-assets') + ' missing — packaged player may ship without wasm/chunks') // t186 NIT: loud WARN, skip semantics kept
-if (existsSync(join(WEB_DIST, 'scripts'))) cpSync(join(WEB_DIST, 'scripts'), join(OUT_PATH, 'scripts'), { recursive: true })
+if (existsSync(join(WEB_DIST, 'scripts'))) copyDirectorySync(join(WEB_DIST, 'scripts'), join(OUT_PATH, 'scripts'))
 
 // The web player bridge.js fetches scriptsBase + index.json -- regenerate it
 // for the packaged script tree so a packaged game boots without manual
@@ -337,16 +341,62 @@ pruneTree(join(OUT_PATH, 'scripts'))
 
 const ASSET_PATH = p2r(ASSET_SRC)
 if (existsSync(ASSET_PATH)) {
-  cpSync(ASSET_PATH, join(OUT_PATH, ASSET_SRC), { recursive: true })
+  copyDirectorySync(ASSET_PATH, join(OUT_PATH, ASSET_SRC))
 } else {
   pkg('WARN: asset root [' + ASSET_SRC + '] not found — shipping without game assets')
 }
 
-for (const k of KAGS) {
-  copyFileSync(k, join(OUT_PATH, 'demo', GAME_NAME, basename(k)))
-}
-
 copyFileSync(BUNDLE, join(OUT_PATH, 'cache', 'story', 'story.lua'))
+
+// Validate the delivered copy with the delivered Lua modules. Staging success
+// cannot bless a stale/damaged copy or a different packaged compiler contract.
+const runtimeCheck = spawnSync(LUA_PATH, ['-e', `
+package.path='scripts/?.lua;scripts/?/init.lua;'..package.path
+require('kag')
+local chunk,err=loadfile('cache/story/story.lua','t',{})
+if not chunk then io.stderr:write('invalid-bundle-literal: '..tostring(err));os.exit(1) end
+local decoded,bundle=pcall(chunk)
+if not decoded then io.stderr:write('invalid-bundle-literal: '..tostring(bundle));os.exit(1) end
+local compiler=require('kag.compiler')
+local keys,key_error=compiler.bundleSceneKeys(${luaLiteralValue(BAKED_SCENE_PATHS)})
+if not keys then io.stderr:write(tostring(key_error));os.exit(1) end
+local compatible,reason=compiler.validateBundle(bundle,keys)
+if not compatible then io.stderr:write(tostring(reason));os.exit(1) end
+io.write('PACKAGE-SCENE-KEYS:',table.concat(keys,string.char(0)))
+`], { cwd: OUT_PATH, encoding: 'utf8' })
+function reportRuntimeCheckFailure() {
+  console.error('[package] runtime verifier failed: ' +
+    `lua=${LUA_PATH}; cwd=${OUT_PATH}; node=${process.version}; ` +
+    `status=${runtimeCheck.status}; signal=${runtimeCheck.signal || 'none'}; ` +
+    `error=${runtimeCheck.error?.message || 'none'}`)
+}
+if (runtimeCheck.status !== 0) {
+  if (runtimeCheck.stdout) process.stdout.write(runtimeCheck.stdout)
+  if (runtimeCheck.stderr) process.stderr.write(runtimeCheck.stderr)
+  reportRuntimeCheckFailure()
+  pkg('FATAL: delivered bundle/runtime compatibility failed')
+  process.exit(1)
+}
+const keyPrefix = 'PACKAGE-SCENE-KEYS:'
+if (!runtimeCheck.stdout.startsWith(keyPrefix)) {
+  if (runtimeCheck.stdout) process.stdout.write(runtimeCheck.stdout)
+  if (runtimeCheck.stderr) process.stderr.write(runtimeCheck.stderr)
+  reportRuntimeCheckFailure()
+  fail('packaged runtime did not return scene keys')
+}
+const sceneKeys = runtimeCheck.stdout.slice(keyPrefix.length).split('\0')
+if (sceneKeys.length !== BAKED_SCENE_PATHS.length) fail('packaged runtime returned incomplete scene keys')
+for (const [index, key] of sceneKeys.entries()) {
+  // Consume the same runtime-derived mapping for the editable source copies.
+  // Never flatten two distinct story.ks inputs onto the same destination.
+  if (!key || isAbsolute(key) || key.includes(':') || key.split(/[\\/]/).some(p => p === '..' || p === '.')) {
+    fail('packaged runtime returned an unsafe scene key')
+  }
+  const destination = join(OUT_PATH, 'demo', GAME_NAME, key)
+  mkdirSync(dirname(destination), { recursive: true })
+  copyFileSync(p2r(BAKED_SCENE_PATHS[index]), destination)
+}
+pkg('delivered bundle matches packaged runtime')
 
 // ---------------------------------------------------- 5. manifest -----------
 console.log()

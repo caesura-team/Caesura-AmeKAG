@@ -690,6 +690,7 @@ export async function createPlayer({ scriptsBase, fetchImpl = fetch, wasmFile, a
       return drive(this, 'source', sceneName, opts, { ...opts.sceneSources, [sceneName]: ksSrc })
     },
     async runFromBundle(bundle, sceneKey, opts = {}) {
+      if (bundle?.version !== 1) return 'ERR:bundle-format-mismatch'
       if (!bundle?.scenes?.[sceneKey]) return 'ERR:scene-not-in-bundle:' + String(sceneKey)
       return drive(this, 'bundle', sceneKey, opts, opts.sceneSources ?? {}, bundle.scenes)
     },

@@ -1,8 +1,9 @@
 import { defineConfig } from 'vite'
-import { cpSync, mkdirSync, writeFileSync } from 'node:fs'
+import { copyFileSync, mkdirSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { buildIndex, serialize } from './gen-index.mjs'
 import { readFileSync, existsSync } from 'node:fs'
+import { copyDirectorySync } from '../scripts/copy_tree.mjs'
 
 // The web player serves the whole repo root as static content so
 // /scripts/, /demo/, /assets/ and /cache/story/story.lua resolve
@@ -21,24 +22,24 @@ function copyRuntimeDirs() {
         const from = resolve(REPO_ROOT, dir)
         const to = resolve(process.cwd(), 'dist', dir)
         mkdirSync(to, { recursive: true })
-        cpSync(from, to, { recursive: true })
+        copyDirectorySync(from, to)
       }
       // W7: vendor the Lua VM wasm into web-assets so the packaged player is
       // offline-capable (wasmoon defaults to fetching glue.wasm from unpkg).
       const localWasm = resolve(process.cwd(), 'node_modules', 'wasmoon', 'dist', 'glue.wasm')
       if (existsSync(localWasm)) {
-        cpSync(localWasm, resolve(process.cwd(), 'dist', 'web-assets', 'glue.wasm'))
+        copyFileSync(localWasm, resolve(process.cwd(), 'dist', 'web-assets', 'glue.wasm'))
       } else {
         console.warn('[vite] WARN: wasmoon glue.wasm not found under node_modules — packaged player would fetch it from unpkg.')
       }
       // Copy PWA Service Worker and Web App Manifest into dist/
       const swFile = resolve(process.cwd(), 'sw.js')
       if (existsSync(swFile)) {
-        cpSync(swFile, resolve(process.cwd(), 'dist', 'sw.js'))
+        copyFileSync(swFile, resolve(process.cwd(), 'dist', 'sw.js'))
       }
       const manifestFile = resolve(process.cwd(), 'manifest.webmanifest')
       if (existsSync(manifestFile)) {
-        cpSync(manifestFile, resolve(process.cwd(), 'dist', 'manifest.webmanifest'))
+        copyFileSync(manifestFile, resolve(process.cwd(), 'dist', 'manifest.webmanifest'))
       }
 
       // bridge.js hard-depends on scriptsBase + 'index.json'; generate it for

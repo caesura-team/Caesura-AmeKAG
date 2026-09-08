@@ -128,29 +128,38 @@ describe('browser flow (jsdom + wasmoon + DOM)', () => {
     expect(sakura.style.transition).toContain('left 300ms')
   }, 120000)
 
-  it('loads a pre-baked .ksc stream (zero-parse start)', async () => {
-    // ks_bake pre-compiles scenes into Lua-literal .ksc; the web player
-    // loads them directly (no tokenizer/compiler at scene start).
-    const kscPath = join(here, '..', 'cache', 'ksc-web', 'demo_galgame_demo.ksc')
-    let ksc = existsSync(kscPath) ? readFileSync(kscPath, 'utf8') : null
-    if (!ksc) {
-      const ks = readFileSync(join(here, '..', 'demo', 'galgame_demo.ks'), 'utf8')
-      player.lua.global.set('KS_TMP_SRC', ks)
-      ksc = await player.lua.doString([
-        '  local compiler = require("kag.compiler")',
-        '  local cmp = compiler.compile_from_source(KS_TMP_SRC, "galgame.ks")',
-        '  local ser = compiler.serialize(cmp)',
-        '  return "return " .. compiler.encode_lua_literal(ser)',
-      ].join(String.fromCharCode(10)))
-    }
+  it('executes a freshly baked current .ksc stream without source parsing', async () => {
+    const ksc = await player.lua.doString(`
+      local compiler = require('kag.compiler')
+      local tokens = compiler.compile_from_source('[set var="f.cache_only" value=7]\\n[ch text="Cached scene"]\\n[end]', 'cached.ks')
+      return 'return '..compiler.encode_lua_literal(assert(compiler.serialize(tokens)))
+    `)
     player.lua.global.set('KSC_SRC', ksc)
-    const data = await player.lua.doString([
-      '  local chunk = assert(load(KSC_SRC, \'@galgame.ksc\', \'t\', _ENV))',
-      '  return chunk()',
-    ].join(String.fromCharCode(10)))
-    expect(data.version).toBe(1)
+    const data = await player.lua.doString("return assert(load(KSC_SRC, '@cached.ksc', 't', {}))()")
+    expect(data.version).toBe(2)
     expect(data.tokens.length).toBeGreaterThan(0)
     expect(data.labels).toBeTruthy()
+    await player.lua.doString(`
+      local tokenizer, compiler = require('tokenizer'), require('kag.compiler')
+      local parse, compile = tokenizer.parse, compiler.compile
+      __U14_RESTORE_CACHE_PROBE = function()
+        tokenizer.parse, compiler.compile = parse, compile
+      end
+      tokenizer.parse = function() error('cached execution attempted source parsing') end
+      compiler.compile = function(tokens)
+        assert(tokens._compiled, 'cached execution attempted fresh compilation')
+        return compile(tokens)
+      end
+    `)
+    try {
+      const result = await player.runFromBundle({ version: 1, scenes: { 'cached.ks': data }, assets: [] },
+        'cached.ks', { maxFrames: 1000, autoClick: true })
+      expect(result, 'the decoded current cache must execute').toMatch(/^DONE:/)
+      expect(await player.lua.doString("return require('kag_runner').get_ctx().f.cache_only")).toBe(7)
+      expect(player.core.backlog.map(page => page.text ?? '').join(' ')).toContain('Cached scene')
+    } finally {
+      await player.lua.doString('__U14_RESTORE_CACHE_PROBE(); __U14_RESTORE_CACHE_PROBE=nil')
+    }
   }, 60000)
 
   // Sprint 1 / t3: the story-bundle load path is verified in two tiers.
