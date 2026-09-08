@@ -6,9 +6,11 @@
 // and Lua-heap growth under collectgarbage — so engine/script hot-path
 // changes that would regress the browser player surface detectably.
 //
-// Measurement surface (jsdom-headless, wasmoon): bridge.js drives each
-// scene as ONE synchronous lua.doString (the whole scene runs in a tight
-// frame loop). Wall-clock around that await is the true scheduler time.
+// Measurement surface (jsdom-headless, wasmoon): wall time around runScene
+// includes parsing, scheduling, bridge work and final state publication.
+// Throughput uses one representative warmup and the median of three runs
+// in the same VM; it does not measure first-player startup. Every run still
+// checks completion, frame/token counts and error events.
 // bridge.js round-109 hook writes _G.__FRAME_COUNT under __PERF_TRACE so
 // we can read the exact frame (tick) count — gated off on the normal path.
 // Memory uses the round-101 technique: collectgarbage("collect") x3 then
@@ -17,10 +19,10 @@
 //
 // Measured (probe): story.ks 2.75 frames/ms (2607 frames / 949ms),
 // synthetic1000 5.87 frames/ms (4001 frames / 682ms). Budgets below are
-// ~2x headroom over those readings (see doc round 109). Is a web test —
-// not part of CI (same standing as story.bundle.sweep); run locally via
+// ~2x headroom over those historical readings (see doc round 109). Runs in CI;
+// run locally via
 // `cd web && npx vitest run perf-baseline.test.js`.
-import { describe, it, expect, beforeAll } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { readFileSync, existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
@@ -72,7 +74,7 @@ async function heapKB(player) {
   return parseFloat(String(s))
 }
 
-async function benchmarkRun(player, src, name) {
+async function benchmarkRun(player, src, name, expectedTokens) {
   player.core.events.length = 0
   player.core.backlog.length = 0
   player.lua.global.set('__PERF_TRACE', true)
@@ -85,6 +87,11 @@ async function benchmarkRun(player, src, name) {
   const memAfter = await heapKB(player)
   const wall = t1 - t0
   const m = /^DONE:(\d+):(\d+)$/.exec(String(out))
+  expect(m, 'scene should complete: ' + out).not.toBeNull()
+  expect(frames, 'real scheduler tick count should be reported').toBeGreaterThan(100)
+  expect(Number.isFinite(wall) && wall > 0, 'positive measured duration').toBe(true)
+  if (expectedTokens !== undefined) expect(Number(m[1])).toBe(expectedTokens)
+  expect(player.core.events.filter(event => String(event.kind).includes('error'))).toEqual([])
   return {
     out: String(out),
     wallMs: wall,
@@ -96,6 +103,46 @@ async function benchmarkRun(player, src, name) {
   }
 }
 
+function medianRun(samples) {
+  expect(samples).toHaveLength(3)
+  return [...samples].sort((left, right) => left.wallMs - right.wallMs)[1]
+}
+
+function assertThroughput(run, name, minFrames, minTokens) {
+  expect(run.framesPerMs, name + ' frame throughput >= ' + minFrames).toBeGreaterThan(minFrames)
+  expect(run.tokensPerMs, name + ' token throughput >= ' + minTokens).toBeGreaterThan(minTokens)
+}
+
+async function steadyRun(player, source, name, expectedTokens) {
+  await benchmarkRun(player, source, name, expectedTokens)
+  const samples = []
+  for (let sample = 0; sample < 3; sample++) {
+    samples.push(await benchmarkRun(player, source, name, expectedTokens))
+  }
+  return medianRun(samples)
+}
+
+describe('performance measurement statistics', () => {
+  const sample = (wallMs) => ({ wallMs, framesPerMs: 4001 / wallMs, tokensPerMs: 3000 / wallMs })
+
+  it('selects an observed median sample without changing the measurements', () => {
+    const samples = [sample(1200), sample(8000), sample(1000)]
+    const original = [...samples]
+    const median = medianRun(samples)
+    expect(median).toBe(samples[0])
+    expect(samples).toEqual(original)
+    expect(() => assertThroughput(median, 'synthetic statistic fixture', 2.5, 2.0)).not.toThrow()
+  })
+
+  it('keeps sustained slowdown failing even when one sample is fast', () => {
+    for (const times of [[1700, 1800, 1900], [1000, 1800, 1900]]) {
+      const median = medianRun(times.map(sample))
+      expect(() => assertThroughput(median, 'synthetic statistic fixture', 2.5, 2.0))
+        .toThrow(/frame throughput/)
+    }
+  })
+})
+
 describe('web player performance baseline (round 109)', () => {
   let player = null
   beforeAll(async () => {
@@ -106,17 +153,13 @@ describe('web player performance baseline (round 109)', () => {
       wasmFile: join(here, 'node_modules', 'wasmoon', 'dist', 'glue.wasm'),
     })
   }, 60000)
+  afterAll(async () => { await player?.dispose() })
 
   it('story.ks main path: frame throughput + completes clean', async () => {
     const src = sourceFor('story.ks')
     expect(src, 'demo/example_game/story.ks should exist').toBeTruthy()
-    const r = await benchmarkRun(player, src, 'story.ks')
-    expect(r.out.startsWith('DONE:'), 'story.ks should complete via runScene: ' + r.out).toBe(true)
-    expect(r.frames, '__FRAME_COUNT should be reported by the round-109 hook').toBeGreaterThan(100)
-    expect(r.framesPerMs, 'story.ks frame throughput >= 0.8 frames/ms').toBeGreaterThan(0.8)
-    expect(r.tokensPerMs, 'story.ks token throughput >= 0.08 tokens/ms').toBeGreaterThan(0.08)
-    const errs = player.core.events.filter((e) => String(e.kind).includes('error'))
-    expect(errs, 'story.ks main run should have no error events').toEqual([])
+    const r = await steadyRun(player, src, 'story.ks')
+    assertThroughput(r, 'story.ks', 0.8, 0.08)
   }, 120000)
 
   it('story.ks Lua heap growth stays bounded (< 1024 KB)', async () => {
@@ -125,23 +168,32 @@ describe('web player performance baseline (round 109)', () => {
   }, 120000)
 
   it('synthetic 1000-line scene: frame throughput + correctness (3000 tokens)', async () => {
-    const r = await benchmarkRun(player, makeSynthetic(1000), 'synthetic1000.ks')
-    expect(r.out, 'synthetic 1000-line scene should complete: ' + r.out).toMatch(/^DONE:/)
-    expect(r.tokens, '1000 ch+p lines produce 3000 tokens').toBe(3000)
-    expect(r.framesPerMs, 'synthetic 1000-line frame throughput >= 2.5 frames/ms').toBeGreaterThan(2.5)
-    expect(r.tokensPerMs, 'synthetic 1000-line token throughput >= 2.0 tokens/ms').toBeGreaterThan(2.0)
+    const r = await steadyRun(player, makeSynthetic(1000), 'synthetic1000.ks', 3000)
+    assertThroughput(r, 'synthetic 1000-line', 2.5, 2.0)
   }, 120000)
 
   it('synthetic 1000-line Lua heap growth stays bounded (< 2048 KB)', async () => {
-    const r = await benchmarkRun(player, makeSynthetic(1000), 'synthetic1000-mem.ks')
+    const r = await benchmarkRun(player, makeSynthetic(1000), 'synthetic1000-mem.ks', 3000)
     expect(r.memGrowthKB, 'synthetic 1000-line heap growth < 2048 KB (got ' + r.memGrowthKB.toFixed(1) + ' KB)').toBeLessThan(2048)
   }, 120000)
 
   it('2000-line scene runs within 2.5x of the 1000-line scene (linear-ish)', async () => {
-    const r1 = await benchmarkRun(player, makeSynthetic(1000), 'synth1000-scale.ks')
-    const r2 = await benchmarkRun(player, makeSynthetic(2000), 'synth2000-scale.ks')
-    expect(r2.out, '2000-line scene should complete: ' + r2.out).toMatch(/^DONE:/)
-    expect(r2.tokens, '2000 ch+p lines produce 6000 tokens').toBe(6000)
+    const small = makeSynthetic(1000), large = makeSynthetic(2000)
+    const smallRun = () => benchmarkRun(player, small, 'synth1000-scale.ks', 3000)
+    const largeRun = () => benchmarkRun(player, large, 'synth2000-scale.ks', 6000)
+    await smallRun()
+    await largeRun()
+    const smallSamples = [], largeSamples = []
+    for (let sample = 0; sample < 3; sample++) {
+      if (sample % 2 === 0) {
+        smallSamples.push(await smallRun())
+        largeSamples.push(await largeRun())
+      } else {
+        largeSamples.push(await largeRun())
+        smallSamples.push(await smallRun())
+      }
+    }
+    const r1 = medianRun(smallSamples), r2 = medianRun(largeSamples)
     expect(r2.wallMs, 'doubling scene size should not blow up (wall2000 < 2.5x wall1000)').toBeLessThan(r1.wallMs * 2.5)
   }, 120000)
 

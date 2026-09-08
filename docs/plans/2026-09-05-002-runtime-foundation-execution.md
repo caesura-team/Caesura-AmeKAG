@@ -2,7 +2,7 @@
 
 当前计划：docs/plans/2026-09-05-001-refactor-runtime-foundation-plan.md。
 
-路线图保留 U1–U29，底层优先，Studio 暂停。U10 已通过 PR #3 合并到 master（7430ca29），PR 的7项检查和合并后10项CI任务全部成功。当前从 codex/u11-state-restore 推进；2026-09-06 用户明确要求本次完成 U11、合并 master、确认 CI 全绿后暂停，U12 及后续等待恢复。完整路线图尚未完成，本记录不把排期当成完成证据。
+路线图保留 U1–U29，底层优先，Studio 暂停。U10 已通过 PR #3 合并到 master（7430ca29），PR 的7项检查和合并后10项CI任务全部成功。U11 已合并，正在收尾恢复缺陷与 CI；2026-09-08 用户明确恢复继续开发，取代此前“U11 后暂停”的安排，CI 收尾后继续 U12。完整路线图尚未完成，本记录不把排期当成完成证据。
 
 ## 工作区
 
@@ -136,6 +136,12 @@ Windows Debug/Release随后暴露两个真实环境差异：两项恢复测试�
 后续Linux run `34034440065` 又确认483/483 Web与CTest通过，失败为能力闭环矩阵未再生成；已按当前源码重新生成。预先执行其下一道Android检查得到82/88：五项字体检查仍定位旧文件/表达式，另有一项真实TTF计数日志在拆分时遗漏。检查器改为核对TextRendererFont.cpp与TTFState的实际atlas/range/光栅循环，恢复真实glyphs.size()日志后88/88通过；17个正负变体确认删除atlas、字形范围、光栅调用或日志，以及伪造固定计数仍失败。这些是U11回归与现有门禁修复，不扩展Android能力声明。
 
 上述CI修复完成完整Windows Debug验证，FFmpeg关闭以覆盖云端实际备用路径：run `37648d6d-99d0-4654-9bb6-386dd72ce0d1`，原始目录 `raw/windows-debug-u11-ci-plmpeg-final`。全量构建退出0，Cpp1290/1290、398873断言、0失败/0跳过，Lua147/147与37/37，全部验证器/耦合/注册通过，CTest25通过+1允许的外部AI跳过（238.56秒）。源码与夹具前后指纹一致，collector和diagnostic verifier均PASS，之后恢复本机原FFmpeg配置。独立增量审查无待处理问题。
+
+2026-09-08 收尾：master `b836a3a8` 的CI已通过Linux、macOS与移动平台任务，Windows两配置仍因单次性能计时失败。吞吐用例现采用同一VM的一次代表性预热及三次实测的实际中位样本，原吞吐门槛不变；1000/2000行样本交错采集，每次运行均校验完成、帧数、token数和错误事件，持续低吞吐负例仍失败。8项定向检查通过；此门槛衡量预热后运行，不声称覆盖首次启动延迟。
+
+同时修复日志揭示的读档后清屏异常：缺失的可选textbox_style不再变成空表，直接复用宿主上下文时也清除未来样式；存在的样式在prepare阶段按当前textbox契约验证，坏样式在提交前拒绝。Lua事务316/316、Web恢复14/14通过，包含真实load→cl、完整样式中的0/false与失败保留owner/co/画面；两项增量独立审查无阻断问题。
+
+最新完整Web为35文件/488项全绿。完整Windows Debug run `1d097a23-1f7e-4e4a-9b87-0b4e23689795`（`raw/windows-debug-u11-textbox-final`）在源码与夹具前后指纹一致的快照上通过全部检查：全量构建、Cpp1290/1290与398873断言、Lua147/147及37/37、验证器/耦合/注册，CTest25通过+1允许的外部AI跳过（189.48秒）；collector与diagnostic verifier均PASS。本机FFmpeg配置已恢复为ON。
 
 ## 本轮实际执行
 
