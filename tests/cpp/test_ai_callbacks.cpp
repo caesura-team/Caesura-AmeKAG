@@ -196,6 +196,43 @@ private:
     bool barrierTimedOut = false;
 };
 
+// Keep the production pool and HTTP worker path, but leave only one worker
+// available. This also exercises single-worker CI scheduling on larger hosts.
+class OneAvailableAiWorker {
+public:
+    ~OneAvailableAiWorker() { release(); }
+    bool reserveSpareWorkers(Caesura::IJobSystem& jobs) {
+        const int spareWorkers = jobs.workerCount() - 1;
+        for (int i = 0; i < spareWorkers; ++i) {
+            if (jobs.submit([gate = gate]() {
+                    std::unique_lock<std::mutex> lock(gate->mutex);
+                    ++gate->parked;
+                    gate->changed.notify_all();
+                    gate->changed.wait(lock, [&gate] { return gate->released; });
+                }, Caesura::JobPriority::Normal, nullptr) == 0)
+                return false;
+        }
+        std::unique_lock<std::mutex> lock(gate->mutex);
+        return gate->changed.wait_for(lock, std::chrono::seconds(5),
+            [&] { return gate->parked == spareWorkers; });
+    }
+    void release() {
+        std::lock_guard<std::mutex> lock(gate->mutex);
+        gate->released = true;
+        gate->changed.notify_all();
+    }
+
+private:
+    struct Gate {
+        std::mutex mutex;
+        std::condition_variable changed;
+        int parked = 0;
+        bool released = false;
+    };
+    // Worker-held ownership remains valid during assertion-failure unwinding.
+    const std::shared_ptr<Gate> gate = std::make_shared<Gate>();
+};
+
 bool aiWorkersFinished(Caesura::IJobSystem& jobs) {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
     while (jobs.pendingJobs() != 0 && std::chrono::steady_clock::now() < deadline)
@@ -266,8 +303,12 @@ void checkRollbackAiResponse(bool buffered, bool oldSuccess) {
     startRollbackAiScene(state);
     auto& jobs = engine.jobSystem();
     REQUIRE(server.waitForRequests(1));
+    OneAvailableAiWorker workerCapacity;
     if (buffered) REQUIRE(aiWorkersFinished(jobs));
-    else CHECK(jobs.pendingJobs() > 0);
+    else {
+        REQUIRE(workerCapacity.reserveSpareWorkers(jobs));
+        CHECK(jobs.pendingJobs() == jobs.workerCount());
+    }
     run(state, R"lua(
         assert(u12_ai_calls[1] == 0 and #runner.get_ctx().backlog == 0)
         assert(runner.rollback())
@@ -283,8 +324,11 @@ void checkRollbackAiResponse(bool buffered, bool oldSuccess) {
         assert(runner.on_click(), 'the restored click must start a fresh AI request')
         assert(u12_ai_requests == 2)
     )lua");
-    REQUIRE(server.waitForRequests(2));
+    // The successor is submitted above, but a single available worker cannot
+    // start its HTTP request while the obsolete request still holds that worker.
     server.releaseOld();
+    REQUIRE(server.waitForRequests(2));
+    workerCapacity.release();
     REQUIRE(aiWorkersFinished(jobs));
     CHECK_FALSE(server.barrierFailed());
     jobs.pollMainThreadJobs();

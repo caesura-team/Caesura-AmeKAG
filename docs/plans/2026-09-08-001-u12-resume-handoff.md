@@ -87,3 +87,13 @@ Golden旧门禁以至少50次点击代替分支运行证据；全文揭示修复
 用户随后明确授权把仓库转入新组织并调整协作者。GitHub仓库现在为 `caesura-team/Caesura-AmeKAG`，数据库ID1260362254保持一致；master仍为54553f8b且保护开启，其余协作者角色保留，patrickzhao555-cmd已回查为Maintain。本地origin已同步。当前克隆/徽章/赞助/演示链接及六个验证profile的repository字段同步到新组织，其余门禁字段逐项比对未改变。上述验收发生在迁移前，保留原仓库名和profile摘要，不重写历史receipt；组织仓库最新CI与合并继续单独核验。
 
 U12本机验收完成，当前处于交付阶段；整个U1–U29目标保持进行中。
+
+## PR #13 跨平台 CI 修正
+
+组织仓库 PR #13 首次 CI `34198666389` 保留失败结果：Android 静态合同、Android 构建审计与 iOS 编译探针通过；Windows Debug/Release 的生成 API 文档检查发现 Lua runtime scripts 应为86；Linux 的能力矩阵指纹已过期。两份文档均使用原生成器同步，没有手工修改能力等级或降低门禁。
+
+macOS 的真实 C++ 套件发现1281项，1280通过、1失败、0跳过。失败来自 AI 回调回滚测试的两个非缓冲分支：旧 HTTP 请求仍占据唯一 worker 时，测试先等待新 HTTP 请求到达服务器，再释放旧请求，形成测试自身的循环等待。修复将旧响应释放移到新请求提交之后、等待其到达之前，保留回滚、旧回调失效与新回调完成的断言。新增生产 JobSystem 压力夹具只留下一个可用 worker，在多核本机复现同一调度条件，析构和断言失败路径均释放共享屏障。
+
+`artifacts/validation/u12-ci-ai/` 保留真实 RED（1项用例、54断言、2失败）与 GREEN（13项 AI/U12 用例、335断言、0失败；1279项未选中）及源码稳定性 receipt。该结果是定向回归；最终整合的完整 Debug profile 和新一轮 PR CI 另行核验。运行时代码、超时、测试发现门槛和跳过条件均未因此修改。
+
+用户要求的新视觉方向为 **Next Generation of Visual Novel**。组织头像与仓库社交预览已在 GitHub 设置；README 标识与品牌资产通过独立文档 PR #14 合并到 master `5da946d1524b084096e32019d2e9fc0fba2b1ce5`，不以文档合并代替 U12 运行时门禁。

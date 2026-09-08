@@ -1,6 +1,10 @@
 <div align="center">
 
+<img src="docs/assets/branding/caesura-engine.png" alt="Caesura engine logo" width="144" height="144">
+
 # Caesura (AmeKAG)
+
+**Next Generation of Visual Novel**
 
 **现代化跨平台视觉小说引擎 · KAG Neo-Genesis 脚本 · C++20 内核**
 
