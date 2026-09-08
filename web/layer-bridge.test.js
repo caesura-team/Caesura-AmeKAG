@@ -20,7 +20,75 @@ beforeEach(async () => {
 })
 afterEach(() => lua?.global.close())
 
+async function loadLayerState() {
+  for (const name of ['kag.wait_state', 'kag.save_state', 'backend', 'rtt', 'kag.layer_state']) {
+    lua.global.set('__module_source', readFileSync(join(here, '../scripts', name.replaceAll('.', '/') + '.lua'), 'utf8'))
+    await lua.doString(`package.preload[${JSON.stringify(name)}]=assert(load(__module_source)); __module_source=nil`)
+  }
+}
+
 describe('live Lua Layers facade (real Wasmoon)', () => {
+  it('bulk capture preserves the complete restore tree and matches the shared scalar validator', async () => {
+    await loadLayerState()
+    const result = await lua.doString(`
+      local L=require('layers')
+      local state=require('kag.layer_state')
+      local bulk=assert(L.capture_restore_tree,'bulk restore capture unavailable')
+      Restore={describe_texture=function() return {kind='color',r=1,g=2,b=3,a=255} end}
+      local parent=L.add_layer(nil,{id='group',name='Group',x=17,y=23,z=2,visible=false})
+      local n=L.add_layer(parent,{id='child',name='Child',tag='portrait',z=3})
+      n.tex=73; n.rt=4; n.w=80; n.h=40; n.opacity=0; n.alpha=0
+      n.originX=7; n.originY=8; n.pos_x=0.2; n.pos_y=0.3
+      n.imgX=1; n.imgY=2; n.imgW=30; n.imgH=20; n.scale=0.5; n.rotation=11
+      local first=state.capture()
+      local second=state.capture()
+      assert(first~=second and first.nodes~=second.nodes and first.nodes[3]~=second.nodes[3])
+      L.capture_restore_tree=nil
+      local scalar=state.capture()
+      L.capture_restore_tree=bulk
+      n.x=99; n.opacity=255; n.parent=L.get_root()
+      assert(first.nodes[3].parent=='group' and first.nodes[3].opacity==0)
+      local changed=state.capture()
+      assert(changed.nodes[3].x==99 and changed.nodes[3].parent=='_root')
+      return {bulk=first,scalar=scalar}
+    `)
+    expect(result.bulk).toEqual(result.scalar)
+    expect(result.bulk.nodes[2]).toMatchObject({parent:'group',opacity:0,alpha:0,originX:7,originY:8,
+      pos_x:0.2,pos_y:0.3,imgX:1,imgY:2,imgW:30,imgH:20,source:{kind:'color',r:1,g:2,b:3,a:255}})
+  })
+
+  it('bulk and scalar capture both reject unsupported payloads, effects, values and cyclic trees', async () => {
+    await loadLayerState()
+    expect(await lua.doString(`
+      local L=require('layers')
+      local state=require('kag.layer_state')
+      local bulk=assert(L.capture_restore_tree,'bulk restore capture unavailable')
+      local n=L.ensure({},'actor',1)
+      local function refused()
+        local fast=pcall(state.capture)
+        L.capture_restore_tree=nil
+        local scalar=pcall(state.capture)
+        L.capture_restore_tree=bulk
+        assert(not fast and not scalar,'capture refusal differs')
+      end
+      n.userdata=false; refused(); n.userdata=nil
+      n.quake.active=true; refused(); n.quake.active=false
+      n.rt=17; refused(); n.rt=nil
+      n.w=-1; refused(); n.w=0
+      n.x=0/0; refused(); n.x=0
+      assert(state.capture().nodes[2].id==n.id)
+      return L.get('actor')==n
+    `)).toBe(true)
+    core.getRoot().children.push(core.getRoot())
+    expect(await lua.doString(`
+      local L=require('layers'); local state=require('kag.layer_state')
+      local fast=pcall(state.capture)
+      L.capture_restore_tree=nil
+      local scalar=pcall(state.capture)
+      return not fast and not scalar
+    `)).toBe(true)
+  })
+
   it('captures isolated rollback transforms and restores surviving layer identities', async () => {
     expect(await lua.doString(`
       local L=require('layers')

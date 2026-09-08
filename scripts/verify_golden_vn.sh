@@ -115,30 +115,50 @@ fi
 # ---- 3. Choice-route reachability ----
 note "Step 3: choice-route reachability (branches -> [end])"
 for b in $BRANCHES; do
-    RL="$(SAMPLE_STORY="$STORY" SAMPLE_ENDING="$b" SAMPLE_FRAMES="$FRAME_BUDGET" "$LUA" "$DRIVER" 2>&1 | grep -E "RESULT|ENDING" || true)"
-    printf "%s\n" "$RL" | sed "s/^/  /"
-    # t67 criterion tightening: the v1 probe accepted a VACUOUS pass -- the
-    # staging used stage_label_jump+stop_flag without _pendingJump, so the
-    # runner ended immediately and "RESULT DONE" matched while the branch
-    # NEVER ran (pre-fix measured 2026-08-29: route_forest DONE:2 token=37
-    # clicks=0, route_city DONE:2 token=48 clicks=0). The sample driver now
-    # arms _pendingJump (mirroring golden_vn_headless); true runs measured
-    # (post-fix): DONE:4169 token=122 clicks=2004 (forest) / DONE:4144
-    # token=122 clicks=1979 (city). Require real branch progress:
-    # clicks>=50 and token>=100 leave an order-of-magnitude margin while
-    # the hollow run (clicks=0, token<=48) can never satisfy them.
-    if printf "%s\n" "$RL" | grep -q "RESULT DONE"; then
+    case "$b" in
+        route_forest) EXPECT_ROUTE=forest; EXPECT_TEXT='You take the quiet forest path.' ;;
+        route_city) EXPECT_ROUTE=city; EXPECT_TEXT='You take the bright city path.' ;;
+        *) check "$b branch reachable -> DONE" 1 "unknown Golden branch contract"; continue ;;
+    esac
+    RL="$(SAMPLE_STORY="$STORY" SAMPLE_ENDING="$b" SAMPLE_FRAMES="$FRAME_BUDGET" \
+          SAMPLE_BRANCH_ROUTE="$EXPECT_ROUTE" SAMPLE_BRANCH_TEXT="$EXPECT_TEXT" "$LUA" "$DRIVER" 2>&1)"
+    RL_RC=$?
+    printf "%s\n" "$RL" | grep -E "RESULT|ENDING|BRANCH_PROGRESS" | sed "s/^/  /" || true
+    # A reveal is now final, so repeated clicks during typewriter animation no
+    # longer inflate the count. Require the route variable AND a fully revealed
+    # branch line, with real completion and the original terminal-token guard.
+    # A staged-but-unexecuted jump, wrong branch, or nonzero driver exit fails.
+    if [ "$RL_RC" -eq 0 ] && printf "%s\n" "$RL" | grep -q "RESULT DONE"; then
         TOK="$(printf "%s\n" "$RL" | grep -o 'token=[0-9]*' | grep -o '[0-9]*' | head -1)"
-        CLK="$(printf "%s\n" "$RL" | grep -o 'clicks=[0-9]*' | grep -o '[0-9]*' | head -1)"
-        if [ "${CLK:-0}" -ge 50 ] && [ "${TOK:-0}" -ge 100 ]; then
+        if [ "${TOK:-0}" -ge 100 ] && printf "%s\n" "$RL" | grep -Fxq "BRANCH_PROGRESS route=$EXPECT_ROUTE text=true"; then
             check "$b branch reachable -> DONE" 0
         else
-            check "$b branch reachable -> DONE" 1 "hollow run: token=${TOK:-?} clicks=${CLK:-?}"
+            check "$b branch reachable -> DONE" 1 "missing branch progress: token=${TOK:-?}"
         fi
     elif printf "%s\n" "$RL" | grep -q "ENDING_NOT_FOUND"; then
         check "$b branch reachable -> DONE" 2
     else
         check "$b branch reachable -> DONE" 1
+    fi
+done
+
+# Exercise the actual driver with deliberately wrong semantic expectations.
+# These must finish the scene but reject its claimed branch proof, so a driver
+# that emits an unconditional success marker cannot satisfy this gate.
+note "Step 3b: branch proof negative controls"
+for mismatch in route text; do
+    EXPECT_ROUTE=forest
+    EXPECT_TEXT='You take the quiet forest path.'
+    if [ "$mismatch" = route ]; then EXPECT_ROUTE=city
+    else EXPECT_TEXT='__golden_nonexistent_branch_text__'; fi
+    NEG_OUT="$(SAMPLE_STORY="$STORY" SAMPLE_ENDING=route_forest SAMPLE_FRAMES="$FRAME_BUDGET" \
+        SAMPLE_BRANCH_ROUTE="$EXPECT_ROUTE" SAMPLE_BRANCH_TEXT="$EXPECT_TEXT" "$LUA" "$DRIVER" 2>&1)"
+    NEG_RC=$?
+    if [ "$NEG_RC" -eq 1 ] && printf "%s\n" "$NEG_OUT" | grep -q "RESULT DONE" \
+        && printf "%s\n" "$NEG_OUT" | grep -Fxq "BRANCH_PROGRESS route=forest text=false"; then
+        check "branch proof rejects mismatched $mismatch after a complete run" 0
+    else
+        check "branch proof rejects mismatched $mismatch after a complete run" 1 "rc=$NEG_RC"
     fi
 done
 

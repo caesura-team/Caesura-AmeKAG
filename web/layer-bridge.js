@@ -52,6 +52,33 @@ export async function installLayerBridge(lua, core) {
       }
       return luaLiteralValue({layers})
     },
+    captureRestoreTree: scalarFields => {
+      const fields = ['id','name','tag','visible','blend_mode','tex','rt', ...scalarFields.split(',')]
+      const seen = new Set()
+      const walk = (node, depth) => {
+        if (depth > 64 || seen.size >= 256 || seen.has(node)) throw new Error('Layer tree exceeds restore limits')
+        seen.add(node)
+        const values = Object.create(null)
+        for (const key of fields) {
+          const value = host.read(node, key)
+          if (value == null) continue
+          if (!['string','number','boolean'].includes(typeof value)) throw new Error('Non-scalar layer field: ' + key)
+          values[key] = value
+        }
+        // These fields are refusal conditions, never restorable payloads.
+        // Preserve Lua truthiness (0 is true) and avoid serializing opaque data.
+        if (node.userdata != null) values.userdata = true
+        for (const key of ['quake','shake','fade']) {
+          const effect = node[key]
+          if (effect == null || effect === false) continue
+          if (typeof effect !== 'object') throw new Error('Invalid layer effect: ' + key)
+          if (effect.active != null && effect.active !== false) values[key] = {active:true}
+        }
+        values.children = (node.children ?? []).map(child => walk(child, depth + 1))
+        return values
+      }
+      return luaLiteralValue(walk(core.getRoot(), 0))
+    },
   }
   lua.global.set('__CAESURA_LAYER_HOST', host)
   try {
@@ -145,6 +172,15 @@ export async function installLayerBridge(lua, core) {
         end
         -- Cache code only: every capture still owns distinct value tables.
         return snapshot_constructor()
+      end
+      local restore_source,restore_constructor
+      function L.capture_restore_tree(fields)
+        local source=host.captureRestoreTree(table.concat(fields,','))
+        if source~=restore_source then
+          local constructor=assert(load('return '..source,'@layers.restore-tree','t',{}))
+          restore_source,restore_constructor=source,constructor
+        end
+        return restore_constructor()
       end
       function L.restore_snapshot(snapshot)
         if not snapshot or not snapshot.layers then return end

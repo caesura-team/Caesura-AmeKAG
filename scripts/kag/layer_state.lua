@@ -92,7 +92,11 @@ function M.capture()
         nodes[#nodes+1]=node_value(record)
         for _,child in ipairs(node.children or {}) do walk(child,node.id,depth+1) end
     end
-    walk(Layers.get_root(),nil,0)
+    -- Web can transfer the complete tree in one bridge call. The resulting
+    -- detached Lua values still pass the same source/shape/limit validation.
+    local root=type(Layers.capture_restore_tree)=="function"
+        and Layers.capture_restore_tree(scalar_fields) or Layers.get_root()
+    walk(root,nil,0)
     return {version=1,nodes=nodes}
 end
 

@@ -172,6 +172,37 @@ class OutputPaths(unittest.TestCase):
         self.assertIn("STALE_LUA_PROBE", log)
         self.assertNotIn("SELECTED_LUA_PROBE", log)
 
+    def branch_probe_interpreter(self, *, clicks, exit_code, progress):
+        script, selected = self.golden_fixture()
+        lines = ["#!/bin/sh", f'echo "RESULT DONE:200 token=122 clicks={clicks}"']
+        if progress:
+            lines.append('echo "BRANCH_PROGRESS route=$SAMPLE_BRANCH_ROUTE text=true"')
+        lines.append(f"exit {exit_code}")
+        selected.write_bytes(("\n".join(lines) + "\n").encode("utf-8"))
+        return self.run_golden(script, str(selected))
+
+    def test_golden_branch_accepts_observed_progress_without_timing_click_counts(self):
+        result = self.branch_probe_interpreter(clicks=47, exit_code=0, progress=True)
+        log = result.stdout + result.stderr
+        # A sentinel proves only verifier dispatch/result handling. The actual
+        # scene and driver still execute in the separate CaesuraGoldenVn gate.
+        for route in ("forest", "city"):
+            self.assertRegex(log, rf"PASS\s+route_{route} branch reachable -> DONE")
+
+    def test_golden_branch_rejects_hollow_completion_even_with_many_clicks(self):
+        result = self.branch_probe_interpreter(clicks=500, exit_code=0, progress=False)
+        log = result.stdout + result.stderr
+        for route in ("forest", "city"):
+            self.assertRegex(log, rf"FAIL\s+route_{route} branch reachable -> DONE")
+            self.assertNotRegex(log, rf"PASS\s+route_{route} branch reachable -> DONE")
+
+    def test_golden_branch_preserves_nonzero_exit_after_a_done_marker(self):
+        result = self.branch_probe_interpreter(clicks=500, exit_code=42, progress=True)
+        log = result.stdout + result.stderr
+        for route in ("forest", "city"):
+            self.assertRegex(log, rf"FAIL\s+route_{route} branch reachable -> DONE")
+            self.assertNotRegex(log, rf"PASS\s+route_{route} branch reachable -> DONE")
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
