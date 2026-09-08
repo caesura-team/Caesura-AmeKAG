@@ -157,6 +157,25 @@ syncBuiltinESMExports();
                     self.assertNotIn('PACKAGE COMPLETE', out)
                     self.assertFalse((self.out_path / 'MANIFEST.txt').exists())
 
+    def test_06_colliding_basename_scenes_survive_the_final_package(self):
+        """The real demo inputs contain two independent story.ks scenes."""
+        if NODE is None:
+            self.skipTest("node not found on PATH")
+        scenes = ['demo/example_game/story.ks', 'demo/template/story.ks']
+        rc, out, err = run_cli_full('--out', self.out_name, *scenes)
+        self.assertEqual(rc, 0, out + err)
+        self.assertIn('delivered bundle matches packaged runtime', out)
+        self.assertIn('PACKAGE COMPLETE', out)
+        bundle = (self.out_path / 'cache/story/story.lua').read_text(encoding='utf-8')
+        for scene in scenes:
+            key = scene.removeprefix('demo/')
+            self.assertIn('["' + key + '"]=', bundle)
+            copy = self.out_path / 'demo/example_game' / key
+            self.assertTrue(copy.is_file(), str(copy))
+            self.assertEqual(copy.read_bytes(), (ROOT / scene).read_bytes())
+        manifest = (self.out_path / 'MANIFEST.txt').read_text(encoding='utf-8')
+        self.assertIn('scenes: 2', manifest)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

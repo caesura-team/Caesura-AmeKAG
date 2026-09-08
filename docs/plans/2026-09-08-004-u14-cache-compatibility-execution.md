@@ -28,3 +28,11 @@ readCache以完整文件内容判断外部改写，缓存解析后的数据，�
 - 独立审查发现的冷初始化、数值表示、冷读取和最终copy遗漏输入问题均已通过真实回归闭环；源码/日志身份及增量审查报告保留。生成文档使用原生成器。
 
 完整Debug profile、完整Web原预算、最终源码身份及候选CI仍待冻结后的最后验收。定向计数不是行/分支覆盖率；现有空/注释流不支持序列化，制作端明确失败，不静默省略场景。
+
+## 完整输入重名场景修正
+
+首次冻结候选`ee2f89d1`的完整pipeline在demo bake阶段真实失败，错误为`duplicate-bundle-scene:story.ks`；后续阶段没有运行。严格集合检查暴露`demo/example_game/story.ks`与`demo/template/story.ks`此前被basename键静默覆盖的问题。完整输入集合和拒绝条件保留，两个场景都继续交付。
+
+新增纯函数`compiler.bundleSceneKeys(paths)`，制作端及最终包runtime共用：唯一basename保持兼容；冲突项移除本批输入共同目录前缀后保留相对子目录。因此两个demo分别成为`example_game/story.ks`与`template/story.ks`。绝对路径前缀、不能安全归一化的父级路径和重复来源仍被拒绝。Node源码副本也使用同组key复制，两个story不再覆盖。
+
+`artifacts/validation/u14-scene-keys/`保留正式RED及GREEN：Lua bake41/41、全部demo24场景/6资产实际bake成功、Node完整CLI6/6无跳过、Web定向33/33无跳过。两个重名场景都经Wasmoon运行到DONE，并各自与源路径backlog对照；最终copy的语义变异和遗漏callee负控制继续被拒绝。Web运行时查找逻辑没有改动。该实质修改纳入下一次冻结候选完整pipeline。

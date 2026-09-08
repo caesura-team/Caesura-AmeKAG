@@ -218,7 +218,7 @@ const STAGE = mkdtempSync(join(tmpdir(), 'caesura-pkg-'))
 // handler too.
 process.once('exit', () => { try { rmSync(STAGE, { recursive: true, force: true }) } catch { /* temp cleanup */ } })
 let BUNDLE = ''
-let BAKED_SCENE_KEYS = []
+let BAKED_SCENE_PATHS = []
 try {
   let baked = [...KAGS_DISPLAY]
   if (ENTRY) {
@@ -232,7 +232,7 @@ try {
       baked = [es, ...baked]
     }
   }
-  BAKED_SCENE_KEYS = baked.map(path => basename(path))
+  BAKED_SCENE_PATHS = baked
   const rr = spawnSync(LUA_PATH, [join(ROOT, 'scripts', 'ks_bake.lua'), ...baked, '--web', STAGE], { cwd: ROOT, stdio: 'inherit' })
   if (rr.status !== 0) {
     pkg('FAIL: ks_bake web bundle failed')
@@ -345,10 +345,6 @@ if (existsSync(ASSET_PATH)) {
   pkg('WARN: asset root [' + ASSET_SRC + '] not found — shipping without game assets')
 }
 
-for (const k of KAGS) {
-  copyFileSync(k, join(OUT_PATH, 'demo', GAME_NAME, basename(k)))
-}
-
 copyFileSync(BUNDLE, join(OUT_PATH, 'cache', 'story', 'story.lua'))
 
 // Validate the delivered copy with the delivered Lua modules. Staging success
@@ -360,14 +356,34 @@ local chunk,err=loadfile('cache/story/story.lua','t',{})
 if not chunk then io.stderr:write('invalid-bundle-literal: '..tostring(err));os.exit(1) end
 local decoded,bundle=pcall(chunk)
 if not decoded then io.stderr:write('invalid-bundle-literal: '..tostring(bundle));os.exit(1) end
-local compatible,reason=require('kag.compiler').validateBundle(bundle,${luaLiteralValue(BAKED_SCENE_KEYS)})
+local compiler=require('kag.compiler')
+local keys,key_error=compiler.bundleSceneKeys(${luaLiteralValue(BAKED_SCENE_PATHS)})
+if not keys then io.stderr:write(tostring(key_error));os.exit(1) end
+local compatible,reason=compiler.validateBundle(bundle,keys)
 if not compatible then io.stderr:write(tostring(reason));os.exit(1) end
-print('[package] delivered bundle matches packaged runtime')
-`], { cwd: OUT_PATH, stdio: 'inherit' })
+io.write('PACKAGE-SCENE-KEYS:',table.concat(keys,string.char(0)))
+`], { cwd: OUT_PATH, encoding: 'utf8' })
 if (runtimeCheck.status !== 0) {
+  if (runtimeCheck.stdout) process.stdout.write(runtimeCheck.stdout)
+  if (runtimeCheck.stderr) process.stderr.write(runtimeCheck.stderr)
   pkg('FATAL: delivered bundle/runtime compatibility failed')
   process.exit(1)
 }
+const keyPrefix = 'PACKAGE-SCENE-KEYS:'
+if (!runtimeCheck.stdout.startsWith(keyPrefix)) fail('packaged runtime did not return scene keys')
+const sceneKeys = runtimeCheck.stdout.slice(keyPrefix.length).split('\0')
+if (sceneKeys.length !== BAKED_SCENE_PATHS.length) fail('packaged runtime returned incomplete scene keys')
+for (const [index, key] of sceneKeys.entries()) {
+  // Consume the same runtime-derived mapping for the editable source copies.
+  // Never flatten two distinct story.ks inputs onto the same destination.
+  if (!key || isAbsolute(key) || key.includes(':') || key.split(/[\\/]/).some(p => p === '..' || p === '.')) {
+    fail('packaged runtime returned an unsafe scene key')
+  }
+  const destination = join(OUT_PATH, 'demo', GAME_NAME, key)
+  mkdirSync(dirname(destination), { recursive: true })
+  copyFileSync(p2r(BAKED_SCENE_PATHS[index]), destination)
+}
+pkg('delivered bundle matches packaged runtime')
 
 // ---------------------------------------------------- 5. manifest -----------
 console.log()

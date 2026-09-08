@@ -784,6 +784,73 @@ function compiler.validateSerialized(data)
     return compatible(data.tokens,data.compatibility)
 end
 
+-- Stable keys for one complete bake input list. Existing unique basenames
+-- remain compatible; collisions keep directories below the shared parent.
+-- This function is pure so bakers and the delivered runtime use one rule.
+function compiler.bundleSceneKeys(paths)
+    if type(paths)~='table' or #paths==0 then return nil,'bundle-required-scenes' end
+    local parsed,counts={},{}
+    local common,common_root=nil,nil
+    for index,path in ipairs(paths) do
+        if type(path)~='string' or path=='' or path:find('%c') then
+            return nil,'bundle-scene-path:'..index
+        end
+        path=path:gsub('\\','/')
+        if path:sub(-1)=='/' then return nil,'bundle-scene-path:'..index end
+        local root=''
+        if path:match('^%a:/') then
+            root=path:sub(1,2):lower();path=path:sub(4)
+        elseif path:match('^//[^/]+/[^/]+/') then
+            root=path:match('^(//[^/]+/[^/]+)');path=path:sub(#root+2)
+        elseif path:sub(1,1)=='/' then
+            root='/';path=path:sub(2)
+        end
+        local parts={}
+        for part in path:gmatch('[^/]+') do
+            if part=='..' and #parts>0 and parts[#parts]~='..' then
+                parts[#parts]=nil
+            elseif part=='..' and root~='' then
+                return nil,'bundle-scene-path:'..index
+            elseif part~='.' then
+                parts[#parts+1]=part
+            end
+        end
+        if #parts==0 then return nil,'bundle-scene-path:'..index end
+        local name=parts[#parts]
+        counts[name]=(counts[name] or 0)+1
+        parsed[index]={parts=parts,root=root,name=name}
+        if not common then
+            common={}
+            for i=1,#parts-1 do common[i]=parts[i] end
+            common_root=root
+        else
+            if root~=common_root then common_root=false end
+            local shared=0
+            while shared<#common and shared<#parts-1 and common[shared+1]==parts[shared+1] do
+                shared=shared+1
+            end
+            for i=#common,shared+1,-1 do common[i]=nil end
+        end
+    end
+    local keys,seen={},{}
+    for index,entry in ipairs(parsed) do
+        local key=entry.name
+        if counts[key]>1 then
+            if common_root==false then return nil,'bundle-scene-root-mismatch:'..index end
+            key=table.concat(entry.parts,'/',#common+1)
+        end
+        if key=='' or key:sub(1,1)=='/' or key:find(':') then
+            return nil,'unsafe-bundle-scene-key:'..index
+        end
+        for part in key:gmatch('[^/]+') do
+            if part=='..' or part=='.' then return nil,'unsafe-bundle-scene-key:'..index end
+        end
+        if seen[key] then return nil,'duplicate-bundle-scene:'..key end
+        keys[index]=key;seen[key]=true
+    end
+    return keys
+end
+
 -- Validate all bundled scenes before replacing a live provider/session.
 -- Compatibility is separate from publisher authenticity.
 function compiler.validateBundle(bundle,expected_scenes)

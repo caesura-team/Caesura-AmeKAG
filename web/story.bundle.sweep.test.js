@@ -68,7 +68,8 @@ const EXPECTED_KEYS = [
   'galgame_demo.ks',
   'showcase.ks',
   'sma_demo.ks',
-  'story.ks',
+  'example_game/story.ks',
+  'template/story.ks',
   'tutorial_01_hello.ks',
   'tutorial_02_text.ks',
   'tutorial_03_layers.ks',
@@ -91,6 +92,10 @@ const EXPECTED_KEYS = [
 // Resolve a scene key back to its raw .ks source on disk (top-level demo/,
 // demo/tutorial/ or demo/example_game/ — wherever it actually lives).
 function sourceFor(key) {
+  if (key.includes('/')) {
+    const path = join(rootDir, 'demo', key)
+    return existsSync(path) ? readFileSync(path, 'utf8') : null
+  }
   for (const dir of ['', 'tutorial/', 'example_game/']) {
     const p = join(rootDir, 'demo', dir, key)
     if (existsSync(p)) return readFileSync(p, 'utf8')
@@ -159,6 +164,8 @@ describe.skipIf(!bundleExists)('story bundle sweep (ks_bake -> bundle -> play)',
 
   // ---- bundle-vs-source parity: same scene, both paths, same backlog ----
   it.each([
+    ['example_game/story.ks'],
+    ['template/story.ks'],
     ['tutorial_06_effects.ks'],
     ['tutorial_14_flow_timing.ks'],
     ['tutorial_15_expr_deep.ks'],

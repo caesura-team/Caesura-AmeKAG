@@ -114,8 +114,9 @@ local function bakeWeb(scenes, outDir)
         assetCount = assetCount + 1
         bundle.assets[assetCount] = p
     end
-    local expected={}
-    for _, path in ipairs(scenes) do
+    local expected,key_error=compiler.bundleSceneKeys(scenes)
+    if not expected then return nil,key_error end
+    for index, path in ipairs(scenes) do
         local f = io.open(path, "r")
         if not f then return nil, "cannot open: " .. path end
         local src = f:read("*a")
@@ -125,9 +126,7 @@ local function bakeWeb(scenes, outDir)
         compiler.compile(tokens)
         local serialized = compiler.serialize(tokens)
         if not serialized then return nil, "serialize failed: " .. path end
-        -- scene key: player uses the basename (demo/galgame_demo.ks)
-        local key = path:match("([^/\\]+)$") or path
-        expected[#expected+1]=key
+        local key = expected[index]
         bundle.scenes[key] = serialized
         -- asset discovery: scan token params for storage/file values
         for _, tok in ipairs(tokens) do
@@ -249,8 +248,7 @@ if is_script then
         end
         w:write("return " .. encoded .. "\n")
         w:close()
-        local expected={}
-        for _,path in ipairs(collected) do expected[#expected+1]=path:match('([^/\\]+)$') or path end
+        local expected=assert(compiler.bundleSceneKeys(collected))
         local compatible,reason=checkWeb(outPath,expected)
         if not compatible then
             print('[error] finished bundle failed runtime compatibility: '..tostring(reason))

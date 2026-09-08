@@ -202,6 +202,49 @@ print('COLD-COMPILER-COMPATIBLE')
     check('U14 CLI bakes a Web artifact',baked,bake_log)
     local accepted,accept_log=cli('--check-web '..path)
     check('U14 CLI validates current artifact',accepted and accept_log:find('[web-check] compatible',1,true),accept_log)
+    check('U14 shared bundle scene-key function is exported',type(compiler.bundleSceneKeys)=='function')
+    if type(compiler.bundleSceneKeys)=='function' then
+        local cases={
+            {{'demo/example_game/story.ks','demo/template/story.ks','demo/tutorial/intro.ks'},
+             'example_game/story.ks|template/story.ks|intro.ks'},
+            {{'C:\\games\\sample\\left\\story.ks','C:\\games\\sample\\right\\story.ks'},
+             'left/story.ks|right/story.ks'},
+            {{'/games/sample/left/story.ks','/games/sample/right/story.ks'},
+             'left/story.ks|right/story.ks'},
+            {{'./demo/left/../a/story.ks','demo/b/story.ks'},'a/story.ks|b/story.ks'},
+            {{'../games/a/story.ks','../games/b/story.ks'},'a/story.ks|b/story.ks'},
+        }
+        for index,case in ipairs(cases) do
+            local keys,reason=compiler.bundleSceneKeys(case[1])
+            check('U14 safe relative scene keys '..index,keys and table.concat(keys,'|')==case[2],reason)
+        end
+        local duplicate,dup_reason=compiler.bundleSceneKeys({'demo/story.ks','./demo/story.ks'})
+        check('U14 repeated source identity remains a failure',not duplicate
+            and dup_reason:find('duplicate-bundle-scene:',1,true),dup_reason)
+        local unsafe,unsafe_reason=compiler.bundleSceneKeys({'../outside/story.ks','demo/story.ks'})
+        check('U14 scene keys never retain parent traversal',not unsafe,unsafe_reason)
+    end
+    for _,name in ipairs({'north','south'}) do
+        ensure_dir(DIR_FIX..'/'..name)
+        local f=assert(io.open(DIR_FIX..'/'..name..'/story.ks','w'))
+        f:write('[ch text="'..name..'"]\n[end]\n');f:close()
+    end
+    local collision_dir=folder..'/duplicates'
+    local duplicates,duplicate_log=cli('--dir '..DIR_FIX..' --web '..collision_dir)
+    check('U14 CLI preserves colliding basenames',duplicates,duplicate_log)
+    if duplicates then
+        local data=assert(loadfile(collision_dir..'/story.lua','t',{}))()
+        for _,name in ipairs({'north','south'}) do
+            local scene=data.scenes[name..'/story.ks']
+            check('U14 duplicate source is distinct: '..name,scene
+                and scene.tokens[1][2].text==name)
+        end
+        check('U14 non-conflicting basename stays compatible',data.scenes['m.ks']~=nil)
+    end
+    for _,name in ipairs({'north','south'}) do
+        os.remove(DIR_FIX..'/'..name..'/story.ks');os.remove(DIR_FIX..'/'..name)
+    end
+    os.remove(collision_dir..'/story.lua');os.remove(collision_dir)
     if baked then
         local data=assert(loadfile(path,'t',{}))()
         local entry=assert(data.scenes['bake_test.ks'])
