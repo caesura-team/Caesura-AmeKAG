@@ -72,9 +72,12 @@ local function pack_seen_flags(flags)
     local cached_flags=cache.flags
     local added, count = {}, 0
     for index, value in next, flags do
-        if value ~= true then return nil end
         count = count + 1
-        if not cached_flags[index] then
+        -- The private map contains only true entries; next never yields nil
+        -- values. Equality proves both "already known" and "still true" in
+        -- one comparison, while every changed/new value still validates.
+        if cached_flags[index] ~= value then
+            if value ~= true then return nil end
             if type(index) ~= "number" or index % 1 ~= 0
                 or index < 1 or index > 2147483647 then return nil end
             added[#added + 1] = index

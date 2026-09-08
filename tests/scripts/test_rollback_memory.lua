@@ -381,6 +381,36 @@ do
         seen_ctx.seen_scenes.story[8192] == true and seen_ctx.seen_scenes.story[8193] == nil)
 end
 
+-- Existing private true entries cannot legitimize a later non-boolean value.
+-- The entire live map must still be inspected when its key count is unchanged.
+do
+    local seen_ctx=make_ctx(0,0)
+    local flags={[1]=true,[64]=true}
+    seen_ctx.seen_scenes={story=flags}
+    snapshot.capture(seen_ctx)
+    for _,value in ipairs({1,"read",{payload=7}}) do
+        flags[64]=value
+        local captured=snapshot.capture(seen_ctx)
+        local copied=captured.seen_scenes and captured.seen_scenes.story[64]
+        check("cached seen keys retain non-boolean fallback values", captured._seen_blocks==nil
+            and (type(value)=="table" and copied~=value and copied.payload==7 or copied==value))
+        flags[64]=true
+        snapshot.capture(seen_ctx)
+    end
+    flags[2.5]=true
+    local fractional=snapshot.capture(seen_ctx)
+    check("new non-token seen keys cannot enter the packed representation",
+        fractional._seen_blocks==nil and fractional.seen_scenes.story[2.5]==true)
+    flags[2.5]=nil
+    setmetatable(flags,{__index=function() error("must use raw seen contents") end,
+        __pairs=function() error("must use raw seen traversal") end})
+    flags[1]=nil
+    local raw_snapshot=snapshot.capture(seen_ctx)
+    snapshot.restore(seen_ctx,raw_snapshot)
+    check("seen encoding observes raw removals without invoking table hooks",
+        seen_ctx.seen_scenes.story[1]==nil and seen_ctx.seen_scenes.story[64]==true)
+end
+
 -- Cache work buffers may retain only current flags. Holding the newest
 -- snapshot must not keep the original live tables or historical empty blocks.
 do
