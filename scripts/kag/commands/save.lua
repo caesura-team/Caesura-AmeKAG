@@ -265,10 +265,14 @@ function SaveCommands.save(ctx, params)
     local runner = package.loaded["kag_runner"]
     local runner_owned = ctx._native_runner_owner or (runner and runner.get_ctx() == ctx)
     local owner_co = ctx.co
+    local retained_owner = runner_owned and runner
+        and type(runner.can_save_retained_context) == "function"
+        and runner.can_save_retained_context(ctx)
     local function owner_active()
+        if runner_owned and (package.loaded["kag_runner"] ~= runner
+            or not runner or runner.get_ctx() ~= ctx or ctx.co ~= owner_co) then return false end
+        if retained_owner then return runner.can_save_retained_context(ctx) end
         return not ctx.stop_flag and ctx._session_active ~= false
-            and (not runner_owned or (package.loaded["kag_runner"] == runner
-                and runner and runner.get_ctx() == ctx and ctx.co == owner_co))
     end
     local function rejected(reason)
         ctx.tf = ctx.tf or {}
@@ -296,7 +300,15 @@ function SaveCommands.save(ctx, params)
     local sceneName = state.scene_path ~= "" and state.scene_path or "unknown"
     local tokenIdx = state.token_index
 
-    local operation <close> = Operation.start(ctx)
+    local operation_owner = ctx
+    if retained_owner then
+        -- This is a new snapshot request, not resumed scene execution. Share
+        -- the owner's cancellation list so stop/replacement still cancels it,
+        -- without reactivating the completed scheduler or its old operations.
+        ctx.active_operations = ctx.active_operations or {}
+        operation_owner = {active_operations=ctx.active_operations}
+    end
+    local operation <close> = Operation.start(operation_owner)
     local function release_slot()
         if ctx._pending_save_slots[slot] == operation then
             ctx._pending_save_slots[slot] = nil

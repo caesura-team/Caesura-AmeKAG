@@ -150,5 +150,97 @@ do
     unrelated:__close()
 end
 
+-- A completed runner deliberately retains its final context for host saves.
+-- Use real compilation, scheduling and retirement; only scene bytes/readback
+-- and final storage are controlled here.
+do
+    local flow = require("flow")
+    flow.load_scene = function(path)
+        local tokens = require("tokenizer").parse("[set f.final=7][end]")
+        require("kag.compiler").compile(tokens)
+        return {path=path,tokens=tokens,labels=tokens._compiled.labels}
+    end
+    require("kag")
+    local runner = require("kag_runner")
+    runner.set_resume_adapter({is_paused=function() return false end,
+        resume=function(_,co,value) return coroutine.resume(co,value) end})
+    local function completed()
+        assert(runner.start("tests/scripts/final.ks",{replace=true}))
+        local ctx = runner.get_ctx()
+        for _=1,30 do if ctx._session_active==false then break end; runner.update(0) end
+        assert(runner.get_ctx()==ctx and ctx._session_active==false and ctx.co==nil)
+        return ctx
+    end
+
+    reset()
+    local ctx = completed()
+    local saved = Save.save(ctx,{slot=12,thumbnail="final-image"})
+    check("fresh host save may capture the retained completed context", saved==true
+        and #writes==1 and writes[1].state.f.final==7 and writes[1].thumbnail=="final-image")
+    check("saving a final snapshot never reactivates its scheduler", ctx._session_active==false and ctx.co==nil)
+
+    reset()
+    ctx = completed()
+    local successful = start(ctx,{slot=16})
+    requests[1].done, requests[1].image = true,"completed-final-image"
+    resume(successful)
+    check("fresh retained save commits its own asynchronously completed image", #writes==1
+        and writes[1].slot==16 and writes[1].thumbnail=="completed-final-image"
+        and released==1 and #ctx.active_operations==0 and ctx._session_active==false)
+
+    reset()
+    ctx = completed()
+    local co = start(ctx,{slot=13})
+    check("retained snapshot can own a new cancellable image request", #requests==1
+        and coroutine.status(co)=="suspended" and #ctx.active_operations==1)
+    assert(runner.start("tests/scripts/replacement.ks",{replace=true}))
+    if coroutine.status(co)=="suspended" then resume(co) end
+    check("replacing a retained context cancels its new image lease", #writes==0
+        and #requests==1 and requests[1].cancelled and released==1)
+    check("a replaced retained owner cannot initiate another save", Save.save(ctx,{slot=14,thumbnail="stale"})==false
+        and #writes==0)
+
+    reset()
+    assert(runner.start("tests/scripts/closing.ks",{replace=true}))
+    ctx = runner.get_ctx()
+    local pending = Operation.start(ctx)
+    pending.token:register(function() Save.save(ctx,{slot=15,thumbnail="cleanup-reentry"}) end)
+    assert(runner.stop())
+    check("retirement cleanup cannot masquerade as a fresh retained save", #writes==0)
+    pending:__close()
+
+    flow.load_scene = function(path)
+        local tokens = require("tokenizer").parse("[save slot=17][end]")
+        require("kag.compiler").compile(tokens)
+        return {path=path,tokens=tokens,labels=tokens._compiled.labels}
+    end
+    for _, mode in ipairs({"stop-for-reload", "reload"}) do
+        reset()
+        local entered, closed = false,false
+        _G.KAG.capture_thumbnail = function()
+            local guard <close> = setmetatable({}, {__close=function()
+                closed=true
+                error("U15 cleanup failure")
+            end})
+            entered=true
+            coroutine.yield()
+            return "unexpected-image"
+        end
+        assert(runner.start("tests/scripts/failed-cleanup.ks",{replace=true}))
+        ctx = runner.get_ctx()
+        for _=1,8 do if entered then break end; runner.update(0) end
+        assert(entered and coroutine.status(ctx.co)=="suspended")
+        flow.reload_scene = flow.load_scene
+        local cleaned, reason
+        if mode=="reload" then cleaned,reason=runner.reload_scene("tests/scripts/failed-cleanup.ks")
+        else cleaned,reason=runner.stop_for_reload() end
+        check(mode .. " reports actual cleanup failure", cleaned==false and closed
+            and tostring(reason):find("U15 cleanup failure",1,true))
+        check(mode .. " failure does not authorize a retained snapshot save",
+            Save.save(ctx,{slot=17,thumbnail="failed-cleanup"})==false and #writes==0)
+        assert(runner.stop())
+    end
+end
+
 print(string.format("Save thumbnail lifecycle: %d passed, %d failed", passed, failed))
 if failed>0 then os.exit(1) end

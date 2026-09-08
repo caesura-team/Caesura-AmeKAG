@@ -116,6 +116,16 @@ Simulator的CWD探针、资源部署及真实C++启动成功；源夹具、实�
 
 本次已完成用户指定的Expo三lane接入与实际验收。iOS验证范围为未签名device编译和Simulator原生C++，macOS为上述foundation profile；UIKit完整应用、真实Metal/音频效果、iOS Lua/CTest整套、物理设备、签名交付，以及U2其余配置/sanitizer/性能基线仍按唯一计划分别推进。
 
+## 合并后边界与第七次未执行记录
+
+第六次的 Apple 证明仅绑定 `74c07ea5ac5d618652ed1b072519b2899b044529`。与后续 U14 合流后的 [PR 17](https://github.com/caesura-team/Caesura-AmeKAG/pull/17) 在最终候选 `f646b820f1256ae906f520330eca13bde74dcc97` 的 GitHub CI 中有 7 个实际作业通过、3 个 PR 打包作业按条件跳过，并已合并为 `eb3aa8a8f08ef6baf3cdd1e56479e9a28407d5f2`；这些 GitHub 结果不把第六次 EAS 的源码身份升级到新候选。
+
+[第七次 EAS 运行 01a08139-57a7-7143-884c-d14d3e367d31](https://expo.dev/accounts/ailiasdesus-team/projects/caesura-native-validation/workflows/01a08139-57a7-7143-884c-d14d3e367d31) 原计划验证上述最终候选，但三个作业均在分配 worker 前失败：账号免费计划的 CI/CD 月度 60 分钟额度已耗尽，服务报告重置时间为 2026-10-01 00:00 UTC（北京时间 08:00）。没有本次构建、测试、receipt 或工件，因此新增 Lua 孤立用例等改动在这次 EAS 中为 **NOT_RUN**，不能写成已验证。原始状态与错误报告保留在 Expo 验证工作区的 `artifacts/validation/eas-seventh-*`。
+
+用户已明确要求先继续其余开发；未升级计费、未购买额度、未再次派发 EAS。此限制仅影响新的 EAS 云执行，U15 及其他本地/GitHub 可执行工作继续推进。
+
+合并后的 [主分支 CI 34235243070](https://github.com/caesura-team/Caesura-AmeKAG/actions/runs/34235243070) 保持原始失败结论：8 个作业通过，Windows Release 在 Web 合成 1000 行场景测得 1.990333 帧/ms，未达到现有大于 2 帧/ms 门槛；该作业后续 CTest/Smoke 未执行，Windows 打包作业被依赖条件跳过。macOS/Linux 打包作业通过。该性能问题与既有 U2/U27 基线工作一起处理，未通过重试或放宽门槛改写本次记录。
+
 ## 官方来源
 
 - [EAS Workflows 当前 JSON Schema](https://api.expo.dev/v2/workflows/schema)：API envelope 的 `data` 才是 JSON Schema。

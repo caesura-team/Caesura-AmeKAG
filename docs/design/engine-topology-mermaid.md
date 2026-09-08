@@ -19,7 +19,7 @@ graph TB
 
     subgraph "Runtime Core"
         script["script (Lua 5.4)<br/>VM · coroutines · KAG bindings<br/>GameState · tokenizer<br/>instruction-budget sandbox"]
-        render["render (bgfx)<br/>GPU device · layers<br/>textures · particles<br/>video · GPU monitor"]
+        render["render (bgfx)<br/>GPU device · layers<br/>textures · particles<br/>screenshot tickets · GPU monitor"]
         audio["audio (SoLoud)<br/>BGM/Voice/SE buses<br/>3D spatial · fade"]
         resource["resource<br/>async loader · asset providers<br/>image decoder · generations"]
     end
@@ -27,7 +27,7 @@ graph TB
     subgraph "Content Systems"
         live2d["live2d<br/>Cubism SDK / image fallback<br/>model · motion · expression"]
         minigame["minigame<br/>3D scenes<br/>enter → update → render → leave"]
-        storage["storage<br/>encrypted save/load<br/>schema migration<br/>cloud sync"]
+        storage["storage<br/>atomic encrypted save/load<br/>supplied thumbnail text<br/>schema migration · cloud sync"]
         archive["archive<br/>CARC packaging<br/>AES-256-GCM · Ed25519"]
     end
 
@@ -107,7 +107,7 @@ graph TB
 
 ### Runtime Core
 
-- **render** (7 interfaces) — bgfx-based GPU rendering. IRenderDevice for draw calls, ILayerManager for BG/FG/MSG compositing, ITextureManager for texture lifecycle, IParticleSystem for 2D particles, IGpuMonitor for adaptive quality, IVideoPlayer for playback, and IMeshRenderer for skeletal/mesh scenes (SMA).
+- **render** (7 interfaces) — bgfx-based GPU rendering. IRenderDevice owns draw calls and screenshot tickets/results, ILayerManager handles BG/FG/MSG compositing, ITextureManager owns texture lifecycle, IParticleSystem handles 2D particles, IGpuMonitor reports adaptive quality, IVideoPlayer handles playback, and IMeshRenderer renders skeletal/mesh scenes (SMA).
 - **script** (1 interface) — Lua 5.4 VM with instruction-budget sandbox. KAG tokenizer and coroutine scheduler. Bindings span 11 modules (KAG, Render, VFX, Debug, DevCore, MiniGame, Sma, Steam, Save, AI, Engine) that register the `KAG`/`Render`/`VFX`/`Debug`/`DevCore`/`mini_game`/`sma`/`steam`/`AI`/`Engine` Lua APIs.
 - **audio** (1 interface) — SoLoud 3-bus audio. BGM (cross-fade), Voice (interrupt), SE (2D/3D spatial), per-bus volume, and playback position queries.
 - **resource** (3 interfaces) — Asset-provider chain, Engine-owned asset manager, asynchronous loading, worker-thread image decoding, and resource-generation tracking.
@@ -143,6 +143,13 @@ Per frame:
   3. HotReload check → JobSystem callbacks → AsyncLoader completion polling
   4. Lua memory/instruction checks → GPU monitor → engine_update(dt)
   5. voice-complete edge detection → Lua callback
-  6. render() → engine_render() / debug overlay / active mini-game render
-  7. RenderDevice::advanceFrame() → active mini-game update
+  6. render() → beginFrame → engine_render / Live2D / debug overlay / active mini-game render
+     → commit_frame finalizes postfx and view state without advancing bgfx
+  7. Optional export screenshot ticket → presentFrame()
+     → advanceFrame submits screenshot readback and advances once → platform.postFrame()
+  8. Optional export consumes its completed ticket; active mini-game CPU update follows presentation
 ```
+
+The mini-game draw pass and postfx finish before the single normal presentation; the existing CPU mini-game update remains after presentation. `renderOneFrame` and RPC capture use the same render/present boundary. Shutdown retains explicit resource-destruction drains while screenshot admission is closed.
+
+For `[save]`, Script freezes the slot/state/scene/cursor and uses an Operation plus a Lua 5.4 closing guard to await its own renderer ticket. `Pending` is retained across zero-value yields; terminal results are consumed once. Cancellation or owner replacement retires the ticket and prevents a late slot write. Only the resulting Base64 text and frozen state reach Storage's existing atomic/encrypted save path. Storage has no GPU-readiness or screenshot-file ownership. See the [screenshot API](../api/cpp-interfaces.md#111-irenderdevice) and [Lua save contract](../api/lua-modules.md#save-registered-on-the-kag-module).

@@ -92,7 +92,7 @@ graph TD
 | **rpc** | `IEditorServer` `IRpcServer` `IRpcDispatcher` | `EditorServer`(HTTP 编辑器端口 9876，25 端点) + `RpcServer`(stdio JSON-RPC，29 方法) | 入：编辑器 HTTP/stdin 请求（eval/run/断点/资产清单/SMA 校验）；出：owner-thread DTO 分发（`unsupported_yieldable_execution` 拒绝直接 yield 主状态） |
 | **script** | `ILuaManager` | `LuaManager`(Lua 5.4 VM+指令预算沙箱)、`GameState`(runner会话引用) + `bindings/*.cpp`(KAG/Render/Save/VFX/Sma/Steam/AI/Debug/DevCore/Engine/MiniGame) | 入：Lua 脚本、KAG .ks token（经 tokenizer→scheduler）、RPC eval；出：经 BackendRegistry 触达全部后端；`engine_update/engine_render` 每帧回调、`_CAESURA_CTX` 执行上下文 |
 | **steam** | `ISteamBackend` | `SteamBackend`（成就/统计/云存档/overlay，条件编译 `CAESURA_HAS_STEAM`；无 SDK 时 Null 安全默认） | 入：Lua `steam.*` 18 API 调用；出：Steamworks 成就解锁/统计写入/Remote Storage 云文件 |
-| **storage** | `ISaveManager` `ISaveProvider` | `SaveManager`(AES-256-GCM + `CAES` 魔数 + schema v1→v5 迁移) `CloudSaveProvider` `HttpCloudSaveProvider` | 入：Lua `KAG.save_game/load_game` 等 12 API、自动存档计时器；出：加密存档文件（槽位目录）、云 push/pull、缩略图 |
+| **storage** | `ISaveManager` `ISaveProvider` | `SaveManager`(AES-256-GCM + `CAES` 魔数 + schema v1→v5 迁移) `CloudSaveProvider` `HttpCloudSaveProvider` | 入：状态与调用方提供的缩略图文本、存档/读档及云同步请求；出：原子发布的存档文件、云 push/pull；不拥有 GPU 或截图 |
 
 
 
@@ -205,12 +205,17 @@ while (m_running) {
   _KAG_onClick（每帧至多一次 coalesced click）
   engine_update(dt)              // Lua：kag_runner.update → scheduler 推进（pcall 容错）
   audio->update + consumeVoiceCompletions → _onVoiceComplete
-  render(dt)                     // engine_render → Live2D render → drawDebugOverlay → minigame render
-  --export-replay 时 requestScreenshot（每帧 PNG）
-  renderDevice->commit_frame()（含 runPostFxChain）→ advanceFrame()
+  render(dt)                     // beginFrame → engine_render → Live2D → debug overlay → minigame render
+                                 // 末尾 commit_frame 完成后处理与视图复位，不推进帧
+  --export-replay 时 requestScreenshot(ScreenshotOptions{}) // 此完整帧的独立票据
+  presentFrame()                 // advanceFrame 提交截图并推进一次 → platform.postFrame
+  --export-replay 等待自己的 Completed PNG 后写文件；失败明确终止导出
+  active minigame update(dt)      // 当前 CPU update 仍在呈现后，供后续帧消费
   --frames N 到时退出
 }
 ```
+
+`renderOneFrame` 与 RPC 截图也使用 `render` / `presentFrame` 的同一完成顺序。`commit_frame` 不再调用 `bgfx::frame()`；正常游戏帧只在完整绘制、小游戏绘制及后处理之后推进一次，然后由平台执行需要的 surface swap。RPC/导出等待自己票据的回调结果，不通过额外空帧或固定文件名假定完成。退出时保留的两次 GPU 销毁排空属于单独的关停步骤，不接收新截图。
 
 ### 3.4 从 Lua 到 kag_runner 的剧本执行
 
@@ -228,13 +233,14 @@ Lua runner负责创建和发布会话表；runner、`_CAESURA_CTX`与C++ registr
 `caesura_ctx`引用同一对象，VM初始化不再另建影子状态。启动先准备场景再发布；
 显式停止、重载和执行失败同步关闭实际协程及输入作用域，再撤销资源与AI回调。
 自然EOF保留最终表供查询和保存，但旧协程及旧请求已终止；显式恢复通过新协程执行。
+宿主对最终表发起的新保存须通过 runner 的 retained-context 检查：成功清理后保留的当前 owner、无协程/continuation、非会话切换中。开始转场或清理失败清除此资格。该操作不重新激活已结束的会话；新保存等待期间发生替换仍取消，先前已过期的挂起保存也不能借最终表重新提交。
 Engine在Job和各后端销毁前停止会话。此生命周期约束不代表存档字段、冷启动图层恢复
 或迁移已全部闭合，相关验收继续由当前计划U11承担。
 
 ## 当前边界
 
 当前迁移已完成模块源码唯一归属，并将 Script 对 Render、Storage 等子系统的
-CMake 依赖收敛到对应 API 目标。Save 绑定经 `ISaveManager`、VFX 绑定经
+CMake 依赖收敛到对应 API 目标。Save 绑定经 `IRenderDevice` 请求/等待缩略图，终态后经 `ISaveManager` 提交存档；VFX 绑定经
 `IParticleSystem`、Steam 绑定经 `ISteamBackend` 访问后端；RPC 也不再依赖 Script
 实现库或 BackendRegistry。
 
@@ -279,8 +285,7 @@ bgfx 帧内视图编号集中定义在 `BgfxDeviceCore.h`（`IRenderDevice.h` �
 | `VIEW_POSTFX` | 40 | **后处理链合成视图**（round 102 新增；RTT→MAIN→POSTFX→DEBUG→TRANSITION） |
 
 帧顺序（`BgfxDeviceCore.cpp` `viewOrder`）：`{ VIEW_RTT, VIEW_MAIN, VIEW_POSTFX, VIEW_DEBUG, VIEW_TRANSITION }`。
-每帧 `setViewRect/setViewClear/setViewTransform` 设置 1280×720 正交投影；`commit_frame`
-末尾统一 `bgfx::frame()` 提交。
+每帧 `setViewRect/setViewClear/setViewTransform` 设置正交投影。`commit_frame` 完成场景与后处理提交；`advanceFrame` 给排队截图填写提交帧号、提交一次 readback，并统一调用后端帧推进。平台 `postFrame` 在这之后处理外部 surface swap。
 
 ### 4.2 批次提交（Batch Protocol）
 
@@ -305,7 +310,7 @@ recoverDevice 均重建或释放。
 - **接口**：`IRenderDevice` 新增 `PostFxKind`（`Vignette/LutColorGrade/SoftBlur/Bloom`）
   + `PostFxParams` + 6 方法（`createPostFx/setPostFxParams/destroyPostFx/clearPostFx`
   `isPostFxActive/isPostFxSupported`）；`PostFxHandle` 为稳定句柄（index+1，0=不支持）。
-- **执行**：链激活时 `commit_frame` 先重定向 `VIEW_MAIN` → `m_sceneRtt`，再调用
+- **执行**：链激活时 `beginFrame` 重定向 `VIEW_MAIN` → `m_sceneRtt`；完整场景绘制后，`commit_frame` 调用
   `runPostFxChain()`：从场景 RTT 纹理起，按 `m_postFxStages` 顺序逐 stage 全屏 pass，
   经尺寸匹配的 scratch RTT 池乒乓（`getScratchRt` 按需扩容），最终合成回 backbuffer，
   合成视图 `VIEW_POSTFX=40`。
@@ -318,6 +323,8 @@ recoverDevice 均重建或释放。
   绑定（5 API，api-stats 38 中计入）；`postfx=none` 映射 `clear_postfx`。
 - **生命周期**：`m_postFxStages` 有序链（句柄稳定）、`destroyPostFxResources` 在
   shutdown/resize/recoverDevice 释放 RTT 池与场景目标。
+
+截图队列属于 render 模块：`ScreenshotTicket` 以请求 ID 与设备代次识别结果，`takeScreenshot` 保留 Pending、一次消费终态。`beginShutdown`、丢失与恢复阶段关闭接收并取消旧 Pending；成功恢复建立新代次，旧回调不能重新发布已取消图片。Lua 保存通过关闭守卫持有票据，在等待前冻结状态，收到自己的图后一次调用既有原子/加密存档路径。`SaveManager` 不维护 GPU 就绪布尔值、不捕获图片，也不读取固定截图文件。详细接口见 [IRenderDevice](../api/cpp-interfaces.md#111-irenderdevice) 与 [Lua Save](../api/lua-modules.md#save-registered-on-the-kag-module)。
 
 ### 4.5 视频（VideoPlayer）
 

@@ -56,8 +56,10 @@ local kag_co = nil
 local ctx = nil
 local changing_session = false
 local session_revision = 0
+local retained_save_owner = nil
 
 local function publish_context(value)
+    retained_save_owner = nil
     local engine = rawget(_G, "Engine")
     if engine and type(engine.bind_active_context) == "function" then
         assert(engine.bind_active_context(value))
@@ -82,6 +84,7 @@ end
 
 local function spawn_scheduler(index)
     local owner = ctx
+    retained_save_owner = nil
     owner._session_active = true
     owner._resume_index = index
     owner._executing_index, owner._executing_command = nil, nil
@@ -129,6 +132,7 @@ local function close_scheduler_coroutine()
     if scheduler_running() then return false, "scheduler-running" end
     local co = kag_co
     kag_co = nil
+    retained_save_owner = nil
     if ctx then ctx.co = nil end
     local was_changing = changing_session
     changing_session = true
@@ -200,6 +204,7 @@ local function finish_session(retain_context)
         if status == "running" or status == "normal" then return false, "overlay-running" end
     end
     changing_session = true
+    retained_save_owner = nil
     owner._session_active = false
     owner.stop_flag = true
     owner._rollback_waiting = nil
@@ -219,6 +224,7 @@ local function finish_session(retain_context)
     if not closed then return false, close_error end
     if not cancelled then return false, cancel_error end
     if not cleaned then return false, cleanup_error end
+    retained_save_owner = retain_context and owner or nil
     return true
 end
 
@@ -251,6 +257,15 @@ end
 --- kag_runner.get_ctx() — expose the live KAG context (RPC inspection).
 function kag_runner.get_ctx()
     return ctx
+end
+
+-- Host controls may save the final state retained after normal completion.
+-- Cleanup/reload re-entry must not treat a context being retired as that stable
+-- final snapshot; only this owner boundary knows whether a transition is open.
+function kag_runner.can_save_retained_context(owner)
+    return not changing_session and owner ~= nil and owner == ctx and owner == retained_save_owner
+        and kag_co == nil and owner.co == nil and owner._session_active == false
+        and not has_continuation(owner)
 end
 
 --- kag_runner.remap_token_index(old_tokens, old_index, new_tokens) → index
@@ -331,6 +346,7 @@ function kag_runner.reload_scene(path)
     -- Close the old scheduler synchronously: its cleanup may enqueue requests
     -- that must belong to the cancellation below, never to the new scene.
     changing_session = true
+    retained_save_owner = nil
     ctx._session_active = false
     local closed, close_error = close_scheduler_coroutine()
     local cancelled, cancel_error = pcall(cancel_session_work, ctx)
@@ -636,6 +652,7 @@ local function commit_rollback(owner, request)
         return discard_rollback(request.prepared, "rollback-owner-expired")
     end
     changing_session = true
+    retained_save_owner = nil
     owner._session_active = false
     owner.stop_flag = true
     owner._rollback_waiting = nil

@@ -231,6 +231,10 @@ if(Python3_EXECUTABLE)
         target_link_libraries(CaesuraPresentationColdProbe PRIVATE Caesura::Engine)
         # The adjacent test binary supplies the same native runtime DLLs.
         add_dependencies(CaesuraPresentationColdProbe CaesuraTests)
+        # Opt-in real D3D11 validation; never launched by the headless suite.
+        add_executable(CaesuraScreenshotGpuProbe probes/screenshot_gpu_probe.cpp)
+        target_link_libraries(CaesuraScreenshotGpuProbe PRIVATE Caesura::Engine)
+        add_dependencies(CaesuraScreenshotGpuProbe CaesuraTests)
         add_test(
             NAME CaesuraColdPresentationRestore
             COMMAND ${Python3_EXECUTABLE}

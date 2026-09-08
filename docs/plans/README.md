@@ -4,7 +4,7 @@
 
 进度显示：[当前待办清单](2026-09-05-003-runtime-foundation-todo.md)。详细证据见 [执行记录](2026-09-05-002-runtime-foundation-execution.md)。
 
-2026-09-08：U12与[U13语言等价语料](2026-09-08-002-u13-language-parity-execution.md)均完成本机完整门禁、候选CI和master构建/打包验证。[U14缓存兼容](2026-09-08-004-u14-cache-compatibility-execution.md)已完成实现和定向回归，进入冻结候选整合。U2的iOS/macOS测试按用户指定使用Expo EAS，接入在独立分支推进。
+2026-09-08：U12、[U13语言等价语料](2026-09-08-002-u13-language-parity-execution.md)和[U14缓存兼容](2026-09-08-004-u14-cache-compatibility-execution.md)已交付。[Expo Apple 三 lane](2026-09-08-003-u2-expo-apple-validation.md)在记录的源码上通过，第七次因配额未执行；用户要求继续其余开发。当前推进[U15截图/帧生命周期与接续文字回归](2026-09-08-005-u15-screenshot-lifecycle-execution.md)，完整候选门禁及共同Web性能基线仍未完成。
 
 2026-09-05 用户要求重新制定后续计划，抛弃原有排期，仅保留两项方向约束：**底层优先、Studio 暂停**。
 
