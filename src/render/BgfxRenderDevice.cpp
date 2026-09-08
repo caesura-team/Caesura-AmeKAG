@@ -46,6 +46,15 @@ BgfxRenderDevice::~BgfxRenderDevice() {
     shutdown();
 }
 
+bool BgfxRenderDevice::setShaderTestFault(ShaderTestFault fault) {
+    if (m_bgfxInitialized || m_deviceCore || !BgfxShaderManager::supportsTestFault(fault)) return false;
+    m_shaderTestFault = fault;
+    return true;
+}
+
+ShaderBuildReport BgfxRenderDevice::shaderBuildReport() const {
+    return m_shaders ? m_shaders->buildReport() : ShaderBuildReport{};
+}
 
 
 void BgfxRenderDevice::flushAllRTT() {
@@ -94,12 +103,14 @@ bool BgfxRenderDevice::init(void* nativeWindowHandle, int width, int height) {
     m_recovering = false;
     m_recoveryFailed = false;
     m_frameFinalized = false;
+    m_shaderRenderingDisabled = false;
 #if defined(__ANDROID__)
     BgfxDeviceCore::setOverrideGLContext(caesuraAndroidGLContext());
 #endif
     m_bgfxInitialized = false;
     m_shutdownComplete = false;
     m_shaders = std::make_unique<BgfxShaderManager>();
+    if (!m_shaders->setTestFault(m_shaderTestFault)) return false;
     m_deviceCore = std::make_unique<BgfxDeviceCore>(m_screenshots);
     if (!m_deviceCore->init(nativeWindowHandle, width, height)) {
         m_deviceCore.reset();
@@ -121,6 +132,7 @@ bool BgfxRenderDevice::init(void* nativeWindowHandle, int width, int height) {
         printf("[RENDER][ERROR] [BgfxRenderDevice] CORE shader programs broken; "
                "rendering disabled (BGFX_DEBUG_IFH) - frame loop continues.\n");
         bgfx::setDebug(BGFX_DEBUG_IFH);
+        m_shaderRenderingDisabled = true;
     }
     m_drawState.shaders = m_shaders.get();
     m_drawState.device  = m_deviceCore.get();
@@ -439,6 +451,11 @@ bool BgfxRenderDevice::recoverDevice(void* nativeWindowHandle, int width, int he
     m_bgfxInitialized = true;
 
     m_shaders = std::make_unique<BgfxShaderManager>();
+    if (!m_shaders->setTestFault(m_shaderTestFault)) {
+        m_recovering = false;
+        return false;
+    }
+    m_shaderRenderingDisabled = false;
     m_shaders->initEmbeddedShaders();
     // t73 (b): same degrade gate as the primary init path.
     if (m_shaders->coreProgramsBroken()) {
@@ -449,6 +466,7 @@ bool BgfxRenderDevice::recoverDevice(void* nativeWindowHandle, int width, int he
         printf("[RENDER][ERROR] [BgfxRenderDevice] CORE shader programs broken; "
                "rendering disabled (BGFX_DEBUG_IFH) - frame loop continues.\n");
         bgfx::setDebug(BGFX_DEBUG_IFH);
+        m_shaderRenderingDisabled = true;
     }
     m_drawState.shaders = m_shaders.get();
     m_drawState.device  = m_deviceCore.get();

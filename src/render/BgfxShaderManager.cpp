@@ -10,6 +10,37 @@
 
 namespace Caesura {
 
+bool BgfxShaderManager::testFaultsEnabled() {
+#if defined(CAESURA_RENDER_TEST_FAULTS)
+    return true;
+#else
+    return false;
+#endif
+}
+
+bool BgfxShaderManager::supportsTestFault(ShaderTestFault fault) {
+    switch (fault) {
+    case ShaderTestFault::None: return true;
+    case ShaderTestFault::FallbackMissingFragment:
+    case ShaderTestFault::BlendMissingFragment:
+    case ShaderTestFault::SoftBlurMissingFragment:
+    case ShaderTestFault::TransitionMissingFragment:
+        return testFaultsEnabled();
+    default: return false;
+    }
+}
+
+bool BgfxShaderManager::setTestFault(ShaderTestFault fault) {
+    if (m_embeddedInit || !supportsTestFault(fault)) return false;
+    m_testFault = fault;
+    return true;
+}
+
+ShaderBuildReport BgfxShaderManager::buildReport() const {
+    return {!coreProgramsBroken(), m_buildFailures, m_injectedFaultCount,
+        m_testFault, m_failedProgramNames};
+}
+
 BgfxShaderManager::~BgfxShaderManager() {
     if (bgfx::isValid(m_fallbackProgram))    bgfx::destroy(m_fallbackProgram);
     if (bgfx::isValid(m_blendProgram))       bgfx::destroy(m_blendProgram);
@@ -415,9 +446,21 @@ void BgfxShaderManager::initEmbeddedShaders() {
         return;
     }
 
-    auto buildProgram = [&](const Bytecode& vs, const Bytecode& fs,
+    auto buildProgram = [&](const Bytecode& vs, const Bytecode& selectedFragment,
                             const char* name,
                             const ShaderUniformMetadata* fragmentUniform) -> bgfx::ProgramHandle {
+        Bytecode fs = selectedFragment;
+#if defined(CAESURA_RENDER_TEST_FAULTS)
+        const bool missingFragment =
+            (m_testFault == ShaderTestFault::FallbackMissingFragment && std::string(name) == "Fallback")
+            || (m_testFault == ShaderTestFault::BlendMissingFragment && std::string(name) == "Blend")
+            || (m_testFault == ShaderTestFault::SoftBlurMissingFragment && std::string(name) == "PostFxSoftBlur")
+            || (m_testFault == ShaderTestFault::TransitionMissingFragment && std::string(name) == "Transition");
+        if (missingFragment) {
+            fs = {};
+            ++m_injectedFaultCount;
+        }
+#endif
         if (!vs.data || !fs.data || vs.size == 0 || fs.size == 0) {
             ++m_buildFailures;
             m_failedProgramNames += std::string(name) + " ";

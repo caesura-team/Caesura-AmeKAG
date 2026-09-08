@@ -19,6 +19,10 @@ public:
     BgfxRenderDevice(const BgfxRenderDevice&) = delete;
     BgfxRenderDevice& operator=(const BgfxRenderDevice&) = delete;
 
+    bool setShaderTestFault(ShaderTestFault fault);
+    ShaderBuildReport shaderBuildReport() const;
+    bool renderingDisabledByShaders() const { return m_shaderRenderingDisabled; }
+
     bool setPreferredBackend(const char* name) override { return BgfxDeviceCore::setPreferredBackend(name); }
     const char* getBackendName() const override { return m_deviceCore ? m_deviceCore->getBackendName() : "bgfx"; }
 
@@ -142,6 +146,8 @@ private:
     bool m_recoveryFailed = false;
     bool m_recovering = false;
     bool m_frameFinalized = false;
+    bool m_shaderRenderingDisabled = false;
+    ShaderTestFault m_shaderTestFault = ShaderTestFault::None;
     uint64_t m_frameId = 0;
     std::shared_ptr<ScreenshotQueue> m_screenshots = std::make_shared<ScreenshotQueue>();
     bool canRender() const {

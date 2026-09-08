@@ -19,7 +19,7 @@
         {"id":"rc-adversarial","parser":"unittest","required":true,"min_discovered":57,"allowed_skips":[],"command":["{python}","tests/scripts/test_rc_adversarial_mutations.py"],"cwd":"{repo}","binary":"{python}","timeout_seconds":120},
         {"id":"coupling","parser":"exit-code","required":true,"command":["{python}","scripts/count_coupling.py","--ci"],"cwd":"{repo}","binary":"{python}","timeout_seconds":60},
         {"id":"test-registration","parser":"exit-code","required":true,"command":["{python}","tests/scripts/check_test_coverage.py"],"cwd":"{repo}","binary":"{python}","timeout_seconds":60},
-        {"id":"ctest","parser":"ctest-junit","required":true,"min_discovered":26,"allowed_skips":["CaesuraHeadlessAiSmoke"],"command":["ctest","--test-dir","{build_dir}","-C","{config}","--output-on-failure","--output-junit","{run_dir}/ctest.xml"],"cwd":"{repo}","report":"{run_dir}/ctest.xml","timeout_seconds":2400}
+        {"id":"ctest","parser":"ctest-junit","required":true,"min_discovered":27,"allowed_skips":["CaesuraHeadlessAiSmoke"],"command":["ctest","--test-dir","{build_dir}","-C","{config}","--output-on-failure","--output-junit","{run_dir}/ctest.xml"],"cwd":"{repo}","report":"{run_dir}/ctest.xml","timeout_seconds":2400}
       ]
     },
     "windows-release": {
@@ -39,7 +39,7 @@
         {"id":"rc-adversarial","parser":"unittest","required":true,"min_discovered":57,"allowed_skips":[],"command":["{python}","tests/scripts/test_rc_adversarial_mutations.py"],"cwd":"{repo}","binary":"{python}","timeout_seconds":120},
         {"id":"coupling","parser":"exit-code","required":true,"command":["{python}","scripts/count_coupling.py","--ci"],"cwd":"{repo}","binary":"{python}","timeout_seconds":60},
         {"id":"test-registration","parser":"exit-code","required":true,"command":["{python}","tests/scripts/check_test_coverage.py"],"cwd":"{repo}","binary":"{python}","timeout_seconds":60},
-        {"id":"ctest","parser":"ctest-junit","required":true,"min_discovered":26,"allowed_skips":["CaesuraHeadlessAiSmoke"],"command":["ctest","--test-dir","{build_dir}","-C","{config}","--output-on-failure","--output-junit","{run_dir}/ctest.xml"],"cwd":"{repo}","report":"{run_dir}/ctest.xml","timeout_seconds":2400}
+        {"id":"ctest","parser":"ctest-junit","required":true,"min_discovered":27,"allowed_skips":["CaesuraHeadlessAiSmoke"],"command":["ctest","--test-dir","{build_dir}","-C","{config}","--output-on-failure","--output-junit","{run_dir}/ctest.xml"],"cwd":"{repo}","report":"{run_dir}/ctest.xml","timeout_seconds":2400}
       ]
     },
     "linux-debug": {
@@ -59,7 +59,7 @@
         {"id":"rc-adversarial","parser":"unittest","required":true,"min_discovered":57,"allowed_skips":[],"command":["{python}","tests/scripts/test_rc_adversarial_mutations.py"],"cwd":"{repo}","binary":"{python}","timeout_seconds":120},
         {"id":"coupling","parser":"exit-code","required":true,"command":["{python}","scripts/count_coupling.py","--ci"],"cwd":"{repo}","binary":"{python}","timeout_seconds":60},
         {"id":"test-registration","parser":"exit-code","required":true,"command":["{python}","tests/scripts/check_test_coverage.py"],"cwd":"{repo}","binary":"{python}","timeout_seconds":60},
-        {"id":"ctest","parser":"ctest-junit","required":true,"min_discovered":26,"allowed_skips":["CaesuraHeadlessAiSmoke"],"command":["ctest","--test-dir","{build_dir}","-C","{config}","--output-on-failure","--output-junit","{run_dir}/ctest.xml"],"cwd":"{repo}","report":"{run_dir}/ctest.xml","timeout_seconds":2400}
+        {"id":"ctest","parser":"ctest-junit","required":true,"min_discovered":27,"allowed_skips":["CaesuraHeadlessAiSmoke"],"command":["ctest","--test-dir","{build_dir}","-C","{config}","--output-on-failure","--output-junit","{run_dir}/ctest.xml"],"cwd":"{repo}","report":"{run_dir}/ctest.xml","timeout_seconds":2400}
       ]
     },
     "linux-release": {
@@ -79,7 +79,7 @@
         {"id":"rc-adversarial","parser":"unittest","required":true,"min_discovered":57,"allowed_skips":[],"command":["{python}","tests/scripts/test_rc_adversarial_mutations.py"],"cwd":"{repo}","binary":"{python}","timeout_seconds":120},
         {"id":"coupling","parser":"exit-code","required":true,"command":["{python}","scripts/count_coupling.py","--ci"],"cwd":"{repo}","binary":"{python}","timeout_seconds":60},
         {"id":"test-registration","parser":"exit-code","required":true,"command":["{python}","tests/scripts/check_test_coverage.py"],"cwd":"{repo}","binary":"{python}","timeout_seconds":60},
-        {"id":"ctest","parser":"ctest-junit","required":true,"min_discovered":26,"allowed_skips":["CaesuraHeadlessAiSmoke"],"command":["ctest","--test-dir","{build_dir}","-C","{config}","--output-on-failure","--output-junit","{run_dir}/ctest.xml"],"cwd":"{repo}","report":"{run_dir}/ctest.xml","timeout_seconds":2400}
+        {"id":"ctest","parser":"ctest-junit","required":true,"min_discovered":27,"allowed_skips":["CaesuraHeadlessAiSmoke"],"command":["ctest","--test-dir","{build_dir}","-C","{config}","--output-on-failure","--output-junit","{run_dir}/ctest.xml"],"cwd":"{repo}","report":"{run_dir}/ctest.xml","timeout_seconds":2400}
       ]
     },
     "macos-debug": {
@@ -99,7 +99,7 @@
         {"id":"rc-adversarial","parser":"unittest","required":true,"min_discovered":57,"allowed_skips":[],"command":["{python}","tests/scripts/test_rc_adversarial_mutations.py"],"cwd":"{repo}","binary":"{python}","timeout_seconds":120},
         {"id":"coupling","parser":"exit-code","required":true,"command":["{python}","scripts/count_coupling.py","--ci"],"cwd":"{repo}","binary":"{python}","timeout_seconds":60},
         {"id":"test-registration","parser":"exit-code","required":true,"command":["{python}","tests/scripts/check_test_coverage.py"],"cwd":"{repo}","binary":"{python}","timeout_seconds":60},
-        {"id":"ctest","parser":"ctest-junit","required":true,"min_discovered":26,"allowed_skips":["CaesuraHeadlessAiSmoke"],"command":["ctest","--test-dir","{build_dir}","-C","{config}","--output-on-failure","--output-junit","{run_dir}/ctest.xml"],"cwd":"{repo}","report":"{run_dir}/ctest.xml","timeout_seconds":2400}
+        {"id":"ctest","parser":"ctest-junit","required":true,"min_discovered":27,"allowed_skips":["CaesuraHeadlessAiSmoke"],"command":["ctest","--test-dir","{build_dir}","-C","{config}","--output-on-failure","--output-junit","{run_dir}/ctest.xml"],"cwd":"{repo}","report":"{run_dir}/ctest.xml","timeout_seconds":2400}
       ]
     },
     "macos-release": {
@@ -119,7 +119,7 @@
         {"id":"rc-adversarial","parser":"unittest","required":true,"min_discovered":57,"allowed_skips":[],"command":["{python}","tests/scripts/test_rc_adversarial_mutations.py"],"cwd":"{repo}","binary":"{python}","timeout_seconds":120},
         {"id":"coupling","parser":"exit-code","required":true,"command":["{python}","scripts/count_coupling.py","--ci"],"cwd":"{repo}","binary":"{python}","timeout_seconds":60},
         {"id":"test-registration","parser":"exit-code","required":true,"command":["{python}","tests/scripts/check_test_coverage.py"],"cwd":"{repo}","binary":"{python}","timeout_seconds":60},
-        {"id":"ctest","parser":"ctest-junit","required":true,"min_discovered":26,"allowed_skips":["CaesuraHeadlessAiSmoke"],"command":["ctest","--test-dir","{build_dir}","-C","{config}","--output-on-failure","--output-junit","{run_dir}/ctest.xml"],"cwd":"{repo}","report":"{run_dir}/ctest.xml","timeout_seconds":2400}
+        {"id":"ctest","parser":"ctest-junit","required":true,"min_discovered":27,"allowed_skips":["CaesuraHeadlessAiSmoke"],"command":["ctest","--test-dir","{build_dir}","-C","{config}","--output-on-failure","--output-junit","{run_dir}/ctest.xml"],"cwd":"{repo}","report":"{run_dir}/ctest.xml","timeout_seconds":2400}
       ]
     }
   }

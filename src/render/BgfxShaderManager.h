@@ -5,6 +5,19 @@
 
 namespace Caesura {
 
+enum class ShaderTestFault {
+    None, FallbackMissingFragment, BlendMissingFragment,
+    SoftBlurMissingFragment, TransitionMissingFragment
+};
+
+struct ShaderBuildReport {
+    bool coreProgramsReady = false;
+    int buildFailures = 0;
+    unsigned injectedFaultCount = 0;
+    ShaderTestFault requestedFault = ShaderTestFault::None;
+    std::string failedPrograms;
+};
+
 class BgfxShaderManager {
 public:
     BgfxShaderManager() = default;
@@ -14,6 +27,12 @@ public:
     BgfxShaderManager& operator=(const BgfxShaderManager&) = delete;
 
     void initEmbeddedShaders();
+    // Test source input, never a forged handle or mutation of readiness flags.
+    // Non-test builds reject every non-None fault. Selection ends at first init.
+    static bool testFaultsEnabled();
+    static bool supportsTestFault(ShaderTestFault fault);
+    bool setTestFault(ShaderTestFault fault);
+    ShaderBuildReport buildReport() const;
 
     // -- t73: embedded-shader feeding contract ---------------------------------
     // Metal and desktop-GL embedded arrays are COMPLETE shaderc BGFX binaries
@@ -94,6 +113,8 @@ private:
     int m_buildFailures = 0;  // t73: loud-degrade tally (see coreProgramsBroken)
     std::string m_failedProgramNames;  // t73: non-core failure tally for the one-shot ERROR
     bool m_embeddedInit = false;  // per-instance initEmbeddedShaders guard
+    ShaderTestFault m_testFault = ShaderTestFault::None;
+    unsigned m_injectedFaultCount = 0;
 };
 
 } // namespace Caesura

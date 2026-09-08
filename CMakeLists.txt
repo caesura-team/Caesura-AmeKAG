@@ -6,6 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(CAESURA_REQUIRE_TEST_PREREQUISITES "Fail configure when validation prerequisites are missing" OFF)
+option(CAESURA_RENDER_TEST_FAULTS "Enable bounded per-instance shader input faults for render contract probes" OFF)
 
 # Force modern CMake policies (FreeType sets 3.0...3.5 which can cause issues)
 cmake_policy(SET CMP0053 NEW)  # Variable expansion in strings

@@ -235,6 +235,10 @@ if(Python3_EXECUTABLE)
         add_executable(CaesuraScreenshotGpuProbe probes/screenshot_gpu_probe.cpp)
         target_link_libraries(CaesuraScreenshotGpuProbe PRIVATE Caesura::Engine)
         add_dependencies(CaesuraScreenshotGpuProbe CaesuraTests)
+        # Full U16 D3D11/OpenGL matrix is opt-in; the Python driver owns scope.
+        add_executable(CaesuraRenderContractProbe probes/render_contract_probe.cpp)
+        target_link_libraries(CaesuraRenderContractProbe PRIVATE Caesura::Engine bcrypt)
+        add_dependencies(CaesuraRenderContractProbe CaesuraTests)
         add_test(
             NAME CaesuraColdPresentationRestore
             COMMAND ${Python3_EXECUTABLE}
@@ -391,6 +395,18 @@ if(Python3_EXECUTABLE)
     set_tests_properties(CaesuraPlatformMatrixAdversarial PROPERTIES
         LABELS "qa;platform;adversarial"
         TIMEOUT 60
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    )
+    # Synthetic validation of the GPU probe receipt and image contracts.
+    # Actual GPU cases run explicitly and are never implied by this test.
+    add_test(
+        NAME CaesuraRenderContractDriver
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_render_contracts_driver.py
+    )
+    set_tests_properties(CaesuraRenderContractDriver PROPERTIES
+        LABELS "qa;render;adversarial"
+        TIMEOUT 120
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
     )
     # Validate this build/configuration's engine and Lua interpreter. Explicit
