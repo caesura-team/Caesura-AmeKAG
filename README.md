@@ -1,13 +1,17 @@
 <div align="center">
 
+<img src="docs/assets/branding/caesura-engine.png" alt="Caesura engine logo" width="144" height="144">
+
 # Caesura (AmeKAG)
+
+**Next Generation of Visual Novel**
 
 **现代化跨平台视觉小说引擎 · KAG Neo-Genesis 脚本 · C++20 内核**
 
 *A modern, cross-platform visual novel engine — KAG Neo-Genesis scripting on a C++20 core.*
 
-[![CI](https://github.com/ailiasdesu/Caesura-AmeKAG/actions/workflows/ci.yml/badge.svg)](https://github.com/ailiasdesu/Caesura-AmeKAG/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/ailiasdesu/Caesura-AmeKAG)](https://github.com/ailiasdesu/Caesura-AmeKAG/releases)
+[![CI](https://github.com/caesura-team/Caesura-AmeKAG/actions/workflows/ci.yml/badge.svg)](https://github.com/caesura-team/Caesura-AmeKAG/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/caesura-team/Caesura-AmeKAG)](https://github.com/caesura-team/Caesura-AmeKAG/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Web%20%7C%20Android%20%7C%20iOS-2ea44f)
 
@@ -51,12 +55,12 @@ Caesura 是面向程序员与独立团队的开源视觉小说引擎。剧本语
 
 > 完整入门（前置依赖、三平台差异、常见问题）：**[docs/guides/getting-started.md](docs/guides/getting-started.md)**
 
-**路径 A —— 发布包**：从 [Releases](https://github.com/ailiasdesu/Caesura-AmeKAG/releases) 下载解压即用（各版本世代差异见入门指南）。
+**路径 A —— 发布包**：从 [Releases](https://github.com/caesura-team/Caesura-AmeKAG/releases) 下载解压即用（各版本世代差异见入门指南）。
 
 **路径 B —— 源码构建**（Windows 需 vcpkg 提供 SDL3；Linux / macOS 见指南）：
 
 ```bash
-git clone --filter=blob:none https://github.com/ailiasdesu/Caesura-AmeKAG.git   # 部分克隆 ~25MB
+git clone --filter=blob:none https://github.com/caesura-team/Caesura-AmeKAG.git   # 部分克隆 ~25MB
 cd Caesura-AmeKAG
 cmake -B build -S . -G "Visual Studio 17 2022" -A x64 -DCMAKE_TOOLCHAIN_FILE="C:/vcpkg/scripts/buildsystems/vcpkg.cmake"
 cmake --build build --config Debug --parallel
