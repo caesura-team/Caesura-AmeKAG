@@ -1,9 +1,9 @@
 # Capability Closure Matrix (auto-generated)
 
 > 由 python scripts/capability_closure.py 生成；勿手动编辑。
-> 生成时间（输入源最新 mtime）：2026-09-06T12:44:53Z
+> 生成时间（输入源最新 mtime）：2026-09-08T01:34:01Z
 > 生成命令：python scripts/capability_closure.py
-> 源指纹（输入内容 sha256 前 16 hex）：1b9924c553f9ba10
+> 源指纹（输入内容 sha256 前 16 hex）：08d5df52d4ba7fdb
 > 输出确定性：同源指纹同字节（generated_at 为输入源最新 mtime；跨机 checkout 的 mtime 差异属 by-design，确定性以指纹为准）
 
 ## 概述
@@ -110,9 +110,9 @@
 | camera | Y | Y | Y | CLOSED | ✓6 | - | - | ? | scripts/kag/commands/transition.lua:495 |
 | cancel | Y | Y | Y | CLOSED | ✓6 | - | - | ? | scripts/kag.lua:222 |
 | capture_state | n | Y | n | EXTRA | - | - | - | ? | scripts/kag/commands/save.lua:244 |
-| ch | Y | Y | Y | CLOSED | ✓587 | - | - | ? | scripts/kag/commands/text.lua:610 |
+| ch | Y | Y | Y | CLOSED | ✓592 | - | - | ? | scripts/kag/commands/text.lua:610 |
 | chapter | Y | Y | n | PARTIAL | ✓3 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/system.lua:323 |
-| cl | Y | Y | Y | CLOSED | ✓11 | - | - | ? | scripts/kag/commands/layer.lua:185 |
+| cl | Y | Y | Y | CLOSED | ✓14 | - | - | ? | scripts/kag/commands/layer.lua:185 |
 | clear | n | Y | Y | EXTRA | ✓2 | - | - | ? | scripts/kag.lua:351 |
 | clearscreen | n | Y | Y | EXTRA | - | - | - | ? | scripts/kag.lua:209 |
 | close | Y | Y | Y | CLOSED | ✓2 | - | - | ? | scripts/kag.lua:230 |
@@ -126,7 +126,7 @@
 | div | Y | Y | n | CLOSED ⚠ | ✓15 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/math.lua:124 |
 | edit | Y | Y | Y | CLOSED | ✓1 | - | - | ? | scripts/kag/commands/text.lua:1970 |
 | emb | Y | Y | n | CLOSED | ✓16 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/system.lua:103 |
-| end | n | Y | n | EXTRA | ✓239 | - | - | ? | scripts/kag.lua:86 |
+| end | n | Y | n | EXTRA | ✓240 | - | - | ? | scripts/kag.lua:86 |
 | endbutton | Y | Y | Y | CLOSED | ✓30 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/text.lua:1423 |
 | endform | n | Y | n | EXTRA | ✓1 | - | - | ? | scripts/kag.lua:362 |
 | ending | Y | Y | n | CLOSED ⚠ | ✓22 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/system.lua:339 |
@@ -239,7 +239,7 @@
 | stopvoice | Y | Y | Y | CLOSED | ✓1 | - | - | ? | scripts/kag/commands/audio.lua:308 |
 | sub | Y | Y | n | CLOSED ⚠ | ✓8 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/math.lua:122 |
 | text | Y | Y | Y | CLOSED ⚠ | ✓51 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/text.lua:845 |
-| textbox | Y | Y | Y | CLOSED | ✓7 | - | - | ? | scripts/kag/commands/text.lua:382 |
+| textbox | Y | Y | Y | CLOSED | ✓8 | - | - | ? | scripts/kag/commands/text.lua:382 |
 | textspeed | Y | Y | n | CLOSED | ✓42 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/text.lua:1263 |
 | trans* | Y | Y | Y | CLOSED | ✓4 | - | - | ? | scripts/kag/commands/transition.lua:299 |
 | tween | Y | Y | Y | CLOSED | ✓14 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/tween.lua:201 |

@@ -52,6 +52,24 @@ local function table_field(state, key)
     return M.copy(value)
 end
 
+local function textbox_style(value)
+    if value == nil then return nil end
+    if type(value) ~= "table" then error("Invalid saved textbox_style", 0) end
+    local schema = require("kag.schema")
+    if not schema.specs("textbox") then require("kag.commands.text") end
+    local restored = M.copy(value)
+    -- Saved styles are complete handler values. Do not coerce/default a
+    -- malformed slot: cl replays this table without scheduler coercion.
+    for key, spec in pairs(schema.specs("textbox")) do
+        local field = restored[key]
+        if type(field) ~= spec.type or (spec.type == "number"
+            and ((spec.min and field < spec.min) or (spec.max and field > spec.max))) then
+            error("Invalid saved textbox_style." .. key, 0)
+        end
+    end
+    return restored
+end
+
 local function array(value, name)
     if value == nil then return {} end
     if type(value) ~= "table" then error("Invalid saved " .. name, 0) end
@@ -190,9 +208,10 @@ function M.prepare(state, safe_path, loader)
         return scenes[path]
     end
     for _, key in ipairs({ "f", "sf", "lf", "mp", "variables", "unlockedCG",
-        "unlockedMusic", "seen_endings", "backlog", "text_state", "textbox_style", "layers", "characters" }) do
+        "unlockedMusic", "seen_endings", "backlog", "text_state", "layers", "characters" }) do
         candidate[key] = table_field(state, key)
     end
+    candidate.textbox_style = textbox_style(state.textbox_style)
     candidate.sf.save_list = nil -- derived slot listing, never persistent state
     for _, entry in ipairs(array(candidate.backlog, "backlog")) do
         if type(entry) ~= "table" then error("Invalid saved backlog entry", 0) end
@@ -258,6 +277,7 @@ end
 function M.apply_values(ctx, candidate)
     ctx._waitState=nil
     ctx._restoredWait=candidate._restoredWait
+    ctx.textbox_style=candidate.textbox_style -- nil also clears a reused host context
     for key, value in pairs(candidate) do
         if key ~= "control" and key ~= "language" and key ~= "language_default" and key ~= "_locale" and key ~= "text_snapshot"
             and key ~= "_presentation" then ctx[key] = value end

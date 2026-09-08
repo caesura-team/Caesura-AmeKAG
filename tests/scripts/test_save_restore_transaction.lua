@@ -77,6 +77,39 @@ local function try_load()
 end
 
 do
+    local ctx = fresh()
+    save.save(ctx, {slot=31})
+    check("absent textbox style is saved", ctx.tf.save_result == "ok" and slots[31].textbox_style == nil)
+    check("absent textbox style loads", save.load(ctx, {slot=31}) == true)
+    local restored = runner.get_ctx()
+    check("missing textbox style stays absent after load", restored.textbox_style == nil)
+    check("cl after loading missing textbox style succeeds",
+        pcall(require("kag.commands.layer").cl, restored, {}))
+
+    ctx = fresh()
+    local style = {x=-12.5, y=42, w=640, h=96, color="12,34,56", opacity=0, visible=false}
+    ctx.textbox_style = copy(style)
+    save.save(ctx, {slot=31})
+    check("complete textbox style saves", ctx.tf.save_result == "ok")
+    check("complete textbox style loads", save.load(ctx, {slot=31}) == true)
+    restored = runner.get_ctx()
+    for key, value in pairs(style) do
+        check("textbox style preserves " .. key, restored.textbox_style[key] == value)
+    end
+    check("cl after loading complete textbox style succeeds",
+        pcall(require("kag.commands.layer").cl, restored, {}))
+
+    -- The direct-host path reuses its context, so nil must clear a future style.
+    runner.stop()
+    slots[31].textbox_style = nil
+    local direct = {f={}, tf={}, textbox_style=copy(style)}
+    check("direct host loads absent style", save.load(direct, {slot=31}) == true)
+    check("direct host clears later textbox style", direct.textbox_style == nil)
+    check("direct host cl without saved style succeeds",
+        pcall(require("kag.commands.layer").cl, direct, {}))
+end
+
+do
     local ctx=fresh()
     runner.update(20)
     slots[31]=copy(save.capture_state(ctx))
@@ -112,6 +145,28 @@ for _, mutation in ipairs({
     { "bad NVL mode", function(state) state.nvl_mode = 1 end },
     { "bad voice mute", function(state) state.voice_muted = {} end },
     { "bad skip mode", function(state) state.skip_mode = "all" end },
+    { "empty textbox style", function(state) state.textbox_style = {} end },
+    { "missing textbox color", function(state)
+        state.textbox_style = {x=0,y=0,w=640,h=96,opacity=200,visible=true}
+    end },
+    { "bad textbox color", function(state)
+        state.textbox_style = {x=0,y=0,w=640,h=96,color={},opacity=200,visible=true}
+    end },
+    { "bad textbox width", function(state)
+        state.textbox_style = {x=0,y=0,w="640",h=96,color="0,0,0",opacity=200,visible=true}
+    end },
+    { "textbox width below contract", function(state)
+        state.textbox_style = {x=0,y=0,w=63,h=96,color="0,0,0",opacity=200,visible=true}
+    end },
+    { "textbox height above contract", function(state)
+        state.textbox_style = {x=0,y=0,w=640,h=1025,color="0,0,0",opacity=200,visible=true}
+    end },
+    { "bad textbox opacity", function(state)
+        state.textbox_style = {x=0,y=0,w=640,h=96,color="0,0,0",opacity=256,visible=true}
+    end },
+    { "bad textbox visible", function(state)
+        state.textbox_style = {x=0,y=0,w=640,h=96,color="0,0,0",opacity=200,visible="false"}
+    end },
     { "negative remaining wait", function(state) state.wait_snapshot={scene=state.scene_path,token_index=state.token_index,remaining_ms=-1} end },
     { "too long remaining wait", function(state) state.wait_snapshot={scene=state.scene_path,token_index=state.token_index,remaining_ms=60001} end },
     { "wrong wait cursor", function(state) state.wait_snapshot={scene=state.scene_path,token_index=state.token_index+1,remaining_ms=1} end },

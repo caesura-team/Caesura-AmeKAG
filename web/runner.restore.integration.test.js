@@ -176,3 +176,49 @@ it('rejects an uncaptured post effect and clears future effects when restoring a
   expect(await player.loadSlot(93,{sceneSources:{'effect.ks':source},autoClick:false})).toMatch(/^WAIT:/)
   expect(player.core.palette.handle).toBeNull()
 })
+
+it('save/load then cl keeps an absent textbox style absent without a handler error', async () => {
+  const source = '[ch text="BEFORE"]\n[cl]\n[ch text="AFTER"]'
+  await player.runScene(source, 'textbox-absent.ks')
+  expect(await player.saveCurrent(94)).toBe(true)
+  expect(JSON.parse(store.get('caesura.save.94')).state.textbox_style).toBeUndefined()
+  expect(await player.loadSlot(94, {sceneSources:{'textbox-absent.ks':source}, autoClick:false})).toMatch(/^WAIT:/)
+  await player.lua.doString(`
+    local ctx=__CTXREF
+    ctx.handle_error=function(command, reason) ctx.f.handler_error=command..':'..reason end
+  `)
+  expect(await player.runScene('', 'textbox-absent.ks', {advance:true, advanceScene:'textbox-absent.ks'})).toMatch(/^WAIT:/)
+  expect(await player.lua.doString('return __CTXREF.f.handler_error==nil')).toBe(true)
+  expect(await player.lua.doString('return __CTXREF.textbox_style==nil')).toBe(true)
+  expect(player.core.draws.some(draw => draw.t === 'AFTER')).toBe(true)
+})
+
+it('save/load then cl preserves complete textbox style including zero and false', async () => {
+  const source = '[textbox x=-12 y=42 w=640 h=96 color="12,34,56" opacity=0 visible=false]\n[ch text="STYLE"]\n[cl]\n[ch text="AFTER"]'
+  await player.runScene(source, 'textbox-complete.ks')
+  expect(await player.saveCurrent(95)).toBe(true)
+  const expected = {x:-12,y:42,w:640,h:96,color:'12,34,56',opacity:0,visible:false}
+  expect(JSON.parse(store.get('caesura.save.95')).state.textbox_style).toEqual(expected)
+  expect(await player.loadSlot(95, {sceneSources:{'textbox-complete.ks':source}, autoClick:false})).toMatch(/^WAIT:/)
+  expect(await player.runScene('', 'textbox-complete.ks', {advance:true, advanceScene:'textbox-complete.ks'})).toMatch(/^WAIT:/)
+  expect(JSON.parse(JSON.stringify(await player.lua.doString('return __CTXREF.textbox_style')))).toEqual(expected)
+  expect(player.core.getLayer('_textbox')).toMatchObject({x:-12,y:42,w:640,h:96,visible:false})
+})
+
+it('malformed textbox styles reject before replacing the live session', async () => {
+  const source = '[ch text="KEEP"]\n[cl]\n[end]'
+  await player.runScene(source, 'textbox-reject.ks')
+  expect(await player.saveCurrent(96)).toBe(true)
+  const valid = store.get('caesura.save.96')
+  await player.lua.doString('TEXTBOX_OWNER=__CTXREF; TEXTBOX_CO=__CO')
+  const draws = structuredClone(player.core.draws)
+  const style = {x:0,y:0,w:640,h:96,color:'0,0,0',opacity:200,visible:true}
+  for (const bad of [{}, {...style,color:null}, {...style,w:63}, {...style,opacity:256}, {...style,visible:'false'}]) {
+    const payload = JSON.parse(valid)
+    payload.state.textbox_style = bad
+    store.set('caesura.save.96', JSON.stringify(payload))
+    expect(await player.loadSlot(96, {sceneSources:{'textbox-reject.ks':source},autoClick:false})).toMatch(/^ERR:.*textbox_style/)
+    expect(await player.lua.doString("return __CTXREF==TEXTBOX_OWNER and __CO==TEXTBOX_CO and coroutine.status(__CO)=='suspended'")).toBe(true)
+    expect(player.core.draws).toEqual(draws)
+  }
+})
