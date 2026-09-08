@@ -216,6 +216,7 @@ Cancelled是逻辑终态，不能立即销毁worker仍在读写的缓冲。Relea
 - **依赖/估算**：配置清点可立即开始，证据出口依赖U1；3–5 人日。
 - **文件**：CMakeLists.txt；cmake/CaesuraModules.cmake；tests/CMakeLists.txt；.github/workflows/ci.yml；tests/scripts/check_test_coverage.py。新增 CMakePresets.json、scripts/validation_profiles.json。
 - **方案与模式**：复用生产静态库测试架构；固定基础Debug/Release、FFmpeg开关、可选SDK关闭、iOS/Android编译等代表配置。加入Linux Clang ASan/UBSan第一方代码检查，TSan先验证可行性。记录修改前的性能样本供U27比较。
+- **2026-09-08 用户指定的 Apple 执行渠道**：U2的iOS与macOS测试使用Expo EAS Workflows的macOS自定义job。按精确源码SHA拉取Caesura，直接运行现有原生构建、CaesuraTests/CTest和可信证据工具；iOS分别记录设备架构编译与实际模拟器测试。EAS任务成功、构建成功、模拟器原生测试、完整app/Metal/设备签名证据分开，不用JavaScript测试结果替代C++引擎结果。U25的真实窗口、设备及签名交付继续保留。
 - **测试**：干净配置/构建；缺Python/Bash导致测试未注册；必需资产缺失；测试发现数意外下降；sanitizer诊断使任务失败；Web完整包模式缺资产不得skip。清点29个Web skipped的真实原因，逐项分类。
 - **验收**：完整与快速开发配置清楚分开；required集合由运行前锁定的可信配置决定；全部运行用本轮构建，不捡旧Release/Lua；配置不支持的sanitizer有具体原因与替代验证，不能整模块静默关闭。
 

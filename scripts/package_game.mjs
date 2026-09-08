@@ -43,10 +43,11 @@
 //  Exit: 0 = packaged, 1 = any step failed.
 // ==============================================================================
 
-import { existsSync, readdirSync, statSync, copyFileSync, cpSync,
+import { existsSync, readdirSync, statSync, copyFileSync,
          mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { luaLiteralValue } from '../web/lua-value.js'
+import { copyDirectorySync } from './copy_tree.mjs'
 import { join, resolve, dirname, basename, relative, isAbsolute } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
@@ -309,9 +310,9 @@ if (existsSync(join(WEB_DIST, 'sw.js'))) copyFileSync(join(WEB_DIST, 'sw.js'), j
 else if (existsSync(join(ROOT, 'web', 'sw.js'))) copyFileSync(join(ROOT, 'web', 'sw.js'), join(OUT_PATH, 'sw.js'))
 if (existsSync(join(WEB_DIST, 'manifest.webmanifest'))) copyFileSync(join(WEB_DIST, 'manifest.webmanifest'), join(OUT_PATH, 'manifest.webmanifest'))
 else if (existsSync(join(ROOT, 'web', 'manifest.webmanifest'))) copyFileSync(join(ROOT, 'web', 'manifest.webmanifest'), join(OUT_PATH, 'manifest.webmanifest'))
-if (existsSync(join(WEB_DIST, 'web-assets'))) cpSync(join(WEB_DIST, 'web-assets'), join(OUT_PATH, 'web-assets'), { recursive: true })
+if (existsSync(join(WEB_DIST, 'web-assets'))) copyDirectorySync(join(WEB_DIST, 'web-assets'), join(OUT_PATH, 'web-assets'))
 else pkg('WARN: ' + join(WEB_DIST, 'web-assets') + ' missing — packaged player may ship without wasm/chunks') // t186 NIT: loud WARN, skip semantics kept
-if (existsSync(join(WEB_DIST, 'scripts'))) cpSync(join(WEB_DIST, 'scripts'), join(OUT_PATH, 'scripts'), { recursive: true })
+if (existsSync(join(WEB_DIST, 'scripts'))) copyDirectorySync(join(WEB_DIST, 'scripts'), join(OUT_PATH, 'scripts'))
 
 // The web player bridge.js fetches scriptsBase + index.json -- regenerate it
 // for the packaged script tree so a packaged game boots without manual
@@ -340,7 +341,7 @@ pruneTree(join(OUT_PATH, 'scripts'))
 
 const ASSET_PATH = p2r(ASSET_SRC)
 if (existsSync(ASSET_PATH)) {
-  cpSync(ASSET_PATH, join(OUT_PATH, ASSET_SRC), { recursive: true })
+  copyDirectorySync(ASSET_PATH, join(OUT_PATH, ASSET_SRC))
 } else {
   pkg('WARN: asset root [' + ASSET_SRC + '] not found — shipping without game assets')
 }

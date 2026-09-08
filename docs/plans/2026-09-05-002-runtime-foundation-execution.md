@@ -16,7 +16,7 @@
 | 单元 | 状态 | 现状与下一项证明 |
 |---|---|---|
 | U1 | 本机适用验收通过 | 53项证据测试、57项隔离mutation及真实run→collect→verify通过；无自动RC-GO；CI发布身份继续由U23承担 |
-| U2 | 进行中 | U10源码已通过Windows Debug与独立干净检出Release完整profile；完整跨平台/sanitizer、Web skipped分类与性能基线保留后续 |
+| U2 | Expo Apple 验证进行中 | 用户指定iOS/macOS使用Expo EAS。第三次云运行对9e9cfc07源码完成macos-debug完整profile（Cpp1281、Lua147/44及严格核验）和IOS/arm64未签名编译；Simulator因Metal符号链接失败，修复等待新源码复验。完整跨平台/sanitizer、Web skipped分类与性能基线继续保留后续 |
 | U3 | 本机回归通过 | 真实SDL所有权、过滤器重入与取消释放计数通过；Engine统一暂停/恢复消费路径有真实Lua回归；跨平台整机释放观测仍依U2/U16 |
 | U4 | 本机适用验收通过 | 默认provider、两种策略、legacy导入、HTTP/Steam替身staging及metadata回归通过；云校验mutation两例必红且原源码摘要已恢复 |
 | U5 | 本机适用验收通过 | 请求epoch、旧worker/cache隔离、SDL重入取消、Engine暂停/回调重入、完整与局部脚本重载均已有运行回归；平台扩展仍依U2 |

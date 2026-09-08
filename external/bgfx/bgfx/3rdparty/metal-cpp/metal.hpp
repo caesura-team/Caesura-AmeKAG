@@ -8064,7 +8064,8 @@ public:
 
 }
 
-_MTL_PRIVATE_DEF_CONST(NS::ErrorDomain, TensorDomain);
+// The iOS Simulator SDK may omit this domain; preserve Metal-cpp's nullptr fallback.
+_MTL_PRIVATE_DEF_WEAK_CONST(NS::ErrorDomain, TensorDomain);
 
 _MTL_INLINE MTL::TensorExtents* MTL::TensorExtents::alloc()
 {
@@ -20954,7 +20955,8 @@ public:
 };
 
 }
-_MTL_PRIVATE_DEF_CONST(NS::ErrorDomain, IOErrorDomain);
+// The iOS Simulator SDK may omit this domain; preserve Metal-cpp's nullptr fallback.
+_MTL_PRIVATE_DEF_WEAK_CONST(NS::ErrorDomain, IOErrorDomain);
 _MTL_INLINE MTL::IOCommandBuffer* MTL::IOCommandQueue::commandBuffer()
 {
     return Object::sendMessage<MTL::IOCommandBuffer*>(this, _MTL_PRIVATE_SEL(commandBuffer));

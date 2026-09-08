@@ -56,3 +56,21 @@ readCache以完整文件内容判断外部改写，缓存解析后的数据，�
 第二轮CI`34220173064`的Web阶段退出0：Linux完整506/506、0跳过，Windows两配置各475通过/32既有产物条件跳过。三平台的synthetic1000中位耗时分别为Linux1893.2ms、Windows Debug1667.6ms、Release1581.2ms，均满足原预算，但不改写本机FAIL。Windows Release/macOS/Android/iOS任务成功；Windows Debug在后续真实Unicode RPC打包返回500，Linux被能力矩阵新鲜度检查阻断。原始日志保留在`artifacts/validation/u14/ci16-run34220173064-failed.log`和`ci16-run34220173064-full.log`。后者源于新增Web场景断言后未再次运行矩阵生成器，生成结果必须随测试更新；前者继续按真实打包响应复现，不能删除或跳过E2E。PR #16仍未合并。
 
 Unicode问题在本机现有Lua、当前Debug Lua和冷Web构建的真实RPC中均未复现，冷路径19项断言全部通过。云端测试只打印响应前300字符，丢失最终runtime校验失败原因；本次仅补齐失败时完整打包logTail、子进程OS错误/退出码/信号及实际解释器信息。真实不存在解释器的spawn负控制先失败于缺失诊断，再通过；完整Node CLI现为7/7、0跳过。未推测性修改编码或兼容语义，云端根因待增强日志定位。本轮证据在`artifacts/validation/u14/unicode-ci-fix/`。
+
+## Node 22 中文目录复制根因与最终修复
+
+候选CI`34223174414`的Linux/macOS/Android/iOS通过，Windows Debug再次在Unicode打包处失败。新增完整诊断显示，Lua已成功启动，却无法在最终输出目录加载`kag`，尚未进入bundle校验。使用同版本Node22.23.2后，本机也在Vite目录复制阶段出现原生异常；Lua本身的direct/Node22/Node24与ASCII/CJK/emoji工作目录微型矩阵均反证当前Debug Lua的路径能力有问题。
+
+真正ASCII父目录下的实测明确分离了根因：Node22原生`cpSync`从ASCII源复制到中文目标时，把内容写到乱码目录；中文源复制到ASCII目标时出现原生异常；ASCII→ASCII和Node24正控制通过。这与[Node22.23.2的filesystem窄路径实现](https://raw.githubusercontent.com/nodejs/node/v22.23.2/src/node_file.cc)相符。仅增加始终为true的filter仍无法处理既有Unicode文件覆盖，因此没有采用这个不完整方案。
+
+新增共享`scripts/copy_tree.mjs`，Vite的运行时目录复制和Node打包统一使用UTF-8文件原语遍历/复制。目录合并、空目录、无关既有文件与文件覆盖被保留；写入前检查canonical源/目标及最近既有父目录，拒绝junction/symlink隐藏的自复制。覆盖普通文件或符号链接时仅unlink该目标条目再复制，避免readonly失败和hardlink写穿，不递归删除目标目录。
+
+原生中文复制、canonical目录别名、readonly/hardlink均有真实RED→GREEN。最终Node22完整CLI为**11/11、0跳过、27.771秒**，原语义篡改、缺callee和新增缺runtime脚本负控制全部仍被拒绝。核心复制修复后的Node22＋当前Debug Lua真实RPC E2E为19项通过；最终包内kag.lua/init/compiler与源文件SHA一致。后续两项审查增量由定向回归和最终CLI覆盖，未声称再次运行同一RPC。Lua和引擎C++未因本次复制问题修改。
+
+诊断曾在旧乱码父目录下新建两处空叶目录；主代理精确核对路径、创建时间、无重定向及0子项后，将这两处移回当前证据目录保存，未删除/移动旧父目录。路径、原始失败、最后源码及处置记录均在`artifacts/validation/u14/unicode-ci-fix/`；候选CI仍需对最终提交运行。
+
+## 本机绝对性能预算的固定诊断
+
+`perf-fixed-01`的三次独立原入口均11通过/1失败，synthetic1000中位2942.0/2123.1/2735.3ms，源/依赖稳定、CPU采集完整。随后预先固定的U13/U14六进程ABBAAB对照使用同一Node/依赖、同字节测试与输入：U14/U13三对比值为1.059253、0.954261、0.912167，中位0.954261，未达到预先设定的版本退化关联规则。
+
+两版本各1次通过、2次失败，故没有证据支持U14新增退化，也不能把原预算失败改写为通过或断言具体机器原因。本次有界诊断到此结束，不继续挑选样本、Profiler或推测性运行时优化；共同运行时的可复现性能基线继续归入U2/U27。原日志、逐次源码/依赖身份、CPU和配对分析保存在`artifacts/validation/u14/perf-fixed-01/`及`perf-paired-01/`。

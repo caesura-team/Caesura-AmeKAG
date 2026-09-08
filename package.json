@@ -1,0 +1,6 @@
+{
+  "name": "caesura-native-validation",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Expo EAS orchestration for Caesura native Apple validation"
+}
