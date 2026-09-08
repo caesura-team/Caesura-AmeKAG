@@ -13,6 +13,8 @@ All runs use --out dist/<unique>; the artifact is removed in tearDown.
 """
 
 import os
+import json
+import tempfile
 import shutil
 import subprocess
 import sys
@@ -24,14 +26,14 @@ NODE = shutil.which("node")
 FIRST_VN_KS = "tests/projects/first_vn/story.ks"
 
 
-def run_cli_full(*args, timeout=300):
+def run_cli_full(*args, timeout=300, env=None):
     cmd = [NODE, "scripts/package_game.mjs", *args]
     # The repo root sits under a non-ASCII path (D:\...\文件存放处\...) and the
     # mjs FATAL messages echo it as UTF-8 bytes; decode as UTF-8 with a
     # replacement fallback instead of the console GBK codec (t193).
     proc = subprocess.run(
         cmd, cwd=str(ROOT), capture_output=True, text=True,
-        encoding="utf-8", errors="replace", timeout=timeout
+        encoding="utf-8", errors="replace", timeout=timeout, env=env
     )
     return proc.returncode, proc.stdout, proc.stderr
 
@@ -114,6 +116,46 @@ class PackageGameCliTest(unittest.TestCase):
         rc2, out2, err2 = run_cli_full("--no-web-build", "--out", "dist/..", FIRST_VN_KS)
         self.assertEqual(rc2, 1)
         self.assertTrue("FATAL" in (out2 + err2), "stdout=%s stderr=%s" % (out2, err2))
+
+    def test_05_final_copied_bundle_must_match_packaged_runtime(self):
+        """A compatible staging artifact cannot bless a changed final copy."""
+        if NODE is None:
+            self.skipTest("node not found on PATH")
+        (ROOT / 'tmp').mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix='u14-web-copy-', dir=ROOT / 'tmp') as temp:
+            injection = Path(temp) / 'copy-boundary.mjs'
+            callee = Path(temp) / 'callee.ks'
+            callee.write_text('[end]\n', encoding='utf-8')
+            destination = self.out_path / 'cache/story/story.lua'
+            injection.write_text('''import fs from 'node:fs';
+import {resolve} from 'node:path';
+import {syncBuiltinESMExports} from 'node:module';
+const destination = %s;
+const copy = fs.copyFileSync;
+fs.copyFileSync = function(source,target,...args) {
+  const result = copy(source,target,...args);
+  if (resolve(String(target)) === resolve(destination)) {
+    const text=fs.readFileSync(target,'utf8');
+    const changed=process.env.U14_COPY_MUTATION==='missing-scene'
+      ? 'local b=(function() '+text+' end)(); b.scenes["callee.ks"]=nil; return b'
+      : text.replace('caesura-kag-2','injected-incompatible-runtime');
+    if (changed===text) throw new Error('U14 fixture did not mutate copied semantics');
+    fs.writeFileSync(target,changed,'utf8');
+  }
+  return result;
+};
+syncBuiltinESMExports();
+''' % json.dumps(str(destination)), encoding='utf-8')
+            for mutation, reason in (('semantics', 'compiler-semantics-mismatch'),
+                                     ('missing-scene', 'missing-bundle-scene:callee.ks')):
+                with self.subTest(mutation=mutation):
+                    env = dict(os.environ, NODE_OPTIONS='--import=' + injection.as_uri(), U14_COPY_MUTATION=mutation)
+                    rc, out, err = run_cli_full('--out', self.out_name, FIRST_VN_KS,
+                                                callee.relative_to(ROOT).as_posix(), env=env)
+                    self.assertEqual(rc, 1, out + err)
+                    self.assertIn(reason, out + err)
+                    self.assertNotIn('PACKAGE COMPLETE', out)
+                    self.assertFalse((self.out_path / 'MANIFEST.txt').exists())
 
 
 if __name__ == "__main__":

@@ -263,6 +263,157 @@ class TestCreateCommand(unittest.TestCase):
 
 
 @unittest.skipIf(ENGINE is None, "no engine binary (build/ is gitignored)")
+class TestPrecompileEvidence(unittest.TestCase):
+    """Real CLI, packaged Lua compiler, and disk artifacts with I/O faults."""
+
+    def _build_with_lua_prefix(self, root, prefix, project="basic"):
+        out = root / "game"
+        driver = root / "precompile_fault_driver.py"
+        driver.write_text(
+            "import sys\n"
+            "sys.path.insert(0, %r)\n" % str(ROOT / "scripts") +
+            "import caesura_build\n"
+            "caesura_build.PRECOMPILE_LUA = %r + caesura_build.PRECOMPILE_LUA\n"
+            % prefix.replace("%", "%%") +
+            "sys.argv = ['caesura.py', 'build', %r, '-o', sys.argv[1]]\n" % str(project) +
+            "import caesura\n"
+            "caesura.main()\n", encoding="utf-8")
+        result = subprocess.run([sys.executable, str(driver), str(out)],
+                                cwd=str(ROOT), capture_output=True, text=True,
+                                encoding="utf-8", errors="replace", timeout=900)
+        return result.returncode, result.stdout + result.stderr, out
+
+    def test_cache_write_failure_preserves_source_fallback_without_claiming_precompile(self):
+        prefix = '''local real_open = io.open
+io.open = function(path, mode)
+    if mode == "w" and path:match("%.ksc$") then return nil, "injected disk full" end
+    return real_open(path, mode)
+end
+'''
+        with tempfile.TemporaryDirectory() as td:
+            rc, log, out = self._build_with_lua_prefix(Path(td), prefix)
+            self.assertEqual(rc, 0, log)
+            info = json.loads((out / "BUILD-INFO.json").read_text(encoding="utf-8"))
+            self.assertEqual(info["precompiled_scenes"], [], info)
+            self.assertEqual(info["precompile"]["status"], "partial", info)
+            self.assertEqual(info["precompile"]["scene_count"], 0, info)
+            self.assertEqual(len(info["precompile_failures"]), len(info["scenes"]), info)
+            self.assertTrue((out / "projects/basic/story.ks").is_file())
+            self.assertEqual(list((out / "cache/ksc").glob("*.ksc")), [])
+
+    def test_incompatible_written_cache_refuses_package_and_cleans_output(self):
+        # Change the serialized compatibility identity at the file-write
+        # boundary. Tokenization, compilation, and disk read remain real.
+        mutations = {
+            "compiler-semantics-mismatch": 'data.compatibility.semantics = "u14-other-runtime"',
+            "cache-format-mismatch": 'data.version = -1',
+            "command-contract-mismatch": 'local cmd = next(data.compatibility.commands); '
+                                         'data.compatibility.commands[cmd] = "u14-other-contract"',
+            "source-hash-mismatch": 'data._srcHash = "u14-other-source"',
+        }
+        for reason, mutation in mutations.items():
+            with self.subTest(reason=reason), tempfile.TemporaryDirectory() as td:
+                prefix = '''local real_open = io.open
+io.open = function(path, mode)
+    local file, err = real_open(path, mode)
+    if file and mode == "w" and path:match("%.ksc$") then
+        return {
+            write = function(_, text)
+                local data = assert(load(text, "=test-written-cache", "t", {}))()
+                MUTATION
+                return file:write("return " .. require("kag.compiler").encode_lua_literal(data))
+            end,
+            close = function() return file:close() end,
+        }
+    end
+    return file, err
+end
+'''.replace("MUTATION", mutation)
+                rc, log, out = self._build_with_lua_prefix(Path(td), prefix)
+                self.assertNotEqual(rc, 0, log)
+                self.assertIn("incompatible", log.lower())
+                self.assertIn(reason, log)
+                self.assertNotIn("Traceback", log)
+                self.assertFalse(out.exists(), "incompatible package must not survive\n" + log)
+
+    def test_incompatible_returned_tokens_are_rejected_even_with_valid_disk_cache(self):
+        # Corrupt only the live token identity after the real cache writer
+        # completes. A disk-only check would incorrectly accept this scene.
+        prefix = '''package.path = "scripts/?.lua;scripts/?/init.lua;" .. package.path
+local compiler = require("kag.compiler")
+local real_write = compiler.writeCache
+compiler.writeCache = function(tokens, path)
+    local written = real_write(tokens, path)
+    tokens._compiled.compatibility.semantics = "u14-incompatible-live-tokens"
+    return written
+end
+'''
+        with tempfile.TemporaryDirectory() as td:
+            rc, log, out = self._build_with_lua_prefix(Path(td), prefix)
+            self.assertNotEqual(rc, 0, log)
+            self.assertIn("compiled tokens: compiler-semantics-mismatch", log)
+            self.assertFalse(out.exists(), log)
+
+    def test_partial_cache_write_is_optional_and_never_successful_precompile(self):
+        prefix = '''local real_open = io.open
+io.open = function(path, mode)
+    local file, err = real_open(path, mode)
+    if file and mode == "w" and path:match("%.ksc$") then
+        return {
+            write = function(_, text)
+                file:write(text:sub(1, 12))
+                return nil, "injected disk full after partial write"
+            end,
+            close = function() return file:close() end,
+        }
+    end
+    return file, err
+end
+'''
+        with tempfile.TemporaryDirectory() as td:
+            rc, log, out = self._build_with_lua_prefix(Path(td), prefix)
+            self.assertEqual(rc, 0, log)
+            info = json.loads((out / "BUILD-INFO.json").read_text(encoding="utf-8"))
+            self.assertEqual(info["precompiled_scenes"], [], info)
+            self.assertEqual(info["precompile"]["status"], "partial", info)
+            self.assertEqual(len(info["precompile_failures"]), len(info["scenes"]), info)
+            self.assertTrue((out / "projects/basic/story.ks").is_file())
+            self.assertTrue(list((out / "cache/ksc").glob("*.ksc")))
+
+    def test_stdout_success_without_verifying_inputs_is_not_precompile_evidence(self):
+        prefix = 'print("PRECOMPILE-OK projects/basic/story.ks tokens=999")\nos.exit(0)\n'
+        with tempfile.TemporaryDirectory() as td:
+            rc, log, out = self._build_with_lua_prefix(Path(td), prefix)
+            self.assertEqual(rc, 0, log)
+            info = json.loads((out / "BUILD-INFO.json").read_text(encoding="utf-8"))
+            self.assertEqual(info["precompiled_scenes"], [], info)
+            self.assertEqual(info["precompile"]["status"], "partial", info)
+            self.assertEqual(len(info["precompile_failures"]), len(info["scenes"]), info)
+
+    def test_early_exit_keeps_verified_scene_but_accounts_for_every_untested_input(self):
+        prefix = '''local real_open = io.open
+io.open = function(path, mode)
+    if mode == "w" and path:match("_story%.ksc$") then os.exit(0) end
+    return real_open(path, mode)
+end
+'''
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            project = root / "space game"
+            project.mkdir()
+            for name in ("first chapter.ks", "story.ks"):
+                (project / name).write_text("*start\n[end]\n", encoding="utf-8")
+            rc, log, out = self._build_with_lua_prefix(root, prefix, project)
+            self.assertEqual(rc, 0, log)
+            info = json.loads((out / "BUILD-INFO.json").read_text(encoding="utf-8"))
+            self.assertEqual(info["precompiled_scenes"], ["projects/space game/first chapter.ks"], info)
+            self.assertEqual(info["precompile"]["status"], "partial", info)
+            self.assertEqual(info["precompile"]["scene_count"], 1, info)
+            self.assertEqual(len(info["precompile_failures"]), 1, info)
+            self.assertIn("projects/space game/story.ks", info["precompile_failures"][0])
+
+
+@unittest.skipIf(ENGINE is None, "no engine binary (build/ is gitignored)")
 class TestGameOnlyBuild(unittest.TestCase):
     """Full build against the real engine binary and the stock basic template."""
 

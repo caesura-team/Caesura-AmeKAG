@@ -46,6 +46,7 @@
 import { existsSync, readdirSync, statSync, copyFileSync, cpSync,
          mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
+import { luaLiteralValue } from '../web/lua-value.js'
 import { join, resolve, dirname, basename, relative, isAbsolute } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
@@ -217,6 +218,7 @@ const STAGE = mkdtempSync(join(tmpdir(), 'caesura-pkg-'))
 // handler too.
 process.once('exit', () => { try { rmSync(STAGE, { recursive: true, force: true }) } catch { /* temp cleanup */ } })
 let BUNDLE = ''
+let BAKED_SCENE_KEYS = []
 try {
   let baked = [...KAGS_DISPLAY]
   if (ENTRY) {
@@ -230,6 +232,7 @@ try {
       baked = [es, ...baked]
     }
   }
+  BAKED_SCENE_KEYS = baked.map(path => basename(path))
   const rr = spawnSync(LUA_PATH, [join(ROOT, 'scripts', 'ks_bake.lua'), ...baked, '--web', STAGE], { cwd: ROOT, stdio: 'inherit' })
   if (rr.status !== 0) {
     pkg('FAIL: ks_bake web bundle failed')
@@ -256,7 +259,7 @@ if (!NO_WEB_BUILD) {
   const ROOT_STORY = join(ROOT, 'cache', 'story', 'story.lua')
   if (!existsSync(ROOT_STORY)) {
     pkg('  cache/story/story.lua missing -- baking demo bundle first')
-    const br = spawnSync(LUA_PATH, [join(ROOT, 'scripts', 'ks_bake.lua'), '--dir', 'demo', '--web', join(ROOT, 'cache', 'story')], { stdio: 'inherit' })
+    const br = spawnSync(LUA_PATH, [join(ROOT, 'scripts', 'ks_bake.lua'), '--dir', 'demo', '--web', 'cache/story'], { cwd: ROOT, stdio: 'inherit' })
     if (br.status !== 0) {
       pkg('FATAL: demo bundle bake failed (cache/story/story.lua); aborting instead of rebuilding web/dist without it')
       process.exit(1)
@@ -347,6 +350,24 @@ for (const k of KAGS) {
 }
 
 copyFileSync(BUNDLE, join(OUT_PATH, 'cache', 'story', 'story.lua'))
+
+// Validate the delivered copy with the delivered Lua modules. Staging success
+// cannot bless a stale/damaged copy or a different packaged compiler contract.
+const runtimeCheck = spawnSync(LUA_PATH, ['-e', `
+package.path='scripts/?.lua;scripts/?/init.lua;'..package.path
+require('kag')
+local chunk,err=loadfile('cache/story/story.lua','t',{})
+if not chunk then io.stderr:write('invalid-bundle-literal: '..tostring(err));os.exit(1) end
+local decoded,bundle=pcall(chunk)
+if not decoded then io.stderr:write('invalid-bundle-literal: '..tostring(bundle));os.exit(1) end
+local compatible,reason=require('kag.compiler').validateBundle(bundle,${luaLiteralValue(BAKED_SCENE_KEYS)})
+if not compatible then io.stderr:write(tostring(reason));os.exit(1) end
+print('[package] delivered bundle matches packaged runtime')
+`], { cwd: OUT_PATH, stdio: 'inherit' })
+if (runtimeCheck.status !== 0) {
+  pkg('FATAL: delivered bundle/runtime compatibility failed')
+  process.exit(1)
+}
 
 // ---------------------------------------------------- 5. manifest -----------
 console.log()

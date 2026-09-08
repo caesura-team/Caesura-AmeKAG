@@ -104,6 +104,7 @@ local TRANSLATABLE_PARAMS = {
 -- Core Semantic Analysis
 -- -----------------------------------------------------------------------------
 function semantic.parse(ks_text, filename)
+    require('kag') -- normalize against the same complete contracts as execution
     filename = filename or "unnamed.ks"
     local scene_basename = filename:match("([^/\\]+)$") or filename
     local line_mapper = build_line_index(ks_text)

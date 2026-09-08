@@ -15,6 +15,13 @@ end
 
 print("\n=== Sandbox Tests ===\n")
 
+-- Keep only the source bytes as an oracle, never an unrestricted I/O handle.
+-- On Windows this also catches silently replacing "rb" with text mode "r".
+local binary_path = "tests/scripts/smoke_test.ks"
+local binary_source = assert(io.open(binary_path, "rb"))
+local expected_bytes = assert(binary_source:read("*a"))
+binary_source:close()
+
 -- 1. sandbox.lua loads
 do
     local ok, sb = pcall(require, "sandbox")
@@ -73,6 +80,43 @@ do
     check("strict: unauthorized global blocked", not ok_blocked)
 end
 
+-- 6. Allowlisted sources remain readable after lockdown, with read-only modes.
+do
+    local binary, err = io.open(binary_path, "rb")
+    check("io: allowlisted binary read opens", binary ~= nil, err)
+    if binary then
+        check("io: binary read preserves source bytes", binary:read("*a") == expected_bytes)
+        local wrote, result = pcall(binary.write, binary, "forbidden")
+        check("io: binary handle cannot write", not wrote or result == nil)
+        binary:close()
+    end
+    local text, err_text = io.open(binary_path, "r")
+    check("io: allowlisted text read remains available", text ~= nil, err_text)
+    if text then text:close() end
+
+    for _, mode in ipairs({"w", "wb", "w+", "wb+", "w+b", "a", "ab",
+                            "a+", "ab+", "a+b", "r+", "rb+", "r+b"}) do
+        local handle, denied = io.open("tests/__sandbox_write_denied__/probe.tmp", mode)
+        check("io: reject write mode " .. mode,
+              handle == nil and denied == "io.open write disabled", denied)
+        if handle then handle:close() end
+    end
+    for _, path in ipairs({"tests/../scripts/sandbox.lua", "tests/..\\scripts/sandbox.lua"}) do
+        local handle, denied = io.open(path, "rb")
+        check("io: reject binary traversal " .. path,
+              handle == nil and denied == "io.open traversal rejected", denied)
+        if handle then handle:close() end
+    end
+    for _, path in ipairs({"README.md", "cache/ksc/smoke_test.ksc", "/etc/passwd", "C:/Windows/win.ini"}) do
+        local handle, denied = io.open(path, "rb")
+        check("io: reject binary path outside allowlist " .. path,
+              handle == nil and denied == "io.open path not allowlisted", denied)
+        if handle then handle:close() end
+    end
+    local handle, denied = io.open({}, "rb")
+    check("io: reject non-string binary path",
+          handle == nil and denied == "io.open path must be string", denied)
+end
+
 print(string.format("\nResults: %d passed, %d failed", passed, failed))
 if failed > 0 then os.exit(1) end
-

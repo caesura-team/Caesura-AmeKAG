@@ -46,6 +46,7 @@ local tests = {
     "test_rollback_capture",
     "test_rollback_stablepoints",
     "test_runtime_contracts",
+    "test_flow_cache_compat",
     "test_bench_dispatch",
     "test_math_cmds",
     "test_character_cmds",

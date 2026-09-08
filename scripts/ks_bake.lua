@@ -13,6 +13,7 @@
 --    lua scripts/ks_bake.lua <scene.ks> [more.ks ...]
 --    lua scripts/ks_bake.lua --dir scripts --dir demo --out cache/ksc
 --    lua scripts/ks_bake.lua --check   (verify existing .ksc is fresh)
+--    lua scripts/ks_bake.lua --check-web cache/story/story.lua
 --
 --  Exit codes: 0 = all baked, 1 = errors.
 -- =============================================================================
@@ -113,6 +114,7 @@ local function bakeWeb(scenes, outDir)
         assetCount = assetCount + 1
         bundle.assets[assetCount] = p
     end
+    local expected={}
     for _, path in ipairs(scenes) do
         local f = io.open(path, "r")
         if not f then return nil, "cannot open: " .. path end
@@ -125,6 +127,7 @@ local function bakeWeb(scenes, outDir)
         if not serialized then return nil, "serialize failed: " .. path end
         -- scene key: player uses the basename (demo/galgame_demo.ks)
         local key = path:match("([^/\\]+)$") or path
+        expected[#expected+1]=key
         bundle.scenes[key] = serialized
         -- asset discovery: scan token params for storage/file values
         for _, tok in ipairs(tokens) do
@@ -139,7 +142,21 @@ local function bakeWeb(scenes, outDir)
             end
         end
     end
+    local compatible,reason=compiler.validateBundle(bundle,expected)
+    if not compatible then return nil,reason end
     return bundle, assetCount
+end
+
+local function checkWeb(path,expected)
+    -- A separate CLI process must register the same built-in contracts before
+    -- comparing them with the baked scene identities.
+    local loaded,reason=pcall(require,'kag')
+    if not loaded then return false,'runtime-contracts-unavailable:'..tostring(reason) end
+    local chunk,err=loadfile(path,'t',{})
+    if not chunk then return false,'invalid-bundle-literal:'..tostring(err) end
+    local decoded,bundle=pcall(chunk)
+    if not decoded then return false,'invalid-bundle-literal:'..tostring(bundle) end
+    return compiler.validateBundle(bundle,expected)
 end
 
 --- check whether an existing .ksc matches the source (fresh).
@@ -158,7 +175,7 @@ local is_script = arg and arg[0]
     and arg[0]:match("([^/\\]+)$") == "ks_bake.lua"
 
 if is_script then
-    local inputs, dirs, outRoot, checkOnly, webOut = {}, {}, OUT_ROOT, false, nil
+    local inputs, dirs, outRoot, checkOnly, webOut, webCheck = {}, {}, OUT_ROOT, false, nil, nil
     local i = 1
     while i <= #arg do
         local a = arg[i]
@@ -173,10 +190,15 @@ if is_script then
             webOut = arg[i]
         elseif a == "--check" then
             checkOnly = true
+        elseif a == '--check-web' then
+            i=i+1
+            webCheck=arg[i]
+            if not webCheck then print('error: --check-web requires a bundle path');os.exit(1) end
         elseif a == "-h" or a == "--help" then
             print("Usage: lua scripts/ks_bake.lua <scene.ks> [more.ks ...]")
             print("       lua scripts/ks_bake.lua --dir <dir> [--dir <dir2>] [--out cache/ksc] [--check]")
             print("       lua scripts/ks_bake.lua --dir demo --web cache/story  (web player bundle)")
+            print("       lua scripts/ks_bake.lua --check-web cache/story/story.lua")
             print("  bakes scenes into pre-compiled .ksc (mobile zero-parse launch)")
             print("  --out: cache root (default cache/ksc, same as flow.load_scene)")
             print("  --web <dir>: emit cache/story.lua bundle (scenes + assets) for the web player")
@@ -186,6 +208,12 @@ if is_script then
             inputs[#inputs + 1] = a
         end
         i = i + 1
+    end
+
+    if webCheck then
+        local compatible,reason=checkWeb(webCheck)
+        print(compatible and '[web-check] compatible' or '[web-check] '..tostring(reason))
+        os.exit(compatible and 0 or 1)
     end
 
     -- gather .ks from --dir args (recursive)
@@ -221,6 +249,13 @@ if is_script then
         end
         w:write("return " .. encoded .. "\n")
         w:close()
+        local expected={}
+        for _,path in ipairs(collected) do expected[#expected+1]=path:match('([^/\\]+)$') or path end
+        local compatible,reason=checkWeb(outPath,expected)
+        if not compatible then
+            print('[error] finished bundle failed runtime compatibility: '..tostring(reason))
+            os.exit(1)
+        end
         print(string.format("[web] %s: %d scenes, %d assets", outPath,
             #collected, assetCount or 0))
         os.exit(0)
@@ -261,4 +296,5 @@ return {
     kscPathFor = kscPathFor,
     listKsFiles = listKsFiles,
     ensureDir = ensureDir,
+    checkWeb = checkWeb,
 }

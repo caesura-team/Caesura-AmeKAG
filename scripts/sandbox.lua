@@ -305,16 +305,17 @@ if _G.io then
     -- Read-only allowlisted io.open: the runtime legitimately reads .ks
     -- scenes (tokenizer/flow), language packs (i18n) and UI config from
     -- scripts/, assets/, tests/ AFTER the sandbox locks. A hard disable
-    -- broke cross-scene jumps and load-game restore. Writes stay blocked.
+    -- broke cross-scene jumps and load-game restore. Binary reads preserve the
+    -- source bytes used by cache freshness hashes. Writes stay blocked.
     local real_open = _G.io.open
     _G.io.open = function(fn, mode)
-        if mode ~= "r" then return nil, "io.open write disabled" end
+        if mode ~= "r" and mode ~= "rb" then return nil, "io.open write disabled" end
         if type(fn) ~= "string" then return nil, "io.open path must be string" end
         if fn:find("..", 1, true) then return nil, "io.open traversal rejected" end
         if fn:find("^scripts/") == 1 or fn:find("^assets/") == 1
            or fn:find("^tests/") == 1 or fn:find("^demo/") == 1
            or fn:find("^projects/") == 1 then
-            local f, err = real_open(fn, "r")
+            local f, err = real_open(fn, mode)
             if f then return f, nil end
             return nil, err or "io.open open failed"
         end

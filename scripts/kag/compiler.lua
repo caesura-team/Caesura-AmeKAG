@@ -31,6 +31,9 @@ local compiler = {}
 -- the cache functions reference these locals, assigned before any
 -- writeCache/readCache call runs).
 local encode_lua_literal
+local capture_compatibility
+local CACHE_FORMAT = 2
+local COMPILER_SEMANTICS = 'caesura-kag-2'
 
 local schemaModule = require("kag.schema")
 local exprLang = require("kag.expr")
@@ -564,6 +567,10 @@ function compiler.compile(tokens)
     end
     if #tokens == 0 then return tokens end
     if tokens._compiled then return tokens end
+    -- Compile against the initialized runtime contract even for a stream that
+    -- contains only inline flow commands. Loading handlers later must not make
+    -- this compiler's own cold output incompatible or change positional rules.
+    local kag = require('kag')
 
     -- 1) Normalize to array format + keyed params FIRST: tokenizer.parse
     -- emits raw pair-array params ({{key,val},...}); macro definition
@@ -595,7 +602,6 @@ function compiler.compile(tokens)
     local params_by_idx = {}
     local exprs = {}
     local exprDumps = {}  -- Battle 1c: AOT bytecode per expression token
-    local kag = nil  -- lazy: only needed when a handler lookup is required
     for i, at in ipairs(norm) do
         if type(at) == "table" and at[1] and not at.type then
             local cmd = at[1]
@@ -654,7 +660,6 @@ function compiler.compile(tokens)
                 end
             else
                 -- regular command: bind the handler once
-                if not kag then kag = require("kag") end
                 local handler = kag[cmd]
                 if handler then handlers[i] = handler end
             end
@@ -675,6 +680,7 @@ function compiler.compile(tokens)
         params = params_by_idx,
         handlers = handlers,
         labels = labels,
+        compatibility = capture_compatibility(tokens),
     }
     return tokens
 end
@@ -705,7 +711,8 @@ end
 -- SOURCE, not part of the payload).
 local function is_serializable(v, seen, skip_key)
     local t = type(v)
-    if t == "nil" or t == "boolean" or t == "number" or t == "string" then
+    if t=='number' then return v==v and v~=math.huge and v~=-math.huge end
+    if t == "nil" or t == "boolean" or t == "string" then
         return true
     end
     if t ~= "table" then return false end
@@ -727,6 +734,81 @@ end
 -- cache payload must not carry function refs (handlers) or the compiled
 -- tables that are stored separately (flow/exprs/params/labels). Shared
 -- params tables (tokens[i][2] === c.params[i]) are copied once per token.
+-- Compare canonical contract strings, so correctness does not depend on a
+-- short fingerprint collision. Unrelated commands and _meta are excluded.
+local function contract_identity(command)
+    local specs=schemaModule.specs(command)
+    if specs==nil then return 'absent' end
+    if not is_serializable(specs,{}) then return nil end
+    return encode_lua_literal(specs)
+end
+
+capture_compatibility=function(tokens)
+    local commands={}
+    for _,token in ipairs(tokens) do
+        local command=type(token)=='table' and token[1]
+        if type(command)~='string' then return nil end
+        if commands[command]==nil then
+            commands[command]=contract_identity(command)
+            if commands[command]==nil then return nil end
+        end
+    end
+    return {format=CACHE_FORMAT,semantics=COMPILER_SEMANTICS,commands=commands}
+end
+
+local function compatible(tokens,identity)
+    if type(identity)~='table' or identity.format~=CACHE_FORMAT then return false,'cache-format-mismatch' end
+    if identity.semantics~=COMPILER_SEMANTICS then return false,'compiler-semantics-mismatch' end
+    if type(identity.commands)~='table' then return false,'command-contracts-missing' end
+    require('kag') -- deserialize/readCache are also public cold-start entries
+    local current=capture_compatibility(tokens)
+    if not current then return false,'command-contracts-unserializable' end
+    for command,value in pairs(current.commands) do
+        if identity.commands[command]~=value then return false,'command-contract-mismatch:'..command end
+    end
+    for command in pairs(identity.commands) do
+        if current.commands[command]==nil then return false,'command-contract-extra:'..tostring(command) end
+    end
+    return true
+end
+
+function compiler.isCompatible(tokens)
+    if type(tokens)~='table' or type(tokens._compiled)~='table' then return false,'uncompiled-stream' end
+    return compatible(tokens,tokens._compiled.compatibility)
+end
+
+function compiler.validateSerialized(data)
+    if type(data)~='table' or data.version~=CACHE_FORMAT then return false,'cache-format-mismatch' end
+    if type(data.tokens)~='table' or type(data.flow)~='table' or type(data.labels)~='table'
+        or type(data.params)~='table' or type(data.exprs)~='table' then return false,'compiled-stream-shape' end
+    return compatible(data.tokens,data.compatibility)
+end
+
+-- Validate all bundled scenes before replacing a live provider/session.
+-- Compatibility is separate from publisher authenticity.
+function compiler.validateBundle(bundle,expected_scenes)
+    if type(bundle)~='table' or bundle.version~=1 or type(bundle.scenes)~='table'
+        or next(bundle.scenes)==nil then return false,'bundle-format-mismatch' end
+    for name,data in pairs(bundle.scenes) do
+        if type(name)~='string' or name=='' then return false,'bundle-scene-key' end
+        local ok,reason=compiler.validateSerialized(data)
+        if not ok then return false,'incompatible-scene:'..name..':'..reason end
+    end
+    if expected_scenes~=nil then
+        if type(expected_scenes)~='table' then return false,'bundle-required-scenes' end
+        local expected={}
+        for _,name in ipairs(expected_scenes) do
+            if expected[name] then return false,'duplicate-bundle-scene:'..tostring(name) end
+            if bundle.scenes[name]==nil then return false,'missing-bundle-scene:'..tostring(name) end
+            expected[name]=true
+        end
+        for name in pairs(bundle.scenes) do
+            if not expected[name] then return false,'unexpected-bundle-scene:'..tostring(name) end
+        end
+    end
+    return true
+end
+
 local function strip_compiled(tokens)
     local out = {}
     for i, tok in ipairs(tokens) do
@@ -756,6 +838,8 @@ end
 --  runtime), so they survive serialization.
 function compiler.serialize(tokens)
     if not tokens or not tokens._compiled then return nil end
+    local current,reason=compiler.isCompatible(tokens)
+    if not current then return nil,reason end
     local c = tokens._compiled
     -- independent seen tables per sub-check: the same params table is
     -- referenced both from tokens[i][2] and c.params[i], so a shared
@@ -770,13 +854,14 @@ function compiler.serialize(tokens)
         return nil
     end
     return {
-        version = 1,
+        version = CACHE_FORMAT,
+        compatibility = c.compatibility,
         tokens = strip_compiled(tokens),
         flow = c.flow,
         exprs = c.exprs,
         params = c.params,
         labels = c.labels,
-        _srcHash = tokens._srcHash,
+        _srcHash = tokens._srcHash or c._srcHash,
     }
 end
 
@@ -796,11 +881,8 @@ local function copy_serialized(value, copies)
 end
 
 function compiler.deserialize(data)
-    if type(data) ~= "table" or data.version ~= 1 then return nil end
-    if type(data.tokens) ~= "table" or type(data.flow) ~= "table"
-        or type(data.labels) ~= "table" then
-        return nil
-    end
+    local current,reason=compiler.validateSerialized(data)
+    if not current then return nil,reason end
     -- A bundle is trusted input, never the live scheduler's mutable storage.
     -- Preserve sharing within this decoded graph without aliasing another run.
     data = copy_serialized(data, {})
@@ -825,19 +907,20 @@ function compiler.deserialize(data)
         handlers = {},
         labels = data.labels or {},
         _srcHash = data._srcHash,
+        compatibility = data.compatibility,
     }
     return tokens
 end
 
 --- compiler.hashFile(path) → FNV-1a 32-bit content hash (hex string) or
 --  nil on read failure. Used for .ksc freshness checks. 32-bit is exact
---  in Lua doubles and plenty for cache invalidation (a collision only
---  costs a stale cache, never correctness).
+--  in Lua doubles. This is a non-cryptographic freshness marker, not trust
+--  evidence; format and compiler/contract identity are checked separately.
 --- FNV-1a 32-bit content hash. Recalculated on every call: the scenes
 --  are small (<100KB) and correctness of the .ksc freshness check beats
 --  the ~1ms saving a cache would buy (a stale-cache bug silently loads
---  old bytecode — not acceptable). readCache has its own (path,size,
---  head) result cache for the hot path.
+--  old bytecode — not acceptable). readCache compares full encoded content
+--  before reusing parsed data, and never shares live token arrays.
 function compiler.hashFile(path)
     local f = io.open(path, "rb")
     if not f then return nil end
@@ -854,11 +937,8 @@ function compiler.hashFile(path)
     return string.format("%08x", hash)
 end
 
--- readCache result cache: the .ksc file rarely changes within a
---  session; cache the deserialized token array keyed by (path, size).
---  Same-size rewrite of a .ksc is not a real scenario (writeCache only
---  rewrites when the source hash changed, which also changes the baked
---  size in practice) — a size check is sufficient here.
+-- Cache immutable parsed data using exact text. External rebakes can preserve
+-- size and prefix. Every read returns a detached runtime graph.
 --  Declared BEFORE writeCache: writeCache invalidates the entry after a
 --  rewrite, and the local must already be assigned at call time (a
 --  later `local` would shadow with nil until this line executes).
@@ -898,45 +978,30 @@ function compiler.writeCache(tokens, cachePath)
     end
     local ok3, f = pcall(io.open, cachePath, "w")
     if not ok3 or not f then return false end
-    f:write(text)
-    f:close()
-    -- Invalidate the read_cache entry: the (size, head) key of the old
-    -- entry can collide with the rewritten file (same size, head within
-    -- the first 64 bytes — e.g. a value change past the head window),
-    -- which would serve STALE tokens to readCache/isFresh. The next
-    -- readCache re-parses the fresh file instead (audit: bake→isFresh
-    -- false after rebake; bake→load served stale content).
+    local wrote,result=pcall(f.write,f,text)
+    local closed,close_result=pcall(f.close,f)
+    -- A failed/partial write must not preserve the old parsed cache entry.
     read_cache[cachePath] = nil
-    return true
-end
-
-local function file_head(fp)
-    fp:seek("set")
-    local head = fp:read(64) or ""
-    local h = 0
-    for i = 1, #head do h = (h * 31 + head:byte(i)) % 4294967296 end
-    return h
+    return wrote and result~=nil and closed and close_result~=nil
 end
 
 function compiler.readCache(cachePath)
-    local f = io.open(cachePath, "r")
+    local opened,f = pcall(io.open,cachePath, "rb")
+    if not opened then return nil end
     if not f then return nil end
-    local size = f:seek("end")
-    local head = file_head(f)
-    f:seek("set")
+    local read,text=pcall(f.read,f,"*a")
+    pcall(f.close,f)
+    if not read or type(text)~='string' or #text==0 then return nil end
     local cached = read_cache[cachePath]
-    if cached and cached.size == size and cached.head == head then
-        f:close()
-        return cached.tokens
+    if cached and cached.text==text then
+        return compiler.deserialize(cached.data)
     end
-    local text = f:read("*a")
-    f:close()
-    if not text or #text == 0 then return nil end
     local chunk, err = load(text, "=ksc", "t", {})
     if not chunk then return nil end
     local ok2, data = pcall(chunk)
     if not ok2 or type(data) ~= "table" then return nil end
     local tokens = compiler.deserialize(data)
+    if not tokens then return nil end
     local n = 0
     for _ in pairs(read_cache) do n = n + 1 end
     if n >= READ_CACHE_MAX then
@@ -944,7 +1009,7 @@ function compiler.readCache(cachePath)
         for k in pairs(read_cache) do keys[#keys + 1] = k end
         for j = 1, math.floor(#keys / 2) do read_cache[keys[j]] = nil end
     end
-    read_cache[cachePath] = { size = size, head = head, tokens = tokens }
+    read_cache[cachePath] = { text = text, data = data }
     return tokens
 end
 
@@ -968,6 +1033,7 @@ local function encode_literal_value(v)
     if t == "boolean" then return v and "true" or "false" end
     if t == "number" then
         if v ~= v or v == math.huge or v == -math.huge then return "nil" end
+        if math.type and math.type(v)=='integer' then return tostring(v) end
         return string.format("%.17g", v)
     end
     if t == "string" then return lua_escape(v) end

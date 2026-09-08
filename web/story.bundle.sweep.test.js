@@ -128,10 +128,10 @@ describe.skipIf(!bundleExists)('story bundle sweep (ks_bake -> bundle -> play)',
     expect(bundle, 'cache/story/story.lua should load (suite was not skipped)').toBeTruthy()
     expect(bundle.version).toBe(1)
     expect(bundle.scenes).toBeTruthy()
-    // every expected key is present with a serialized (version=1) entry
+    // Container version remains 1; compiled scene format is independently 2.
     for (const key of EXPECTED_KEYS) {
       expect(bundle.scenes[key], 'missing bundle scene: ' + key).toBeTruthy()
-      expect(bundle.scenes[key].version, key + ' should be serialized (version=1)').toBe(1)
+      expect(bundle.scenes[key].version, key + ' should use compiled scene format 2').toBe(2)
     }
     // the required tutorial 14/15 scenes are explicitly present
     expect(bundle.scenes['tutorial_14_flow_timing.ks']).toBeTruthy()
