@@ -132,8 +132,12 @@ class Lane:
         self.run("host", ["sw_vers"])
         self.run("xcode", ["xcodebuild", "-version"])
         self.run("sdk-inventory", ["xcodebuild", "-showsdks"])
-        self.run("brew-dependencies", ["brew", "install", "cmake", "pkg-config", "openssl@3", "sdl3", "python@3.12"], timeout=1200)
-        self.run("brew-versions", ["brew", "list", "--versions", "cmake", "pkg-config", "openssl@3", "sdl3", "python@3.12"])
+        host_dependencies = ["cmake", "pkg-config", "python@3.12"]
+        if self.name == "macos":
+            host_dependencies += ["openssl@3", "sdl3"]
+        # iOS SDL/OpenSSL are separate pinned target builds, never host bottles.
+        self.run("brew-dependencies", ["brew", "install", *host_dependencies], timeout=1200)
+        self.run("brew-versions", ["brew", "list", "--versions", *host_dependencies])
         self.run("cmake-version", ["cmake", "--version"])
         self.run("clang-version", ["clang", "--version"])
         venv = self.root / "python"

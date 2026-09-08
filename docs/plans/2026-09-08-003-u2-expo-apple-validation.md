@@ -62,13 +62,13 @@ EAS 提供机器/调度/工件保存，不代替原生测试的通过条件。�
 3. `python scripts/eas/test_run_apple_validation.py`：7 个工具回归通过；覆盖真实非零进程退出/原始日志、失败回执落盘、实际超时，以及不合法 SHA、dirty checkout、错误 Mach-O 平台和错误架构的拒绝。这些是驱动工具测试，不是 Apple 引擎测试。
 4. Python 语法编译与 Git whitespace 检查通过。本地没有启动 Apple/其他原生引擎构建，也没有把 Windows 执行结果当 Apple 证明。
 
-## 官方来源
-
 ## 首次云执行与输入传递修正
 
 已创建并绑定`@ailiasdesus-team/caesura-native-validation`。首次运行[01a08072-84a2-7638-85e7-f3efe8f6fc33](https://expo.dev/accounts/ailiasdesus-team/projects/caesura-native-validation/workflows/01a08072-84a2-7638-85e7-f3efe8f6fc33)上传22.4KB编排归档，明确请求源码`9e9cfc07c4455b498ea99d465cc6f560bf1eed32`。
 
 三个job均在构建前的SHA验证阶段失败；原生验证、iOS编译和模拟器测试尚未执行。CLI原始日志显示没有收到有效40位`CAESURA_SOURCE_SHA`。工作流现改为官方文档指定的job级`env`传递手动输入，并在run_name显示源码SHA；保持相同原生检查和失败条件。修正版经相同官方schema严格字段校验通过，下一次云运行需证明输入确已到达。首次失败记录保留，不被后续结果覆盖。
+
+第二次运行[01a08082-9af3-7b68-99d0-57bfcb3037b6](https://expo.dev/accounts/ailiasdesus-team/projects/caesura-native-validation/workflows/01a08082-9af3-7b68-99d0-57bfcb3037b6)已从job环境取得正确SHA，完成clone/fetch/checkout和clean校验，随后三个lane在Homebrew安装处失败：自动镜像中没有sdl3配方。现固定官方列出的`macos-tahoe-26.5-xcode-26.6`镜像；macOS安装本机SDL/OpenSSL，iOS只安装必要主机工具，继续从固定提交构建目标SDL/OpenSSL。新运行继续验证同一原生源码SHA，旧失败及原始日志保留。
 
 ## 官方来源
 

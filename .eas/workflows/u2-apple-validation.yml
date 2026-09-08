@@ -1,6 +1,9 @@
 name: U2 Apple native validation
 run_name: U2 Apple ${{ inputs.source_sha }}
 
+defaults:
+  image: macos-tahoe-26.5-xcode-26.6
+
 on:
   workflow_dispatch:
     inputs:
