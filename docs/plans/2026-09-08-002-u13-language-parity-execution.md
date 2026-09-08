@@ -20,3 +20,11 @@
 - 独立审查发现Web测试默认localStorage跨lane共享可能误读旧slot41。`storage-isolation-red-01.log`实际复现“第二实例保存失败但加载得到ok”；每lane改为独立Map后该负控制通过，同lane原执行与重放仍共用存储。审查闭环见`artifacts/validation/u13-review/review.md`，无未解决P1/P2。
 
 上述为定向真实运行证据。完整Debug构建、全部C++/Lua/CTest、完整Web、冻结候选身份与组织仓库CI尚待最后整合；不把定向计数冒充完整门禁或覆盖率，也不提供真实GPU/设备音频证明。
+
+## 最终本机整合验收
+
+干净候选`43394fa093235fa978996ac1dbdbbf05abf215ac`于2026-09-08完成顺序门禁：先真实bake全部demo，再重建Web产物、运行完整Web，最后完整Windows Debug profile。Web为36个测试文件、498/498用例、0失败/0跳过，92.88秒；原吞吐、内存和配对缩放预算通过。`artifacts/validation/u13/final-pipeline-01.json`四阶段全部退出0，源文件前后摘要一致。
+
+原生run ID为`95429185-2f41-4a5f-934b-0e61771983c6`，`raw/windows-debug-u13-01/run.json`记录11项required检查全部通过：完整Debug构建、C++1292/1292、Lua主147/147与隔离44/44、Python17/7/53/57、耦合、测试注册以及CTest25通过/0失败/1预声明外部AI smoke跳过。源码及夹具未在运行期间变化。collector与严格verifier通过，manifest在`artifacts/validation/u13/evidence/43394fa093235fa978996ac1dbdbbf05abf215ac/95429185-2f41-4a5f-934b-0e61771983c6/windows-debug/manifest.json`。
+
+U13本机最终验收通过，组织仓库候选CI与主分支合并继续单独核验；后续U14开发在隔离工作树进行，不混入本候选。
