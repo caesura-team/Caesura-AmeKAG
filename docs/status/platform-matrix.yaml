@@ -1,7 +1,7 @@
 version: 1
 schema_version: "1.0.0"
 generated_document: "docs/status/platform-status.md"
-evidence_head_commit: "65e6e0c0f45cde6fb32d806bb8b45362b93a25ce"
+evidence_head_commit: "ce70661e224709ea69ce8fe627d6a23572454bc8"
 
 allowed_status_enums:
   - verified
@@ -61,9 +61,10 @@ platforms:
         status: pending
         evidence:
           commit: "62132e78"
-          document: "docs/Caesura_AmeKAG_Agent_Pack/05_RELEASE_CANDIDATE.md"
+          document: "docs/guides/release-validation.md"
           test: "RC-GO decision gate"
           verified_at: "2026-08-25T01:57:33Z"
+          notes: "Documentation reference migrated only; status, evidence commit and verification timestamp retain their historical meaning. No platform revalidation or release approval is implied."
 
   linux:
     display_name: "Linux (x64 / Ubuntu 24.04 / WSL)"
@@ -112,9 +113,10 @@ platforms:
         status: pending
         evidence:
           commit: "62132e78"
-          document: "docs/Caesura_AmeKAG_Agent_Pack/05_RELEASE_CANDIDATE.md"
+          document: "docs/guides/release-validation.md"
           test: "RC-GO decision gate"
           verified_at: "2026-08-25T01:57:33Z"
+          notes: "Documentation reference migrated only; status, evidence commit and verification timestamp retain their historical meaning. No platform revalidation or release approval is implied."
 
   web:
     display_name: "Web Player (WASM / DOM)"
@@ -239,9 +241,10 @@ platforms:
         status: pending
         evidence:
           commit: "62132e78"
-          document: "docs/Caesura_AmeKAG_Agent_Pack/05_RELEASE_CANDIDATE.md"
+          document: "docs/guides/release-validation.md"
           test: "Official keystore signing & store publishing gate"
           verified_at: "2026-08-25T01:57:33Z"
+          notes: "Documentation reference migrated only; status, evidence commit and verification timestamp retain their historical meaning. No platform revalidation or release approval is implied."
 
   macos:
     display_name: "macOS (Apple Silicon / Intel)"
@@ -290,9 +293,10 @@ platforms:
         status: pending
         evidence:
           commit: "62132e78"
-          document: "docs/Caesura_AmeKAG_Agent_Pack/05_RELEASE_CANDIDATE.md"
+          document: "docs/guides/release-validation.md"
           test: "Apple Developer ID signing and notarization"
           verified_at: "2026-08-25T01:57:33Z"
+          notes: "Documentation reference migrated only; status, evidence commit and verification timestamp retain their historical meaning. No platform revalidation or release approval is implied."
 
   ios:
     display_name: "iOS (Track I / Metal)"
@@ -362,6 +366,7 @@ platforms:
         status: pending
         evidence:
           commit: "62132e78"
-          document: "docs/Caesura_AmeKAG_Agent_Pack/05_RELEASE_CANDIDATE.md"
+          document: "docs/guides/release-validation.md"
           test: "App Store submission gate"
           verified_at: "2026-08-25T01:57:33Z"
+          notes: "Documentation reference migrated only; status, evidence commit and verification timestamp retain their historical meaning. No platform revalidation or release approval is implied."

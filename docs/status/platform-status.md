@@ -4,8 +4,8 @@
 # Caesura (AmeKAG) — Unified Platform Status Matrix
 
 > **Single Source of Truth**: [`docs/status/platform-matrix.yaml`](platform-matrix.yaml)<br>
-> **Evidence HEAD Commit**: `65e6e0c0f45cde6fb32d806bb8b45362b93a25ce`<br>
-> **Generated At**: `2026-09-08T02:25:29.431285+00:00`<br>
+> **Evidence HEAD Commit**: `ce70661e224709ea69ce8fe627d6a23572454bc8`<br>
+> **Generated At**: `2026-09-08T04:59:04.641312+00:00`<br>
 > **Verification Status**: 100% Evidence-Backed (Zero Undocumented Claims)
 
 ---
@@ -55,7 +55,7 @@
 | **Runtime** | 🟢 `verified` | [`docs/plans/2026-08-24-027-antigravity-handoff.md`](../../docs/plans/2026-08-24-027-antigravity-handoff.md) | `(cd build/tests/Debug && ./CaesuraTests.exe) && build/lua/Debug/lua.exe tests/scripts/run_lua_tests.lua && build/lua/Debug/lua.exe tests/scripts/run_orphan_tests.lua` | `3cc9bfb8` | `2026-09-03T17:42:42Z` | CI run 33783878872 (Windows MSVC Debug + Release: full test surfaces, ctest, coupling) green at 3cc9bfb8. Local re-measurement on 7935dffb: 1120 doctest cases / 385790 assertions (0 failed, 0 skipped), 143 main Lua suites (0 failed), 25 orphan suites (0 failed; +select->cross-scene [jump] regression as of 2026-08-29), coupling gate PASS, 15/15 ctest targets (CaesuraBuildCli + CaesuraGoldenVn; ctest --test-dir build -N at HEAD b7e1e7ce, 2026-08-29) |
 | **First Vn** | 🟢 `verified` | [`scripts/verify_first_vn.sh`](../../scripts/verify_first_vn.sh) | `bash scripts/verify_first_vn.sh` | `d406e780` | `2026-08-28T15:15:00Z` | 13/13 user journey checks passed on d406e780 (template, creation, metadata, validation, headless run, choices A/B, save/load, package). Journey starts from a BUILT source tree, not from the released ZIP; the Lua interpreter resolves via the three-level probe (bare-clone safe). |
 | **Packaging** | 🟢 `verified` | [`docs/guides/release-process.md`](../../docs/guides/release-process.md) | `cpack -C Release -G ZIP && bash scripts/verify_release_package.sh (30/30 assertions; incl. out-of-repo, PATH-stripped create/build/run probe, demo/ non-empty; +SDL3 dylib relocatability check added 2026-08-29 — 1 otool scope note on Windows)` | `3cc9bfb8` | `2026-09-03T17:42:42Z` | CPack ZIP builds and the extracted archive boots from its own folder (--frames 60 exits 0). The install-set gaps measured on v1.0.1 (no web-editor/dist, no tools/project_templates, hand-copied steam_api64.dll) were closed in Sprint 4: the install set now ships web-editor/dist, tools/project_templates (5 templates), external/lua (lua_cli product) and steam_api64.dll (OPTIONAL, Steam builds only). Verified by scripts/verify_release_package.sh 30/30 (29 strict + 1 otool scope note since 2026-08-29, when the SDL3 dylib relocatability hard gate was added; Windows has no otool so the check notes instead of asserting) on both Release (sha256 b6a5b93c...) and Debug ZIPs, including an out-of-repo create->build->run probe with lua stripped from PATH and a demo/ non-empty check (2026-08-28). |
-| **Release** | ⏳ `pending` | [`docs/Caesura_AmeKAG_Agent_Pack/05_RELEASE_CANDIDATE.md`](../../docs/Caesura_AmeKAG_Agent_Pack/05_RELEASE_CANDIDATE.md) | `RC-GO decision gate` | `62132e78` | `2026-08-25T01:57:33Z` | — |
+| **Release** | ⏳ `pending` | [`docs/guides/release-validation.md`](../../docs/guides/release-validation.md) | `RC-GO decision gate` | `62132e78` | `2026-08-25T01:57:33Z` | Documentation reference migrated only; status, evidence commit and verification timestamp retain their historical meaning. No platform revalidation or release approval is implied. |
 
 ### 2.2 Linux (x64 / Ubuntu 24.04 / WSL) (Tier 1) — 🟢 `verified`
 
@@ -75,7 +75,7 @@
 | **Runtime** | 🟢 `verified` | [`docs/plans/2026-08-22-025-delivery-handoff.md`](../../docs/plans/2026-08-22-025-delivery-handoff.md) | `ctest --test-dir build --output-on-failure` | `3cc9bfb8` | `2026-09-03T17:42:42Z` | CI run 33783878872 (Linux GCC job: ctest + coupling) green at 3cc9bfb8; earlier 11/11 CTest targets on WSL and GitHub Actions Linux CI at 806275cf. |
 | **First Vn** | 🟢 `verified` | [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) | `xvfb-run -a -s '-screen 0 1280x720x24' bash scripts/verify_bundle_boot.sh build/CaesuraAmeKAG first_vn` | `3cc9bfb8` | `2026-09-03T17:42:42Z` | CI run 33783878872 (Linux GCC job runs verify_bundle_boot first_vn + demo steps) green at 3cc9bfb8; earlier 806275cf evidence retained. |
 | **Packaging** | 🟢 `verified` | [`docs/guides/release-process.md`](../../docs/guides/release-process.md) | `CI 'Linux · Package' job: CPack TGZ then verify_release_package.sh on CaesuraAmeKAG-(PROJECT_VERSION)-Linux-x86_64.tar.gz` | `3cc9bfb8` | `2026-09-03T17:42:42Z` | Linux TGZ lane green in run 33783878872 (commit 3cc9bfb8); earlier green at 33193556904 (commit d310747a). verify semantics = 30 items on every lane (count is platform-uniform since 2026-08-29): Linux = 28 strict-PASS + 2 notes (the stripped-PATH probe degrades to a note on POSIX because /usr/bin distro lua cannot be stripped — the true `ran under the PACKAGED lua` assertion still guards the property — plus the SDL3 relocatability scope note, since no otool on Linux); Windows = 29 strict + 1 note; macOS = 29 strict + 1 note with a packaged SDL3 dylib (real otool assertion), 28 strict + 2 notes when statically linked. Channel code chain: 4bc22248 (TGZ lane) + be815fa3 (pgrep -x) + d82a0f72 (probe degradation). |
-| **Release** | ⏳ `pending` | [`docs/Caesura_AmeKAG_Agent_Pack/05_RELEASE_CANDIDATE.md`](../../docs/Caesura_AmeKAG_Agent_Pack/05_RELEASE_CANDIDATE.md) | `RC-GO decision gate` | `62132e78` | `2026-08-25T01:57:33Z` | — |
+| **Release** | ⏳ `pending` | [`docs/guides/release-validation.md`](../../docs/guides/release-validation.md) | `RC-GO decision gate` | `62132e78` | `2026-08-25T01:57:33Z` | Documentation reference migrated only; status, evidence commit and verification timestamp retain their historical meaning. No platform revalidation or release approval is implied. |
 
 ### 2.3 Web Player (WASM / DOM) (Tier 1) — 🟢 `verified`
 
@@ -120,7 +120,7 @@
 | **Real Device** | 🟢 `verified` | [`docs/platform/android-device-validation.md`](../../docs/platform/android-device-validation.md) | `Physical Redmi K40 adb/su logcat + screencap suite` | `1f054039` | `2026-08-24T22:00:00Z` | Launch, touch tap, long press (GestureDetector), landscape orientation lock, sleep/wake power cycle, save slot 7 + autosave |
 | **Signing** | 🟢 `verified` | [`docs/platform/android-release-signing.md`](../../docs/platform/android-release-signing.md) | `apksigner verify --verbose --print-certs android/app/build/outputs/apk/release/app-release.apk` | `8aa51c36` | `2026-08-24T23:30:00Z` | V1/V2/V3 signing verified true, zipalign 4-byte check passed, zero hardcoded credentials |
 | **Aab** | 🟢 `verified` | [`docs/platform/android-release-signing.md`](../../docs/platform/android-release-signing.md) | `cd android && gradle bundleRelease` | `8aa51c36` | `2026-08-24T23:30:00Z` | app-release.aab built with language/density/abi splits disabled for visual novel assets |
-| **Release** | ⏳ `pending` | [`docs/Caesura_AmeKAG_Agent_Pack/05_RELEASE_CANDIDATE.md`](../../docs/Caesura_AmeKAG_Agent_Pack/05_RELEASE_CANDIDATE.md) | `Official keystore signing & store publishing gate` | `62132e78` | `2026-08-25T01:57:33Z` | — |
+| **Release** | ⏳ `pending` | [`docs/guides/release-validation.md`](../../docs/guides/release-validation.md) | `Official keystore signing & store publishing gate` | `62132e78` | `2026-08-25T01:57:33Z` | Documentation reference migrated only; status, evidence commit and verification timestamp retain their historical meaning. No platform revalidation or release approval is implied. |
 
 ### 2.5 macOS (Apple Silicon / Intel) (Tier 2) — 🟡 `probe`
 
@@ -144,7 +144,7 @@
 | **Runtime** | ⏳ `pending` | [`docs/guides/release-qa-matrix.md`](../../docs/guides/release-qa-matrix.md) | `ctest --test-dir build --output-on-failure` | `62132e78` | `2026-08-25T01:57:33Z` | Non-GUI test targets pass; full windowed Cocoa/Metal runtime pending physical device |
 | **First Vn** | ⏳ `pending` | [`docs/release/cross-platform-matrix.md`](../../docs/release/cross-platform-matrix.md) | `Interactive / windowed first_vn execution pending hardware` | `62132e78` | `2026-08-25T01:57:33Z` | — |
 | **Real Device** | 🔒 `hardware-gated` | [`docs/platform/ios-device-validation.md`](../../docs/platform/ios-device-validation.md) | `Physical Mac interactive smoke testing` | `62132e78` | `2026-08-25T01:57:33Z` | — |
-| **Release** | ⏳ `pending` | [`docs/Caesura_AmeKAG_Agent_Pack/05_RELEASE_CANDIDATE.md`](../../docs/Caesura_AmeKAG_Agent_Pack/05_RELEASE_CANDIDATE.md) | `Apple Developer ID signing and notarization` | `62132e78` | `2026-08-25T01:57:33Z` | — |
+| **Release** | ⏳ `pending` | [`docs/guides/release-validation.md`](../../docs/guides/release-validation.md) | `Apple Developer ID signing and notarization` | `62132e78` | `2026-08-25T01:57:33Z` | Documentation reference migrated only; status, evidence commit and verification timestamp retain their historical meaning. No platform revalidation or release approval is implied. |
 
 ### 2.6 iOS (Track I / Metal) (Tier 2) — 🟡 `probe`
 
@@ -171,7 +171,7 @@
 | **Real Device** | 🔒 `hardware-gated` | [`docs/platform/ios-device-validation.md`](../../docs/platform/ios-device-validation.md) | `Physical iPhone 15/16 or iOS Simulator interactive run` | `8aa51c36` | `2026-08-24T23:30:00Z` | — |
 | **Signing** | 🔑 `credential-gated` | [`docs/platform/ios-build-and-validation.md`](../../docs/platform/ios-build-and-validation.md) | `Apple Developer code signing` | `8aa51c36` | `2026-08-24T23:30:00Z` | — |
 | **Testflight** | 🔑 `credential-gated` | [`docs/platform/ios-device-validation.md`](../../docs/platform/ios-device-validation.md) | `App Store Connect / TestFlight distribution pipeline` | `8aa51c36` | `2026-08-24T23:30:00Z` | — |
-| **Release** | ⏳ `pending` | [`docs/Caesura_AmeKAG_Agent_Pack/05_RELEASE_CANDIDATE.md`](../../docs/Caesura_AmeKAG_Agent_Pack/05_RELEASE_CANDIDATE.md) | `App Store submission gate` | `62132e78` | `2026-08-25T01:57:33Z` | — |
+| **Release** | ⏳ `pending` | [`docs/guides/release-validation.md`](../../docs/guides/release-validation.md) | `App Store submission gate` | `62132e78` | `2026-08-25T01:57:33Z` | Documentation reference migrated only; status, evidence commit and verification timestamp retain their historical meaning. No platform revalidation or release approval is implied. |
 
 ---
 
@@ -185,12 +185,12 @@ All `verified` and `probe` capabilities are anchored by concrete evidence artifa
 | Windows (x64) | Runtime | 🟢 `verified` | [`docs/plans/2026-08-24-027-antigravity-handoff.md`](../../docs/plans/2026-08-24-027-antigravity-handoff.md) | `(cd build/tests/Debug && ./CaesuraTests.exe) && build/lua/Debug/lua.exe tests/scripts/run_lua_tests.lua && build/lua/Debug/lua.exe tests/scripts/run_orphan_tests.lua` | `3cc9bfb8` |
 | Windows (x64) | First Vn | 🟢 `verified` | [`scripts/verify_first_vn.sh`](../../scripts/verify_first_vn.sh) | `bash scripts/verify_first_vn.sh` | `d406e780` |
 | Windows (x64) | Packaging | 🟢 `verified` | [`docs/guides/release-process.md`](../../docs/guides/release-process.md) | `cpack -C Release -G ZIP && bash scripts/verify_release_package.sh (30/30 assertions; incl. out-of-repo, PATH-stripped create/build/run probe, demo/ non-empty; +SDL3 dylib relocatability check added 2026-08-29 — 1 otool scope note on Windows)` | `3cc9bfb8` |
-| Windows (x64) | Release | ⏳ `pending` | [`docs/Caesura_AmeKAG_Agent_Pack/05_RELEASE_CANDIDATE.md`](../../docs/Caesura_AmeKAG_Agent_Pack/05_RELEASE_CANDIDATE.md) | `RC-GO decision gate` | `62132e78` |
+| Windows (x64) | Release | ⏳ `pending` | [`docs/guides/release-validation.md`](../../docs/guides/release-validation.md) | `RC-GO decision gate` | `62132e78` |
 | Linux (x64 / Ubuntu 24.04 / WSL) | Build | 🟢 `verified` | [`docs/plans/2026-08-22-025-delivery-handoff.md`](../../docs/plans/2026-08-22-025-delivery-handoff.md) | `cmake -B build -S . -DCMAKE_BUILD_TYPE=Debug && cmake --build build -j$(nproc)` | `3cc9bfb8` |
 | Linux (x64 / Ubuntu 24.04 / WSL) | Runtime | 🟢 `verified` | [`docs/plans/2026-08-22-025-delivery-handoff.md`](../../docs/plans/2026-08-22-025-delivery-handoff.md) | `ctest --test-dir build --output-on-failure` | `3cc9bfb8` |
 | Linux (x64 / Ubuntu 24.04 / WSL) | First Vn | 🟢 `verified` | [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) | `xvfb-run -a -s '-screen 0 1280x720x24' bash scripts/verify_bundle_boot.sh build/CaesuraAmeKAG first_vn` | `3cc9bfb8` |
 | Linux (x64 / Ubuntu 24.04 / WSL) | Packaging | 🟢 `verified` | [`docs/guides/release-process.md`](../../docs/guides/release-process.md) | `CI 'Linux · Package' job: CPack TGZ then verify_release_package.sh on CaesuraAmeKAG-(PROJECT_VERSION)-Linux-x86_64.tar.gz` | `3cc9bfb8` |
-| Linux (x64 / Ubuntu 24.04 / WSL) | Release | ⏳ `pending` | [`docs/Caesura_AmeKAG_Agent_Pack/05_RELEASE_CANDIDATE.md`](../../docs/Caesura_AmeKAG_Agent_Pack/05_RELEASE_CANDIDATE.md) | `RC-GO decision gate` | `62132e78` |
+| Linux (x64 / Ubuntu 24.04 / WSL) | Release | ⏳ `pending` | [`docs/guides/release-validation.md`](../../docs/guides/release-validation.md) | `RC-GO decision gate` | `62132e78` |
 | Web Player (WASM / DOM) | Build | 🟢 `verified` | [`docs/status/web-release-status.md`](../../docs/status/web-release-status.md) | `CI 'Web package hard gate (t144 design A)' step: (cd web && npm ci && npm run build) + package_game + verify_web_package` | `3cc9bfb8` |
 | Web Player (WASM / DOM) | Runtime | 🟢 `verified` | [`docs/status/web-release-status.md`](../../docs/status/web-release-status.md) | `cd web && npm test` | `3cc9bfb8` |
 | Web Player (WASM / DOM) | First Vn | 🟢 `verified` | [`docs/status/web-release-status.md`](../../docs/status/web-release-status.md) | `CI 'Web package hard gate (t144 design A)' step: ks_bake demo --web → npm run build → bash scripts/package_game.sh --no-web-build tests/projects/first_vn → bash scripts/verify_web_package.sh dist/first_vn (25/25)` | `3cc9bfb8` |
@@ -203,12 +203,12 @@ All `verified` and `probe` capabilities are anchored by concrete evidence artifa
 | Android (ARM64) | Real Device | 🟢 `verified` | [`docs/platform/android-device-validation.md`](../../docs/platform/android-device-validation.md) | `Physical Redmi K40 adb/su logcat + screencap suite` | `1f054039` |
 | Android (ARM64) | Signing | 🟢 `verified` | [`docs/platform/android-release-signing.md`](../../docs/platform/android-release-signing.md) | `apksigner verify --verbose --print-certs android/app/build/outputs/apk/release/app-release.apk` | `8aa51c36` |
 | Android (ARM64) | Aab | 🟢 `verified` | [`docs/platform/android-release-signing.md`](../../docs/platform/android-release-signing.md) | `cd android && gradle bundleRelease` | `8aa51c36` |
-| Android (ARM64) | Release | ⏳ `pending` | [`docs/Caesura_AmeKAG_Agent_Pack/05_RELEASE_CANDIDATE.md`](../../docs/Caesura_AmeKAG_Agent_Pack/05_RELEASE_CANDIDATE.md) | `Official keystore signing & store publishing gate` | `62132e78` |
+| Android (ARM64) | Release | ⏳ `pending` | [`docs/guides/release-validation.md`](../../docs/guides/release-validation.md) | `Official keystore signing & store publishing gate` | `62132e78` |
 | macOS (Apple Silicon / Intel) | Build | 🟡 `probe` | [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) | `cmake -B build -S . -DCMAKE_BUILD_TYPE=Debug -DCAESURA_ENABLE_FFMPEG=OFF && cmake --build build` | `62132e78` |
 | macOS (Apple Silicon / Intel) | Runtime | ⏳ `pending` | [`docs/guides/release-qa-matrix.md`](../../docs/guides/release-qa-matrix.md) | `ctest --test-dir build --output-on-failure` | `62132e78` |
 | macOS (Apple Silicon / Intel) | First Vn | ⏳ `pending` | [`docs/release/cross-platform-matrix.md`](../../docs/release/cross-platform-matrix.md) | `Interactive / windowed first_vn execution pending hardware` | `62132e78` |
 | macOS (Apple Silicon / Intel) | Real Device | 🔒 `hardware-gated` | [`docs/platform/ios-device-validation.md`](../../docs/platform/ios-device-validation.md) | `Physical Mac interactive smoke testing` | `62132e78` |
-| macOS (Apple Silicon / Intel) | Release | ⏳ `pending` | [`docs/Caesura_AmeKAG_Agent_Pack/05_RELEASE_CANDIDATE.md`](../../docs/Caesura_AmeKAG_Agent_Pack/05_RELEASE_CANDIDATE.md) | `Apple Developer ID signing and notarization` | `62132e78` |
+| macOS (Apple Silicon / Intel) | Release | ⏳ `pending` | [`docs/guides/release-validation.md`](../../docs/guides/release-validation.md) | `Apple Developer ID signing and notarization` | `62132e78` |
 | iOS (Track I / Metal) | Build | 🟡 `probe` | [`docs/platform/ios-build-and-validation.md`](../../docs/platform/ios-build-and-validation.md) | `cmake -S . -B build-ios -G Xcode -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_ARCHITECTURES=arm64 && cmake --build build-ios --config Release` | `8aa51c36` |
 | iOS (Track I / Metal) | Metal | 🟡 `probe` | [`scripts/verify_metal_shaders.py`](../../scripts/verify_metal_shaders.py) | `python3 scripts/verify_metal_shaders.py` | `8aa51c36` |
 | iOS (Track I / Metal) | Runtime | ⏳ `pending` | [`docs/platform/ios-device-validation.md`](../../docs/platform/ios-device-validation.md) | `UIKit event loop & AudioSession interruption handling` | `8aa51c36` |
@@ -216,7 +216,7 @@ All `verified` and `probe` capabilities are anchored by concrete evidence artifa
 | iOS (Track I / Metal) | Real Device | 🔒 `hardware-gated` | [`docs/platform/ios-device-validation.md`](../../docs/platform/ios-device-validation.md) | `Physical iPhone 15/16 or iOS Simulator interactive run` | `8aa51c36` |
 | iOS (Track I / Metal) | Signing | 🔑 `credential-gated` | [`docs/platform/ios-build-and-validation.md`](../../docs/platform/ios-build-and-validation.md) | `Apple Developer code signing` | `8aa51c36` |
 | iOS (Track I / Metal) | Testflight | 🔑 `credential-gated` | [`docs/platform/ios-device-validation.md`](../../docs/platform/ios-device-validation.md) | `App Store Connect / TestFlight distribution pipeline` | `8aa51c36` |
-| iOS (Track I / Metal) | Release | ⏳ `pending` | [`docs/Caesura_AmeKAG_Agent_Pack/05_RELEASE_CANDIDATE.md`](../../docs/Caesura_AmeKAG_Agent_Pack/05_RELEASE_CANDIDATE.md) | `App Store submission gate` | `62132e78` |
+| iOS (Track I / Metal) | Release | ⏳ `pending` | [`docs/guides/release-validation.md`](../../docs/guides/release-validation.md) | `App Store submission gate` | `62132e78` |
 
 ---
 

@@ -287,7 +287,7 @@ cmake --build build --config Debug --parallel
 # 预期：零错误；产物 build/Debug/CaesuraAmeKAG.exe
 ```
 
-**常用 CMake 选项**（完整表见 CLAUDE.md）：
+**常用 CMake 选项**（完整表见[开发指南](../team/development-guide.md)）：
 
 | 选项 | 默认 | 作用 |
 |------|------|------|

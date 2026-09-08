@@ -78,7 +78,7 @@ locate_tgz() {
         cat >&2 <<'EOF'
 ERROR: no Linux CPack TGZ found under build/CaesuraAmeKAG-*-Linux-*.tar.gz.
 Build one on a Linux host first:
-  cmake -B build -DCAESURA_LIVE2D=OFF -DCAESURA_ENABLE_FFMPEG=OFF   # (per CLAUDE.md)
+  cmake -B build -DCAESURA_LIVE2D=OFF -DCAESURA_ENABLE_FFMPEG=OFF   # (per docs/team/development-guide.md)
   cmake --build build -j$(nproc)
   cd build && cpack -C Release -G TGZ
 or pass --tgz <path>.

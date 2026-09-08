@@ -448,7 +448,7 @@ Cancelled是逻辑终态，不能立即销毁worker仍在读写的缓冲。Relea
 
 - **目标/需求**：让公开文档能准确说明支持到哪一层；满足 R4/R12/R13。
 - **依赖/估算**：U1/U19/U22；平台设备格随U24–U26补充；1–2 人日。
-- **文件**：scripts/api_stats.py、capability_closure.py及平台状态生成器；docs/design/capability-closure-matrix.md与overrides；docs/status/platform-matrix.yaml；README.md、CLAUDE.md、docs/compatibility.md；tests/scripts/test_capability_closure.py、test_platform_matrix_adversarial.py。
+- **文件**：scripts/api_stats.py、capability_closure.py及平台状态生成器；docs/design/capability-closure-matrix.md与overrides；docs/status/platform-matrix.yaml；README.md、docs/team/development-guide.md、docs/compatibility.md；tests/scripts/test_capability_closure.py、test_platform_matrix_adversarial.py。
 - **方案与模式**：结构扫描、运行记录、平台记录、包记录分层显示；生成器验证证据身份和存在性，不凭源码关键词给运行PASS。即时修正被本轮确认不准确的描述，不等待所有平台齐备。
 - **测试**：旧SHA/缺日志/错误package digest/错误平台；实验能力和SDK关闭；接口计数变化；生成文档过期。
 - **验收**：任何运行/平台/发布声明可追溯；旧百分比与硬编码测试数量不冒充当前状态；没有设备的格子保持未测。
