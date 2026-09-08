@@ -1,0 +1,13 @@
+{
+  "expo": {
+    "name": "Caesura Native Validation",
+    "slug": "caesura-native-validation",
+    "owner": "ailiasdesus-team",
+    "version": "1.0.0",
+    "extra": {
+      "eas": {
+        "projectId": "f1ec4f69-d2de-475c-ae7c-48be2b832b01"
+      }
+    }
+  }
+}

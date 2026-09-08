@@ -1,0 +1,61 @@
+name: U2 Apple native validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        type: string
+        required: true
+        description: Full 40-character commit SHA reachable in caesura-team/Caesura-AmeKAG
+
+jobs:
+  macos_debug:
+    name: macOS Debug native profile
+    type: custom
+    runs_on: macos-medium
+    steps:
+      - uses: eas/checkout
+      - name: Build and verify the exact source commit
+        env:
+          CAESURA_SOURCE_SHA: ${{ inputs.source_sha }}
+        run: python3 scripts/eas/run_apple_validation.py macos
+      - uses: eas/upload_artifact
+        if: ${{ always() }}
+        with:
+          type: other
+          name: u2-macos-debug-evidence
+          path: artifacts/eas/macos/evidence/**/*
+
+  ios_device_compile:
+    name: iOS arm64 unsigned compile (no device execution)
+    type: custom
+    runs_on: macos-medium
+    steps:
+      - uses: eas/checkout
+      - name: Compile and identify native iOS products
+        env:
+          CAESURA_SOURCE_SHA: ${{ inputs.source_sha }}
+        run: python3 scripts/eas/run_apple_validation.py ios-device
+      - uses: eas/upload_artifact
+        if: ${{ always() }}
+        with:
+          type: other
+          name: u2-ios-device-compile-evidence
+          path: artifacts/eas/ios-device/evidence/**/*
+
+  ios_simulator_cpp:
+    name: iOS Simulator arm64 unfiltered C++ tests
+    type: custom
+    runs_on: macos-medium
+    steps:
+      - uses: eas/checkout
+      - name: Compile simulator targets and execute native C++ tests
+        env:
+          CAESURA_SOURCE_SHA: ${{ inputs.source_sha }}
+        run: python3 scripts/eas/run_apple_validation.py ios-simulator
+      - uses: eas/upload_artifact
+        if: ${{ always() }}
+        with:
+          type: other
+          name: u2-ios-simulator-cpp-evidence
+          path: artifacts/eas/ios-simulator/evidence/**/*
