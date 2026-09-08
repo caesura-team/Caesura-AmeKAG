@@ -2,6 +2,10 @@
 
 当前唯一有效的后续迭代计划是 [运行时可靠性与交付闭环迭代计划](2026-09-05-001-refactor-runtime-foundation-plan.md)。
 
+进度显示：[当前待办清单](2026-09-05-003-runtime-foundation-todo.md)。详细证据见 [执行记录](2026-09-05-002-runtime-foundation-execution.md)。
+
+2026-09-08 接续开发核对见 [U12 交接记录](2026-09-08-001-u12-resume-handoff.md)：U11 对应 master CI 已在线复核；U12 已通过本机完整Windows Debug profile及严格证据核验（Cpp1292、Lua147/43，CTest25通过+1预声明外部AI跳过），完整Web496/496和原性能预算通过；正在交付到caesura-team组织仓库，U13语义等价语料进入准备。
+
 2026-09-05 用户要求重新制定后续计划，抛弃原有排期，仅保留两项方向约束：**底层优先、Studio 暂停**。
 
 ## 历史计划的地位

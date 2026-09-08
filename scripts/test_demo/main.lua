@@ -246,7 +246,7 @@ local function s7_update()
         center(h*0.48,"All systems operational",C.green,1.3)
     end
     if S.timer>3 then
-        center(h*0.60,"github.com/ailiasdesu/Caesura-AmeKAG",C.dim,1.0)
+        center(h*0.60,"github.com/caesura-team/Caesura-AmeKAG",C.dim,1.0)
     end
 end
 

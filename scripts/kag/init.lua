@@ -52,6 +52,7 @@ local save_cmds  = require("kag.commands.save")
 -- first required inside a frame/click callback (kag_runner.on_click ->
 -- kag.snapshot) would otherwise hard-error "not preloaded".
 local snapshot    = require("kag.snapshot")   -- rollback snapshots (on_click)
+local rollback_presentation = require("kag.rollback_presentation") -- prepared rollback resources
 local text_scene  = require("kag.text_scene") -- dialogue draw list (render)
 
 -- Declarative tween commands (round 106): preloaded so sandbox require

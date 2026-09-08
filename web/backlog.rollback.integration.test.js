@@ -1,15 +1,15 @@
 // @vitest-environment jsdom
-// round-87 parity lock: [rollback] in the web player (no undo stack) must
-// degrade to no-context, never crash, and never re-loop the scene.
+// Shared-runner parity: rollback with real history restores a click point;
+// an unconditional inline rollback keeps returning to that point.
 //
 // Deep backlog / history / rollback coverage beyond the round-82 baseline:
 //  1. backlog STRUCTURE  — per-page draws / nameplate / src fields; multi-[p]
 //     page order; the [ch name=] nameplate-prefix convention.
 //  2. backlog CAP        — web backlog grows UNBOUNDED (no backlog_max on the
 //     bridge/AdapterCore side), a 500-page probe runs clean (memory no crash).
-//  3. rollback semantics — [rollback] with no undo stack degrades in the MIDDLE
-//     of a multi-page scene; rollback to a [p] boundary keeps the page cursor;
-//     a later page still advances forward (no re-loop / no cursor rewound).
+//  3. rollback semantics — inline rollback restores real history and stops at
+//     its click boundary; public rollback restores a [p] wait and then follows
+//     the normal continuation. Lua and JS history discard future entries.
 //  4. replay/review      — re-running the same scene re-commits identical pages
 //     FIFO on top of the accumulated history; a deep read preserves order.
 //  5. clear semantics    — a NEW runScene KEEPS the accumulated backlog (session
@@ -151,33 +151,71 @@ describe('web backlog / history / rollback (round-87 parity deep)', () => {
   }, 300000)
 
   // ---------------------------------------------------------------- task 3 --
-  it('[rollback] through the shared runner completes and later pages advance', async () => {
+  it('inline [rollback] restores a real checkpoint and never falls through its script loop', async () => {
     player.core.backlog = []
     player.core.events.length = 0
     const ks = [
-      '[ch name="N" text="P1"]', '[p]',
-      '[ch name="N" text="P2"]', '[p]',
+      '[set var="f.reward" value=0]', '[set var="lf.local_value" value=10]',
+      '[ch name="N" text="P1"]',
+      '[set var="f.reward" value=1]', '[set var="lf.local_value" value=20]',
+      '[ch name="N" text="P2"]',
+      '[set var="f.reward" value=2]', '[set var="lf.local_value" value=30]',
       '[rollback]',
-      '[ch name="N" text="P3"]', '[p]',
+      '[set var="f.future_reward" value=1]', '[ch name="N" text="P3"]',
       '[end]',
     ].join(NL)
-    const out = await player.runScene(ks, 'rb_mid.ks', { maxFrames: 200000, autoClick: true })
-    expect(out.startsWith('DONE:'), out).toBe(true)
+    const advance = (autoClick = false) => player.runScene(ks, 'rb_mid.ks', {
+      maxFrames: 200, advance: true, advanceScene: 'rb_mid.ks', autoClick,
+    })
+    let out = await player.runScene(ks, 'rb_mid.ks', { maxFrames: 200 })
+    expect(out.startsWith('WAIT:'), out).toBe(true)
+    expect(await player.lua.doString("return #require('kag_runner').get_ctx()._undoStack")).toBe(0)
+    out = await advance()
+    expect(out.startsWith('WAIT:'), out).toBe(true)
+    expect(pageText()).toBe('[N]P2')
+    expect(await player.lua.doString("return #require('kag_runner').get_ctx()._undoStack")).toBe(1)
+
+    // Even automatic host clicks stop at the restored boundary. A bounded
+    // driver must not silently skip the repeated rollback to manufacture DONE.
+    out = await advance(true)
+    expect(out.startsWith('WAIT:'), out).toBe(true)
+    const restored = await player.lua.doString(`
+      local c=require('kag_runner').get_ctx()
+      return {reward=c.f.reward, local_value=c.lf.local_value, future=c.f.future_reward or false,
+        undo=#c._undoStack, waiting=c.waiting_input, pending=c._pendingRollback~=nil,
+        shown=c.text_state.reveal_chars, total=c.reveal.total}
+    `)
+    expect(restored).toMatchObject({ reward: 1, local_value: 20, future: false, undo: 1, waiting: true, pending: false })
+    expect(restored.shown).toBe(restored.total)
+    expect(pageText()).toBe('[N]P2')
+    expect((await readCtx('backlog')).map(entry => `[${entry.name}]${entry.text}`)).toEqual(['[N]P1', '[N]P2'])
+    expect(player.core.backlog.map(entry => entry.text)).toEqual(['[N]P1', '[N]P2'])
+    out = await advance()
+    expect(out.startsWith('WAIT:'), out).toBe(true)
+    expect(pageText()).toBe('[N]P2')
+    expect(player.core.backlog.map(entry => entry.text)).toEqual(['[N]P1', '[N]P2'])
+    expect(await player.lua.doString("return require('kag_runner').get_ctx().f.future_reward or false")).toBe(false)
     const errs = player.core.events.filter((e) => String(e.kind).includes('error'))
     expect(errs, 'rollback must surface no error event').toEqual([])
-    const texts = player.core.backlog.map((b) => b.text)
-    expect(player.core.backlog.length).toBe(3)
-    expect(texts).toEqual(['[N]P1', '[N]P2', '[N]P3'])
   }, 120000)
 
-  it('[rollback] preserves explicit ch and p waits before later pages advance', async () => {
+  it('public rollback restores an explicit p wait and then follows the baseline continuation', async () => {
     player.core.backlog = []
     const ks = [
+      '[set var="f.reward" value=0]', '[set var="lf.local_value" value=10]',
       '[ch name="A" text="R1"]', '[p]',
-      '[rollback]',
+      '[set var="f.reward" value=1]', '[set var="lf.local_value" value=20]',
       '[ch name="A" text="R2"]', '[p]',
+      '[set var="f.reward" value=2]', '[ch name="A" text="R3"]', '[p]',
       '[end]',
     ].join(NL)
+    const normal = await player.runScene(ks, 'rb_p.ks', { maxFrames: 2000, autoClick: true })
+    expect(normal.startsWith('DONE:'), normal).toBe(true)
+    const baselineHistory = player.core.backlog.map(entry => entry.text)
+    const baselineReward = (await readCtx('f')).reward
+    expect(baselineHistory).toEqual(['[A]R1', '[A]R2', '[A]R3'])
+
+    player.core.backlog = []
     let out = await player.runScene(ks, 'rb_p.ks', { maxFrames: 50000 })
     expect(out.startsWith('WAIT:'), out).toBe(true)
     expect(pageText()).toContain('R1')
@@ -186,15 +224,82 @@ describe('web backlog / history / rollback (round-87 parity deep)', () => {
     expect(out.startsWith('WAIT:'), out).toBe(true)
     // The common runner respects both the ch wait and the explicit p wait.
     expect(pageText()).toContain('R1')
-    let sawSecond = false
-    for (let clicks = 0; clicks < 6 && out.startsWith('WAIT:'); clicks++) {
+    out = await player.runScene(ks, 'rb_p.ks', { maxFrames: 50000, advance: true, advanceScene: 'rb_p.ks' })
+    expect(pageText()).toBe('[A]R2')
+    expect(await player.lua.doString("return #require('kag_runner').get_ctx()._undoStack")).toBe(2)
+    // Commit R3 to the JS backlog too, so restoration must actually remove
+    // future JS content rather than merely catch up with the Lua current page.
+    for (let clicks = 0; clicks < 3; clicks++) {
       out = await player.runScene(ks, 'rb_p.ks', { maxFrames: 50000, advance: true, advanceScene: 'rb_p.ks' })
-      sawSecond ||= pageText().includes('R2')
+      expect(out.startsWith('WAIT:'), out).toBe(true)
     }
-    expect(sawSecond).toBe(true)
+    expect(pageText()).toBe('[A]R3')
+    expect(player.core.backlog.map(entry => entry.text)).toEqual(baselineHistory)
+    expect(await player.lua.doString("return #require('kag_runner').get_ctx()._undoStack")).toBe(5)
+    const restored = await player.lua.doString(`
+      local r=require('kag_runner')
+      local ok,reason
+      for _=1,4 do
+        ok,reason=r.rollback()
+        if not ok then break end
+      end
+      local c=r.get_ctx()
+      local draws={}
+      require('kag.text_scene').render(c,{render_text=function(text) draws[#draws+1]=text end})
+      return {ok=ok,reason=reason,page=table.concat(draws),reward=c.f.reward,local_value=c.lf.local_value,
+        waiting=c.waiting_input,undo=#c._undoStack}
+    `)
+    expect(restored).toMatchObject({ ok: true, page: '[A]R1', reward: 0, local_value: 10, waiting: true, undo: 1 })
+    expect((await readCtx('backlog')).map(entry => entry.text)).toEqual(['R1'])
+    out = await player.runScene(ks, 'rb_p.ks', { maxFrames: 50000, advance: true, advanceScene: 'rb_p.ks' })
+    expect(out.startsWith('WAIT:'), out).toBe(true)
+    expect(pageText()).toBe('[A]R2')
+    expect(player.core.backlog.map(entry => entry.text)).toEqual(['[A]R1', '[A]R2'])
+    expect((await readCtx('backlog')).map(entry => `[${entry.name}]${entry.text}`)).toEqual(['[A]R1', '[A]R2'])
+    out = await player.runScene(ks, 'rb_p.ks', { maxFrames: 50000, advance: true, advanceScene: 'rb_p.ks', autoClick: true })
     expect(out.startsWith('DONE:'), out).toBe(true)
-    const texts = player.core.backlog.map((b) => b.text)
-    expect(texts).toEqual(['[A]R1', '[A]R2'])
+    expect(player.core.backlog.map(entry => entry.text)).toEqual(baselineHistory)
+    expect((await readCtx('f')).reward).toBe(baselineReward)
+    expect((await readCtx('backlog')).map(entry => `[${entry.name}]${entry.text}`)).toEqual(baselineHistory)
+  }, 120000)
+
+  it.each(['source', 'bundle'])('manual advance with persistent skip resumes a restored %s checkpoint', async (mode) => {
+    player.core.backlog = []
+    const name = 'rb_manual_skip.ks'
+    const ks = [
+      '[set var="f.reward" value=0]', '[ch name="N" text="ALPHA"]',
+      '[set var="f.reward" value=1]', '[ch name="N" text="BRAVO"]',
+      '[set var="f.reward" value=2]', '[end]',
+    ].join(NL)
+    let bundle
+    if (mode === 'bundle') {
+      player.lua.global.set('__ROLLBACK_SKIP_SOURCE', ks)
+      const serialized = await player.lua.doString(`
+        local compiler=require('kag.compiler')
+        local tokens=require('tokenizer').parse(__ROLLBACK_SKIP_SOURCE)
+        compiler.compile(tokens)
+        return compiler.serialize(tokens)
+      `)
+      bundle = { version: 1, scenes: { [name]: serialized }, assets: [] }
+    }
+    const run = (opts = {}) => mode === 'bundle'
+      ? player.runFromBundle(bundle, name, { maxFrames: 200, ...opts })
+      : player.runScene(ks, name, { maxFrames: 200, ...opts })
+    expect(await run()).toMatch(/^WAIT:/)
+    expect(await run({ advance: true, advanceScene: name })).toMatch(/^WAIT:/)
+    expect(pageText()).toBe('[N]BRAVO')
+    const restored = await player.lua.doString(`
+      local r=require('kag_runner')
+      local ok=r.rollback()
+      local c=r.get_ctx()
+      return {ok=ok,waiting=c._rollback_waiting,reward=c.f.reward,undo=#c._undoStack}
+    `)
+    expect(restored).toMatchObject({ ok: true, waiting: true, reward: 0, undo: 0 })
+    const out = await run({ advance: true, advanceScene: name, skip: true })
+    expect(out.startsWith('DONE:'), out).toBe(true)
+    expect((await readCtx('f')).reward).toBe(2)
+    expect(player.core.backlog.map(entry => entry.text)).toEqual(['[N]ALPHA', '[N]BRAVO'])
+    expect(await player.lua.doString("return require('kag_runner').get_ctx()._rollback_waiting or false")).toBe(false)
   }, 120000)
 
   // ---------------------------------------------------------------- task 4 --

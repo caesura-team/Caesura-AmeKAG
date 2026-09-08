@@ -20,7 +20,7 @@
 
 > **判定你的 ZIP 是"新包"还是"旧包"**：解压后看一眼目录——新包（Sprint 4 起，
 > 判据：解压目录含 `tools/project_templates/`、`scripts/`、`external/lua/lua.exe`）
-> 才能解压即建；**[v1.0.1 ZIP](https://github.com/ailiasdesu/Caesura-AmeKAG/releases)
+> 才能解压即建；**[v1.0.1 ZIP](https://github.com/caesura-team/Caesura-AmeKAG/releases)
 > 及更早的发布包为旧包**（无这些目录，`--editor` 会打印
 > `web-editor/dist not found; serving API only`）——旧包请走路径 B。
 > 包内容验证用 `bash scripts/verify_release_package.sh`（30 项断言；
@@ -234,11 +234,11 @@ brew install cmake sdl3 freetype zstd openssl@3   # ffmpeg 可选，见上
 
 ```bash
 # 推荐 1：部分克隆（仅按需下载当前提交的 blob，保留完整分支历史，下载量仅 ~25MB，速度提升 15 倍）
-git clone --filter=blob:none https://github.com/ailiasdesu/Caesura-AmeKAG.git CaesuraAmeKAG
+git clone --filter=blob:none https://github.com/caesura-team/Caesura-AmeKAG.git CaesuraAmeKAG
 cd CaesuraAmeKAG
 
 # 推荐 2：浅克隆（仅拉取最新 HEAD，适合 CI 或快速体验）
-# git clone --depth=1 https://github.com/ailiasdesu/Caesura-AmeKAG.git CaesuraAmeKAG
+# git clone --depth=1 https://github.com/caesura-team/Caesura-AmeKAG.git CaesuraAmeKAG
 
 # 确认在 master 分支
 git branch --show-current          # -> master

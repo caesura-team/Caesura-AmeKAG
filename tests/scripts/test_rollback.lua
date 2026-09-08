@@ -13,8 +13,10 @@ local ctx = {
     current_scene = "demo/rollback_demo.ks",
     currentScene = "demo/rollback_demo.ks",
     token_index = 7,
+    _resume_index = 9,
     f = { hp = 100, name = "Ame" },
     sf = { flag = true },
+    lf = { local_value = 10 },
     variables = { gold = 5 },
     backlog = { { name = "a", text = "line1" }, { name = "b", text = "line2" } },
     seen_scenes = { ["demo/rollback_demo.ks"] = { [5] = true } },
@@ -34,6 +36,8 @@ local snap = snapshot.capture(ctx)
 ctx.f.hp = 1
 ctx.variables.gold = 99
 ctx.token_index = 99
+ctx._resume_index = 100
+ctx.lf.local_value = 20
 ctx.backlog[#ctx.backlog + 1] = { name = "c", text = "line3" }
 ctx.reveal.elapsed = 0
 ctx.text_state.line = 9
@@ -45,7 +49,8 @@ check("restore token_index", ctx.token_index == 7)
 check("restore deep f", ctx.f.hp == 100)
 check("restore deep variables", ctx.variables.gold == 5)
 check("restore backlog truncated", #ctx.backlog == 2)
-check("restore reveal complete", ctx.reveal.elapsed == ctx.reveal.total)
+check("restore reveal complete", ctx.reveal.elapsed == ctx.reveal.total * ctx.text_speed
+      and ctx.text_state.reveal_chars == ctx.reveal.total)
 check("restore text_state", ctx.text_state.line == 2)
 check("restore seen_scenes", ctx.seen_scenes["demo/rollback_demo.ks"][5] == true)
 
@@ -53,20 +58,20 @@ check("restore seen_scenes", ctx.seen_scenes["demo/rollback_demo.ks"][5] == true
 local kag_runner = require("kag_runner")
 check("rollback exists", type(kag_runner.rollback) == "function")
 
--- Source-level invariants that unit tests cannot reach without a live
--- coroutine + engine frame: (1) the rollback respawn branch clears
--- stop_flag (else scheduler.run returns immediately and the script halts);
--- (2) the snapshot push is unconditional (not gated on reveal==nil, which
--- [ch]/[text] always set -- that bug left the undo stack permanently empty).
-local runner_src = io.open("scripts/kag_runner.lua", "r"):read("*a")
-local idx = runner_src:find("if ctx._pendingRollback then", 1, true)
-local respawn_blk = idx and runner_src:sub(idx, idx + 400) or ""
-check("rollback respawn clears stop_flag",
-      respawn_blk:find("stop_flag = false", 1, true) ~= nil)
-check("snapshot push not gated on reveal==nil",
-      not runner_src:find('if ctx.reveal == nil then', 1, true))
-check("snapshot push calls capture",
-      runner_src:find('require("kag.snapshot").capture(ctx)', 1, true) ~= nil)
+-- The former source-string checks are exercised through the real runner in
+-- test_rollback_session.lua: clear stop_flag, first-click reveal without a
+-- push, second-click capture and continuation. Keep direct value regressions
+-- here; neither copied source snippets nor function spelling prove behavior.
+check("restore preserves separate next execution cursor", ctx._resume_index == 9)
+check("restore local frame", ctx.lf.local_value == 10)
+require("kag.text_scene").add_text(ctx,"future",32,580,{255,255,255,255})
+ctx.reveal.elapsed = 0
+check("restored presentation stays independent from retained snapshot",
+      #snap.text_state.draws == 0 and snap.reveal.elapsed == 240)
+snap.lf = nil
+ctx.lf = { only_future = true }
+check("missing historical local frame clears future locals",
+      snapshot.restore(ctx, snap) and next(ctx.lf) == nil)
 
 for _, passed in ipairs(results) do assert(passed, "rollback check failed") end
 print("ROLLBACK TESTS DONE")

@@ -577,7 +577,10 @@ function compiler.compile(tokens)
     -- 2) Static macro inlining (Battle 1d) on the normalized stream:
     -- statically-safe macro call sites are expanded at compile time
     -- (zero runtime splice).
-    compiler.inlineStaticMacros(norm)
+    -- A runtime splice owns live instruction/control/macro indices. Rebuild
+    -- its metadata without silently inlining newly exposed nested calls:
+    -- those must go through the scheduler's index-adjusting splice path.
+    if not tokens._runtime_rewritten then compiler.inlineStaticMacros(norm) end
 
     -- 3) Handler binding + expression precompile on the final stream.
     local handlers = {}

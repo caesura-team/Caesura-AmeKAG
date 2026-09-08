@@ -18,6 +18,8 @@
 --                    "ending_companion", "ending_promise") -- reachability
 --                    probe for a specific ending branch.
 --    SAMPLE_FRAMES  frame budget (default 200000)
+--    SAMPLE_BRANCH_ROUTE / SAMPLE_BRANCH_TEXT  optional paired Golden proof:
+--                    require the final route and a fully revealed branch line.
 --
 --  Exit: 0 = reached [end] (DONE), 1 = frame limit / fatal, 2 = target label
 --  not found.
@@ -59,6 +61,14 @@ local kag_runner = require("kag_runner")
 local STORY  = os.getenv("SAMPLE_STORY")  or "demo/example_game/story.ks.new"
 local ENDING = os.getenv("SAMPLE_ENDING") -- optional *ending_xxx label
 local FMAX   = tonumber(os.getenv("SAMPLE_FRAMES")) or 200000
+local BRANCH_ROUTE = os.getenv("SAMPLE_BRANCH_ROUTE")
+local BRANCH_TEXT = os.getenv("SAMPLE_BRANCH_TEXT")
+local branch_seen = false
+if (BRANCH_ROUTE ~= nil or BRANCH_TEXT ~= nil)
+    and (not BRANCH_ROUTE or BRANCH_ROUTE == "" or not BRANCH_TEXT or BRANCH_TEXT == "") then
+    print("FATAL_BRANCH: both route and text expectations are required")
+    os.exit(1)
+end
 
 local started, err = kag_runner.start(STORY)
 if not started then
@@ -89,6 +99,15 @@ end
 -- option when a [select]/[endbutton] choice block is active.
 local function drive_click()
     local ctx = _G._CAESURA_CTX
+    if BRANCH_ROUTE and ctx and ctx.f and ctx.f.route == BRANCH_ROUTE then
+        local state = require("kag.text_scene").get_state(ctx)
+        local fully_revealed = not ctx.reveal or (state.reveal_chars or 0) >= ctx.reveal.total
+        if fully_revealed then
+            local words = {}
+            for _, draw in ipairs(state.draws or {}) do words[#words + 1] = draw.text or "" end
+            if table.concat(words):find(BRANCH_TEXT, 1, true) then branch_seen = true end
+        end
+    end
     if ctx and ctx._choiceMode then
         _G._GAME_MOUSE_X = 100
         local cbs = ctx._choiceButtonsActive or ctx._choiceButtons
@@ -132,9 +151,13 @@ end
 if not result then result = "FRAME_LIMIT" end
 
 local ctx = _G._CAESURA_CTX
+local branch_ok = not BRANCH_ROUTE or (ctx.f and ctx.f.route == BRANCH_ROUTE and branch_seen)
+if BRANCH_ROUTE then
+    print("BRANCH_PROGRESS route=" .. tostring(ctx.f and ctx.f.route) .. " text=" .. tostring(branch_seen))
+end
 print("RESULT " .. result
       .. " token=" .. tostring(ctx.token_index)
       .. " clicks=" .. clicks
       .. " scene=" .. tostring(ctx.current_scene))
 
-os.exit(result:sub(1, 4) == "DONE" and 0 or 1)
+os.exit(result:sub(1, 4) == "DONE" and branch_ok and 0 or 1)

@@ -1,8 +1,8 @@
 -- test_rollback_memory.lua — rollback snapshot memory cost regression test
 -- P1-5: verifies snapshot.capture stays within a sane per-snapshot budget
 -- (deep-copied variable tables are inherent rollback semantics; the
--- text_state.draws shallow-copy optimization cut 64-snapshot memory by
--- ~85% at VN scale). A regression here (e.g. reverting to deep copy, or
+-- immutable text values are shared across histories without aliasing the
+-- renderer's mutable draws). A regression here (e.g. repeated deep copy, or
 -- growing the per-snapshot footprint) fails loudly.
 package.path = "scripts/?.lua;scripts/kag/?.lua;" .. package.path
 local passed, failed = 0, 0
@@ -13,13 +13,9 @@ local function check(name, cond, detail)
 end
 
 local snapshot = require("kag.snapshot")
-
--- Mock layers (capture_snapshot must exist for snapshot.capture).
-local layers_saved = package.loaded["layers"]
-package.loaded["layers"] = {
-    capture_snapshot = function() return {} end,
-    restore_snapshot = function() end,
-}
+local Text = require("kag.text_scene")
+local Layers = require("layers")
+Layers.clear_for_restore()
 
 local function make_ctx(nvars, ndraws)
     local ctx = {
@@ -35,23 +31,55 @@ local function make_ctx(nvars, ndraws)
     }
     for i = 1, nvars do ctx.f["flag_" .. i] = i end
     for i = 1, ndraws do
-        ctx.text_state.draws[i] = { group = "g", r = 255, g = 255, b = 255,
-                                    a = 255, typewriter = true,
-                                    text = "Line " .. i }
+        Text.add_text(ctx,"Line "..i,32,580,{255,255,255,255},"g")
     end
     return ctx
 end
 
--- 1. text_state.draws is shallow-copied: the snapshot's draws array is a
---    DIFFERENT table sharing the same entries (the live state appending a
---    new draw must not appear in the snapshot).
+-- 1. Each snapshot owns its draw array and shares only immutable captured
+--    values with other snapshots, never the live renderer's entries.
 local ctx = make_ctx(10, 100)
 local snap = snapshot.capture(ctx)
 check("snapshot has own draws array", snap.text_state.draws ~= ctx.text_state.draws)
-check("draw entries shared (shallow copy)", snap.text_state.draws[1] == ctx.text_state.draws[1])
+check("draw values independent from mutable renderer", snap.text_state.draws[1] ~= ctx.text_state.draws[1])
 check("draws count preserved", #snap.text_state.draws == 100)
-ctx.text_state.draws[101] = { group = "g", text = "appended" }
+Text.add_text(ctx,"appended",32,604,{255,255,255,255},"g")
 check("live append does not leak into snapshot", #snap.text_state.draws == 100)
+
+-- The current version in a weak cache must not keep old mutable draw/source
+-- objects alive or accumulate every version of a repeatedly changed entry.
+do
+    local changing=make_ctx(0,1)
+    local draw=changing.text_state.draws[1]
+    local source={kind="text",src="Original",scene="s.ks",speaker="",
+        opts={msgX=32,msgY=580,color={r=1,g=2,b=3,a=255}}}
+    changing.text_state.page_src={source}
+    local first=snapshot.capture(changing)
+    collectgarbage("collect")
+    local before=collectgarbage("count")
+    local latest
+    for i=1,2000 do
+        draw.text="Version "..i
+        source.src=draw.text
+        source.opts.msgX=i
+        latest=snapshot.capture(changing)
+    end
+    collectgarbage("collect")
+    local retained=collectgarbage("count")-before
+    check("replaced text cache records do not accumulate",retained<64,string.format("%.1f KB",retained))
+    check("earlier captured semantic values survive in-place changes",
+        first.text_state.draws[1].text=="Line 1" and first.text_state.page_src[1].src=="Original"
+        and first.text_state.page_src[1].opts.msgX==32)
+    local weak=setmetatable({[draw]=true,[source]=true,[source.opts]=true,[source.opts.color]=true},{__mode="k"})
+    changing,draw,source=nil,nil,nil
+    collectgarbage("collect"); collectgarbage("collect")
+    check("retained text histories never keep source pages alive",next(weak)==nil)
+    local target=make_ctx(0,0)
+    snapshot.restore(target,latest)
+    check("detached text records restore after source pages are collected",
+        target.text_state.draws[1].text=="Version 2000"
+        and target.text_state.page_src[1].opts.msgX==2000)
+end
 
 -- 2. variable tables are still deep-copied (rollback isolation): mutating
 --    ctx.f after capture must not affect the snapshot.
@@ -103,6 +131,53 @@ check("extreme scale under 12 MB cap",
       mem4 < 12 * 1024, string.format("%.1f KB", mem4))
 print(string.format("  [mem] 64 snaps @ 2000vars+2000draws: %.1f KB (%.1f KB/snap)",
       mem4, mem4 / 64))
+
+-- Expanded U12 declaration baseline, recorded before the capture change.
+-- Use the EXISTING 3 MiB/48 KiB budgets for 64 snapshots, now with 8 nested
+-- loop frames, 12 non-GPU layer declarations, and 300 page replay records.
+-- No threshold is raised after observing this workload.
+do
+    local rich = make_ctx(200,300)
+    rich._forStack,rich._whileStack,rich._ifStack,rich._switchStack = {},{},{},{}
+    rich._forStackMarks,rich._forRewound = {},{}
+    for i=1,8 do
+        rich._forStack[i]={pos=i,var="i"..i,endv=100,step=1,ended=false}
+        rich._whileStack[i]={pos=8+i,ended=false}
+        rich._ifStack[i],rich._switchStack[i]=true,false
+        rich._forStackMarks["i"..i],rich._forRewound["i"..i]=1,false
+    end
+    rich.text_state.page_src={}
+    for i=1,300 do
+        rich.text_state.page_src[i]={kind="text",src="Line "..i,scene="s.ks",speaker="",
+            opts={nvl=true,msgX=32,msgY=160+i*24,lineHeight=24,maxWidth=1184,
+                color={r=255,g=240,b=230,a=255},font_size=24}}
+    end
+    for i=1,12 do
+        Layers.add_layer(nil,{id="memory_layer_"..i,x=i*10,y=i*8,w=120,h=100,z=i})
+    end
+    collectgarbage("collect")
+    local before=collectgarbage("count")
+    local history={}
+    local started=os.clock()
+    for i=1,64 do
+        rich._forStack[1].endv=100+i
+        Layers.get_layer("memory_layer_1").x=i
+        history[i]=snapshot.capture(rich)
+    end
+    local capture_ms=(os.clock()-started)*1000
+    collectgarbage("collect")
+    local retained=collectgarbage("count")-before
+    check("64 control/layer/page histories under existing 3 MB budget",retained<3*1024,
+        string.format("%.1f KB",retained))
+    check("control/layer/page history under existing 48 KB each",retained/64<48,
+        string.format("%.1f KB/snap",retained/64))
+    check("control and layer declarations remain independently captured",
+        history[1].control.for_[1].endv==101 and history[64].control.for_[1].endv==164
+        and history[1].layers.nodes[2].x==1 and history[64].layers.nodes[2].x==64)
+    print(string.format("  [rich] 64 snaps @ 200vars+300draws+300sources+8frames+12layers: %.1f KB; %.3f ms",
+        retained,capture_ms))
+    Layers.clear_for_restore()
+end
 
 -- 6. Seen-token state grows throughout a story. Keep all 64 history entries
 -- without retaining a full numeric-key hash table in each snapshot.
@@ -264,7 +339,7 @@ do
         and target.seen_scenes.story[2] == true)
 end
 
-package.loaded["layers"] = layers_saved
+Layers.clear_for_restore()
 
 if failed > 0 then
     print(string.format("ROLLBACK MEMORY TESTS: %d passed, %d FAILED", passed, failed))

@@ -3,8 +3,15 @@
 #include "job/api/IJobSystem.h"
 #include "script/bindings/AIBinding.h"
 #include "mocks/NullJobSystem.h"
+#include "entry/Engine.h"
+#include "entry/EngineConfig.h"
+#include "EntryLifecycleBackends.h"
+#include "U10SessionFixture.h"
 #include <httplib.h>
+#include <chrono>
+#include <condition_variable>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <utility>
@@ -116,6 +123,236 @@ private:
     int port = 0;
 };
 
+// The first real HTTP response can straddle rollback. The barrier observes
+// server admission and withholds that response; no guessed sleep races the
+// runner against the worker. Later requests always receive a fresh reply.
+class RollbackAiLoopback {
+public:
+    RollbackAiLoopback(bool holdOld, bool oldSuccess)
+        : released(!holdOld), oldSucceeds(oldSuccess) {
+        server.Post("/v1/chat/completions", [this](const httplib::Request&,
+                                                  httplib::Response& response) {
+            bool obsolete = false;
+            {
+                std::unique_lock<std::mutex> lock(mutex);
+                obsolete = ++requests == 1;
+                changed.notify_all();
+                if (obsolete && !changed.wait_for(lock, std::chrono::seconds(10),
+                                                  [this] { return released; }))
+                    barrierTimedOut = true;
+            }
+            if (obsolete && !oldSucceeds) {
+                response.status = 503;
+                response.set_content("obsolete failure", "text/plain");
+            } else {
+                const std::string reply = obsolete ? "obsolete reply" : "current reply";
+                response.set_content("{\"choices\":[{\"message\":{\"content\":\""
+                    + reply + "\"}}]}", "application/json");
+            }
+        });
+        port = server.bind_to_any_port("127.0.0.1");
+        REQUIRE(port > 0);
+        listener = std::thread([this] { server.listen_after_bind(); });
+        server.wait_until_ready();
+    }
+    ~RollbackAiLoopback() {
+        releaseOld();
+        server.stop();
+        if (listener.joinable()) listener.join();
+    }
+    bool waitForRequests(int count) {
+        std::unique_lock<std::mutex> lock(mutex);
+        return changed.wait_for(lock, std::chrono::seconds(5),
+                                [this, count] { return requests >= count; });
+    }
+    void releaseOld() {
+        std::lock_guard<std::mutex> lock(mutex);
+        released = true;
+        changed.notify_all();
+    }
+    bool barrierFailed() {
+        std::lock_guard<std::mutex> lock(mutex);
+        return barrierTimedOut;
+    }
+    void configure(lua_State* state) const {
+        // Runner startup requires config for accessibility. Initialize that real
+        // module first so its defaults cannot overwrite the loopback endpoint.
+        const auto source = "package.path = 'scripts/?.lua;scripts/?/init.lua;' .. package.path; "
+            "config = require('config'); u12_ai_endpoint = 'http://127.0.0.1:"
+            + std::to_string(port) + "/v1'; config.ai = {endpoint = u12_ai_endpoint, "
+            "model = 'fixture', timeout_ms = 10000}";
+        run(state, source.c_str());
+    }
+
+private:
+    httplib::Server server;
+    std::thread listener;
+    std::mutex mutex;
+    std::condition_variable changed;
+    int port = 0;
+    int requests = 0;
+    bool released;
+    const bool oldSucceeds;
+    bool barrierTimedOut = false;
+};
+
+// Keep the production pool and HTTP worker path, but leave only one worker
+// available. This also exercises single-worker CI scheduling on larger hosts.
+class OneAvailableAiWorker {
+public:
+    ~OneAvailableAiWorker() { release(); }
+    bool reserveSpareWorkers(Caesura::IJobSystem& jobs) {
+        const int spareWorkers = jobs.workerCount() - 1;
+        for (int i = 0; i < spareWorkers; ++i) {
+            if (jobs.submit([gate = gate]() {
+                    std::unique_lock<std::mutex> lock(gate->mutex);
+                    ++gate->parked;
+                    gate->changed.notify_all();
+                    gate->changed.wait(lock, [&gate] { return gate->released; });
+                }, Caesura::JobPriority::Normal, nullptr) == 0)
+                return false;
+        }
+        std::unique_lock<std::mutex> lock(gate->mutex);
+        return gate->changed.wait_for(lock, std::chrono::seconds(5),
+            [&] { return gate->parked == spareWorkers; });
+    }
+    void release() {
+        std::lock_guard<std::mutex> lock(gate->mutex);
+        gate->released = true;
+        gate->changed.notify_all();
+    }
+
+private:
+    struct Gate {
+        std::mutex mutex;
+        std::condition_variable changed;
+        int parked = 0;
+        bool released = false;
+    };
+    // Worker-held ownership remains valid during assertion-failure unwinding.
+    const std::shared_ptr<Gate> gate = std::make_shared<Gate>();
+};
+
+bool aiWorkersFinished(Caesura::IJobSystem& jobs) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (jobs.pendingJobs() != 0 && std::chrono::steady_clock::now() < deadline)
+        std::this_thread::yield();
+    return jobs.pendingJobs() == 0;
+}
+
+void startRollbackAiScene(lua_State* state) {
+    run(state, R"lua(
+        package.path = 'scripts/?.lua;scripts/?/init.lua;' .. package.path
+        package.loaded.flow = {load_scene = function(path)
+            return {path = path, labels = {}, tokens = require('tokenizer').parse(
+                '[p][ai_dialog prompt="request" name="fixture" '
+                .. 'fallback="obsolete fallback" max_wait_ms=60000][p][end]')}
+        end}
+        require('kag')
+        runner = require('kag_runner')
+        runner.set_resume_adapter({
+            is_paused = function() return false end,
+            resume = function(_, co, value)
+                u12_last_co = co
+                return coroutine.resume(co, value)
+            end,
+        })
+        -- Observe the real callback entry without replacing native AI I/O.
+        local native_query = AI.query_async
+        u12_ai_requests, u12_ai_calls = 0, {}
+        u12_ai_weak = setmetatable({}, {__mode = 'v'})
+        AI.query_async = function(prompt, opts, callback)
+            assert(config.ai.endpoint == u12_ai_endpoint,
+                'runner startup must preserve the loopback endpoint')
+            u12_ai_requests = u12_ai_requests + 1
+            local request = u12_ai_requests
+            u12_ai_calls[request] = 0
+            local observed = function(...)
+                u12_ai_calls[request] = u12_ai_calls[request] + 1
+                return callback(...)
+            end
+            u12_ai_weak[request] = observed
+            local submitted = native_query(prompt, opts, observed)
+            assert(submitted, 'the real JobSystem must accept the AI request')
+            return submitted
+        end
+        assert(runner.start('ai-rollback.ks'))
+        runner.get_ctx().f.marker = 'historical'
+        assert(runner.on_click())
+        assert(#runner.get_ctx()._undoStack == 1, 'history must come from a public click')
+        assert(u12_ai_requests == 1)
+        u12_old_co = u12_last_co
+        assert(coroutine.status(u12_old_co) == 'suspended')
+        assert(not runner.get_ctx().waiting_input and next(_AI_CALLBACKS) ~= nil,
+            'the scene must be suspended inside the real AI wait')
+        runner.get_ctx().f.marker = 'future'
+    )lua");
+}
+
+void checkRollbackAiResponse(bool buffered, bool oldSuccess) {
+    Caesura::Test::LifecycleProbe render;
+    Caesura::EngineConfig config;
+    config.headless = true;
+    config.render = new Caesura::Test::RenderDevice(render);
+    Caesura::Engine engine(std::move(config));
+    REQUIRE(engine.init());
+    // Destroy the barrier before Engine joins workers if an assertion fails.
+    RollbackAiLoopback server(!buffered, oldSuccess);
+    auto* state = engine.lua().state();
+    server.configure(state);
+    startRollbackAiScene(state);
+    auto& jobs = engine.jobSystem();
+    REQUIRE(server.waitForRequests(1));
+    OneAvailableAiWorker workerCapacity;
+    if (buffered) REQUIRE(aiWorkersFinished(jobs));
+    else {
+        REQUIRE(workerCapacity.reserveSpareWorkers(jobs));
+        CHECK(jobs.pendingJobs() == jobs.workerCount());
+    }
+    run(state, R"lua(
+        assert(u12_ai_calls[1] == 0 and #runner.get_ctx().backlog == 0)
+        assert(runner.rollback())
+        assert(coroutine.status(u12_old_co) == 'dead')
+        assert(#runner.get_ctx()._undoStack == 0)
+        assert(runner.get_ctx().f.marker == 'historical')
+        assert(next(_AI_CALLBACKS) == nil)
+        collectgarbage('collect')
+        assert(u12_ai_weak[1] == nil, 'rollback must release the old AI closure')
+        local progressed, reason = runner.update(0.1)
+        assert(not progressed and reason == 'waiting-input')
+        assert(u12_ai_requests == 1 and #runner.get_ctx().backlog == 0)
+        assert(runner.on_click(), 'the restored click must start a fresh AI request')
+        assert(u12_ai_requests == 2)
+    )lua");
+    // The successor is submitted above, but a single available worker cannot
+    // start its HTTP request while the obsolete request still holds that worker.
+    server.releaseOld();
+    REQUIRE(server.waitForRequests(2));
+    workerCapacity.release();
+    REQUIRE(aiWorkersFinished(jobs));
+    CHECK_FALSE(server.barrierFailed());
+    jobs.pollMainThreadJobs();
+    run(state, R"lua(
+        assert(u12_ai_calls[1] == 0 and u12_ai_calls[2] == 1)
+        runner.update(0.016)
+        local ctx = runner.get_ctx()
+        assert(rawequal(ctx, _CAESURA_CTX) and ctx.f.marker == 'historical')
+        assert(#ctx.backlog == 1 and ctx.backlog[1].text == 'current reply')
+        local page = {}
+        for _, draw in ipairs(require('kag.text_scene').get_state(ctx).draws) do
+            page[#page + 1] = draw.text or ''
+        end
+        local visible = table.concat(page)
+        assert(visible:find('current reply', 1, true), 'fresh AI reply must be presented')
+        assert(not visible:find('obsolete', 1, true), 'old response/fallback must stay absent')
+        assert(ctx.waiting_input and not ctx._rollback_waiting)
+        assert(next(_AI_CALLBACKS) == nil)
+        collectgarbage('collect')
+        assert(u12_ai_weak[1] == nil and u12_ai_weak[2] == nil)
+    )lua");
+    engine.shutdown();
+}
+
 int retainSentinel(lua_State* state) {
     lua_newtable(state);
     lua_pushstring(state, "unrelated registry owner");
@@ -162,6 +399,19 @@ TEST_CASE("AI callback completion releases its reference exactly once") {
     checkSentinel(lua.get(), sentinel);
     run(lua.get(), "assert(calls == 1)");
     luaL_unref(lua.get(), LUA_REGISTRYINDEX, sentinel);
+}
+
+TEST_CASE("AI U12: rollback suppresses obsolete real HTTP replies and presents a fresh reply") {
+    bool buffered = false;
+    bool oldSuccess = true;
+    SUBCASE("old success arrives after rollback") {}
+    SUBCASE("old HTTP error arrives after rollback") { oldSuccess = false; }
+    SUBCASE("old success completes before rollback without consumption") { buffered = true; }
+    SUBCASE("old HTTP error completes before rollback without consumption") {
+        buffered = true;
+        oldSuccess = false;
+    }
+    checkRollbackAiResponse(buffered, oldSuccess);
 }
 
 TEST_CASE("AI callback can cancel and enqueue a successor exactly once") {
