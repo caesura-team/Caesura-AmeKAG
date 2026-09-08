@@ -176,6 +176,37 @@ syncBuiltinESMExports();
         manifest = (self.out_path / 'MANIFEST.txt').read_text(encoding='utf-8')
         self.assertIn('scenes: 2', manifest)
 
+    def test_07_final_runtime_spawn_failure_reports_os_error(self):
+        """A real OS spawn failure must retain its cause in the package log."""
+        if NODE is None:
+            self.skipTest("node not found on PATH")
+        (ROOT / 'tmp').mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix='u14-runtime-spawn-', dir=ROOT / 'tmp') as temp:
+            injection = Path(temp) / 'spawn-boundary.mjs'
+            missing_lua = Path(temp) / 'missing-lua-interpreter.exe'
+            injection.write_text('''import child from 'node:child_process';
+import {syncBuiltinESMExports} from 'node:module';
+const spawn = child.spawnSync;
+child.spawnSync = function(command,args,options) {
+  if (args?.[0]==='-e' && args[1]?.includes('PACKAGE-SCENE-KEYS:')) {
+    command = %s;
+  }
+  return spawn(command,args,options);
+};
+syncBuiltinESMExports();
+''' % json.dumps(str(missing_lua)), encoding='utf-8')
+            env = dict(os.environ, NODE_OPTIONS='--import=' + injection.as_uri())
+            rc, out, err = run_cli_full('--out', self.out_name, FIRST_VN_KS, env=env)
+            self.assertEqual(rc, 1, out + err)
+            self.assertTrue((self.out_path / 'cache/story/story.lua').is_file())
+            self.assertIn('runtime verifier failed', out + err)
+            self.assertIn('ENOENT', out + err)
+            self.assertIn('missing-lua-interpreter.exe', out + err)
+            self.assertIn('status=null', out + err)
+            self.assertIn('signal=none', out + err)
+            self.assertNotIn('PACKAGE COMPLETE', out)
+            self.assertFalse((self.out_path / 'MANIFEST.txt').exists())
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

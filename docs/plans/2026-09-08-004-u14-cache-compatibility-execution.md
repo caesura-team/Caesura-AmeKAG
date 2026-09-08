@@ -50,3 +50,9 @@ readCache以完整文件内容判断外部改写，缓存解析后的数据，�
 首次候选CI`34217073981`保留失败：Windows Debug/Release和Linux均在同一个Web测试中把新场景format 2断言为1。本机因`cache/ksc-web/demo_galgame_demo.ksc`旧文件仍为1而没有暴露该旧断言；该测试只解析表并未真正执行，原本的zero-parse名称缺乏对应证明。
 
 测试现在始终使用当前编译器新生成的序列化流，明确断言format 2，再禁用tokenizer.parse并拒绝对未编译tokens调用compile，通过实际Web bundle入口执行到DONE，核对变量与对话结果，finally恢复测试钩子。本机旧文件不再参与这项判断，也未删除旧产物。定向新测试通过；原生/C++/Lua源码未修改，c227dcc7的完整原生证据保持原来源，新的完整Web与CI结果另行记录。
+
+随后完整本机`web-u14-ci-fix-03`为505通过/1失败、0跳过：synthetic1000三样本2414.2/2337.1/2212.0ms，中位2337.1ms，未满足原绝对吞吐预算；配对缩放和内存通过。该次FAIL保留，不能被前次全绿覆盖。两次638个source指纹只有上述flow测试不同，声明依赖digest相同；独立审查未发现跨文件Lua hook污染路径，但历史运行没有CPU/频率/GC采样，尚不能确定变慢原因。后续固定样本诊断不调整预算，不挑选通过结果。
+
+第二轮CI`34220173064`的Web阶段退出0：Linux完整506/506、0跳过，Windows两配置各475通过/32既有产物条件跳过。三平台的synthetic1000中位耗时分别为Linux1893.2ms、Windows Debug1667.6ms、Release1581.2ms，均满足原预算，但不改写本机FAIL。Windows Release/macOS/Android/iOS任务成功；Windows Debug在后续真实Unicode RPC打包返回500，Linux被能力矩阵新鲜度检查阻断。原始日志保留在`artifacts/validation/u14/ci16-run34220173064-failed.log`和`ci16-run34220173064-full.log`。后者源于新增Web场景断言后未再次运行矩阵生成器，生成结果必须随测试更新；前者继续按真实打包响应复现，不能删除或跳过E2E。PR #16仍未合并。
+
+Unicode问题在本机现有Lua、当前Debug Lua和冷Web构建的真实RPC中均未复现，冷路径19项断言全部通过。云端测试只打印响应前300字符，丢失最终runtime校验失败原因；本次仅补齐失败时完整打包logTail、子进程OS错误/退出码/信号及实际解释器信息。真实不存在解释器的spawn负控制先失败于缺失诊断，再通过；完整Node CLI现为7/7、0跳过。未推测性修改编码或兼容语义，云端根因待增强日志定位。本轮证据在`artifacts/validation/u14/unicode-ci-fix/`。

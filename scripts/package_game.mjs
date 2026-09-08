@@ -363,14 +363,26 @@ local compatible,reason=compiler.validateBundle(bundle,keys)
 if not compatible then io.stderr:write(tostring(reason));os.exit(1) end
 io.write('PACKAGE-SCENE-KEYS:',table.concat(keys,string.char(0)))
 `], { cwd: OUT_PATH, encoding: 'utf8' })
+function reportRuntimeCheckFailure() {
+  console.error('[package] runtime verifier failed: ' +
+    `lua=${LUA_PATH}; cwd=${OUT_PATH}; node=${process.version}; ` +
+    `status=${runtimeCheck.status}; signal=${runtimeCheck.signal || 'none'}; ` +
+    `error=${runtimeCheck.error?.message || 'none'}`)
+}
 if (runtimeCheck.status !== 0) {
   if (runtimeCheck.stdout) process.stdout.write(runtimeCheck.stdout)
   if (runtimeCheck.stderr) process.stderr.write(runtimeCheck.stderr)
+  reportRuntimeCheckFailure()
   pkg('FATAL: delivered bundle/runtime compatibility failed')
   process.exit(1)
 }
 const keyPrefix = 'PACKAGE-SCENE-KEYS:'
-if (!runtimeCheck.stdout.startsWith(keyPrefix)) fail('packaged runtime did not return scene keys')
+if (!runtimeCheck.stdout.startsWith(keyPrefix)) {
+  if (runtimeCheck.stdout) process.stdout.write(runtimeCheck.stdout)
+  if (runtimeCheck.stderr) process.stderr.write(runtimeCheck.stderr)
+  reportRuntimeCheckFailure()
+  fail('packaged runtime did not return scene keys')
+}
 const sceneKeys = runtimeCheck.stdout.slice(keyPrefix.length).split('\0')
 if (sceneKeys.length !== BAKED_SCENE_PATHS.length) fail('packaged runtime returned incomplete scene keys')
 for (const [index, key] of sceneKeys.entries()) {

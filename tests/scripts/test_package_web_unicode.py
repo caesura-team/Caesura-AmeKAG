@@ -130,6 +130,8 @@ def main():
                                             "outName": "故事输出(50%)"}).encode("utf-8"),
                            timeout=300)
         resp = json.loads(body) if body else {}
+        if st != 200 or resp.get("ok") is not True:
+            print("PACKAGE WEB FAILURE LOG:\n" + resp.get("logTail", "<missing logTail>"))
         check("package-web-unicode-200", st == 200 and resp.get("ok") is True,
               "%s %s" % (st, body[:300]))
         check("package-web-outputDir", resp.get("outputDir") == OUT,
