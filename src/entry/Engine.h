@@ -68,6 +68,7 @@ public:
 
     bool isHeadless() const { return m_config.headless; }
     bool isEditorMode() const { return m_config.editorMode; }
+    bool hasRenderFailure() const noexcept { return m_renderFailed; }
     void renderOneFrame();
     std::string captureFrameForRpc(int w, int h);
     bool reloadScriptsNow();
@@ -102,6 +103,7 @@ private:
     void requireInitialized() const;
     void processEvents();
     void render(float dt);
+    void presentFrame();
 
     void triggerAutoSave();
     void quicksave();
@@ -136,6 +138,7 @@ private:
     double       m_autoSaveIntervalSec = 60.0;
     bool         m_platformInitialized = false;
     bool         m_renderInitialized = false;
+    bool         m_renderFailed = false;
     bool         m_audioInitialized = false;
     bool         m_textureManagerInitialized = false;
     bool         m_layerManagerInitialized = false;

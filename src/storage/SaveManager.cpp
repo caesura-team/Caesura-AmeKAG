@@ -18,7 +18,6 @@
 #include "../di/BackendRegistry.h"
 #include "../archive/api/ICryptoEngine.h"
 #include "../debug/api/DebugLog.h"
-#include <bgfx/bgfx.h>
 #include <vector>
 
 #include <cstdio>
@@ -724,58 +723,5 @@ void SaveManager::registerBuiltinMigrations() {
     });
 }
 
-
-// ============================================================================
-//  Thumbnail capture (SU-4 stub)
-// ============================================================================
-bool SaveManager::s_gfxReady = false;
-
-std::string SaveManager::captureThumbnailPNG(int width, int height) {
-    (void)width; (void)height;
-    if (!s_gfxReady) {
-        DEBUG_ERR(SubSys::Storage, ErrCode::Ok, "[SaveManager] Thumbnail skipped: gfx not ready");
-        return "";
-    }
-    // Two-phase safe capture. requestScreenShot latching is pumped by the
-    // NEXT bgfx::frame() -- and the engine already pumps one in commit_frame
-    // every frame. Pumping an EXTRA bgfx::frame() in the middle of the frame
-    // loop (inside [save], during the Lua update) double-presents per engine
-    // frame; with the external EGL context on Android the text atlas came
-    // back stale, which is the device "text invisible after [save]" bug.
-    // So: first try to read the file produced by the PREVIOUS request (the
-    // previous frame, fully presented long ago), then issue a fresh request.
-    static const char* kThumb = "save_thumb.png";
-    std::string result;
-    {
-        std::ifstream file(kThumb, std::ios::binary | std::ios::ate);
-        if (file.is_open()) {
-            std::streamsize size = file.tellg();
-            if (size > 0) {
-                file.seekg(0, std::ios::beg);
-                std::vector<unsigned char> buffer(static_cast<size_t>(size));
-                file.read(reinterpret_cast<char*>(buffer.data()), size);
-                if (file.good()) {
-                    static const char* b64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-                    result.reserve(((size + 2) / 3) * 4);
-                    for (size_t j = 0; j < size; j += 3) {
-                        unsigned char a = buffer[j];
-                        unsigned char b = (j + 1 < size) ? buffer[j + 1] : 0;
-                        unsigned char c = (j + 2 < size) ? buffer[j + 2] : 0;
-                        result += b64[a >> 2];
-                        result += b64[((a & 3) << 4) | (b >> 4)];
-                        result += (j + 1 < size) ? b64[((b & 15) << 2) | (c >> 6)] : '=';
-                        result += (j + 2 < size) ? b64[c & 63] : '=';
-                    }
-                }
-                file.close();
-            }
-        }
-    }
-    std::remove(kThumb);
-    // Request the NEXT frame's shot (no mid-frame frame()); the following
-    // save call picks it up.
-    bgfx::requestScreenShot(BGFX_INVALID_HANDLE, kThumb);
-    return result;
-}
 
 } // namespace Caesura

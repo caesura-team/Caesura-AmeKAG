@@ -112,6 +112,14 @@ public:
     void setDebugName(uint16_t, const std::string&) override {}
     void drawDebugOverlay(const std::string&) override {}
     bool requestScreenshot(const std::string&) override { return false; }
+    Caesura::ScreenshotResult requestScreenshot(const Caesura::ScreenshotOptions&) override {
+        Caesura::ScreenshotResult result;
+        result.status = Caesura::ScreenshotStatus::Failed;
+        result.error = "screenshots unsupported by test renderer";
+        return result;
+    }
+    Caesura::ScreenshotResult takeScreenshot(const Caesura::ScreenshotTicket&) override { return {}; }
+    bool cancelScreenshot(const Caesura::ScreenshotTicket&) override { return false; }
     bool recoverDevice(void*, int, int) override { return true; }
     void flagDeviceLost() override {}
     bool consumeDeviceLost() override { return false; }

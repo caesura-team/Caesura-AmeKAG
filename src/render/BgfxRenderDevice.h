@@ -24,7 +24,7 @@ public:
 
     bool init(void* nativeWindowHandle, int width, int height) override;
     void setPresentSize(uint32_t width, uint32_t height) override;
-    bool isInitialized() const override { return m_bgfxInitialized; }
+    bool isInitialized() const override { return canRender(); }
     void beginShutdown() override;
     void resize(int width, int height) override;
     void shutdown() override;
@@ -66,6 +66,9 @@ public:
     void setDebugName(uint16_t viewId, const std::string& name) override;
     void drawDebugOverlay(const std::string& title) override;
     bool requestScreenshot(const std::string& path) override;
+    ScreenshotResult requestScreenshot(const ScreenshotOptions& options) override;
+    ScreenshotResult takeScreenshot(const ScreenshotTicket& ticket) override;
+    bool cancelScreenshot(const ScreenshotTicket& ticket) override;
     bool recoverDevice(void* nativeWindowHandle, int width, int height) override;
     void flagDeviceLost() override;
     bool consumeDeviceLost() override;
@@ -135,6 +138,16 @@ private:
     int m_width  = 1280;
     int m_height = 720;
     bool m_bgfxInitialized = false;
+    bool m_stopping = false;
+    bool m_recoveryFailed = false;
+    bool m_recovering = false;
+    bool m_frameFinalized = false;
+    uint64_t m_frameId = 0;
+    std::shared_ptr<ScreenshotQueue> m_screenshots = std::make_shared<ScreenshotQueue>();
+    bool canRender() const {
+        return m_bgfxInitialized && !m_stopping && !m_recovering && !m_recoveryFailed
+            && m_deviceCore && !m_deviceCore->deviceLost();
+    }
 
     // -- Post-processing chain state (round 102) --------------------------
     struct PostFxStage {
@@ -178,6 +191,3 @@ private:
 };
 
 } // namespace Caesura
-
-// -- Shutdown coordination: signal bgfx debug callback before GPU teardown --
-void setBgfxShuttingDown(bool shuttingDown);

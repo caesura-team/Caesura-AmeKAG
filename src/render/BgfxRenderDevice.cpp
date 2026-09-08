@@ -63,10 +63,10 @@ void BgfxRenderDevice::flushAllRTT() {
 // ===========================================================================
 
 
-void BgfxRenderDevice::beginBatch() { m_draw->beginBatch(); }
+void BgfxRenderDevice::beginBatch() { if (canRender() && m_draw) m_draw->beginBatch(); }
 
 
-void BgfxRenderDevice::flushBatch() { m_draw->flushBatch(); }
+void BgfxRenderDevice::flushBatch() { if (canRender() && m_draw) m_draw->flushBatch(); }
 
 
 // ===========================================================================
@@ -88,13 +88,19 @@ extern "C" void* caesuraAndroidGLContext();  // set by Engine from SDL3PlatformB
 #endif
 
 bool BgfxRenderDevice::init(void* nativeWindowHandle, int width, int height) {
+    if (m_bgfxInitialized || width <= 0 || height <= 0) return false;
+    m_screenshots->close("renderer initializing");
+    m_stopping = false;
+    m_recovering = false;
+    m_recoveryFailed = false;
+    m_frameFinalized = false;
 #if defined(__ANDROID__)
     BgfxDeviceCore::setOverrideGLContext(caesuraAndroidGLContext());
 #endif
     m_bgfxInitialized = false;
     m_shutdownComplete = false;
     m_shaders = std::make_unique<BgfxShaderManager>();
-    m_deviceCore = std::make_unique<BgfxDeviceCore>();
+    m_deviceCore = std::make_unique<BgfxDeviceCore>(m_screenshots);
     if (!m_deviceCore->init(nativeWindowHandle, width, height)) {
         m_deviceCore.reset();
         m_shaders.reset();
@@ -122,11 +128,15 @@ bool BgfxRenderDevice::init(void* nativeWindowHandle, int width, int height) {
     m_draw->init(&m_drawState);
     m_textRenderer = std::make_unique<TextRenderer>();
     if (!m_textRenderer->init(this)) { m_textRenderer.reset(); }
+    if (!m_shaders->coreProgramsBroken() && bgfx::getCaps()->rendererType != bgfx::RendererType::Noop
+        && !m_deviceCore->deviceLost()) m_screenshots->open();
     return true;
 }
 
 void BgfxRenderDevice::beginShutdown() {
-    if (m_bgfxInitialized) setBgfxShuttingDown(true);
+    m_stopping = true;
+    m_screenshots->close("renderer shutting down");
+    if (m_deviceCore) m_deviceCore->beginShutdown();
 }
 
 void BgfxRenderDevice::setPresentSize(uint32_t width, uint32_t height) {
@@ -134,6 +144,7 @@ void BgfxRenderDevice::setPresentSize(uint32_t width, uint32_t height) {
 }
 
 void BgfxRenderDevice::resize(int width, int height) {
+    if (!canRender()) return;
     m_deviceCore->resize(width, height);
     // Scene RTT + chain scratch targets are size-matched to the backbuffer;
     // rebuild them lazily on the next chain frame (beginFrame/runPostFxChain
@@ -144,12 +155,14 @@ void BgfxRenderDevice::resize(int width, int height) {
 
 void BgfxRenderDevice::shutdown() {
     if (m_shutdownComplete) return;
+    beginShutdown();
     m_shutdownComplete = true;
     if (m_bgfxInitialized) {
         // Release chain RTTs while the GPU context is still alive.
         destroyPostFxResources();
     }
     if (m_textRenderer) m_textRenderer.reset();
+    m_draw.reset();
     m_shaders.reset();
     if (m_deviceCore) m_deviceCore->shutdown();
     m_bgfxInitialized = false;
@@ -200,7 +213,8 @@ void BgfxRenderDevice::shutdown() {
 //   T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T
 
 void BgfxRenderDevice::beginFrame() {
-    if (m_bgfxInitialized && m_deviceCore) {
+    if (canRender()) {
+        m_frameFinalized = false;
         m_deviceCore->beginFrame();
         // Round-102 post-process chain: while active the whole frame's
         // VIEW_MAIN draws are redirected to the internal scene RTT. This must
@@ -233,22 +247,36 @@ void BgfxRenderDevice::beginFrame() {
 
 
 void BgfxRenderDevice::endFrame() {
-    if (m_bgfxInitialized && m_deviceCore) m_deviceCore->endFrame();
+    commit_frame();
+    advanceFrame();
 }
 
 
 void BgfxRenderDevice::commit_frame() {
-    if (!m_bgfxInitialized || !m_deviceCore) return;
+    if (!canRender() || m_frameFinalized) return;
     if (isPostFxActive()) runPostFxChain(); // sceneRtt -> stages -> backbuffer
     // Always restore VIEW_MAIN to the default backbuffer for next frame
     // (idempotent: no-op when no chain was active and no retarget was set).
     bgfx::setViewFrameBuffer(BgfxDeviceCore::VIEW_MAIN, BGFX_INVALID_HANDLE);
-    m_deviceCore->commit_frame();
+    m_frameFinalized = true;
 }
 
 
 void BgfxRenderDevice::advanceFrame() {
-    if (m_bgfxInitialized && m_deviceCore) m_deviceCore->commit_frame();
+    if (!m_bgfxInitialized || !m_deviceCore || m_recovering || (m_recoveryFailed && !m_stopping)
+        || m_deviceCore->deviceLost()) return;
+    // beginShutdown closes capture admission but allows the Engine's two explicit
+    // resource-destruction drains while the context is still alive, including
+    // when core recreation succeeded but font/program restoration failed.
+    // A missing context, active recovery, or latched device loss still rejects.
+    if (!m_stopping) {
+        for (const auto& submission : m_screenshots->submit(++m_frameId)) {
+            if (!canRender()) break;
+            bgfx::requestScreenShot(BGFX_INVALID_HANDLE, submission.callbackName.c_str());
+        }
+    }
+    m_deviceCore->advanceFrame();
+    m_frameFinalized = false;
 }
 
 
@@ -261,13 +289,13 @@ void BgfxRenderDevice::setScreenOffset(int dx, int dy) {
     if (m_deviceCore) m_deviceCore->setScreenOffset(dx, dy);
 }
 
-void BgfxRenderDevice::setViewRect(uint16_t v, uint16_t x, uint16_t y, uint16_t w, uint16_t h) { m_deviceCore->setViewRect(v, x, y, w, h); }
+void BgfxRenderDevice::setViewRect(uint16_t v, uint16_t x, uint16_t y, uint16_t w, uint16_t h) { if (canRender()) m_deviceCore->setViewRect(v, x, y, w, h); }
 
 
-void BgfxRenderDevice::setViewClear(uint16_t v, uint16_t f, uint32_t c, float d, uint8_t s) { m_deviceCore->setViewClear(v, f, c, d, s); }
+void BgfxRenderDevice::setViewClear(uint16_t v, uint16_t f, uint32_t c, float d, uint8_t s) { if (canRender()) m_deviceCore->setViewClear(v, f, c, d, s); }
 
 
-void BgfxRenderDevice::touch(uint16_t v) { m_deviceCore->touch(v); }
+void BgfxRenderDevice::touch(uint16_t v) { if (canRender()) m_deviceCore->touch(v); }
 
 
 
@@ -275,28 +303,29 @@ void BgfxRenderDevice::touch(uint16_t v) { m_deviceCore->touch(v); }
 // createRenderTarget / destroyRenderTarget / blitViewport
 //   T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T
 
-ViewportHandle BgfxRenderDevice::createRenderTarget(int w, int h) { return m_deviceCore->createRenderTarget(w, h); }
+ViewportHandle BgfxRenderDevice::createRenderTarget(int w, int h) { return canRender() ? m_deviceCore->createRenderTarget(w, h) : ViewportHandle{}; }
 
 
-void BgfxRenderDevice::destroyRenderTarget(ViewportHandle h) { m_deviceCore->destroyRenderTarget(h); }
+void BgfxRenderDevice::destroyRenderTarget(ViewportHandle h) { if (m_bgfxInitialized && m_deviceCore) m_deviceCore->destroyRenderTarget(h); }
 
 
 void BgfxRenderDevice::blitViewport(ViewportHandle handle, uint16_t targetView,
                                      float x, float y, float w, float h) {
+    if (!canRender()) return;
     blitTexture(targetView, m_deviceCore->getViewportTexture(handle), x, y, w, h, 255);
 }
 
-RenderTextureHandle BgfxRenderDevice::getViewportTexture(ViewportHandle h) { return toRenderHandle(m_deviceCore->getViewportTexture(h)); }
+RenderTextureHandle BgfxRenderDevice::getViewportTexture(ViewportHandle h) { return canRender() ? toRenderHandle(m_deviceCore->getViewportTexture(h)) : RenderTextureHandle{}; }
 
-RenderProgramHandle BgfxRenderDevice::getFallbackProgram() const { return toRenderHandle(m_shaders->getFallbackProgram()); }
+RenderProgramHandle BgfxRenderDevice::getFallbackProgram() const { return m_shaders ? toRenderHandle(m_shaders->getFallbackProgram()) : RenderProgramHandle{}; }
 
-RenderUniformHandle BgfxRenderDevice::getDefaultSampler() const { return toRenderHandle(m_shaders->getDefaultSampler()); }
-
-
+RenderUniformHandle BgfxRenderDevice::getDefaultSampler() const { return m_shaders ? toRenderHandle(m_shaders->getDefaultSampler()) : RenderUniformHandle{}; }
 
 
-void BgfxRenderDevice::blitTexture(uint16_t v, uint32_t tid, float x, float y, float w, float h, uint8_t o) { m_draw->blitTexture(v,tid,x,y,w,h,o); }
-void BgfxRenderDevice::blitTexture(uint16_t v, bgfx::TextureHandle t, float x, float y, float w, float h, uint8_t o) { m_draw->blitTexture(v,t,x,y,w,h,o); }
+
+
+void BgfxRenderDevice::blitTexture(uint16_t v, uint32_t tid, float x, float y, float w, float h, uint8_t o) { if (canRender() && m_draw) m_draw->blitTexture(v,tid,x,y,w,h,o); }
+void BgfxRenderDevice::blitTexture(uint16_t v, bgfx::TextureHandle t, float x, float y, float w, float h, uint8_t o) { if (canRender() && m_draw) m_draw->blitTexture(v,t,x,y,w,h,o); }
 
 
 
@@ -315,7 +344,7 @@ void BgfxRenderDevice::renderText(uint16_t viewId, const std::string& text,
     // Scaled/bold/italic/struck text ({size}/{b}/{i}/{s} markup) bypasses
     // the cache (the geometry differs per scale/shear/strike) and goes
     // straight to the direct path.
-    if (!m_textRenderer) return;
+    if (!canRender() || !m_textRenderer) return;
     if (scale != 1.0f || bold || italic || strike) {
         m_textRenderer->renderText(viewId, text, x, y, TextColor{r,g,b,a},
                                    scale, bold, italic, strike);
@@ -328,26 +357,27 @@ void BgfxRenderDevice::renderRuby(uint16_t viewId, const std::string& text,
                                      const std::string& ruby,
                                      float x, float y,
                                      uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
-    if (m_textRenderer)
+    if (canRender() && m_textRenderer)
         m_textRenderer->renderRuby(viewId, text, ruby, x, y, TextColor{r,g,b,a});
 }
 
 void BgfxRenderDevice::setFont(int fontId) {
-    if (m_textRenderer)
+    if (canRender() && m_textRenderer)
         m_textRenderer->setFont(static_cast<FontId>(fontId));
 }
 
 bool BgfxRenderDevice::loadTTF(const char* path, float fontSize) {
-    return m_textRenderer && m_textRenderer->loadTTF(path, fontSize);
+    return canRender() && m_textRenderer && m_textRenderer->loadTTF(path, fontSize);
 }
 
 float BgfxRenderDevice::textLineHeight() const {
     return m_textRenderer ? m_textRenderer->lineHeight() : 16.0f;
 }
 
-void BgfxRenderDevice::setDebugName(uint16_t v, const std::string& n) { m_deviceCore->setDebugName(v, n.c_str()); }
+void BgfxRenderDevice::setDebugName(uint16_t v, const std::string& n) { if (canRender()) m_deviceCore->setDebugName(v, n.c_str()); }
 
 void BgfxRenderDevice::drawDebugOverlay(const std::string& title) {
+    if (!canRender()) return;
     const bgfx::Caps* caps = bgfx::getCaps();
     if (!caps) return;
 
@@ -359,13 +389,34 @@ void BgfxRenderDevice::drawDebugOverlay(const std::string& title) {
 }
 
 bool BgfxRenderDevice::requestScreenshot(const std::string& path) {
-    if (path.empty()) return false;
-    bgfx::requestScreenShot(BGFX_INVALID_HANDLE, path.c_str());
-    return true;
+    if (path.empty() || !canRender()) return false;
+    return static_cast<bool>(m_screenshots->request({}, m_deviceCore->presentWidth(),
+                                                  m_deviceCore->presentHeight(), path).ticket);
+}
+
+ScreenshotResult BgfxRenderDevice::requestScreenshot(const ScreenshotOptions& options) {
+    // No bgfx introspection at admission: readiness is renderer-owned.
+    if (!canRender()) {
+        ScreenshotResult result;
+        result.status = ScreenshotStatus::Failed;
+        result.error = "renderer unavailable";
+        return result;
+    }
+    return m_screenshots->request(options, m_deviceCore->presentWidth(), m_deviceCore->presentHeight());
+}
+ScreenshotResult BgfxRenderDevice::takeScreenshot(const ScreenshotTicket& ticket) {
+    return m_screenshots->take(ticket);
+}
+bool BgfxRenderDevice::cancelScreenshot(const ScreenshotTicket& ticket) {
+    return m_screenshots->cancel(ticket);
 }
 
 bool BgfxRenderDevice::recoverDevice(void* nativeWindowHandle, int width, int height) {
-    if (!m_bgfxInitialized || !m_deviceCore) return false;
+    if (!m_bgfxInitialized || !m_deviceCore || m_stopping || m_recovering) return false;
+    m_recovering = true;
+    m_recoveryFailed = true;
+    m_frameFinalized = false;
+    m_screenshots->close("renderer recovering");
 
     std::unique_ptr<IPreparedFontState> savedFont;
     if (m_textRenderer) savedFont=m_textRenderer->takeFontForDeviceRecovery();
@@ -380,9 +431,9 @@ bool BgfxRenderDevice::recoverDevice(void* nativeWindowHandle, int width, int he
     m_shaders.reset();
     m_bgfxInitialized = false;
     m_deviceCore->shutdown();
-    setBgfxShuttingDown(false);
 
     if (!m_deviceCore->init(nativeWindowHandle, width, height)) {
+        m_recovering = false;
         return false;
     }
     m_bgfxInitialized = true;
@@ -407,14 +458,26 @@ bool BgfxRenderDevice::recoverDevice(void* nativeWindowHandle, int width, int he
     if (!m_textRenderer->init(this,false)
         || (savedFont && !m_textRenderer->applyFontState(std::move(savedFont)))) {
         m_textRenderer.reset();
+        m_recovering = false;
         return false;
     }
+    m_recovering = false;
+    m_recoveryFailed = false;
+    if (m_shaders->coreProgramsBroken() || m_deviceCore->deviceLost()
+        || bgfx::getCaps()->rendererType == bgfx::RendererType::Noop) {
+        m_recoveryFailed = true;
+        return false;
+    }
+    m_screenshots->open();
     return true;
 }
 
-void BgfxRenderDevice::flagDeviceLost() { BgfxDebugCallback::flagDeviceLost(); }
+void BgfxRenderDevice::flagDeviceLost() {
+    if (m_deviceCore) m_deviceCore->flagDeviceLost();
+    else m_screenshots->close("device lost");
+}
 
-bool BgfxRenderDevice::consumeDeviceLost() { return BgfxDebugCallback::isDeviceLost(); }
+bool BgfxRenderDevice::consumeDeviceLost() { return m_deviceCore && m_deviceCore->consumeDeviceLost(); }
 
 RenderRuntimeInfo BgfxRenderDevice::getRuntimeInfo() const {
     RenderRuntimeInfo info;
@@ -435,7 +498,7 @@ RenderRuntimeInfo BgfxRenderDevice::getRuntimeInfo() const {
 //  fillViewport -- render solid-color quad into a viewport RTT framebuffer
 // ===========================================================================
 
-void BgfxRenderDevice::fillViewport(ViewportHandle h, uint8_t r, uint8_t g, uint8_t b, uint8_t a) { m_draw->fillViewport(h,r,g,b,a); }
+void BgfxRenderDevice::fillViewport(ViewportHandle h, uint8_t r, uint8_t g, uint8_t b, uint8_t a) { if (canRender() && m_draw) m_draw->fillViewport(h,r,g,b,a); }
 
 // Accessibility color filter presets: shared pure table (ColorFilterMath.h).
 bool BgfxRenderDevice::setColorFilter(ColorFilterPreset preset) {
@@ -457,7 +520,7 @@ bool BgfxRenderDevice::setColorFilter(ColorFilterPreset preset) {
 // submitFullscreenQuad → BgfxDraw
 
 
-void BgfxRenderDevice::submitBlend(uint16_t v, RenderTextureHandle base, RenderTextureHandle blend, int mode, float ba, float bla, float ga) { m_draw->submitBlend(v,toBgfx(base),toBgfx(blend),mode,ba,bla,ga); }
+void BgfxRenderDevice::submitBlend(uint16_t v, RenderTextureHandle base, RenderTextureHandle blend, int mode, float ba, float bla, float ga) { if (canRender() && m_draw) m_draw->submitBlend(v,toBgfx(base),toBgfx(blend),mode,ba,bla,ga); }
 
 
 // ===========================================================================
@@ -467,28 +530,28 @@ void BgfxRenderDevice::submitBlend(uint16_t v, RenderTextureHandle base, RenderT
 // Spec [10.2.25]: @Beta 闂?Pre-bake rule images into a LUT texture atlas for batch
 // transition rendering. Currently each transition passes its rule texture
 // individually via texture slot 2. A pre-baked atlas would reduce draw calls.
-void BgfxRenderDevice::submitTransition(uint16_t v, RenderTextureHandle from, RenderTextureHandle to, RenderTextureHandle rule, int method, float progress) { m_draw->submitTransition(v,toBgfx(from),toBgfx(to),toBgfx(rule),method,progress); }
+void BgfxRenderDevice::submitTransition(uint16_t v, RenderTextureHandle from, RenderTextureHandle to, RenderTextureHandle rule, int method, float progress) { if (canRender() && m_draw) m_draw->submitTransition(v,toBgfx(from),toBgfx(to),toBgfx(rule),method,progress); }
 
 
 // ===========================================================================
 //  GPU Effect: VFX — fade / blur / quake post-processing
 // ===========================================================================
 
-void BgfxRenderDevice::submitVFX(uint16_t v, RenderTextureHandle src, int e, float fa, float fr, float fg, float fb, float br, float qx, float qy) { m_draw->submitVFX(v,toBgfx(src),e,fa,fr,fg,fb,br,qx,qy); }
+void BgfxRenderDevice::submitVFX(uint16_t v, RenderTextureHandle src, int e, float fa, float fr, float fg, float fb, float br, float qx, float qy) { if (canRender() && m_draw) m_draw->submitVFX(v,toBgfx(src),e,fa,fr,fg,fb,br,qx,qy); }
 
 
 // ===========================================================================
 //  GPU Transform: Stretch Blit (filtered copy with src/dst rects)
 // ===========================================================================
 
-void BgfxRenderDevice::stretchBlt(uint16_t v, uint32_t d, float dx, float dy, float dw, float dh, uint32_t s, float sx, float sy, float sw, float sh, int f) { m_draw->stretchBlt(v,d,dx,dy,dw,dh,s,sx,sy,sw,sh,f); }
+void BgfxRenderDevice::stretchBlt(uint16_t v, uint32_t d, float dx, float dy, float dw, float dh, uint32_t s, float sx, float sy, float sw, float sh, int f) { if (canRender() && m_draw) m_draw->stretchBlt(v,d,dx,dy,dw,dh,s,sx,sy,sw,sh,f); }
 
 
 // ===========================================================================
 //  GPU Transform: Affine Blit (2D affine matrix transform)
 // ===========================================================================
 
-void BgfxRenderDevice::affineBlt(uint16_t v, uint32_t d, float dx, float dy, float dw, float dh, uint32_t s, float sx, float sy, float sw, float sh, const float m[6]) { m_draw->affineBlt(v,d,dx,dy,dw,dh,s,sx,sy,sw,sh,m); }
+void BgfxRenderDevice::affineBlt(uint16_t v, uint32_t d, float dx, float dy, float dw, float dh, uint32_t s, float sx, float sy, float sw, float sh, const float m[6]) { if (canRender() && m_draw) m_draw->affineBlt(v,d,dx,dy,dw,dh,s,sx,sy,sw,sh,m); }
 
 
 // ===========================================================================
@@ -500,7 +563,7 @@ void BgfxRenderDevice::affineBlt(uint16_t v, uint32_t d, float dx, float dy, flo
 bool BgfxRenderDevice::isPostFxSupported(PostFxKind kind) const {
     // All four kinds ride the same full-screen quad pipeline; support is
     // backend-agnostic as long as the device is initialized with shaders.
-    return m_bgfxInitialized && m_shaders != nullptr;
+    return canRender() && m_shaders != nullptr;
 }
 
 BgfxRenderDevice::PostFxHandle BgfxRenderDevice::createPostFx(PostFxKind kind, const PostFxParams& params) {

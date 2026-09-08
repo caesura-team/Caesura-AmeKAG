@@ -64,11 +64,6 @@ public:
     virtual int currentSchemaVersion() const = 0;
     virtual void registerMigration(int fromVersion, int toVersion,
                                    MigrationFn fn) = 0;
-    virtual std::string captureThumbnailPNG(int width = 320, int height = 180) = 0;
-    // Gfx-readiness (audit SIGSEGV guard): captureThumbnailPNG calls
-    // bgfx::requestScreenShot + frame with no init guard -- a save
-    // before the renderer initializes crashed. Engine::init() sets it.
-    virtual void setGfxReady(bool ready) = 0;
 };
 
 } // namespace Caesura

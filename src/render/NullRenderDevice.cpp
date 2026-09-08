@@ -38,6 +38,14 @@ void NullRenderDevice::blitTexture(uint16_t, uint32_t, float, float, float, floa
 void NullRenderDevice::setDebugName(uint16_t, const std::string&) {}
 void NullRenderDevice::drawDebugOverlay(const std::string&) {}
 bool NullRenderDevice::requestScreenshot(const std::string&) { return false; }
+ScreenshotResult NullRenderDevice::requestScreenshot(const ScreenshotOptions&) {
+    ScreenshotResult result;
+    result.status = ScreenshotStatus::Failed;
+    result.error = "screenshots unsupported by headless renderer";
+    return result;
+}
+ScreenshotResult NullRenderDevice::takeScreenshot(const ScreenshotTicket&) { return {}; }
+bool NullRenderDevice::cancelScreenshot(const ScreenshotTicket&) { return false; }
 bool NullRenderDevice::recoverDevice(void*, int width, int height) {
     m_width = width;
     m_height = height;

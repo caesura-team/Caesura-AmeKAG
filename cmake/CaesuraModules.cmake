@@ -286,6 +286,7 @@ caesura_add_module(Render
     src/render/ColorFilterMath.cpp
     src/render/BgfxShaderManager.cpp
     src/render/BgfxDebugCallback.cpp
+    src/render/ScreenshotQueue.cpp
     src/render/RTTManager.cpp
     src/render/EmbeddedShaders.cpp
     src/render/EmbeddedShaders_GL.cpp

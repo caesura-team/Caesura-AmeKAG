@@ -7,18 +7,26 @@
 #include <cstdio>
 #include <cstdarg>
 #include <atomic>
+#include "ScreenshotQueue.h"
 
 // BgfxDebugCallback -- captures bgfx internal error/warning messages.
 // Extracted from BgfxRenderDevice (U1).
 
 class BgfxDebugCallback : public bgfx::CallbackI {
 public:
-    bool m_shuttingDown = false;
+    explicit BgfxDebugCallback(std::shared_ptr<Caesura::ScreenshotQueue> queue = std::make_shared<Caesura::ScreenshotQueue>())
+        : m_screenshots(std::move(queue)) {}
+    void reset() { m_shuttingDown.store(false); m_deviceLost.store(false); m_lossPending.store(false); }
+    void beginShutdown() { m_shuttingDown.store(true); m_screenshots->close("renderer shutting down"); }
 
     // Device loss detection (set from bgfx fatal callback on any thread)
-    static std::atomic<bool> s_deviceLost;
-    static void flagDeviceLost() { s_deviceLost.store(true); }
-    static bool isDeviceLost() { return s_deviceLost.exchange(false); }
+    void flagDeviceLost() {
+        m_deviceLost.store(true);
+        m_lossPending.store(true);
+        m_screenshots->close("device lost");
+    }
+    bool deviceLost() const { return m_deviceLost.load(); }
+    bool consumeDeviceLost() { return m_lossPending.exchange(false); }
     void fatal(const char* _filePath, uint16_t _line, bgfx::Fatal::Enum _code, const char* _str) override {
         // Device lost is non-fatal — flag it and let the main loop recover
         if (_code == bgfx::Fatal::DeviceLost) {
@@ -29,7 +37,7 @@ public:
             return;
         }
         BX_UNUSED(_code);
-        if (!m_shuttingDown) {
+        if (!m_shuttingDown.load()) {
             DEBUG_WARN(Caesura::SubSys::Render, Caesura::ErrCode::Ok,
                        "[bgfx WARN] %s(%d): %s",
                        _filePath, (int)_line, _str);
@@ -48,12 +56,14 @@ public:
     bool cacheRead(uint64_t, void*, uint32_t) override { return false; }
     void cacheWrite(uint64_t, const void*, uint32_t) override {}
     void screenShot(const char* _name, uint32_t _width, uint32_t _height,
-                    uint32_t _depth, bgfx::TextureFormat::Enum _format,
+                    uint32_t _pitch, bgfx::TextureFormat::Enum _format,
                     const void* _data, uint32_t _size, bool _flipY) override;
     void captureBegin(uint32_t, uint32_t, uint32_t, bgfx::TextureFormat::Enum, bool) override {}
     void captureEnd() override {}
     void captureFrame(const void*, uint32_t) override {}
+private:
+    std::shared_ptr<Caesura::ScreenshotQueue> m_screenshots;
+    std::atomic<bool> m_shuttingDown{false};
+    std::atomic<bool> m_deviceLost{false};
+    std::atomic<bool> m_lossPending{false};
 };
-
-extern BgfxDebugCallback g_bgfxDebugCallback;
-void setBgfxShuttingDown(bool shuttingDown);

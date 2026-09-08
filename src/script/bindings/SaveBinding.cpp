@@ -15,6 +15,7 @@ extern "C" {
 #include "SaveBinding.h"
 #include "../../di/BackendRegistry.h"
 #include "../../storage/api/ISaveManager.h"
+#include "../../render/api/IRenderDevice.h"
 #include <cstdio>
 #include <ctime>
 #include <algorithm>
@@ -22,6 +23,7 @@ extern "C" {
 #include <limits>
 #include <stdexcept>
 #include <unordered_set>
+#include <new>
 
 namespace Caesura {
 
@@ -350,12 +352,177 @@ static int lua_ClearEncryptionKey(lua_State* L) {
 }
 
 // -- lua_CaptureThumbnail ---------------------------------------------------
+namespace {
+constexpr const char* kCaptureGuard = "Caesura.ThumbnailCapture";
+
+struct CaptureLease {
+    ScreenshotTicket ticket;
+    ScreenshotResult result;
+    std::string base64;
+    bool ownsTicket = false;
+};
+
+// Lua is compiled as C: its yield/error longjmps do not unwind C++ locals.
+// The POD shell is protected before any request; all owning C++ values live
+// behind it, including buffers used by allocation-capable Lua push calls.
+struct CaptureGuard {
+    CaptureLease* lease;
+    bool cancelled;
+    const char* status;
+    char error[256];
+};
+
+static void releaseCapture(CaptureGuard* guard) noexcept {
+    if (!guard || !guard->lease) return;
+    auto* lease = guard->lease;
+    if (lease->ownsTicket) {
+        lease->ownsTicket = false;
+        // Never retain/dereference an old renderer address across a yield.
+        // Globally unique tickets let a replacement safely reject this id.
+        auto* renderer = BackendRegistry::instance().getRenderDevice();
+        if (renderer) {
+            try { renderer->cancelScreenshot(lease->ticket); } catch (...) {}
+            // Completion may have won the race: still consume OUR terminal.
+            try { (void)renderer->takeScreenshot(lease->ticket); } catch (...) {}
+        }
+    }
+    delete lease;
+    guard->lease = nullptr;
+}
+
+static int closeCapture(lua_State* L) {
+    releaseCapture(static_cast<CaptureGuard*>(lua_touserdata(L, 1)));
+    return 0;
+}
+
+static int cancelCapture(lua_State* L) {
+    auto* guard = static_cast<CaptureGuard*>(lua_touserdata(L, lua_upvalueindex(1)));
+    guard->cancelled = true;
+    releaseCapture(guard);
+    return 0;
+}
+
+static void startCapture(CaptureGuard* guard) noexcept {
+    try {
+        guard->lease = new CaptureLease;
+        auto* renderer = BackendRegistry::instance().getRenderDevice();
+        if (!renderer) {
+            guard->status = "unavailable";
+            std::snprintf(guard->error, sizeof(guard->error), "renderer-unavailable");
+            return;
+        }
+        auto& lease = *guard->lease;
+        lease.result = renderer->requestScreenshot(ScreenshotOptions{320, 180});
+        lease.ticket = lease.result.ticket;
+        lease.ownsTicket = static_cast<bool>(lease.ticket);
+        if (!lease.ownsTicket || lease.result.status != ScreenshotStatus::Pending) {
+            guard->status = "unavailable";
+            std::snprintf(guard->error, sizeof(guard->error), "%s",
+                lease.result.error.empty() ? "screenshot-rejected" : lease.result.error.c_str());
+        }
+    } catch (const std::exception& error) {
+        guard->status = "failed";
+        std::snprintf(guard->error, sizeof(guard->error), "%s", error.what());
+    } catch (...) {
+        guard->status = "failed";
+        std::snprintf(guard->error, sizeof(guard->error), "screenshot-request-failed");
+    }
+}
+
+static void pollCapture(CaptureGuard* guard) noexcept {
+    if (guard->status) return;
+    try {
+        auto& lease = *guard->lease;
+        auto* renderer = BackendRegistry::instance().getRenderDevice();
+        if (!renderer) {
+            guard->status = "cancelled";
+            std::snprintf(guard->error, sizeof(guard->error), "renderer-unavailable");
+            return;
+        }
+        lease.result = renderer->takeScreenshot(lease.ticket);
+        if (lease.result.status == ScreenshotStatus::Pending) return;
+        lease.ownsTicket = false;
+        if (lease.result.status == ScreenshotStatus::Completed) {
+            if (lease.result.png.empty()) {
+                guard->status = "failed";
+                std::snprintf(guard->error, sizeof(guard->error), "empty-screenshot");
+                return;
+            }
+            static constexpr char alphabet[] =
+                "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+            const auto& png = lease.result.png;
+            lease.base64.reserve(((png.size() + 2) / 3) * 4);
+            for (size_t i = 0; i < png.size(); i += 3) {
+                const uint8_t a = png[i];
+                const uint8_t b = i + 1 < png.size() ? png[i + 1] : 0;
+                const uint8_t c = i + 2 < png.size() ? png[i + 2] : 0;
+                lease.base64 += alphabet[a >> 2];
+                lease.base64 += alphabet[((a & 3) << 4) | (b >> 4)];
+                lease.base64 += i + 1 < png.size() ? alphabet[((b & 15) << 2) | (c >> 6)] : '=';
+                lease.base64 += i + 2 < png.size() ? alphabet[c & 63] : '=';
+            }
+            guard->status = "completed";
+        } else {
+            guard->status = lease.result.status == ScreenshotStatus::Failed ? "failed" : "cancelled";
+            std::snprintf(guard->error, sizeof(guard->error), "%s",
+                lease.result.error.empty() ? "screenshot-owner-expired" : lease.result.error.c_str());
+        }
+    } catch (const std::exception& error) {
+        guard->status = "failed";
+        std::snprintf(guard->error, sizeof(guard->error), "%s", error.what());
+    } catch (...) {
+        guard->status = "failed";
+        std::snprintf(guard->error, sizeof(guard->error), "screenshot-result-failed");
+    }
+}
+
+static int continueCapture(lua_State* L, int, lua_KContext context) {
+    const int index = static_cast<int>(context);
+    auto* guard = static_cast<CaptureGuard*>(lua_touserdata(L, index));
+    // Resume arguments (e.g. dt) are not results and must not pop the tbc slot.
+    lua_settop(L, index);
+    if (guard->cancelled) {
+        guard->status = "cancelled";
+        std::snprintf(guard->error, sizeof(guard->error), "owner-cancelled");
+    } else {
+        pollCapture(guard);
+    }
+    if (!guard->status) {
+        if (lua_isyieldable(L)) return lua_yieldk(L, 0, context, continueCapture);
+        releaseCapture(guard);
+        guard->status = "unavailable";
+        std::snprintf(guard->error, sizeof(guard->error), "not-yieldable");
+    }
+    if (guard->lease && !guard->error[0] && !guard->lease->base64.empty())
+        lua_pushlstring(L, guard->lease->base64.data(), guard->lease->base64.size());
+    else lua_pushnil(L);
+    lua_pushstring(L, guard->status);
+    if (guard->error[0]) lua_pushstring(L, guard->error);
+    else lua_pushnil(L);
+    return 3;
+}
+} // namespace
+
+// KAG.capture_thumbnail([CancelToken]) -> raw base64 or nil, status, reason.
+// Pending stays within this C call until its own ticket reaches a terminal.
 static int lua_CaptureThumbnail(lua_State* L) {
-    auto* manager = getSaveManager();
-    if (!manager) { lua_pushnil(L); return 1; }
-    std::string b64 = manager->captureThumbnailPNG(320, 180);
-    if (b64.empty()) { lua_pushnil(L); return 1; }
-    lua_pushlstring(L, b64.c_str(), b64.size()); return 1;
+    if (!lua_isnoneornil(L, 1)) luaL_checktype(L, 1, LUA_TTABLE);
+    auto* guard = new (lua_newuserdatauv(L, sizeof(CaptureGuard), 0)) CaptureGuard{};
+    const int index = lua_gettop(L);
+    luaL_setmetatable(L, kCaptureGuard);
+    lua_toclose(L, index);
+    if (index > 1 && !lua_isnil(L, 1)) {
+        lua_getfield(L, 1, "register");
+        luaL_checktype(L, -1, LUA_TFUNCTION);
+        lua_pushvalue(L, 1);
+        lua_pushvalue(L, index);
+        lua_pushcclosure(L, cancelCapture, 1);
+        lua_call(L, 2, 0);
+    }
+    // Allocation, method lookup and cancellation registration all precede
+    // admission. No C++ automatic owner crosses any Lua longjmp boundary.
+    if (!guard->cancelled) startCapture(guard);
+    return continueCapture(L, LUA_OK, index);
 }
 
 // KAG.get_save_dir() -> string
@@ -394,6 +561,13 @@ static int lua_CloudPull(lua_State* L) {
 }
 
 void registerSaveBinding(lua_State* L) {
+    if (luaL_newmetatable(L, kCaptureGuard)) {
+        lua_pushcfunction(L, closeCapture);
+        lua_setfield(L, -2, "__close");
+        lua_pushcfunction(L, closeCapture);
+        lua_setfield(L, -2, "__gc");
+    }
+    lua_pop(L, 1);
     // [R12-FIX] Registration order note:
     // SaveBinding functions are appended to the existing "KAG" global table.
     // This requires that KAGBinding already registered the KAG table first.

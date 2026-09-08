@@ -3,9 +3,34 @@
 #include <string>
 #include <memory>
 #include <cstddef>
+#include <vector>
 #include "RenderTypes.h"
 
 namespace Caesura {
+
+struct ScreenshotTicket {
+    uint64_t requestId = 0;
+    uint64_t generation = 0;
+    explicit operator bool() const { return requestId != 0 && generation != 0; }
+};
+struct ScreenshotOptions {
+    // Both zero select native backbuffer dimensions at admission; otherwise both
+    // must be positive. Captures are resized to these dimensions if the surface
+    // changes before submission. Excessive dimensions/retention are rejected.
+    uint32_t width = 0;
+    uint32_t height = 0;
+};
+enum class ScreenshotStatus { Unknown, Pending, Completed, Failed, Cancelled };
+struct ScreenshotResult {
+    ScreenshotTicket ticket;
+    ScreenshotStatus status = ScreenshotStatus::Unknown;
+    // Renderer-local submission frame, assigned by advanceFrame (zero before submission).
+    uint64_t frameId = 0;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    std::vector<uint8_t> png;
+    std::string error;
+};
 
 enum class FontId : uint8_t { Small = 0, Large = 1, TTF = 2 };
 struct FontRestoreState {
@@ -75,7 +100,9 @@ public:
     // still alive. Safe to call multiple times. Called automatically by shutdown().
     virtual void flushAllRTT() = 0;
 
-    // Frame management
+    // Frame management: commit_frame finalizes scene/postfx submissions without
+    // advancing bgfx. advanceFrame submits pending captures and advances once.
+    // endFrame is the convenience spelling of commit_frame + advanceFrame.
     virtual void beginFrame() = 0;
     virtual void endFrame() = 0;
     virtual void commit_frame() = 0;
@@ -145,6 +172,13 @@ public:
     virtual void setDebugName(uint16_t viewId, const std::string& name) = 0;
     virtual void drawDebugOverlay(const std::string& title) = 0;
     virtual bool requestScreenshot(const std::string& path) = 0;
+    // Rejected admission returns Failed with an invalid ticket. Accepted requests
+    // start Pending. takeScreenshot preserves Pending and consumes a terminal
+    // result exactly once (subsequent takes return Unknown). Cancellation only
+    // changes Pending to Cancelled; a terminal result still must be taken.
+    virtual ScreenshotResult requestScreenshot(const ScreenshotOptions& options) = 0;
+    virtual ScreenshotResult takeScreenshot(const ScreenshotTicket& ticket) = 0;
+    virtual bool cancelScreenshot(const ScreenshotTicket& ticket) = 0;
     virtual bool recoverDevice(void* nativeWindowHandle, int width, int height) = 0;
     virtual void flagDeviceLost() = 0;
     virtual bool consumeDeviceLost() = 0;

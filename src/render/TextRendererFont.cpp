@@ -141,7 +141,7 @@ std::unique_ptr<IPreparedFontState> BgfxRenderDevice::prepareFontState(
     return TextRenderer::prepareFontState(state,bytes,size);
 }
 bool BgfxRenderDevice::applyFontState(std::unique_ptr<IPreparedFontState> prepared) {
-    return m_textRenderer && m_textRenderer->applyFontState(std::move(prepared));
+    return canRender() && m_textRenderer && m_textRenderer->applyFontState(std::move(prepared));
 }
 void BgfxRenderDevice::clearFontState() { if (m_textRenderer) m_textRenderer->clearFontState(); }
 

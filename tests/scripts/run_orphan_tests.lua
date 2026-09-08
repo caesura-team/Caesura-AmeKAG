@@ -32,6 +32,7 @@ local tests = {
     "test_contracts_runtime2",
     "test_contract_runtime_gaps",
     "test_saveflow",
+    "test_save_thumbnail_lifecycle",
     "test_save_load_samescene",
     "test_save_restore_transaction",
     "test_i18n_restore",
