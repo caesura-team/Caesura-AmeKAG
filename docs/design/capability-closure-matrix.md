@@ -1,9 +1,9 @@
 # Capability Closure Matrix (auto-generated)
 
 > 由 python scripts/capability_closure.py 生成；勿手动编辑。
-> 生成时间（输入源最新 mtime）：2026-09-08T15:29:13Z
+> 生成时间（输入源最新 mtime）：2026-09-08T17:13:04Z
 > 生成命令：python scripts/capability_closure.py
-> 源指纹（输入内容 sha256 前 16 hex）：132477206c7b68e9
+> 源指纹（输入内容 sha256 前 16 hex）：9d0082cbf167a626
 > 输出确定性：同源指纹同字节（generated_at 为输入源最新 mtime；跨机 checkout 的 mtime 差异属 by-design，确定性以指纹为准）
 
 ## 概述
@@ -209,7 +209,7 @@
 | rollback | Y | Y | n | CLOSED | ✓9 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/system.lua:363 |
 | ruby | Y | Y | Y | CLOSED | ✓8 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/text.lua:1081 |
 | s | Y | Y | n | CLOSED | ✓7 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag.lua:305 |
-| save | Y | Y | Y | CLOSED | ✓101 | - | - | ? | scripts/kag/commands/save.lua:261 |
+| save | Y | Y | Y | CLOSED | ✓102 | - | - | ? | scripts/kag/commands/save.lua:261 |
 | saveload | Y | Y | n | CLOSED | ✓12 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/save.lua:455 |
 | saveplace | Y | Y | n | CLOSED ⚠ | ✓7 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/save.lua:510 |
 | scroll | Y | Y | Y | CLOSED | ✓5 | - | - | ? | scripts/kag/commands/transition.lua:215 |
