@@ -104,6 +104,18 @@ Simulator的CWD探针、资源部署及真实C++启动成功；源夹具、实�
 
 本次只修改测试入口/夹具/诊断，生产runtime及CMake未改。完整报告及原始工件在`artifacts/validation/eas-fifth-*`。Windows组件通过不能替代Apple验收；下一次EAS必须使用包含测试修正的新源码SHA，再执行完整三lane。
 
+## 第六次完整云验收
+
+[第六次EAS运行01a0810e-bf2f-7590-8999-c1bf4fc87005](https://expo.dev/accounts/ailiasdesus-team/projects/caesura-native-validation/workflows/01a0810e-bf2f-7590-8999-c1bf4fc87005)的三个job全部成功，统一原生源码为`74c07ea5ac5d618652ed1b072519b2899b044529`。原始工件已下载；125条命令的stdout/stderr散列、实际二进制、源/夹具及执行结果逐项核对。
+
+- macOS完整Debug profile：C++1281/1281、0失败/0跳过；Lua主147/147、孤立44/44；Python17/6/53/57，CTest25通过、仅唯一预声明外部AI smoke跳过。云端executor/collector/verifier和下载后的strict verifier均退出0。
+- iOS Simulator：1281项未过滤C++用例与398972条断言全部通过，0失败/0跳过，exit0；七项SDL事件回归和Live2D symlink用例仍在完整套件中，前次8项失败均已消除。原生CWD探针命中本次新UDID的data目录，模拟器关停与删除成功。
+- iOS device：完整目标编译通过，两个真实Mach-O均为arm64/IOS/minos14.0.0。Simulator对应产物为arm64/IOSSIMULATOR/minos14.0.0。二进制散列与工件一致，运行前后稳定；OpenSSL较新最低OS警告为0。
+
+源夹具、实际目标目录、归档及模拟器副本共327文件/34目录，inventory散列一致。完整核验报告在`artifacts/validation/eas-sixth-report.md`及`eas-sixth-evidence-audit.json`，前五次失败原样保留。驱动的12项工具回归随后注册进Windows Debug和macOS的GitHub CI，以持续校验编排；此CI接线不改变上述已验证的原生源码或驱动行为。
+
+本次已完成用户指定的Expo三lane接入与实际验收。iOS验证范围为未签名device编译和Simulator原生C++，macOS为上述foundation profile；UIKit完整应用、真实Metal/音频效果、iOS Lua/CTest整套、物理设备、签名交付，以及U2其余配置/sanitizer/性能基线仍按唯一计划分别推进。
+
 ## 官方来源
 
 - [EAS Workflows 当前 JSON Schema](https://api.expo.dev/v2/workflows/schema)：API envelope 的 `data` 才是 JSON Schema。
