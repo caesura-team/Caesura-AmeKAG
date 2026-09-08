@@ -185,7 +185,7 @@ check(po_str:find("msgid", 1, true) ~= nil, "PO format generated with msgid")
 local comp = require("kag.compiler")
 local compiled1 = comp.compile_from_ast(m1)
 check(compiled1._compiled ~= nil, "compile_from_ast creates _compiled side-table")
-check(compiled1._compiled.labels["*start"] == 1, "compile_from_ast maps *start to token index 1")
+check(compiled1._compiled.labels.start == 1, "compile_from_ast maps runtime label start to token index 1")
 
 local compiled_src = comp.compile_from_source([[
 *main
@@ -193,7 +193,21 @@ local compiled_src = comp.compile_from_source([[
 [jump target=*main]
 ]], "test_source.ks")
 check(compiled_src._compiled ~= nil, "compile_from_source creates compiled stream")
-check(compiled_src._compiled.labels["*main"] == 1, "compile_from_source maps *main label")
+check(compiled_src._compiled.labels.main == 1, "compile_from_source maps runtime label main")
+
+-- 12. Tooling names retain the star; bare arguments retain their runtime type.
+local bare_model = semantic.parse("*entry\n[switch flag]\n[case yes]\n[endswitch]\n"
+    .. "[set f.value 7 value=9]", "bare.ks")
+check(bare_model.nodes[1].name == "*entry" and bare_model.labels["*entry"] ~= nil,
+    "Semantic label names retain their star for tooling")
+check(bare_model.nodes[2].params[1] == "flag"
+    and bare_model.nodes[2].positional_params[1] == "flag"
+    and bare_model.nodes[2].params.flag == nil,
+    "Bare flag is a positional string, not a named boolean")
+check(bare_model.nodes[5].params[1] == "f.value"
+    and bare_model.nodes[5].params[2] == "7"
+    and bare_model.nodes[5].params.value == "9",
+    "Mixed bare and named parameters keep positions and explicit named precedence")
 
 print(string.format("\nKAG Semantic AST Tests: %d passed, %d failed.", passed, failed))
 if failed > 0 then os.exit(1) end

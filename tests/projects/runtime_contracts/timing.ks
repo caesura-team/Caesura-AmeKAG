@@ -1,0 +1,7 @@
+[textbox x=0]
+[ch text="移动之前"]
+[wait time=137]
+[tween target="message" attr="x" from=0 to=100 dur=251 wait=true]
+[set var="f.finished" value=1]
+[ch text="移动完成"]
+[end]

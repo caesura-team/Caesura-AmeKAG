@@ -72,7 +72,11 @@ local function to_array_tok(tok)
     if tok.type then
         local cmd = tok.cmd or tok.type
         if tok.type == "label" then
-            return { "label", { name = tok.name } }
+            -- Semantic AST labels retain the source '*' for tooling; the
+            -- scheduler resolves unprefixed names, as emitted by tokenizer.
+            local name = tok.name
+            if type(name) == "string" then name = name:gsub("^%*", "") end
+            return { "label", { name = name } }
         elseif tok.type == "text" or tok.type == "blocktext" then
             return { "ch", { text = tok.text or tok.content or "" } }
         elseif tok.type == "iscript" then
@@ -157,6 +161,10 @@ local function normalize_params(cmd, raw)
     end
     return out
 end
+
+-- The semantic frontend uses the same parameter contract as execution,
+-- including numeric positions, dotted assignments and named precedence.
+compiler.normalize_params = normalize_params
 
 --- Compile-time expression translation (TJS->Lua) for one param value.
 --  Returns the translated source string (or the original when translation

@@ -4,7 +4,7 @@
 
 进度显示：[当前待办清单](2026-09-05-003-runtime-foundation-todo.md)。详细证据见 [执行记录](2026-09-05-002-runtime-foundation-execution.md)。
 
-2026-09-08 接续开发核对见 [U12 交接记录](2026-09-08-001-u12-resume-handoff.md)：U11 对应 master CI 已在线复核；U12 已通过本机完整Windows Debug profile及严格证据核验（Cpp1292、Lua147/43，CTest25通过+1预声明外部AI跳过），完整Web496/496和原性能预算通过；正在交付到caesura-team组织仓库，U13语义等价语料进入准备。
+2026-09-08 接续开发核对见 [U12 交接记录](2026-09-08-001-u12-resume-handoff.md)：U12已通过完整Windows Debug profile、严格证据核验、完整Web及PR跨平台CI，合并到组织仓库master `99a65d16`；master构建/打包继续核验。[U13语言等价语料](2026-09-08-002-u13-language-parity-execution.md)已完成AST差异修复及36次原生/12次Web实际运行对照，正在进行最终完整门禁。
 
 2026-09-05 用户要求重新制定后续计划，抛弃原有排期，仅保留两项方向约束：**底层优先、Studio 暂停**。
 

@@ -1,0 +1,16 @@
+[eval exp="f.total = 0"]
+[set var="lf.owner" value="caller"]
+[call *sub]
+[eval exp="f.returned = lf.owner"]
+[ch text="返回 ${f.total}"]
+[jump *finish]
+*sub
+[for var="i" start="1" end="2"]
+[eval exp="f.total = f.total + f.i"]
+[ch text="循环 ${f.i}"]
+[endfor]
+[call callee.ks]
+[return]
+*finish
+[ch text="完成 ${f.total}"]
+[end]

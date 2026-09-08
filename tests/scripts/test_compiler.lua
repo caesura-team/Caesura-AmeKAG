@@ -469,6 +469,60 @@ do
     check("13f: prepared control metadata is independent", packed.flow[2].jump ~= -99 and second._compiled.flow[2].jump ~= -99)
 end
 
+-- AST compilation must execute the same language through the real scheduler.
+do
+    local semantic = require("kag.semantic")
+    local scheduler = require("scheduler")
+    local function run_ast_case(source, lane)
+        local stream = lane == "ast" and compiler.compile_from_ast(semantic.parse(source, "parity.ks"))
+            or compiler.compile(tokenizer.parse(source))
+        local ctx = { f = {}, sf = {}, tf = {}, mp = {}, lf = {}, variables = {},
+            current_scene = "parity.ks", token_index = 1, tokens = stream }
+        local co = coroutine.create(function() scheduler.run(ctx, stream, 1) end)
+        for _ = 1, 100 do
+            if coroutine.status(co) == "dead" then return ctx, stream end
+            local ok, err = coroutine.resume(co)
+            assert(ok, err)
+        end
+        error("AST parity scene exceeded 100 scheduler resumes")
+    end
+    for _, lane in ipairs({ "source", "ast" }) do
+        for _, syntax in ipairs({ "named", "bare" }) do
+            local target = syntax == "named" and "target=" or ""
+            local ctx, stream = run_ast_case('[eval exp="f.trace=\'begin\'"]\n'
+                .. '[call ' .. target .. '*sub]\n[eval exp="f.trace=f.trace .. \'|return\'"]\n'
+                .. '[jump ' .. target .. '*finish]\n*sub\n'
+                .. '[eval exp="f.trace=f.trace .. \'|sub\'"]\n[return]\n*finish\n'
+                .. '[eval exp="f.trace=f.trace .. \'|finish\'"]\n[end]', lane)
+            check("14: " .. lane .. " " .. syntax .. " call returns and jump reaches finish",
+                ctx.f.trace == "begin|sub|return|finish")
+            check("14: " .. lane .. " " .. syntax .. " runtime label map excludes star",
+                stream._compiled.labels.sub == 5 and stream._compiled.labels.finish == 8
+                and stream._compiled.labels["*sub"] == nil)
+        end
+        local switched = run_ast_case('[eval exp="f.flag=\'yes\'"]\n[switch flag]\n'
+            .. '[case no]\n[eval exp="f.branch=\'wrong\'"]\n'
+            .. '[case yes]\n[eval exp="f.branch=\'selected\'"]\n'
+            .. '[default]\n[eval exp="f.branch=\'default\'"]\n[endswitch]', lane)
+        check("14: " .. lane .. " bare switch and case select the matching branch",
+            switched.f.branch == "selected")
+        local assigned_ok, assigned = pcall(run_ast_case, '[set f.name = "Aoi"]\n[set f.count = 3]\n'
+            .. '[set f.count 7 value=9]', lane)
+        check("14: " .. lane .. " dotted assignment and explicit named override execute",
+            assigned_ok and assigned.f.name == "Aoi" and assigned.f.count == 9)
+        if not assigned_ok then print("PARITY ERROR " .. lane .. ": " .. tostring(assigned)) end
+        local missing = run_ast_case('[call target=*missing]\n[jump target=*absent]\n'
+            .. '[eval exp="f.fell_through=true"]\n[end]', lane)
+        check("14: " .. lane .. " unresolved targets still fall through",
+            missing.f.fell_through == true)
+        local duplicates = lane == "ast"
+            and compiler.compile_from_ast(semantic.parse("*same\n[end]\n*same\n[end]", "duplicate.ks"))
+            or compiler.compile(tokenizer.parse("*same\n[end]\n*same\n[end]"))
+        check("14: " .. lane .. " duplicate labels still resolve to first definition",
+            duplicates._compiled.labels.same == 1)
+    end
+end
+
 if failed > 0 then
     print(string.format("COMPILER TESTS: %d passed, %d FAILED", passed, failed))
     os.exit(1)
