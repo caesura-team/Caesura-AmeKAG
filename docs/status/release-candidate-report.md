@@ -1,5 +1,7 @@
 # Caesura (AmeKAG) 1.x Release Candidate Evaluation Report
 
+> **历史快照范围（2026-09-08 文档迁移注记）**：下文保留 2026-08-29 对 `a59bab975d2bd84e8891e7a685c4d39ec507c816` 的原始评估声明、数字和旧核验步骤，未在本轮重新证明。所有 `RC-GO`、`CLEARED`、`100%` 及“本树 HEAD”均属于当时记录，不能解释为当前源码、当前平台或当前发布授权。2026-09-05 重新规划已废止旧排期和冻结规则。现行证据流程见 [发布验证指南](../guides/release-validation.md)；原文可追溯至 [迁移前的固定 Git 版本](https://github.com/ailiasdesu/Caesura-AmeKAG/blob/84e766eda8c1a61bc23cb457a70da0c0fa8210fe/docs/status/release-candidate-report.md)。
+
 > **Decision**: **`RC-GO`**  
 > **Target Version**: `1.0.0-rc.1`  
 > **Target Commit SHA**: `a59bab975d2bd84e8891e7a685c4d39ec507c816` (`a59bab97`)  
@@ -29,7 +31,7 @@ Caesura (AmeKAG) has achieved the **1.x Release Candidate (RC-GO)** milestone. A
 
 ## 2. Release Blockers Clearance Review (9/9 Cleared)
 
-In accordance with `docs/Caesura_AmeKAG_Agent_Pack/05_RELEASE_CANDIDATE.md`, any unmitigated occurrence of the following 9 blockers prohibits an RC declaration. All 9 blockers have been thoroughly inspected, tested, and cleared:
+The following historical clearance statement used the [former Release Candidate Gate](https://github.com/ailiasdesu/Caesura-AmeKAG/blob/41c9e8a7addc8e4daa2e4d79d61a257250913c07/docs/Caesura_AmeKAG_Agent_Pack/05_RELEASE_CANDIDATE.md): any unmitigated occurrence of the following 9 blockers prohibits an RC declaration. Its original claim was: all 9 blockers have been thoroughly inspected, tested, and cleared. This claim has not been revalidated for the current worktree; use the [current validation guide](../guides/release-validation.md) for new evidence.
 
 | # | Blocker Item | Status | Verified Evidence & Invariant Guard |
 |---|--------------|:------:|-------------------------------------|
@@ -176,7 +178,7 @@ artifacts/release/
 
 ## 7. Independent Verification Procedure
 
-To independently audit and verify this release candidate from the repository root:
+Historical procedure, retained for traceability. The bare verifier invocation and old execution assumptions below do not satisfy the current trusted-profile / `--expected-run` contract; follow the [current execution, collection and verification workflow](../guides/release-validation.md) for a new run.
 
 ```powershell
 # 1. Run the master Release Candidate Gate Verifier

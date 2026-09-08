@@ -2,7 +2,7 @@
 
 感谢你考虑为 **Caesura (AmeKAG)** 贡献代码、文档或内容！本指南是贡献入口；
 完整构章规则以仓库根目录的 [AGENTS.md](AGENTS.md)（权威宪章）为准，
-操作命令以 [CLAUDE.md](CLAUDE.md)（构建/测试/提交手册）为准。
+操作命令见 [开发指南](docs/team/development-guide.md)，Codex 的技能、插件与 MCP 使用见 [Codex 工作流](docs/team/codex-workflow.md)。
 
 - **想聊天/提问/晒作品** → 见 [docs/guides/community.md](docs/guides/community.md)（GitHub Discussions + 学习路径）
 - **想直接改代码** → 继续往下读。

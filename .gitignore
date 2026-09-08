@@ -86,12 +86,18 @@ tests/scripts/config/
 FrameworkShaders/
 editor/tsconfig.tsbuildinfo
 tmp/
-# Multi-agent runtime state and scratch reports. .agents/ used to be
-# tracked (234 files of BRIEFING/handoff/report/DISPATCH noise plus one-off
-# probe scripts) which turned every agent round into a noisy diff; keep
-# them on disk, out of the index. Durable material belongs in docs/ per
-# AGENTS.md §12.
-.agents/
+# Local agent runtime state is not source. Curated project skills are source.
+/.agents/*
+!/.agents/skills/
+/.agents/skills/*
+!/.agents/skills/caesura-*/
+!/.agents/skills/ast-grep/
+.aimax/
+.claude/
+.superpowers/
+.dsh-vision-toolkit/
+/CLAUDE.md
+/%SystemDrive%/
 .agent-teams/
 /agent-tools/
 .vite/

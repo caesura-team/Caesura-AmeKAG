@@ -181,7 +181,7 @@ Contains 10 unit and regression test cases covering:
 
 ## 5. Architectural Parity Enforcement: Zero Platform If/Else
 
-A core architectural principle of Caesura (AmeKAG) (`AGENTS.md` and Rule 4 of `07_AGENT_RULES.md`) is:
+A core architectural principle of Caesura (AmeKAG), enforced by [AGENTS.md](../../AGENTS.md) §§1–4 (module APIs, interfaces, BackendRegistry and the composition root), is:
 > **"Platform Service -> stable interface -> shared game logic"**
 
 ```
