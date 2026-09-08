@@ -9,7 +9,7 @@
 [![CI](https://github.com/ailiasdesu/Caesura-AmeKAG/actions/workflows/ci.yml/badge.svg)](https://github.com/ailiasdesu/Caesura-AmeKAG/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/ailiasdesu/Caesura-AmeKAG)](https://github.com/ailiasdesu/Caesura-AmeKAG/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Web-2ea44f)
+![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Web%20%7C%20Android%20%7C%20iOS-2ea44f)
 
 [快速开始](#快速开始) · [教程与示例](#教程与示例) · [文档](#文档) · [平台支持](#平台支持) · [参与开发](#参与开发)
 
