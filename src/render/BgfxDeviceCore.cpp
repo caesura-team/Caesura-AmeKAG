@@ -420,7 +420,7 @@ bgfx::TextureHandle BgfxDeviceCore::getSolidPixel(uint8_t r, uint8_t g,
     }
     if (bgfx::isValid(m_solidPixel)) bgfx::destroy(m_solidPixel);
     const uint8_t pixel[4] = { r, g, b, a };
-    const bgfx::Memory* mem = bgfx::makeRef(pixel, sizeof(pixel), nullptr, nullptr);
+    const bgfx::Memory* mem = bgfx::copy(pixel, sizeof(pixel));
     m_solidPixel = bgfx::createTexture2D(1, 1, false, 1,
         bgfx::TextureFormat::RGBA8, BGFX_SAMPLER_POINT, mem);
     m_solidPixelKey = key;
