@@ -44,3 +44,9 @@ readCache以完整文件内容判断外部改写，缓存解析后的数据，�
 原生run `7bf04603-ff94-41f7-a0df-4ff3fd4654d8`的11项required检查全部通过：完整Debug构建、C++1292/1292与399003断言、Lua主147/147和隔离45/45、Python17/7/53/57、耦合、注册、CTest25通过/0失败/1预声明外部AI smoke跳过。CTest共273.17秒。dirty=false，source/fixture fingerprint前后相同；collector和严格verifier通过。manifest在`artifacts/validation/u14/evidence/c227dcc70490b362c82739696f8a39ea955438b5/7bf04603-ff94-41f7-a0df-4ff3fd4654d8/windows-debug/manifest.json`。
 
 本机最终验收已通过，组织仓库候选CI和master合并/打包仍单独核验。U2 Expo云端任务与U15后端生命周期继续保持各自证据边界。
+
+## PR #16 旧缓存测试修正
+
+首次候选CI`34217073981`保留失败：Windows Debug/Release和Linux均在同一个Web测试中把新场景format 2断言为1。本机因`cache/ksc-web/demo_galgame_demo.ksc`旧文件仍为1而没有暴露该旧断言；该测试只解析表并未真正执行，原本的zero-parse名称缺乏对应证明。
+
+测试现在始终使用当前编译器新生成的序列化流，明确断言format 2，再禁用tokenizer.parse并拒绝对未编译tokens调用compile，通过实际Web bundle入口执行到DONE，核对变量与对话结果，finally恢复测试钩子。本机旧文件不再参与这项判断，也未删除旧产物。定向新测试通过；原生/C++/Lua源码未修改，c227dcc7的完整原生证据保持原来源，新的完整Web与CI结果另行记录。
