@@ -9,6 +9,14 @@ end
 
 local flow = require("flow")
 local resource = require("kag.commands.resource")
+-- The normal main suite is already locked here. Keep the standalone entry on
+-- that same production path, after loading the runtime modules it requires.
+require("kag")
+require("mods")
+require("tokenizer")
+local compiler = require("kag.compiler")
+require("sandbox")
+check("scene preload runs after sandbox lockdown", dofile == nil)
 
 -- parse_file call counter: proves the cache is hit on the second load.
 local real_parse_file = nil
@@ -27,10 +35,17 @@ do
     local ctx = { f = {}, tf = {}, sf = {}, mp = {}, lf = {},
                   current_scene = "p.ks", token_index = 1 }
     parse_calls = 0
+    flow.scene_cache["tests/scripts/smoke_test.ks"] = nil
+    check("locked source hash is available",
+        compiler.hashFile("tests/scripts/smoke_test.ks") ~= nil)
     local co = coroutine.create(function()
         resource.preload(ctx, { type = "scene", path = "tests/scripts/smoke_test.ks" })
     end)
-    while coroutine.status(co) ~= "dead" do coroutine.resume(co) end
+    while coroutine.status(co) ~= "dead" do
+        local ok, err = coroutine.resume(co)
+        check("preload coroutine resumes", ok, err)
+        if not ok then break end
+    end
     check("preload scene parses once", parse_calls == 1, tostring(parse_calls))
     check("preload scene fills cache",
         flow.scene_cache["tests/scripts/smoke_test.ks"] ~= nil)

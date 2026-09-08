@@ -177,6 +177,8 @@ jobs:
           # path-safety gate (tests/scripts/test_package_web_unicode.py).
           python tests/scripts/test_package_web_unicode.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tests/scripts/test_package_game_node_cli.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   # ============================================================
   # macOS Clang
@@ -306,6 +308,7 @@ jobs:
           (cd web && npm ci --no-audit --no-fund && npm run build)
           bash scripts/package_game.sh --no-web-build tests/projects/first_vn
           bash scripts/verify_web_package.sh dist/first_vn
+          python3 tests/scripts/test_package_game_node_cli.py
 
       - name: Web package real-browser boot smoke (t199 A gate)
         run: |

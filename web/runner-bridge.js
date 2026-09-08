@@ -157,6 +157,10 @@ export async function installRunnerBridge(lua) {
     end
 
     function __DRIVE_WEB_RUNNER(mode, name, opts, sources, bundle)
+      if mode=='bundle' then
+        local valid,reason=require('kag.compiler').validateBundle({version=1,scenes=bundle})
+        if not valid then return 'ERR:'..tostring(reason) end
+      end
       local owner = runner.get_ctx()
       if owner and owner ~= __CTXREF and owner.tf and owner.tf.load_result=='ok' then
         owner._web_restore_history=true

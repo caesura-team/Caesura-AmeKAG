@@ -168,6 +168,99 @@ if not IS_WINDOWS then
     if stray then stray:close(); os.remove("nul") end
 end
 
+-- U14: the actual CLI verifies the finished Web artifact against this runtime.
+do
+    local bin=arg and arg[-1] or 'lua'
+    if IS_WINDOWS then bin='call "'..bin:gsub('/','\\')..'"' else bin='"'..bin..'"' end
+    local function cli(args)
+        local process=assert(io.popen(bin..' scripts/ks_bake.lua '..args..' 2>&1'))
+        local output=process:read('*a');local ok=process:close()
+        return ok==true,output
+    end
+    local folder='tmp/bake_web_compat'
+    local path=folder..'/story.lua'
+    ensure_dir(folder)
+    local cold_path=folder..'/cold.lua'
+    local cold=assert(io.open(cold_path,'wb'))
+    cold:write([=[package.path='scripts/?.lua;scripts/?/init.lua;'..package.path
+local compiler=require('kag.compiler')
+local tokens=require('tokenizer').parse('[eval exp="f.x=1"]\n[end]')
+compiler.compile(tokens)
+local data=assert(compiler.serialize(tokens))
+require('kag')
+assert(compiler.validateSerialized(data),'cold compiler contracts differ from loaded runtime')
+print('COLD-COMPILER-COMPATIBLE')
+]=]);cold:close()
+    local process=assert(io.popen(bin..' '..cold_path..' 2>&1'))
+    local cold_log=process:read('*a');local cold_ok=process:close()
+    check('U14 cold compiler uses complete runtime contracts',cold_ok==true,cold_log)
+    local cached,cache_log=cli(SCENE..' --out '..folder)
+    check('U14 cold CLI writes current native cache',cached,cache_log)
+    local fresh,fresh_log=cli(SCENE..' --out '..folder..' --check')
+    check('U14 separate cold CLI accepts its current native cache',fresh,fresh_log)
+    local baked,bake_log=cli(SCENE..' --web '..folder)
+    check('U14 CLI bakes a Web artifact',baked,bake_log)
+    local accepted,accept_log=cli('--check-web '..path)
+    check('U14 CLI validates current artifact',accepted and accept_log:find('[web-check] compatible',1,true),accept_log)
+    check('U14 shared bundle scene-key function is exported',type(compiler.bundleSceneKeys)=='function')
+    if type(compiler.bundleSceneKeys)=='function' then
+        local cases={
+            {{'demo/example_game/story.ks','demo/template/story.ks','demo/tutorial/intro.ks'},
+             'example_game/story.ks|template/story.ks|intro.ks'},
+            {{'C:\\games\\sample\\left\\story.ks','C:\\games\\sample\\right\\story.ks'},
+             'left/story.ks|right/story.ks'},
+            {{'/games/sample/left/story.ks','/games/sample/right/story.ks'},
+             'left/story.ks|right/story.ks'},
+            {{'./demo/left/../a/story.ks','demo/b/story.ks'},'a/story.ks|b/story.ks'},
+            {{'../games/a/story.ks','../games/b/story.ks'},'a/story.ks|b/story.ks'},
+        }
+        for index,case in ipairs(cases) do
+            local keys,reason=compiler.bundleSceneKeys(case[1])
+            check('U14 safe relative scene keys '..index,keys and table.concat(keys,'|')==case[2],reason)
+        end
+        local duplicate,dup_reason=compiler.bundleSceneKeys({'demo/story.ks','./demo/story.ks'})
+        check('U14 repeated source identity remains a failure',not duplicate
+            and dup_reason:find('duplicate-bundle-scene:',1,true),dup_reason)
+        local unsafe,unsafe_reason=compiler.bundleSceneKeys({'../outside/story.ks','demo/story.ks'})
+        check('U14 scene keys never retain parent traversal',not unsafe,unsafe_reason)
+    end
+    for _,name in ipairs({'north','south'}) do
+        ensure_dir(DIR_FIX..'/'..name)
+        local f=assert(io.open(DIR_FIX..'/'..name..'/story.ks','w'))
+        f:write('[ch text="'..name..'"]\n[end]\n');f:close()
+    end
+    local collision_dir=folder..'/duplicates'
+    local duplicates,duplicate_log=cli('--dir '..DIR_FIX..' --web '..collision_dir)
+    check('U14 CLI preserves colliding basenames',duplicates,duplicate_log)
+    if duplicates then
+        local data=assert(loadfile(collision_dir..'/story.lua','t',{}))()
+        for _,name in ipairs({'north','south'}) do
+            local scene=data.scenes[name..'/story.ks']
+            check('U14 duplicate source is distinct: '..name,scene
+                and scene.tokens[1][2].text==name)
+        end
+        check('U14 non-conflicting basename stays compatible',data.scenes['m.ks']~=nil)
+    end
+    for _,name in ipairs({'north','south'}) do
+        os.remove(DIR_FIX..'/'..name..'/story.ks');os.remove(DIR_FIX..'/'..name)
+    end
+    os.remove(collision_dir..'/story.lua');os.remove(collision_dir)
+    if baked then
+        local data=assert(loadfile(path,'t',{}))()
+        local entry=assert(data.scenes['bake_test.ks'])
+        if entry.compatibility then entry.compatibility.semantics='unknown-compiler' end
+        local file=assert(io.open(path,'wb'));file:write('return '..compiler.encode_lua_literal(data));file:close()
+        local accepted_bad,bad_log=cli('--check-web '..path)
+        check('U14 CLI refuses mismatched compiler artifact',not accepted_bad
+            and bad_log:find('compiler-semantics-mismatch',1,true),bad_log)
+        file=assert(io.open(path,'wb'));file:write('return { scenes = {');file:close()
+        local accepted_short,short_log=cli('--check-web '..path)
+        check('U14 CLI refuses truncated artifact',not accepted_short
+            and short_log:find('invalid-bundle-literal',1,true),short_log)
+    end
+    os.remove(folder..'/tmp_bake_test.ksc');os.remove(cold_path);os.remove(path);os.remove(folder)
+end
+
 -- cleanup (files first, then empty dirs bottom-up; leftovers are harmless:
 -- ensure_dir/ensureDir are idempotent and the *.ks filter ignores strays)
 for _, rel in ipairs({ "z.ks", "m.ks", "sub/a.ks", "not.txt" }) do os.remove(DIR_FIX .. "/" .. rel) end

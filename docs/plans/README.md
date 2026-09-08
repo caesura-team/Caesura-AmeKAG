@@ -4,7 +4,7 @@
 
 进度显示：[当前待办清单](2026-09-05-003-runtime-foundation-todo.md)。详细证据见 [执行记录](2026-09-05-002-runtime-foundation-execution.md)。
 
-2026-09-08 接续开发核对见 [U12 交接记录](2026-09-08-001-u12-resume-handoff.md)：U12已通过完整Windows Debug profile、严格证据核验、完整Web及PR跨平台CI，合并到组织仓库master `99a65d16`；master构建/打包继续核验。[U13语言等价语料](2026-09-08-002-u13-language-parity-execution.md)已完成AST差异修复及36次原生/12次Web实际运行对照，正在进行最终完整门禁。
+2026-09-08：U12与[U13语言等价语料](2026-09-08-002-u13-language-parity-execution.md)均完成本机完整门禁、候选CI和master构建/打包验证。[U14缓存兼容](2026-09-08-004-u14-cache-compatibility-execution.md)已完成实现和定向回归，进入冻结候选整合。U2的iOS/macOS测试按用户指定使用Expo EAS，接入在独立分支推进。
 
 2026-09-05 用户要求重新制定后续计划，抛弃原有排期，仅保留两项方向约束：**底层优先、Studio 暂停**。
 

@@ -10,14 +10,32 @@ local flow = {}
 
 flow.scene_cache = {}
 
+-- Public cache entries retain the latest loaded scene for preload/hot-reload
+-- callers. Their token streams belong to a runner and may be rewritten by
+-- dynamic macros. Only these private, detached payloads can seed another load.
+local scene_templates = setmetatable({}, { __mode = "k" })
+
+local function restore_template(compiler, data)
+    local ok, tokens = pcall(compiler.deserialize, data)
+    if ok then return tokens end
+end
+
+local function remember_template(compiler, tokens)
+    local ok, data = pcall(compiler.serialize, tokens)
+    if not ok or not data then return nil end
+    -- serialize may share nested tables with its input. Deserialize first so
+    -- the stored payload never points back into the live scene's token graph.
+    local detached = restore_template(compiler, data)
+    if not detached then return nil end
+    local saved, payload = pcall(compiler.serialize, detached)
+    if saved then return payload end
+end
+
 -- ── flow.load_scene(path) → {tokens, labels} ────────────────────────────────
 
--- .ksc bytecode cache (Battle 1b: compile once, reuse many). The cache
--- file sits next to the scene (scene.ks -> scene.ksc). Freshness is
--- checked by source size + cache non-emptiness (cheap proxy; a content
--- hash would be stronger but the tokenizer/compiler are fast enough that
--- a stale cache only costs one recompile). Cache failures never break
--- scene loading — they degrade to parse+compile.
+-- Both memory and .ksc caches must match the current resolved source content
+-- and compiler/schema contract. Every load owns an independent token graph.
+-- Cache failures degrade to parse+compile; source parsing remains authoritative.
 
 function flow.load_scene(path, prepare_only)
     -- Check cache (cache keyed by the RESOLVED path so a mod override
@@ -26,10 +44,6 @@ function flow.load_scene(path, prepare_only)
     -- (mods/<name>/<path>); the resolved path is cached independently.
     local mods = require("mods")
     local resolved = mods.resolve_scene(path)
-    if not prepare_only and flow.scene_cache[resolved] then
-        return flow.scene_cache[resolved]
-    end
-
     local tokenizer = require("tokenizer")
     local compiler = require("kag.compiler")
 
@@ -38,15 +52,31 @@ function flow.load_scene(path, prepare_only)
     -- is the resolved path with separators and extension sanitized.
     local kscPath = "cache/ksc/" .. resolved:gsub("[/\\]+", "_"):gsub("%.ks$", ".ksc")
     local tokens = nil
+    local template_data = nil
+    local srcHash = nil
+    if not prepare_only then
+        local hashed, hash = pcall(compiler.hashFile, resolved)
+        if hashed then srcHash = hash end
+    end
 
-    -- 1) Try the .ksc cache first (compile once, reuse many).
-    local cached = not prepare_only and compiler.readCache(kscPath)
-    if cached and #cached > 0 and cached._compiled then
-        -- freshness: content hash must match (size-only comparison is
-        -- unreliable when a scene is edited without changing length)
-        local srcHash = compiler.hashFile(resolved)
-        if srcHash and cached._compiled._srcHash == srcHash then
-            tokens = cached
+    -- A caller may clear/replace scene_cache directly. Respect that observable
+    -- cache invalidation instead of silently retaining an unrelated template.
+    local previous = not prepare_only and scene_templates[flow.scene_cache[resolved]]
+    if previous and srcHash and previous.hash == srcHash then
+        -- deserialize checks compatibility against the CURRENT compiler and
+        -- command schemas, including in-place edits to a schema default.
+        tokens = restore_template(compiler, previous.data)
+        if tokens then template_data = previous.data end
+    end
+
+    -- 1) Try persisted bytecode when no compatible memory template remains.
+    if not tokens and not prepare_only and srcHash then
+        local read, cached = pcall(compiler.readCache, kscPath)
+        if read and cached and #cached > 0 and cached._compiled then
+            local checked, compatible = pcall(compiler.isCompatible, cached)
+            if checked and compatible and cached._compiled._srcHash == srcHash then
+                tokens = cached
+            end
         end
     end
 
@@ -61,7 +91,7 @@ function flow.load_scene(path, prepare_only)
         local compiled, reason=pcall(compiler.compile, tokens)
         if prepare_only and not compiled then return nil,reason end
         if not prepare_only then
-            tokens._srcHash = compiler.hashFile(resolved)
+            tokens._srcHash = srcHash
             pcall(compiler.writeCache, tokens, kscPath)
         end
     end
@@ -75,7 +105,11 @@ function flow.load_scene(path, prepare_only)
 
     local scene = {tokens = tokens, labels = labels, path = resolved,
                    base_path = path}
-    if not prepare_only then flow.scene_cache[resolved] = scene end
+    if not prepare_only then
+        local payload = template_data or remember_template(compiler, tokens)
+        scene_templates[scene] = payload and { data = payload, hash = srcHash } or nil
+        flow.scene_cache[resolved] = scene
+    end
     return scene
 end
 
@@ -88,6 +122,8 @@ end
 -- ── flow.reload_scene(path) — force reload (for hot reload) ──────────────────
 
 function flow.reload_scene(path)
+    local resolved = require("mods").resolve_scene(path)
+    flow.scene_cache[resolved] = nil
     flow.scene_cache[path] = nil
     return flow.load_scene(path)
 end
@@ -96,6 +132,7 @@ end
 
 function flow.clear_cache()
     flow.scene_cache = {}
+    scene_templates = setmetatable({}, { __mode = "k" })
 end
 
 -- ── flow.skip_to(tokens, start, targets) → index ────────────────────────────

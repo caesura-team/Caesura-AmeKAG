@@ -23,7 +23,7 @@ local src = '[if exp="f.x > 1 && f.y != 0"]\n[ch text="a"]\n[else]\n[ch text="b"
 local tokens = tokenizer.parse(src)
 compiler.compile(tokens)
 local data = compiler.serialize(tokens)
-check("serialize produces data", data ~= nil and data.version == 1)
+check("serialize produces current format data", data ~= nil and data.version == 2)
 if data then
     check("serialize keeps flow jump table", data.flow[1].kind == "if"
           and data.flow[1].jump_false == 3)
@@ -108,6 +108,60 @@ bad:write("{not valid json")
 bad:close()
 check("readCache corrupt file", compiler.readCache(TMP) == nil)
 os.remove(TMP)
+
+-- U14: source identity, container format and compiler/contracts identity are
+-- distinct. A same-size external cache rewrite must not reuse old live tokens.
+do
+    local a=tokenizer.parse('[set var="f.padding" value="'..string.rep('x',180)..'"]\n[set var="f.answer" value=1]')
+    local b=tokenizer.parse('[set var="f.padding" value="'..string.rep('x',180)..'"]\n[set var="f.answer" value=2]')
+    compiler.compile(a);compiler.compile(b)
+    local da,db=assert(compiler.serialize(a)),assert(compiler.serialize(b))
+    check('U14 serialized compiler identity exists',type(da.compatibility)=='table'
+        and da.compatibility.format==2 and type(da.compatibility.semantics)=='string')
+    check('U14 public compatibility check accepts current output',type(compiler.isCompatible)=='function'
+        and compiler.isCompatible(a)==true)
+    local old={};for k,v in pairs(da) do old[k]=v end
+    old.version=1
+    check('U14 old cache format is rejected',compiler.deserialize(old)==nil)
+    local unknown={};for k,v in pairs(da) do unknown[k]=v end
+    unknown.compatibility={format=2,semantics='unknown-future',commands={}}
+    check('U14 unknown compiler identity is rejected',compiler.deserialize(unknown)==nil)
+    assert(compiler.writeCache(a,TMP))
+    local first=assert(compiler.readCache(TMP))
+    first[2][2].value='corrupted-live-copy'
+    local second=assert(compiler.readCache(TMP))
+    check('U14 each cache read owns a detached token tree',first~=second and second[2][2].value~='corrupted-live-copy')
+    local textA='return '..compiler.encode_lua_literal(da)
+    local textB='return '..compiler.encode_lua_literal(db)
+    assert(#textA==#textB and textA:sub(1,64)==textB:sub(1,64),'rewrite must collide with old size/head cache key')
+    local file=assert(io.open(TMP,'wb'));file:write(textB);file:close()
+    local rewritten=assert(compiler.readCache(TMP))
+    check('U14 same-size same-prefix external rewrite is detected',tonumber(rewritten[2][2].value)==2)
+    file=assert(io.open(TMP,'wb'));file:write(textB:sub(1,#textB-10));file:close()
+    check('U14 truncated cache is rejected',compiler.readCache(TMP)==nil)
+    os.remove(TMP)
+end
+do
+    local schema=require('kag.schema')
+    schema.define('u14_contract_probe',{value={type='number',default=7}})
+    local source=tokenizer.parse('[u14_contract_probe]');compiler.compile(source)
+    local packed=assert(compiler.serialize(source))
+    schema.specs('u14_contract_probe').value.default=9
+    check('U14 only changing a schema default invalidates serialized code',compiler.deserialize(packed)==nil)
+    check('U14 old compiled tokens are not silently stamped with new contracts',compiler.serialize(source)==nil)
+    check('U14 memory compatibility detects schema mutation',type(compiler.isCompatible)=='function'
+        and compiler.isCompatible(source)==false)
+    schema.specs('u14_contract_probe').value.default=7
+    check('U14 restoring the exact contract restores compatibility',compiler.deserialize(packed)~=nil)
+    schema.specs('u14_contract_probe').value.default=9007199254740992
+    local integer_tokens=tokenizer.parse('[u14_contract_probe]');compiler.compile(integer_tokens)
+    schema.specs('u14_contract_probe').value.default=9007199254740993
+    check('U14 distinct Lua integers retain distinct contract identities',not compiler.isCompatible(integer_tokens))
+    schema.specs('u14_contract_probe').value.default=math.huge
+    local infinite_tokens=tokenizer.parse('[u14_contract_probe]');compiler.compile(infinite_tokens)
+    check('U14 non-finite contracts cannot enter persisted code',compiler.serialize(infinite_tokens)==nil)
+    schema.specs('u14_contract_probe').value.default=7
+end
 
 -- Exit gate.
 if failed > 0 then
