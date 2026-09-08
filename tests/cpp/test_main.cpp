@@ -1,7 +1,11 @@
-#define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
+#define DOCTEST_CONFIG_IMPLEMENT
+#ifndef SDL_MAIN_HANDLED
+#define SDL_MAIN_HANDLED
+#endif
 #define WIN32_LEAN_AND_MEAN
 #include "doctest.h"
 #include "entry/Engine.h"
+#include <SDL3/SDL_main.h>
 #include <thread>
 #ifdef _MSC_VER
 #include <crtdbg.h>
@@ -61,3 +65,9 @@ static int s_testSetup = []() -> int {
     Caesura::detail::g_mainThreadId = std::this_thread::get_id();
     return 0;
 }();
+
+int main(int argc, char** argv) {
+    // This console runner owns main; it does not enter SDL's UIKit app wrapper.
+    SDL_SetMainReady();
+    return doctest::Context(argc, argv).run();
+}

@@ -92,6 +92,18 @@ Simulator在原生CWD探针退出3处失败，C++测试尚未启动。证据显�
 
 五项新适配回归先RED；修复后完整12/12 GREEN，包含真实CMake生成路径复现与复制、缺夹具拒绝、错误UDID、已有目标保护、无关模拟器内容保留。原始RUN04、工件散列审查及RED/GREEN在`artifacts/validation/eas-fourth-*`；第四次仍为FAIL，修复后的Simulator C++实际执行待下一次云端验证。下一次保持相同原生源码SHA，上传驱动的独立摘要另行记录，以区分原生源码和编排适配身份。
 
+## 第五次云执行与测试入口修正
+
+[第五次EAS运行01a080e8-8333-73e5-abe7-ba28dc310f59](https://expo.dev/accounts/ailiasdesus-team/projects/caesura-native-validation/workflows/01a080e8-8333-73e5-abe7-ba28dc310f59)仍验证原生源码`e56e55a182781be8094fc03f4d5d6ee7dff7f234`，上传编排来自`509f3cb8`。macOS再次通过完整profile及strict核验。iOS device的42条命令全部退出0，真实IOS/arm64/minos14.0.0产物与receipt一致，包内四组夹具共327文件/34目录，内容散列与源完全一致。
+
+Simulator的CWD探针、资源部署及真实C++启动成功；源夹具、实际目标包与专属设备data目录副本的inventory散列均为`986c8037…`，二进制前后摘要一致。完整1281项C++实际执行结果为**1273通过、8失败、0跳过**，61条命令中仅`simulator-cpp`退出1；该次运行保持FAIL。上传helper/workflow的实际字节散列精确匹配提交内容的CRLF表示，原LF与CRLF散列及对应关系均保留，未泛化忽略内容差异。
+
+七个失败发生在SDL事件初始化。独立控制台doctest入口没有经过SDL平台main包装；固定SDL3.2.4的iOS初始化先检查MainIsReady。测试入口现使用显式标准main，在原doctest Context运行前调用官方`SDL_SetMainReady()`，并保留CRT/主线程setup及命令行参数。七项原断言保持必跑，仅补充SDL错误文字；没有关闭iOS事件检查。
+
+另一个失败是Live2D路径测试假定临时目录一定在CWD外，实际Simulator临时目录位于data CWD中。测试现建立明确的model-root与外部sibling，并分别验证真实越界symlink拒绝、root内symlink接受。使用原生产`PathConfinement.cpp`和真实testcase的MSVC组件回归，原前提在TMP位于CWD内时先RED；更新后1用例、8断言全部通过，两条symlink实际执行。test_async与test_live2d声明数分别保持22和27，注册审计通过。
+
+本次只修改测试入口/夹具/诊断，生产runtime及CMake未改。完整报告及原始工件在`artifacts/validation/eas-fifth-*`。Windows组件通过不能替代Apple验收；下一次EAS必须使用包含测试修正的新源码SHA，再执行完整三lane。
+
 ## 官方来源
 
 - [EAS Workflows 当前 JSON Schema](https://api.expo.dev/v2/workflows/schema)：API envelope 的 `data` 才是 JSON Schema。
@@ -99,3 +111,4 @@ Simulator在原生CWD探针退出3处失败，C++测试尚未启动。证据显�
 - [Expo pre-packaged jobs](https://github.com/expo/expo/blob/main/docs/pages/eas/workflows/pre-packaged-jobs.mdx)：用于区分本次 custom jobs 与标准 Expo app build jobs。
 - [OpenSSL 3.3.2 iOS targets](https://github.com/openssl/openssl/blob/openssl-3.3.2/Configurations/15-ios.conf)：device/simulator 编译目标的直接来源。
 - [Apple Metal-cpp](https://developer.apple.com/metal/cpp/)：ErrorDomain弱链接及缺失符号为nullptr的约定。
+- [SDL_SetMainReady](https://wiki.libsdl.org/SDL3/SDL_SetMainReady) 与 [固定SDL3.2.4初始化源码](https://github.com/libsdl-org/SDL/blob/b5c3eab6b447111d3c7879bb547b80fb4abd9063/src/SDL.c)：自有main的ready接线及iOS初始化守卫。

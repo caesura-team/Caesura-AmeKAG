@@ -1,4 +1,5 @@
 #include "doctest.h"
+#include "TestPaths.h"
 
 #include "di/BackendRegistry.h"
 #include "live2d/NullAnimationBackend.h"
@@ -497,24 +498,47 @@ TEST_CASE("confineToModelRoot rejects prefix look-alike outside the root") {
 }
 
 TEST_CASE("confineToModelRoot resolves symlinks and keeps containment") {
-    // Create a temp dir with a symlink that points outside the root; the
-    // symlinked path must be rejected (resolved target escapes the root).
+    // A simulator may place its temp directory beneath the original CWD.
+    // An explicit model root makes the sibling target outside on every host.
     namespace fs = std::filesystem;
-    const fs::path tmp = fs::temp_directory_path() / ("pc_test_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-    fs::remove_all(tmp);
-    fs::create_directories(tmp);
-    const fs::path target = tmp / "target.txt";
-    { std::ofstream(target) << "x"; }
-    const fs::path link = tmp / "link.txt";
+    TestPaths::ScopedTempDir fixture("model_root_symlinks");
+    struct RestoreWorkingDirectory {
+        fs::path original = fs::current_path();
+        ~RestoreWorkingDirectory() {
+            std::error_code ignored;
+            fs::current_path(original, ignored);
+        }
+    } restore;
+    const fs::path root = fixture.path() / "model-root";
+    const fs::path outside = fixture.path() / "outside";
+    fs::create_directories(root);
+    fs::create_directories(outside);
+    const fs::path insideTarget = root / "inside.txt";
+    const fs::path outsideTarget = outside / "target.txt";
+    { std::ofstream(insideTarget) << "inside"; }
+    { std::ofstream(outsideTarget) << "outside"; }
+    REQUIRE(fs::is_regular_file(insideTarget));
+    REQUIRE(fs::is_regular_file(outsideTarget));
+    fs::current_path(root);
+    CHECK_FALSE(Caesura::confineToModelRoot(insideTarget.string()).empty());
+    CHECK(Caesura::confineToModelRoot(outsideTarget.string()).empty());
+
+    const fs::path escapeLink = root / "escape.txt";
     std::error_code ec;
-    fs::create_symlink(target, link, ec);
-    if (!ec) {
-        // The symlink target lives outside the model root (CWD) unless the
-        // temp dir happens to be inside it; either way the link path itself
-        // is outside the CWD and must be rejected.
-        CHECK(Caesura::confineToModelRoot(link.string()).empty());
+    fs::create_symlink(outsideTarget, escapeLink, ec);
+#ifdef _WIN32
+    if (ec) {
+        MESSAGE("Symlink creation unavailable on this Windows host: ", ec.message());
+        return; // Direct inside/outside checks above still ran.
     }
-    fs::remove_all(tmp);
+#endif
+    REQUIRE_MESSAGE(!ec, ec.message());
+    CHECK(Caesura::confineToModelRoot(escapeLink.string()).empty());
+
+    const fs::path insideLink = root / "inside-link.txt";
+    fs::create_symlink(insideTarget, insideLink, ec);
+    REQUIRE_MESSAGE(!ec, ec.message());
+    CHECK(Caesura::confineToModelRoot(insideLink.string()) == fs::canonical(insideTarget).string());
 }
 
 // ---------------------------------------------------------------------------
