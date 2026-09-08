@@ -338,7 +338,9 @@ if(Python3_EXECUTABLE)
     )
     add_test(
         NAME CaesuraHeadlessHttpSmoke
-        COMMAND ${Python3_EXECUTABLE}
+        COMMAND ${CMAKE_COMMAND} -E env
+                "CAESURA_LUA=$<TARGET_FILE:lua_cli>"
+                ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/headless_http_smoke.py
                 $<TARGET_FILE:CaesuraAmeKAG>
     )

@@ -350,5 +350,110 @@ console.log('destination-mkdir-attempts='+attempted);'''
             self.assertFalse((source / 'nested-output').exists())
 
 
+class PackageLuaSelectionCliTest(unittest.TestCase):
+    """Exercise the real Node CLI and a real Lua process, without a web build.
+
+    LUA_INIT exits at the interpreter boundary before ks_check. Its stdout
+    reports the executable name supplied by the actual Lua arg table. No probe
+    function, filesystem lookup, spawn result, or interpreter is mocked.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        if NODE is None:
+            raise unittest.SkipTest("node not found on PATH")
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import caesura_build
+        try:
+            cls.lua_binary = Path(caesura_build.find_lua()).resolve()
+        except caesura_build.BuildError as error:
+            if "CAESURA_LUA" in os.environ:
+                raise RuntimeError("Configured fixture interpreter is invalid: " + str(error)) from error
+            raise unittest.SkipTest("real Lua fixture interpreter unavailable: " + str(error)) from error
+
+    def setUp(self):
+        (ROOT / "tmp").mkdir(exist_ok=True)
+        self.temporary = tempfile.TemporaryDirectory(prefix="u2-package-lua-", dir=ROOT / "tmp")
+        self.addCleanup(self.temporary.cleanup)
+        self.fixture = Path(self.temporary.name)
+        for relative in ("scripts/package_game.mjs", "scripts/copy_tree.mjs", "web/lua-value.js"):
+            target = self.fixture / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(ROOT / relative, target)
+        (self.fixture / "game.ks").write_text("[end]\n", encoding="utf-8")
+        (self.fixture / "scripts/ks_check.lua").write_text(
+            "error('LUA_INIT execution control must run first')\n", encoding="utf-8")
+        self.path_dir = self.fixture / "path-lua"
+        self.path_dir.mkdir()
+        self.executable = "lua.exe" if os.name == "nt" else "lua"
+        self.legacy = [self.fixture / "external/lua" / self.executable,
+                       self.fixture / "build/lua/Release" / self.executable,
+                       self.path_dir / self.executable]
+
+    def plant(self, destination):
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(self.lua_binary, destination)
+        return destination
+
+    def cli(self, explicit=None):
+        env = dict(os.environ)
+        env.pop("NODE_OPTIONS", None)
+        env.pop("CAESURA_LUA", None)
+        if explicit is not None:
+            env["CAESURA_LUA"] = explicit
+        env["PATH"] = str(self.path_dir)
+        control = r'''local exe=assert(arg[-1]):gsub("\\","/"):match("([^/]+)$")
+io.write("U2-LUA-EXECUTED:"..exe..":".._VERSION.."\n")
+os.exit(42)'''
+        env["LUA_INIT"] = control
+        env["LUA_INIT_5_4"] = control
+        return subprocess.run([NODE, "scripts/package_game.mjs", "--no-web-build", "game.ks"],
+                              cwd=self.fixture, env=env, capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", timeout=30)
+
+    def test_12_explicit_lua_executes_before_packaged_release_and_path(self):
+        """Spaces/Unicode in the authoritative path reach that exact binary."""
+        for candidate in self.legacy:
+            self.plant(candidate)
+        name = "configured lua.exe" if os.name == "nt" else "configured lua"
+        selected = self.plant(self.fixture / "Lua 解释器 (测试)" / name)
+        for configured in (str(selected), str(selected.relative_to(self.fixture))):
+            with self.subTest(configured=configured):
+                result = self.cli(configured)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("U2-LUA-EXECUTED:" + name + ":Lua 5.4", result.stdout)
+                self.assertEqual(result.stdout.count("U2-LUA-EXECUTED:"), 1)
+                self.assertIn("FAIL: contract check failed", result.stdout)
+                self.assertNotIn("PACKAGE COMPLETE", result.stdout)
+
+    def test_13_invalid_explicit_lua_never_falls_back(self):
+        """Empty/missing/directory selections fail before a valid stale Lua runs."""
+        for candidate in self.legacy:
+            self.plant(candidate)
+        directory = self.fixture / "configured directory"
+        directory.mkdir()
+        for configured in ("", str(self.fixture / "missing lua.exe"), str(directory)):
+            with self.subTest(configured=configured):
+                result = self.cli(configured)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("CAESURA_LUA does not point at a Lua interpreter", result.stderr)
+                self.assertIn(configured or "<empty>", result.stderr)
+                self.assertNotIn("U2-LUA-EXECUTED:", result.stdout)
+                self.assertNotIn("Step 1/5", result.stdout)
+                self.assertNotIn("PACKAGE COMPLETE", result.stdout)
+
+    def test_14_unconfigured_legacy_lua_probe_remains_available(self):
+        """Each legacy location still launches a real Lua when no override exists."""
+        for candidate in self.legacy:
+            with self.subTest(candidate=str(candidate.relative_to(self.fixture))):
+                self.plant(candidate)
+                result = self.cli()
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("U2-LUA-EXECUTED:" + self.executable + ":Lua 5.4", result.stdout)
+                self.assertEqual(result.stdout.count("U2-LUA-EXECUTED:"), 1)
+                self.assertIn("FAIL: contract check failed", result.stdout)
+                candidate.unlink()
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
