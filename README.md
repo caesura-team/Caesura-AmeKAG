@@ -116,6 +116,10 @@ python scripts/caesura.py build my_vn --engine build/Debug/CaesuraAmeKAG.exe --c
 - 合并门槛：全量构建零错误 + C++ / Lua / CTest 满足当前验证要求；发现数、失败和跳过以实际运行结果报告（命令见[开发指南](docs/team/development-guide.md)，协作方式见[Codex 工作流](docs/team/codex-workflow.md)）。
 - 提交信息遵循 `type(scope): description`（`feat` / `fix` / `test` / `docs` / …）。
 
+## 赞助项目
+
+欢迎通过 **微信支付** 或 **支付宝** 支持 Caesura 的开发与维护：[查看收款码与赞助方式](docs/guides/sponsorship.md)。感谢每一份支持。
+
 ## 许可证
 
 [MIT](LICENSE)
