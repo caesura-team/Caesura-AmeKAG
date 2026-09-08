@@ -262,7 +262,7 @@ default/range/type 破坏性改变；已发布参数移除；i18n 语言键与�
 | KAG3 兼容 | 裸位置参数 **13** families / TJS 表达式 / `%f.x%` / `[elsif]` / `[call *label]` / `[end]` / `[goto]`→`[jump]` | `docs/api/kag-commands.md`、`kag-expression-language.md` |
 | 存档格式 | JSON + AES-256-GCM + `CAES` 信封 | `docs/design/save-security-audit.md`、`engine-architecture-topology.md` |
 | 存档 schema | 迁移链 **v1 → v5**（自动升级，步数上限 64） | `engine-capability-matrix.md` (C4) |
-| 脚本运行时 | **Lua 5.4**（指令预算沙箱） | `docs/guides/getting-started.md`、CLAUDE.md |
+| 脚本运行时 | **Lua 5.4**（指令预算沙箱） | `docs/guides/getting-started.md`、`docs/team/development-guide.md` |
 | 教程 | **16** 个递进式教程（tutorial_01–16） | `docs/guides/community.md`、`engine-capability-matrix.md` (C10) |
 | 项目布局 | `entry.lua` + `assets/` 子目录 + 可选 `mods/` | `docs/guides/asset-pipeline.md`、`template-quickstart.md` |
 | 当前版本 | **v1.0.1** | `CHANGELOG.md` |

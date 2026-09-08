@@ -11,6 +11,9 @@
 // Throughput uses one representative warmup and the median of three runs
 // in the same VM; it does not measure first-player startup. Every run still
 // checks completion, frame/token counts and error events.
+// Scaling uses the median of three within-pair 2000/1000 duration ratios.
+// Neighboring measurements stay paired, with their execution order alternating;
+// independent medians can select durations from different measurement pairs.
 // bridge.js round-109 hook writes _G.__FRAME_COUNT under __PERF_TRACE so
 // we can read the exact frame (tick) count — gated off on the normal path.
 // Memory uses the round-101 technique: collectgarbage("collect") x3 then
@@ -129,6 +132,26 @@ function assertThroughput(run, name, minFrames, minTokens) {
   expect(run.tokensPerMs, name + ' token throughput >= ' + minTokens).toBeGreaterThan(minTokens)
 }
 
+function medianScaleRatio(pairs, name) {
+  expect(pairs).toHaveLength(3)
+  const measurements = pairs.map((pair, index) => {
+    const wall1000Ms = pair.small.wallMs, wall2000Ms = pair.large.wallMs
+    for (const wallMs of [wall1000Ms, wall2000Ms]) {
+      expect(Number.isFinite(wallMs) && wallMs > 0, 'each paired sample needs a positive finite duration')
+        .toBe(true)
+    }
+    return { sample: index + 1, order: pair.order, wall1000Ms, wall2000Ms, ratio: wall2000Ms / wall1000Ms }
+  })
+  const median = measurements.map(run => run.ratio).sort((left, right) => left - right)[1]
+  if (name) process.stdout.write(`[perf] ${name}: pairs=${JSON.stringify(measurements)}; medianRatio=${median}\n`)
+  return median
+}
+
+function assertScaling(ratio) {
+  expect(ratio, 'doubling scene size should not blow up (paired wall2000 / wall1000 < 2.5)')
+    .toBeLessThan(2.5)
+}
+
 async function steadyRun(player, source, name, expectedTokens) {
   await benchmarkRun(player, source, name, expectedTokens)
   const samples = []
@@ -159,6 +182,55 @@ describe('performance measurement statistics', () => {
     const tokenLimited = medianRun([2100, 2200, 2300].map(wall => ({...sample(wall), framesPerMs:3})))
     expect(() => assertThroughput(tokenLimited, 'synthetic statistic fixture', syntheticMinFrames, syntheticMinTokens))
       .toThrow(/token throughput/)
+  })
+
+  const pair = (smallMs, largeMs) => ({ small: sample(smallMs), large: sample(largeMs) })
+
+  it('compares neighboring measurements when sample durations drift across pairs', () => {
+    const pairs = [pair(1813.7, 4311.9), pair(1279.0, 3528.1), pair(1348.1, 3180.6)]
+    const ratio = medianScaleRatio(pairs)
+    expect(ratio).toBeCloseTo(4311.9 / 1813.7, 12)
+    expect(() => assertScaling(ratio)).not.toThrow()
+    // Independently selected medians belong to different measurement pairs.
+    const independentRatio = medianRun(pairs.map(run => run.large)).wallMs
+      / medianRun(pairs.map(run => run.small)).wallMs
+    expect(independentRatio).toBeGreaterThan(2.5)
+  })
+
+  it('preserves pair membership and never sorts or changes the original measurements', () => {
+    const pairs = Object.freeze([
+      pair(10, 20), pair(30, 45), pair(20, 50),
+    ].map(run => Object.freeze({
+      small: Object.freeze(run.small), large: Object.freeze(run.large),
+    })))
+    const original = JSON.stringify(pairs)
+    expect(medianScaleRatio(pairs)).toBe(2)
+    expect(JSON.stringify(pairs)).toBe(original)
+    // Identical marginal timings with different pair membership have a different result.
+    expect(medianScaleRatio([pair(10, 45), pair(30, 50), pair(20, 20)]))
+      .toBeCloseTo(50 / 30, 12)
+  })
+
+  it('keeps sustained scaling regressions failing even when one pair is fast', () => {
+    for (const pairs of [
+      [pair(100, 260), pair(200, 560), pair(300, 900)],
+      [pair(100, 100), pair(200, 560), pair(300, 900)],
+      [pair(100, 200), pair(200, 500), pair(300, 900)],
+    ]) {
+      expect(() => assertScaling(medianScaleRatio(pairs))).toThrow(/doubling scene size/)
+    }
+  })
+
+  it('rejects invalid durations in either member of any measured pair', () => {
+    for (const wallMs of [NaN, Infinity, -Infinity, 0, -1, '10', null, undefined]) {
+      for (const member of ['small', 'large']) {
+        for (let index = 0; index < 3; index++) {
+          const pairs = [pair(100, 200), pair(150, 300), pair(200, 400)]
+            .map((run, i) => i === index ? { ...run, [member]: sample(wallMs) } : run)
+          expect(() => medianScaleRatio(pairs)).toThrow(/positive finite duration/)
+        }
+      }
+    }
   })
 })
 
@@ -202,18 +274,18 @@ describe('web player performance baseline (round 109)', () => {
     const largeRun = () => benchmarkRun(player, large, 'synth2000-scale.ks', 6000)
     await smallRun()
     await largeRun()
-    const smallSamples = [], largeSamples = []
+    const pairs = []
     for (let sample = 0; sample < 3; sample++) {
-      if (sample % 2 === 0) {
-        smallSamples.push(await smallRun())
-        largeSamples.push(await largeRun())
-      } else {
-        largeSamples.push(await largeRun())
-        smallSamples.push(await smallRun())
-      }
+      const smallFirst = sample % 2 === 0
+      const first = await (smallFirst ? smallRun() : largeRun())
+      const second = await (smallFirst ? largeRun() : smallRun())
+      pairs.push({
+        small: smallFirst ? first : second,
+        large: smallFirst ? second : first,
+        order: smallFirst ? '1000->2000' : '2000->1000',
+      })
     }
-    const r1 = medianRun(smallSamples, 'scale 1000'), r2 = medianRun(largeSamples, 'scale 2000')
-    expect(r2.wallMs, 'doubling scene size should not blow up (wall2000 < 2.5x wall1000)').toBeLessThan(r1.wallMs * 2.5)
+    assertScaling(medianScaleRatio(pairs, 'scale 2000/1000'))
   }, 120000)
 
   it('wasmoon limitation observability: heap window + single-thread coroutines', async () => {

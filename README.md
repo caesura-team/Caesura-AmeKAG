@@ -9,7 +9,7 @@
 [![CI](https://github.com/ailiasdesu/Caesura-AmeKAG/actions/workflows/ci.yml/badge.svg)](https://github.com/ailiasdesu/Caesura-AmeKAG/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/ailiasdesu/Caesura-AmeKAG)](https://github.com/ailiasdesu/Caesura-AmeKAG/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Web-2ea44f)
+![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Web%20%7C%20Android%20%7C%20iOS-2ea44f)
 
 [快速开始](#快速开始) · [教程与示例](#教程与示例) · [文档](#文档) · [平台支持](#平台支持) · [参与开发](#参与开发)
 
@@ -24,13 +24,15 @@ Caesura 是面向程序员与独立团队的开源视觉小说引擎。剧本语
 引擎内核为 C++20：bgfx 渲染、SDL3 窗口、SoLoud 音频、Lua 5.4 脚本 VM —— 16 个静态模块库、
 34 个纯虚接口、零循环依赖（[实时 API 普查](docs/api/api-stats.md)）。
 
+**当前开发方向：底层优先，Studio 暂停。** 后续工作以运行时正确性、状态恢复、真实后端与交付验证为主，进度和验收范围见[当前计划](docs/plans/README.md)。已有编辑器入口保留供维护，创作入门以引擎和 CLI 为主。
+
 ## 核心特性
 
 **创作体验**
 
 - **KAG Neo-Genesis 剧本语言**：134 个声明式契约命令——对白、选择支、存档/回滚/履历、NVL、参数化宏、内联文本标记、i18n 热切换（[命令参考](docs/api/command-contracts.md)）
 - **KAG + Lua 混合脚本**：`[eval]` / `[iscript]` 在剧本内嵌 Lua，`kag.*` API 反向驱动剧情；也可以纯 Lua 直驱引擎
-- **Caesura Studio**：浏览器端编辑器——工程管理、资产浏览、脚本 LSP 补全/诊断、断点调试、一键运行与打包（`--editor` 即开即用）
+- **Caesura Studio（开发暂停）**：仓库保留编辑器与 RPC 实现；现阶段不作为完整创作流程的就绪承诺，底层与 CLI 的开发优先。
 - **caesura 命令行**：`doctor` 环境体检、`create` 五模板脚手架、`check` 剧本契约校验、`flow` 分支图与死分支诊断、`i18n` 本地化管线、`build` / `package` 一键出包
 
 **引擎内核**
@@ -60,13 +62,15 @@ cmake -B build -S . -G "Visual Studio 17 2022" -A x64 -DCMAKE_TOOLCHAIN_FILE="C:
 cmake --build build --config Debug --parallel
 ```
 
-构建完成后，三条命令跑起第一个游戏：
+构建完成后，可通过 CLI 创建、校验并组装第一个游戏：
 
-```bash
-python scripts/caesura.py create my_vn --template basic   # 脚手架新项目
-build/Debug/CaesuraAmeKAG.exe --editor                    # Caesura Studio（浏览器打开 127.0.0.1:9876）
-python scripts/caesura.py package my_vn --target windows  # 一键出包
+```powershell
+python scripts/caesura.py create my_vn --template basic
+python scripts/caesura.py check my_vn/story.ks
+python scripts/caesura.py build my_vn --engine build/Debug/CaesuraAmeKAG.exe --config Debug
 ```
+
+随后从生成的 `dist/my_vn-game/` 目录启动 `CaesuraAmeKAG.exe`。`caesura build` 使用已有引擎二进制组装游戏目录；需要 ZIP 时运行 `python scripts/caesura.py package my_vn --target windows --engine build/Debug/CaesuraAmeKAG.exe`。具体操作与验证边界见[开发指南](docs/team/development-guide.md)。
 
 ## 教程与示例
 
@@ -91,6 +95,8 @@ python scripts/caesura.py package my_vn --target windows  # 一键出包
 | 能力矩阵（82 项） | [design/engine-capability-matrix.md](docs/design/engine-capability-matrix.md) |
 | 资源管线 | [guides/asset-pipeline.md](docs/guides/asset-pipeline.md) |
 | 发布流程 | [guides/release-process.md](docs/guides/release-process.md) |
+| 构建、测试、CLI 与受控验证 | [team/development-guide.md](docs/team/development-guide.md) |
+| Codex 项目工作流与技能 | [team/codex-workflow.md](docs/team/codex-workflow.md) |
 
 ## 平台支持
 
@@ -107,8 +113,16 @@ python scripts/caesura.py package my_vn --target windows  # 一键出包
 ## 参与开发
 
 - **[AGENTS.md](AGENTS.md)** 是本仓库的工程宪章：模块边界、接口规范、BackendRegistry 依赖注入、耦合预算——动手前必读。
-- 合并门槛：全量构建零错误 + C++ / Lua / ctest 全绿（命令速查见 [CLAUDE.md](CLAUDE.md) 与入门指南）。
+- 合并门槛：全量构建零错误 + C++ / Lua / CTest 满足当前验证要求；发现数、失败和跳过以实际运行结果报告（命令见[开发指南](docs/team/development-guide.md)，协作方式见[Codex 工作流](docs/team/codex-workflow.md)）。
 - 提交信息遵循 `type(scope): description`（`feat` / `fix` / `test` / `docs` / …）。
+
+## 赞助项目
+
+欢迎通过 **微信支付** 或 **支付宝** 支持 Caesura 的开发与维护：[查看收款码与赞助方式](docs/guides/sponsorship.md)。感谢每一份支持。
+
+| 微信支付 | 支付宝 |
+| :---: | :---: |
+| <img src="docs/assets/sponsorship/wechat.jpg" alt="微信支付收款码" width="320"> | <img src="docs/assets/sponsorship/alipay.jpg" alt="支付宝收款码" width="320"> |
 
 ## 许可证
 

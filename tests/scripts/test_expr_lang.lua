@@ -415,6 +415,101 @@ do
         tostring(v2))
 end
 
+-- Every namespace participates in a cached function's bound environment.
+-- A callee can replace lf/mp without replacing f, and independent contexts
+-- can intentionally share f while retaining different local/system state.
+do
+    for _, namespace in ipairs({ 'f', 'sf', 'tf', 'mp', 'lf' }) do
+        expr.reset_cache()
+        local ctx = { f = { n = 1 }, sf = { n = 1 }, tf = { n = 1 },
+            mp = { n = 1 }, lf = { n = 1 } }
+        local source = namespace .. '.n'
+        local first_ok, first = expr.evaluateTranslated(ctx, source)
+        ctx[namespace] = { n = 2 }
+        local second_ok, second = expr.evaluateTranslated(ctx, source)
+        ctx[namespace].n = 3
+        local third_ok, third = expr.evaluateTranslated(ctx, source)
+        check(namespace .. ' replacement rebinds the expression environment',
+            first_ok and first == 1 and second_ok and second == 2 and third_ok and third == 3)
+    end
+
+    expr.reset_cache()
+    local shared = { marker = 7 }
+    local first = { f = shared, sf = { n = 1 }, tf = { n = 2 }, mp = { n = 3 }, lf = { n = 4 } }
+    local second = { f = shared, sf = { n = 10 }, tf = { n = 20 }, mp = { n = 30 }, lf = { n = 40 } }
+    local source = 'f.marker + sf.n + tf.n + mp.n + lf.n'
+    local first_ok, first_value = expr.evaluateTranslated(first, source)
+    local second_ok, second_value = expr.evaluateTranslated(second, source)
+    local again_ok, again_value = expr.evaluateTranslated(first, source)
+    check('contexts sharing f retain independent expression namespaces', first_ok and first_value == 17
+        and second_ok and second_value == 107 and again_ok and again_value == 17)
+
+    expr.reset_cache()
+    local ctx = { f = {} }
+    local before_ok, before = expr.evaluateTranslated(ctx, 'lf.n or 0')
+    ctx.lf = { n = 9 }
+    local set_ok, set = expr.evaluateTranslated(ctx, 'lf.n or 0')
+    ctx.lf = nil
+    local clear_ok, cleared = expr.evaluateTranslated(ctx, 'lf.n or 0')
+    check('namespace nil-to-table-to-nil never retains an old local frame', before_ok and before == 0
+        and set_ok and set == 9 and clear_ok and cleared == 0)
+
+    expr.reset_cache()
+    local equal = { __eq = function() return true end }
+    local a, b = setmetatable({ n = 1 }, equal), setmetatable({ n = 2 }, equal)
+    ctx.lf = a
+    expr.evaluateTranslated(ctx, 'lf.n')
+    ctx.lf = b
+    local identity_ok, identity_value = expr.evaluateTranslated(ctx, 'lf.n')
+    check('namespace identity does not use table equality metamethods', identity_ok and identity_value == 2)
+end
+
+do
+    expr.reset_cache()
+    local real_load, compiles = load, 0
+    load = function(...) compiles = compiles + 1; return real_load(...) end
+    local first_ok, first = expr.evaluateTranslated(nil, '(lf.n or 0) + 1')
+    local second_ok, second = expr.evaluateTranslated(nil, '(lf.n or 0) + 1')
+    local third_ok, third = expr.evaluateTranslated({}, '(lf.n or 0) + 1')
+    load = real_load
+    check('missing namespaces reuse a single cached environment', first_ok and first == 1
+        and second_ok and second == 1 and third_ok and third == 1 and compiles == 1, compiles)
+
+    expr.reset_cache()
+    local binary = string.dump(assert(load('return lf.n', '=namespace_dump', 't', {})), true)
+    local first = { f = {}, lf = { n = 1 } }
+    local second = { f = first.f, lf = { n = 2 } }
+    local modes = {}
+    load = function(chunk, name, mode, env)
+        modes[#modes + 1] = mode
+        return real_load(chunk, name, mode, env)
+    end
+    local a_ok, a = expr.evaluateTranslated(first, 'lf.n', nil, binary)
+    local b_ok, b = expr.evaluateTranslated(second, 'lf.n')
+    load = real_load
+    check('namespace replacement reuses shared AOT bytes with a fresh environment', a_ok and a == 1
+        and b_ok and b == 2 and #modes == 2 and modes[1] == 'b' and modes[2] == 'b')
+end
+
+-- The inner evaluation must bind a new function, not mutate the _ENV of the
+-- outer function while it is still evaluating the right-hand lf expression.
+do
+    expr.reset_cache()
+    local shared, nested = {}, false
+    local outer, inner = { f = shared, lf = { n = 1 } }, { f = shared, lf = { n = 20 } }
+    local source = 'f.read() + lf.n'
+    shared.read = function()
+        if nested then return 100 end
+        nested = true
+        local ok, value = expr.evaluateTranslated(inner, source)
+        nested = false
+        assert(ok)
+        return value
+    end
+    local ok, value = expr.evaluateTranslated(outer, source)
+    check('reentrant evaluation cannot replace a running expression environment', ok and value == 121, value)
+end
+
 local failed = 0
 for _, ok in ipairs(results) do if not ok then failed = failed + 1 end end
 if failed > 0 then os.exit(1) end

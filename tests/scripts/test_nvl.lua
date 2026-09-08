@@ -12,6 +12,9 @@ end
 -- Save + restore the global: the suite runs every file in one process,
 -- so a leaked mock would change later tests' backend resolution.
 local saved_backend = rawget(_G, "_CAESURA_BACKEND")
+local backend_guard <close> = setmetatable({}, { __close = function()
+    rawset(_G, "_CAESURA_BACKEND", saved_backend)
+end })
 local calls = { render_text = 0, clear_text = 0 }
 _G._CAESURA_BACKEND = {
     render = function(method, ...)
@@ -21,6 +24,10 @@ _G._CAESURA_BACKEND = {
             calls.clear_text = calls.clear_text + 1
         elseif method == "line_height" then
             return 24
+        elseif method == "create_viewport" or method == "create_solid_texture" then
+            -- This text-only host owns no GPU resources. A boolean is not a
+            -- render handle and cannot participate in presentation capture.
+            return 0
         end
         return true
     end,
@@ -34,6 +41,9 @@ local TextCommands = require("kag.commands.text")
 local Schema = require("kag.schema")
 local snapshot = require("kag.snapshot")
 local layers = require("layers")
+-- Shared-suite predecessors own different synthetic textures. This text test
+-- starts with its own empty scene, just like a new runner session.
+assert(layers.clear_for_restore())
 
 -- Seed the message layer so [ch] does not allocate one during the test.
 layers.add_layer(nil, {

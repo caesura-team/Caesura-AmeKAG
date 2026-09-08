@@ -57,9 +57,8 @@ end
 
 -- ===========================================================================
 --  CancelToken:mark_cancelled()
---  Phase 1: Mark the token as cancelled.  Idempotent; the lock prevents
---  re-entrant cancellation from a callback erroneously calling cancel()
---  again, which would cause infinite recursion.
+--  Phase 1: Mark the token as cancelled.  Idempotent; the lock keeps
+--  repeated calls from changing the cancellation state.
 -- ===========================================================================
 function CancelToken:mark_cancelled()
     if self.cancellation_lock then return end
@@ -70,14 +69,16 @@ end
 -- ===========================================================================
 --  CancelToken:execute_callbacks()
 --  Phase 2: Run all registered callbacks in reverse registration order,
---  each wrapped in pcall.  After execution, the callback list is cleared.
+--  each wrapped in pcall. Detach the list first so re-entrant cancellation
+--  cannot execute the same callbacks again.
 --  Should be called after coroutine.close() in the scheduler.
 -- ===========================================================================
 function CancelToken:execute_callbacks()
-    for i = #self.callbacks, 1, -1 do
-        pcall(self.callbacks[i])
-    end
+    local callbacks = self.callbacks
     self.callbacks = {}
+    for i = #callbacks, 1, -1 do
+        pcall(callbacks[i])
+    end
 end
 
 -- ===========================================================================

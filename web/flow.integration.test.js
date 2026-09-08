@@ -1572,17 +1572,14 @@ describe('browser flow (jsdom + wasmoon + DOM)', () => {
     expect(player.core.backlog[7].text).toContain('[N]LINE8')
   }, 120000)
 
-  it('[rollback] degrades gracefully on web: no undo stack -> no-op, no crash (round 82 parity)', async () => {
+  it('[rollback] before the first text point has no history and continues safely', async () => {
     const NL = String.fromCharCode(10)
-    // Desktop [rollback] pops the kag_runner undo stack and re-runs from the
-    // saved token. The web bridge drives its own scene cursor (__CTXREF) and
-    // never wires kag_runner.rollback's module ctx, so rollback() returns
-    // "nothing-to-rollback" / "no-context"; the handler prints and returns
-    // false. Parity to lock: the scene survives, runs to DONE, no error event.
+    // The Web player uses the same runner and real undo stack as native.
+    // Only the initial command below has no historical click point to restore.
     player.core.events.length = 0
     player.core.backlog = []
     const out = await player.runScene(
-      ['[ch name="N" text="A"]', '[p]', '[rollback]', '[ch name="N" text="B"]', '[p]', '[end]'].join(NL),
+      ['[rollback]', '[ch name="N" text="A"]', '[p]', '[ch name="N" text="B"]', '[p]', '[end]'].join(NL),
       'rollback_deg.ks', { maxFrames: 200000, autoClick: true })
     expect(out.startsWith('DONE:'), out).toBe(true)
     const errs = player.core.events.filter((e) => String(e.kind).includes('error'))

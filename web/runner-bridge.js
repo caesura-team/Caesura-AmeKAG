@@ -112,7 +112,10 @@ export async function installRunnerBridge(lua) {
         frames = frames+1
         if __PERF_TRACE == true then __FRAME_COUNT=frames end
         local ok, reason
-        if ctx.waiting_input and not ctx._pendingRestore and not ctx.skip_mode then
+        -- A manual advance releases a restored checkpoint even when the host
+        -- retains skip mode. Automatic input still stops at the checkpoint.
+        local resume_rollback = ctx._rollback_waiting and clicked
+        if ctx.waiting_input and not ctx._pendingRestore and (not ctx.skip_mode or resume_rollback) then
           if clicked or (opts.autoClick and clicks < 10000) then
             ok, reason = click(ctx, opts)
             clicked = false
@@ -135,6 +138,13 @@ export async function installRunnerBridge(lua) {
         end
         local current = runner.get_ctx()
         if current ~= ctx and current then current._web_restore_history=true end
+        if current and current._rollback_waiting then
+          -- Rollback retains its context identity, but replaces that context's
+          -- historical page and backlog. Use the existing restore publisher
+          -- and hand this click point back to the host before any auto-click.
+          current._web_restore_history=true
+          return 'WAIT:'..tostring(current.token_index)
+        end
         if not ok and reason=='waiting-input' and ctx.skip_mode=='seen' then
           return 'WAIT:'..tostring(ctx.token_index)
         end
@@ -151,6 +161,9 @@ export async function installRunnerBridge(lua) {
       if owner and owner ~= __CTXREF and owner.tf and owner.tf.load_result=='ok' then
         owner._web_restore_history=true
       end
+      -- A host may call the public runner rollback between drives. Capture
+      -- its history replacement before an explicit advance clears the wait.
+      if owner and owner._rollback_waiting then owner._web_restore_history=true end
       local advance = opts.advance == true and opts.advanceScene == name
         and owner ~= nil
       if mode == 'load' or not advance then

@@ -189,6 +189,96 @@ void checkReplacedSessionLoad(bool buffered, bool oldSuccess) {
     engine.shutdown();
 }
 
+void checkRollbackSessionLoad(bool buffered, bool oldSuccess) {
+    SessionImage image;
+    Test::LifecycleProbe render;
+    Test::ServiceProbe quota;
+    EngineConfig config;
+    config.headless = true;
+    config.render = new Test::RenderDevice(render);
+    config.sandboxQuota = new TextureQuotaProbe(quota);
+    Engine engine(std::move(config));
+    REQUIRE(engine.init());
+    auto* state = engine.lua().state();
+    initNativeRunner(state, image);
+    lua_pushboolean(state, oldSuccess);
+    lua_setglobal(state, "u12_old_success");
+    runLua(state, R"lua(
+        package.loaded.flow.load_scene = function(path)
+            return {path = path, labels = {}, tokens = require('tokenizer').parse(
+                '[p][wait time=60000][end]')}
+        end
+        assert(runner.start('rollback.ks'))
+        runner.get_ctx().f.marker = 'historical'
+        assert(runner.on_click())
+        u12_owner, u12_old_co = runner.get_ctx(), u10_last_co
+        assert(#u12_owner._undoStack == 1, 'must create history through public click')
+        u12_old_token = assert(u12_owner.active_operations[1])
+        u12_owner.f.marker = 'future'
+        u12_old_calls, u12_new_calls = 0, 0
+        local callback = function()
+            u12_old_calls = u12_old_calls + 1
+            runner.get_ctx().f.marker = 'obsolete completion'
+        end
+        u10_weak_callbacks[1] = callback
+        local path = u12_old_success and u10_image or (u10_image .. '.missing')
+        assert(Render.load_texture_async(path, callback) > 0)
+    )lua");
+    auto& jobs = engine.jobSystem();
+    auto* loader = BackendRegistry::instance().getAsyncLoader();
+    REQUIRE(loader != nullptr);
+    // Both modes use real worker I/O/decode. One leaves the completion in the
+    // JobSystem; the other transfers it to the loader before rollback.
+    REQUIRE(sessionWorkersFinished(jobs));
+    if (buffered) jobs.pollMainThreadJobs();
+    REQUIRE(loader->pendingCount() == 1);
+    const int allocations = quota.tryAllocCalls;
+    const int releases = quota.releaseCalls;
+    runLua(state, R"lua(
+        assert(u12_old_calls == 0)
+        assert(runner.rollback())
+        assert(coroutine.status(u12_old_co) == 'dead' and u12_old_token.cancelled)
+        assert(u10_close_calls[u12_old_token] == 1)
+        assert(#runner.get_ctx()._undoStack == 0)
+        assert(runner.get_ctx().f.marker == 'historical')
+        assert(runner.get_ctx().waiting_input and runner.get_ctx()._rollback_waiting)
+        assert(next(_ASYNC_CALLBACKS) == nil)
+        collectgarbage('collect')
+        assert(u10_weak_callbacks[1] == nil, 'rollback must release obsolete closure')
+        local callback = function(ok, path, texture)
+            u12_new_calls = u12_new_calls + 1
+            u12_new_result = {ok = ok, path = path, texture = texture}
+        end
+        u10_weak_callbacks[2] = callback
+        assert(Render.load_texture_async(u10_image, callback) > 0)
+    )lua");
+    REQUIRE(sessionWorkersFinished(jobs));
+    jobs.pollMainThreadJobs();
+    CHECK(loader->pendingCount() == 1);
+    CHECK(quota.tryAllocCalls == allocations);
+    int ticks = 0;
+    engine.run([&] { if (++ticks == 3) engine.quit(); });
+    CHECK(ticks == 3);
+    runLua(state, R"lua(
+        assert(u12_old_calls == 0 and u12_new_calls == 1)
+        assert(u12_new_result.path == u10_image)
+        assert(u12_new_result.ok == false and u12_new_result.texture == 0)
+        assert(rawequal(runner.get_ctx(), _CAESURA_CTX))
+        assert(runner.get_ctx().f.marker == 'historical')
+        assert(runner.get_ctx().waiting_input and runner.get_ctx()._rollback_waiting)
+        assert(next(_ASYNC_CALLBACKS) == nil)
+        collectgarbage('collect')
+        assert(u10_weak_callbacks[1] == nil and u10_weak_callbacks[2] == nil)
+        assert(runner.on_click(), 'manual continuation remains available')
+        assert(runner.get_ctx().f.marker == 'historical')
+        assert(not runner.get_ctx()._rollback_waiting)
+    )lua");
+    CHECK(loader->pendingCount() == 0);
+    CHECK(quota.tryAllocCalls == allocations + 1);
+    CHECK(quota.releaseCalls == releases + 1);
+    engine.shutdown();
+}
+
 struct ShutdownObservation {
     Test::LifecycleProbe& render;
     Test::ServiceProbe& layers;
@@ -238,6 +328,16 @@ TEST_CASE("Entry U10: stop discards loader results buffered before Engine consum
     SUBCASE("old successful decode") {}
     SUBCASE("old missing asset") { oldSuccess = false; }
     checkReplacedSessionLoad(true, oldSuccess);
+}
+
+TEST_CASE("Entry U12: rollback rejects obsolete native loads and accepts a fresh load") {
+    bool buffered = false;
+    bool oldSuccess = true;
+    SUBCASE("successful decode delivered after rollback") {}
+    SUBCASE("missing asset delivered after rollback") { oldSuccess = false; }
+    SUBCASE("successful decode buffered before rollback") { buffered = true; }
+    SUBCASE("missing asset buffered before rollback") { buffered = true; oldSuccess = false; }
+    checkRollbackSessionLoad(buffered, oldSuccess);
 }
 
 TEST_CASE("Entry U10: shutdown closes runner scopes before backends and cancels cleanup loads") {

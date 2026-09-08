@@ -64,7 +64,7 @@ check("rollback exists", type(kag_runner.rollback) == "function")
 -- here; neither copied source snippets nor function spelling prove behavior.
 check("restore preserves separate next execution cursor", ctx._resume_index == 9)
 check("restore local frame", ctx.lf.local_value == 10)
-ctx.text_state.draws[#ctx.text_state.draws + 1] = { text = "future" }
+require("kag.text_scene").add_text(ctx,"future",32,580,{255,255,255,255})
 ctx.reveal.elapsed = 0
 check("restored presentation stays independent from retained snapshot",
       #snap.text_state.draws == 0 and snap.reveal.elapsed == 240)

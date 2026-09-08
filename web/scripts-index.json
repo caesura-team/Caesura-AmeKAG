@@ -44,6 +44,7 @@
  "kag.operation": true,
  "kag.presentation": true,
  "kag.quickmenu": true,
+ "kag.rollback_presentation": true,
  "kag.save_state": true,
  "kag.schema": true,
  "kag.semantic": true,

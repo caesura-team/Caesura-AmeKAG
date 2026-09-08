@@ -21,9 +21,9 @@
 
 local expr = {}
 
--- Expression chunk cache (translated source -> compiled function).
--- Keyed by translated source + env identity (ctx.f), so cached chunks never
--- pin an old env table. Bounded like the scheduler's own cache.
+-- Expression chunk cache, bucketed by translated source + ctx.f. A bucket
+-- matches only while all five bound namespace identities still match.
+-- Bounded like the scheduler's own cache.
 local cache = {}
 local CACHE_MAX = 128
 
@@ -540,23 +540,22 @@ end
 --  serves every env identity — a session-wide AOT win, not per-env.
 function expr.evaluateTranslated(ctx, translated, original, dump)
     if type(translated) ~= "string" then return true, translated end
-    local f = ctx and ctx.f or {}
-    -- Dual-style environment:
-    --   * bare identifiers (score > 5) resolve in ctx.f via __index
-    --   * TJS/KAG3 style (f.hp, tf.flag, sf.x, mp.z, lf.y) resolve via the
-    --     named tables -- lf is the call-stack variable frame (empty when
-    --     no [call] frame is active, see scheduler.lua).
-    local env = {
-        f  = f,
-        sf = ctx and ctx.sf or {},
-        tf = ctx and ctx.tf or {},
-        mp = ctx and ctx.mp or {},
-        lf = ctx and ctx.lf or {},
-    }
-    setmetatable(env, { __index = f })
+    -- Compare the actual namespaces before allocating fallback tables: an
+    -- absent namespace is stable too. rawequal excludes user __eq methods.
+    local f, sf, tf = ctx and ctx.f or nil, ctx and ctx.sf or nil, ctx and ctx.tf or nil
+    local mp, lf = ctx and ctx.mp or nil, ctx and ctx.lf or nil
     local key = translated .. "\0" .. tostring(f)
-    local fn = cache[key]
+    local cached = cache[key]
+    local fn = cached and rawequal(cached.f, f) and rawequal(cached.sf, sf)
+        and rawequal(cached.tf, tf) and rawequal(cached.mp, mp)
+        and rawequal(cached.lf, lf) and cached.fn or nil
     if not fn then
+        -- Bind a fresh function instead of replacing a live function's _ENV:
+        -- an expression may re-enter evaluation with a different call frame.
+        -- Bare identifiers resolve through f; qualified names use the five
+        -- explicit namespace tables, with independent empty defaults.
+        local env = { f = f or {}, sf = sf or {}, tf = tf or {}, mp = mp or {}, lf = lf or {} }
+        setmetatable(env, { __index = env.f })
         -- AOT path: use the precompiled bytecode when available (either
         -- supplied by the compiler or back-filled in dump_cache). Fall
         -- back to source load on any dump failure (e.g. a dump produced
@@ -604,7 +603,7 @@ function expr.evaluateTranslated(ctx, translated, original, dump)
         end
         if okChunk and chunk then
             fn = chunk
-            cache[key] = fn
+            cache[key] = { fn = fn, f = f, sf = sf, tf = tf, mp = mp, lf = lf }
             local n = 0
             for _ in pairs(cache) do n = n + 1 end
             if n > CACHE_MAX then

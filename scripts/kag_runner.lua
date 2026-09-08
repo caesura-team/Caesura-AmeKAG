@@ -171,6 +171,25 @@ local function cancel_session_work(owner)
     if failed then error(first_error, 0) end
 end
 
+local function clear_pending_transitions(owner)
+    local restore, rollback = owner._pendingRestore, owner._pendingRollback
+    owner._pendingRestore, owner._pendingRollback = nil, nil
+    owner._pendingSceneReload, owner._scene_changed, owner._pendingJump = nil, false, nil
+    owner._pendingLoadScene, owner._pendingLoadToken = nil, nil
+    local errors = {}
+    local function discard(fn, value)
+        local called, ok, reason = pcall(fn, value)
+        if not called or ok == false then
+            errors[#errors + 1] = tostring(called and reason or ok)
+        end
+    end
+    if restore then discard(require("kag.presentation").discard, restore._presentation) end
+    if rollback and rollback.prepared then
+        discard(require("kag.snapshot").discard, rollback.prepared)
+    end
+    return #errors == 0, table.concat(errors, "; ")
+end
+
 local function finish_session(retain_context)
     if changing_session then return false, "session-changing" end
     if scheduler_running() then return false, "scheduler-running" end
@@ -187,20 +206,13 @@ local function finish_session(retain_context)
     local closed, close_error = close_scheduler_coroutine()
     local cancelled, cancel_error = pcall(cancel_session_work, owner)
     local presentation = package.loaded["kag.presentation"]
-    local cleaned, cleanup_error = true, nil
-    if presentation then
-        if owner._pendingRestore then
-            cleaned, cleanup_error = presentation.discard(owner._pendingRestore._presentation)
-        end
-        if not retain_context then
-            local stopped, stop_error = presentation.stop(owner)
-            if not stopped then cleaned, cleanup_error = false, stop_error end
+    local cleaned, cleanup_error = clear_pending_transitions(owner)
+    if presentation and not retain_context then
+        local called, stopped, stop_error = pcall(presentation.stop, owner)
+        if not called or stopped == false then
+            cleaned, cleanup_error = false, called and stop_error or stopped
         end
     end
-    owner._pendingSceneReload, owner._pendingRollback = nil, nil
-    owner._scene_changed, owner._pendingJump = false, nil
-    owner._pendingLoadScene, owner._pendingLoadToken = nil, nil
-    owner._pendingRestore = nil
     owner.waiting_input = false
     if not retain_context then publish_context(nil) end
     changing_session = false
@@ -592,35 +604,66 @@ end
 
 local auto_advance_ms = 0  -- accumulated ms before auto-mode advances
 
-local function commit_rollback(owner, snap)
-    if owner ~= ctx or owner._undoStack[#owner._undoStack] ~= snap then
-        return false, "rollback-owner-expired"
+local function discard_rollback(prepared, reason)
+    local called, discarded, err = pcall(require("kag.snapshot").discard, prepared)
+    if not called then discarded, err = false, discarded end
+    return false, tostring(reason) .. (discarded and "" or "; discard: " .. tostring(err))
+end
+
+local function rollback_request_is_current(owner, request)
+    return owner == ctx and request.revision == session_revision and request.co == kag_co
+        and type(owner._undoStack) == "table" and owner._undoStack[#owner._undoStack] == request.snap
+end
+
+local function fail_rollback(owner, request, reason)
+    -- Commit has retired the old scopes. Partial GPU/font installation is a
+    -- stopped session, not a recoverable preparation error or a live mixture.
+    local called, cleaned, cleanup_error = pcall(require("kag.presentation").stop, owner, true)
+    if not called then cleaned, cleanup_error = false, cleaned end
+    changing_session = false
+    local stopped, stop_error = finish_session(false)
+    return discard_rollback(request.prepared, tostring(reason)
+        .. (cleaned and "" or "; cleanup: " .. tostring(cleanup_error))
+        .. (stopped and "" or "; stop: " .. tostring(stop_error)))
+end
+
+local function commit_rollback(owner, request)
+    if not rollback_request_is_current(owner, request) then
+        if owner == ctx and owner._pendingRollback == request then
+            owner._pendingRollback = nil
+            if not has_continuation(owner) then owner.stop_flag = request.previous_stop end
+        end
+        return discard_rollback(request.prepared, "rollback-owner-expired")
     end
     changing_session = true
     owner._session_active = false
     owner.stop_flag = true
     owner._rollback_waiting = nil
+    owner._pendingRollback = nil -- this prepared candidate transfers to commit
     local closed, close_error = close_scheduler_coroutine()
     local cancelled, cancel_error = pcall(cancel_session_work, owner)
-    owner._pendingRollback = nil
+    local cleared, clear_error = clear_pending_transitions(owner)
     owner.waiting_input = false
-    if not closed or not cancelled then
-        changing_session = false
-        return false, not closed and close_error or cancel_error
+    if not closed or not cancelled or not cleared then
+        return fail_rollback(owner, request, not closed and close_error
+            or not cancelled and cancel_error or clear_error)
     end
-    local called, restored = pcall(require("kag.snapshot").restore, owner, snap)
-    if not called or not restored then
-        changing_session = false
-        return false, called and "restore-failed" or restored
+    local applied, apply_error = pcall(function()
+        assert(require("kag.transient_state").stop(owner))
+        assert(require("kag.snapshot").apply(owner, request.prepared))
+        owner._restoredWait = nil
+        owner._rollback_capture_reason = nil
+        table.remove(owner._undoStack)
+        owner.stop_flag = false
+        owner._rollback_waiting, owner.waiting_input = true, true
+        auto_advance_ms = 0
+        spawn_scheduler(owner._resume_index)
+    end)
+    if not applied then
+        return fail_rollback(owner, request, apply_error)
     end
-    table.remove(owner._undoStack)
-    owner.stop_flag = false
-    owner._rollback_waiting = true
-    owner.waiting_input = true
-    auto_advance_ms = 0
-    spawn_scheduler(owner._resume_index)
     changing_session = false
-    if snap.resume_page_wait then
+    if request.snap.resume_page_wait then
         return resume_scheduler("rollback")
     end
     return true, "rolled-back"
@@ -987,11 +1030,13 @@ end
 function kag_runner.rollback()
     if changing_session then return false, "session-changing" end
     if not ctx then return false, "no-context" end
-    if type(ctx._undoStack) ~= "table" or #ctx._undoStack == 0 then
-        return false, "nothing-to-rollback"
-    end
-    -- Can't roll back while a choice menu is open (stack cleared on choice).
     if ctx._choiceMode then return false, "choice-open" end
+    if type(ctx._macroStack) == "table" and #ctx._macroStack > 0 then
+        return false, "macro-active"
+    end
+    if type(ctx._undoStack) ~= "table" or #ctx._undoStack == 0 then
+        return false, ctx._rollback_capture_reason or "nothing-to-rollback"
+    end
     if ctx._pendingRollback then return false, "rollback-pending" end
     local snap = ctx._undoStack[#ctx._undoStack]
     if type(snap) ~= "table" then return false, "invalid-snapshot" end
@@ -999,15 +1044,32 @@ function kag_runner.rollback()
     if type(index) ~= "number" or index < 1 or index % 1 ~= 0 then
         return false, "invalid-resume-index"
     end
-    local overlay = ctx._gesture_history_co
+    local owner = ctx
+    local request = {snap = snap, revision = session_revision, co = kag_co,
+        previous_stop = owner.stop_flag}
+    local ready, prepared = pcall(require("kag.snapshot").prepare, owner, snap)
+    if not ready then return false, "rollback-prepare-failed: " .. tostring(prepared) end
+    request.prepared = prepared
+    -- Web resource providers may suspend or re-enter while preparing. Never
+    -- install a candidate into a replaced owner, scheduler or history head.
+    if not rollback_request_is_current(owner, request) then
+        return discard_rollback(prepared, "rollback-owner-expired")
+    end
+    if owner._pendingRollback then
+        -- A provider can re-enter rollback while this candidate is preparing.
+        -- A queued inner request does not change the owner/co/history identity;
+        -- retain its ownership instead of overwriting and leaking its tickets.
+        return discard_rollback(prepared, "rollback-pending")
+    end
+    local overlay = owner._gesture_history_co
     local overlay_busy = overlay and (coroutine.status(overlay) == "running"
         or coroutine.status(overlay) == "normal")
     if scheduler_running() or overlay_busy then
-        ctx._pendingRollback = snap
-        ctx.stop_flag = true
+        owner._pendingRollback = request
+        owner.stop_flag = true
         return true, "rollback-pending"
     end
-    return commit_rollback(ctx, snap)
+    return commit_rollback(owner, request)
 end
 
 -- ── kag_runner.on_click() ────────────────────────────────────────────────────
@@ -1017,6 +1079,7 @@ end
 function kag_runner.on_click()
     if changing_session then return false, "session-changing" end
     if ctx and ctx._pendingRollback then return false, "rollback-pending" end
+    if ctx and ctx._choiceMode then return false, "choice-open" end
     -- History/backlog overlay owns the pointer while open: ignore clicks so
     -- the overlay coroutine is not batch-resumed underneath. (Checked first:
     -- the guard must hold even when no coroutine is running yet.)
@@ -1039,6 +1102,10 @@ function kag_runner.on_click()
         local st = require("kag.text_scene").get_state(ctx)
         if st.reveal_chars < ctx.reveal.total then
             st.reveal_chars = ctx.reveal.total
+            -- Keep the time-derived reveal state aligned with the explicit
+            -- reveal. The next update (or save/load) must not hide the line.
+            ctx.reveal.elapsed = math.max(ctx.reveal.elapsed or 0,
+                (ctx.reveal.total or 0) * math.max(0, tonumber(ctx.text_speed) or 50))
             -- [typewriter sound] (t201): the click-instant reveal shows the
             -- whole remainder; mark the SE boundary complete so the
             -- elapsed-driven follow-through cannot fire a burst of SEs for
@@ -1067,7 +1134,18 @@ function kag_runner.on_click()
     -- first click, so every click that reaches here actually advances and
     -- gets a snapshot. (Gating on ctx.reveal==nil would never fire: [ch]/
     -- [text] always set reveal.)
-    local snap = require("kag.snapshot").capture(ctx)
+    -- Dynamic macros splice the token stream and own stack frames that cannot
+    -- be reconstructed from a click checkpoint. Choice handlers own the
+    -- current click until their branch is settled. Both permit normal input,
+    -- but must not publish a partially restorable history point.
+    local macro_active = type(ctx._macroStack) == "table" and #ctx._macroStack > 0
+    local snap, capture_reason
+    if not ctx._choiceMode and not macro_active then
+        local captured, value, reason = pcall(require("kag.snapshot").capture, ctx)
+        if captured then snap, capture_reason = value, reason
+        else capture_reason = "capture-failed: " .. tostring(value) end
+    end
+    ctx._rollback_capture_reason = capture_reason
     if snap then
         local stack = ctx._undoStack
         if type(stack) ~= "table" then stack = {}; ctx._undoStack = stack end

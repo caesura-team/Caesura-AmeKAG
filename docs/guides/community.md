@@ -5,7 +5,8 @@
 > 如何参与、如何发布你的作品。
 >
 > 相关入口：[README](../../README.md) · [贡献指南](../../CONTRIBUTING.md) ·
-> [入门指南](getting-started.md) · [示例库](sample-library.md)
+> [入门指南](getting-started.md) · [示例库](sample-library.md) ·
+> [开发操作指南](../team/development-guide.md) · [Codex 工作流](../team/codex-workflow.md)
 
 ---
 
@@ -13,6 +14,8 @@
 
 Caesura 是一个开源的跨平台视觉小说 / 文字冒险引擎：**C++20 + bgfx 渲染 + SDL3 窗口 + Lua 5.4 脚本**，内置 Live2D、3D 小游戏、SMA 骨骼动画与云存档。
 它的脚本语言是 **KAG Neo-Genesis**——脱胎于老一代 KAG3 的现代化标签语法，老 KAG3 工程可以导入迁移。
+
+当前项目方向为**底层优先、Studio 暂停**，以[当前计划](../plans/README.md)为准。新作者可从引擎示例和 CLI 入手；已有编辑器界面与 RPC 的存在，不代表完整 Studio 创作流程已经验收。
 
 引擎自带一个 **16 步教程路径**（`demo/tutorial/tutorial_01_hello.ks` → `tutorial_16_tween.ks`）
 和一个**完整示例游戏《单程回信》**（`demo/example_game/`），新人可以照猫画虎。
@@ -65,7 +68,7 @@ example_game（完整示例游戏，照着改剧情）
 
 ### 第 2 步 — 教程路径 tutorial 01–16
 
-按顺序运行 16 个递进式教学剧本，即可掌握 KAG Neo-Genesis 全部基础（每个都是独立可跑、带逐行注释、经引擎 + Web 播放器双重验证）：
+按顺序阅读和运行递进式教学剧本，学习 KAG Neo-Genesis 的基础能力。原生引擎与 Web 的验证范围分别核对，不以静态契约检查代替运行结果：
 
 | 步骤 | 文件 | 学习内容 |
 |------|------|----------|
@@ -89,10 +92,13 @@ example_game（完整示例游戏，照着改剧情）
 > ⚠️ 教程 16 依赖 [tween] 命令（round 106 起）。若 ks_check 将其判为未知命令，说明模块尚未登记进 `kag/init.lua`，见 [sample-library.md](sample-library.md) 的当前状态标注。
 
 运行方式（仓库根）：
-```bash
-external/lua/lua.exe scripts/ks_check.lua demo/tutorial/tutorial_01_hello.ks
+```powershell
+python scripts/caesura.py check demo/tutorial/tutorial_01_hello.ks
 # 或全部教程一起校验
-for f in demo/tutorial/tutorial_*.ks; do external/lua/lua.exe scripts/ks_check.lua $f; done
+Get-ChildItem -LiteralPath 'demo/tutorial' -Filter 'tutorial_*.ks' | ForEach-Object {
+    python scripts/caesura.py check $_.FullName
+    if ($LASTEXITCODE -ne 0) { throw "教程契约检查失败：$($_.Name)" }
+}
 ```
 
 ### 第 3 步 — 完整示例游戏 example_game
@@ -101,25 +107,26 @@ for f in demo/tutorial/tutorial_*.ks; do external/lua/lua.exe scripts/ks_check.l
 
 - [demo/example_game/DESIGN.md](../../demo/example_game/DESIGN.md) —— 完整设计文档（世界观 / 角色 / 流程 / 能力展示清单）
 - [demo/example_game/README.md](../../demo/example_game/README.md) —— 快速上手（修改剧本 story.ks）
-- 启动：`lua demo/example_game/entry.lua`（无 lua 用 `external/lua/lua.exe demo/example_game/entry.lua`）
+- 组装：`python scripts/caesura.py build demo/example_game --engine build/Debug/CaesuraAmeKAG.exe --config Debug`；引擎构建完成后，从该命令生成的游戏目录启动二进制。普通 Lua 解释器不能代替原生渲染和音频宿主。
 
 **把它当成模板**：改 `story.ks` 的剧情、换 `assets/` 下的立绘与 BGM，就是你的第一个游戏原型。
 
 ### 第 4 步 — 深入引擎文档
 
-当需要底层能力时，按 AGENTS.md §12 的 5 类文档查阅：
+当需要底层能力时，按 [AGENTS.md](../../AGENTS.md) 的文档分类查阅：
 
 | 类别 | 目录 | 关键入口 |
 |------|------|----------|
 | api/ | docs/api/ | 命令契约 command-contracts.md（权威）、Lua 模块、C++ 接口、编辑器 RPC |
 | design/ | docs/design/ | 架构拓扑、能力矩阵、KAG Neo-Genesis 标准、市场分析 |
 | guides/ | docs/guides/ | getting-started、asset-pipeline、carc-packaging、live2d-setup、packaging-ux |
-| plans/ | docs/plans/ | 执行记录与 roadmap（产品化阶段状态） |
+| plans/ | docs/plans/ | 当前计划入口与按日期记录的执行进度 |
 | solutions/ | docs/solutions/ | 可复用经验 / 模式（YAML 可搜索） |
+| team/ | docs/team/ | 开发指南、Codex 工作流与可追溯项目记忆 |
 
 快速导航：
 - [KAG Neo-Genesis 语言白皮书](../../docs/design/kag-neo-genesis-language.md)
-- [命令契约（123 个）](../../docs/api/command-contracts.md)（自动生成，权威）
+- [命令契约](../api/command-contracts.md)（自动生成，数量与参数以当前文件为准）
 - [KAG 语言速查](../../docs/guides/kag-language-tour.md)
 - [资源管线 / 目录规范](../../docs/guides/asset-pipeline.md)
 
@@ -127,12 +134,14 @@ for f in demo/tutorial/tutorial_*.ks; do external/lua/lua.exe scripts/ks_check.l
 
 引擎提供**一键打包**为静态 Web 播放器站点（无后端、无需额外运行时），可直接上传到 itch.io / GitHub Pages / Netlify / 任意静态托管：
 
-```bash
-# 在仓库根（git bash）
-bash scripts/package_game.sh demo/example_game   # 打包示例游戏
-bash scripts/package_game.sh my_game/scene.ks   # 打包你自己的剧本
-# 产物在 dist/<game>/——静态站点，直接上传分发
+```powershell
+# 在仓库根，通过 Python CLI 调用现有 Node 打包器
+python scripts/caesura.py package demo/example_game --target web
+# 或直接打包一个剧本
+node scripts/package_game.mjs my_game/scene.ks --out dist/my_game-web
 ```
+
+产物路径以命令输出为准；分享前检查实际生成的站点和目标浏览器运行情况。打包成功不等于浏览器验收或托管发布完成。
 
 发布入口建议：
 - **itch.io**：免费 / 付费上架，社区人气高，支持 Web 嵌入式试玩。
@@ -148,8 +157,9 @@ bash scripts/package_game.sh my_game/scene.ks   # 打包你自己的剧本
 想改代码 / 文档 / 测试？完整流程见 **[CONTRIBUTING.md](../../CONTRIBUTING.md)**，要点：
 
 - **Fork → 分支（codex/<描述>）→ 语义提交 → PR**。
-- **合并门禁**：全量构建零错误 + 四套件测试全绿（C++ doctest + Lua 套件 + Web vitest + Editor vitest）+ 耦合门禁 + git diff --check。
-- **文档规范**：按 api / design / guides / plans / solutions 五类归位（AGENTS.md §12）。
+- **合并门禁**：按 AGENTS.md 与当前验证 profile 完成构建、测试和适用的耦合检查；测试数量实时发现，缺失或跳过不能写成通过。具体命令见[开发指南](../team/development-guide.md)。
+- **文档规范**：API、设计、使用指南、执行计划、解决方案和团队流程分别放入对应目录（AGENTS.md）。
+- **Codex 协作**：按[项目工作流](../team/codex-workflow.md)选择 `.agents/skills/caesura-*` 技能；先保留并检查已有工作，复用仍适用的证据，不要求固定模型、固定代理数量或每轮重复全量测试。
 - 想贡献但不确定从哪开始？去 Discussions「引擎开发」或 Issues 里找标着 good first issue 的。
 
 还不会写代码、但会用引擎创作内容？同样是贡献——优质教程、示例游戏、美术 / 音频素材都能帮助社区。
@@ -160,6 +170,8 @@ bash scripts/package_game.sh my_game/scene.ks   # 打包你自己的剧本
 
 - [README](../../README.md) —— 项目总览（特性 / 架构 / 模块 / 文档索引 / 示例库）
 - [CONTRIBUTING.md](../../CONTRIBUTING.md) —— 参与贡献（PR 流程 / 测试 / 文档规范）
+- [development-guide.md](../team/development-guide.md) —— 构建、测试、CLI 与受控证据操作
+- [codex-workflow.md](../team/codex-workflow.md) —— Codex 接续、项目技能与验证范围
 - [getting-started.md](getting-started.md) —— 从克隆到可跑
 - [sample-library.md](sample-library.md) —— 示例库 + 教程路径 01–16 覆盖矩阵
 - [packaging-ux.md](packaging-ux.md) —— 一键打包分发

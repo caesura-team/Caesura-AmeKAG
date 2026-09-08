@@ -18,6 +18,13 @@ local schemaModule = require("kag.schema")
 -- scheduler compiles every token stream once (idempotent per stream).
 local compiler = require("kag.compiler")
 
+-- Rollback snapshots share the token stream and macro definitions. Retire
+-- checkpoints before mutating either reference; static AOT calls do not pass
+-- through the runtime expansion branch and retain their normal history.
+local function clear_macro_history(ctx)
+    ctx._undoStack = {}
+end
+
 -- ──── Flow-control command set (handled inline, never dispatched to kag table) ────
 
 local flow_commands = {
@@ -1244,6 +1251,7 @@ function scheduler.run(ctx, tokens, start_index)
                 i = i + 1
             end
             if name then
+                clear_macro_history(ctx)
                 ctx.macros = ctx.macros or {}
                 ctx.macros[name] = body
                 -- Neo-Genesis: parameterized macros (KAG3 args feature).
@@ -1267,6 +1275,9 @@ function scheduler.run(ctx, tokens, start_index)
                 name = params[1]
             end
             if name and ctx.macros then
+                if ctx.macros[name] ~= nil or (ctx.macro_args and ctx.macro_args[name] ~= nil) then
+                    clear_macro_history(ctx)
+                end
                 ctx.macros[name] = nil
                 if ctx.macro_args then ctx.macro_args[name] = nil end
             end
@@ -1278,6 +1289,7 @@ function scheduler.run(ctx, tokens, start_index)
             -- Check if it's a macro invocation
             local macro_body = ctx.macros and ctx.macros[cmd]
             if macro_body then
+                clear_macro_history(ctx)
                 -- Expansion depth guard (round 75): the old per-ctx
                 -- counter grew without bound, so a legit scene with >1000
                 -- macro calls (e.g. a [for] loop calling a macro once per
@@ -1298,6 +1310,14 @@ function scheduler.run(ctx, tokens, start_index)
                 -- passed endIdx) -- the stack grows one per level and
                 -- trips the depth cap. No dedupe: deduping by endIdx
                 -- would swallow exactly the recursion signal.
+                -- A nested splice also shifts the unexecuted outer tail.
+                -- Keep its boundary live until that tail has actually run.
+                local expansion_grow = #macro_body - 1
+                for depth, end_index in ipairs(ctx._macroStack) do
+                    if end_index >= i then
+                        ctx._macroStack[depth] = end_index + expansion_grow
+                    end
+                end
                 ctx._macroStack[#ctx._macroStack + 1] = i - 1 + #macro_body
                 if #ctx._macroStack > 100 then
                     error("[macro] expansion depth exceeded (possible "

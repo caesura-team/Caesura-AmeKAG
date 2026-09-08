@@ -1454,6 +1454,11 @@ function TextCommands.endbutton(ctx, params)
         return
     end
 
+    -- A visible menu commits a branch boundary. Its suspended operation and
+    -- later deferred jump are not part of token snapshots. Empty/all-hidden
+    -- blocks above remain ordinary linear flow and keep their history.
+    ctx._undoStack = {}
+
     local operation <close> = Operation.start(ctx)
     local oldClick = _G._KAG_onClick
     local clickHandler
