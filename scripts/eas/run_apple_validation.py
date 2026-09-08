@@ -24,6 +24,8 @@ from validation_process import run_owned_command
 SOURCE_URL = "https://github.com/caesura-team/Caesura-AmeKAG.git"
 SDL_SHA = "b5c3eab6b447111d3c7879bb547b80fb4abd9063"  # release-3.2.4
 OPENSSL_SHA = "fb7fab9fa6f4869eaa8fbb97e0d593159f03ffe4"  # openssl-3.3.2
+# Match the effective engine minimum recorded by the Xcode 26.6 native builds.
+IOS_DEPLOYMENT_TARGET = "14.0"
 
 
 def now():
@@ -189,12 +191,13 @@ class Lane:
     def ios(self):
         simulator = self.name == "ios-simulator"
         sdk = "iphonesimulator" if simulator else "iphoneos"
+        target_triple = f"arm64-apple-ios{IOS_DEPLOYMENT_TARGET}" + ("-simulator" if simulator else "")
         self.run("simulator-inventory", ["xcrun", "simctl", "list", "--json"], allow_failure=not simulator)
         sdl = self.dependency_checkout("sdl", "https://github.com/libsdl-org/SDL.git", SDL_SHA)
         ssl = self.dependency_checkout("openssl", "https://github.com/openssl/openssl.git", OPENSSL_SHA)
         sdl_install, ssl_install = self.root / "sdl-install", self.root / "openssl-install"
         flags = ["-G", "Xcode", "-DCMAKE_SYSTEM_NAME=iOS", f"-DCMAKE_OSX_SYSROOT={sdk}",
-                 "-DCMAKE_OSX_ARCHITECTURES=arm64", "-DCMAKE_OSX_DEPLOYMENT_TARGET=13.0",
+                 "-DCMAKE_OSX_ARCHITECTURES=arm64", f"-DCMAKE_OSX_DEPLOYMENT_TARGET={IOS_DEPLOYMENT_TARGET}",
                  "-DCMAKE_BUILD_TYPE=Debug", "-DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO",
                  "-DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_REQUIRED=NO"]
         self.run("sdl-configure", ["cmake", "-S", sdl, "-B", sdl / "build", *flags,
@@ -205,7 +208,7 @@ class Lane:
         self.run("sdl-install", ["cmake", "--install", sdl / "build", "--config", "Debug"])
         ssl_target = "iossimulator-arm64-xcrun" if simulator else "ios64-xcrun"
         self.run("openssl-configure", ["perl", "Configure", ssl_target, f"--prefix={ssl_install}",
-            "--libdir=lib", "no-shared", "no-tests", "no-apps", "no-docs"], cwd=ssl)
+            "--libdir=lib", f"--target={target_triple}", "no-shared", "no-tests", "no-apps", "no-docs"], cwd=ssl)
         self.run("openssl-build", ["make", "-j3"], cwd=ssl, timeout=1800)
         self.run("openssl-install", ["make", "install_sw"], cwd=ssl)
         self.run("metal-source-audit", [self.python, "scripts/verify_metal_shaders.py"])
@@ -231,6 +234,7 @@ class Lane:
             for name, binary in binaries.items():
                 archive.add(binary.parent, arcname=name)
         self.receipt["compile"] = {"status": "PASS", "sdk": sdk, "configuration": "Debug",
+            "deployment_target": IOS_DEPLOYMENT_TARGET, "openssl_target_triple": target_triple,
             "code_signing_allowed": False, "sdl_sha": SDL_SHA, "openssl_sha": OPENSSL_SHA}
         self.save()
         if simulator:
@@ -252,9 +256,12 @@ class Lane:
         _, build = self.run(f"{name}-platform", ["xcrun", "vtool", "-show-build", binary])
         if arch != "arm64" or not re.search(rf"\bplatform\s+{expected_platform}\b", build):
             raise RuntimeError(f"{name} is not an arm64 {expected_platform} binary")
+        minimum = re.search(r"\bminos\s+([0-9.]+)\b", build)
+        if not minimum or tuple(int(n) for n in minimum[1].split(".")[:2]) != tuple(int(n) for n in IOS_DEPLOYMENT_TARGET.split(".")):
+            raise RuntimeError(f"{name} does not preserve the iOS {IOS_DEPLOYMENT_TARGET} deployment target")
         self.receipt.setdefault("binaries", {})[name] = {
             "path": str(binary), "sha256": sha256(binary), "architecture": arch,
-            "platform": expected_platform}
+            "platform": expected_platform, "minimum_os": minimum[1]}
         self.save()
 
     def simulator_tests(self, binary, test_cwd):
@@ -289,7 +296,7 @@ class Lane:
         probe = self.root / "simulator-cwd-probe"
         self.receipt["uploaded_cwd_probe_sha256"] = sha256(probe_source)
         self.run("cwd-probe-compile", ["xcrun", "--sdk", "iphonesimulator", "clang", "-target",
-            "arm64-apple-ios13.0-simulator", "-isysroot", sdk, probe_source, "-o", probe])
+            f"arm64-apple-ios{IOS_DEPLOYMENT_TARGET}-simulator", "-isysroot", sdk, probe_source, "-o", probe])
         self.identify_binary("cwd-probe", probe, "IOSSIMULATOR")
         self.run("simulator-cwd-proof", ["xcrun", "simctl", "spawn", udid, probe, test_cwd], cwd=test_cwd)
         before = sha256(binary)

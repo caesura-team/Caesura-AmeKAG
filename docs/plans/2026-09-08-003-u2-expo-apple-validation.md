@@ -2,7 +2,7 @@
 
 日期：2026-09-08。该记录落实用户“U2 的 iOS 和 macOS 测试用 Expo 来做”的要求，是 [运行时可靠性与交付闭环计划](2026-09-05-001-refactor-runtime-foundation-plan.md) 的 U2 执行接入，不替代 U1–U29，也不恢复 Studio 开发。
 
-当前状态：工作流及驱动已实现，完成工具层本地检查；**Apple 云端编译、macOS 原生完整测试、iOS 模拟器 C++ 实际运行仍需对应的 EAS run 证明**。本记录不把接入完成等同于 U2 完成。U25 的完整 iOS app、UIKit 生命周期、真实 Metal/音频、真机及签名交付合同仍需单独完成。
+当前状态：工作流已真实执行。第三次EAS run已证明macOS完整原生profile和iOS arm64未签名编译通过；iOS Simulator在Metal链接处失败，修复准备后仍需真实重跑。本记录不把接入完成或两个lane通过等同于U2完成。U25的完整iOS app、UIKit生命周期、真实Metal/音频、真机及签名交付合同仍需单独完成。
 
 ## 运行合同
 
@@ -72,7 +72,22 @@ EAS 提供机器/调度/工件保存，不代替原生测试的通过条件。�
 
 ## 官方来源
 
+## 第三次云执行与 Simulator 链接修复
+
+[第三次EAS运行01a0808e-5336-786d-8364-c7a01bb36a00](https://expo.dev/accounts/ailiasdesus-team/projects/caesura-native-validation/workflows/01a0808e-5336-786d-8364-c7a01bb36a00)继续验证源码`9e9cfc07c4455b498ea99d465cc6f560bf1eed32`。三个真实工件已下载并检查路径安全后解包，保存在本地`artifacts/validation/eas-third-results/`，原始archive未改写。
+
+- macOS：完整`macos-debug` profile PASS，原生run ID `029c7068-4f92-4585-9edc-19c9fd8d5af8`；C++1281/1281、Lua147/44、Python17/6/53/57、耦合、注册、CTest25通过/0失败/1预声明外部AI跳过；executor、collector、严格verifier均退出0，源码clean及fingerprint前后相同。
+- iOS device：SDL/OpenSSL及引擎、CaesuraTests完整目标构建成功；确认IOS/arm64、Debug、未签名，源码前后clean。它是编译证明，未运行真机。
+- iOS Simulator：交叉依赖和配置完成，实际引擎链接exit65。`libbgfx.a(renderer_mtl.o)`引用的`_MTLIOErrorDomain`、`_MTLTensorDomain`在该Simulator SDK中不存在；完整构建未完成，故没有Simulator C++通过结论。
+
+最小修复把vendored Metal-cpp头中这两个ErrorDomain改用该头已有的动态弱符号宏；有真实符号时读取它，缺失时为nullptr，不关闭Metal、不自行定义替代常量。Apple官方Metal-cpp说明的ErrorDomain弱链接合同提供依据；当前bgfx上游尚未对这两处采用该宏，因此这是本仓库修复，不标为已合入上游。
+
+同一次构建还发现OpenSSL对象默认使用SDK26.5最低版本而引擎实际最低版本为14.0。驱动现将SDL、引擎、CWD探针和OpenSSL的显式target统一到iOS14.0，并检查实际Mach-O minos。Windows Clang18提取真实vendor宏的IR对照确认两个强外部引用消失而dlsym保留；驱动7项检查和minos正负控制通过。这些本地检查不能代替Apple SDK链接与Simulator复验，下一次EAS改为新的修复源码SHA。
+
+## 官方来源
+
 - [EAS Workflows 当前 JSON Schema](https://api.expo.dev/v2/workflows/schema)：API envelope 的 `data` 才是 JSON Schema。
 - [Expo Workflows syntax](https://github.com/expo/expo/blob/main/docs/pages/eas/workflows/syntax.mdx)：custom Mac workers、手动输入、checkout、失败工件上传及 16 KiB 限制。
 - [Expo pre-packaged jobs](https://github.com/expo/expo/blob/main/docs/pages/eas/workflows/pre-packaged-jobs.mdx)：用于区分本次 custom jobs 与标准 Expo app build jobs。
 - [OpenSSL 3.3.2 iOS targets](https://github.com/openssl/openssl/blob/openssl-3.3.2/Configurations/15-ios.conf)：device/simulator 编译目标的直接来源。
+- [Apple Metal-cpp](https://developer.apple.com/metal/cpp/)：ErrorDomain弱链接及缺失符号为nullptr的约定。
