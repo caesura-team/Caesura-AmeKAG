@@ -101,13 +101,27 @@ Exit: 0 = packaged, 1 = any step failed.`)
 }
 
 // ------------------------------------------- Lua interpreter probe ----------
-// Same three levels as scripts/caesura_build.py::find_lua (keep in sync):
+// Same precedence as scripts/caesura_build.py::find_lua (keep in sync):
+//   explicit CAESURA_LUA (authoritative, invalid values fail without fallback) ->
 //   packaged external/lua/lua[.exe] (release-package artifact; gitignored in a
 //   checkout; Windows-only presence) -> build-tree lua_cli product
 //   (build/lua/<config>/lua[.exe], present after cmake --build) -> PATH
 //   lua5.4 / lua. FATAL only when ALL levels miss, listing every location
 //   probed (honest diagnostics; never a silent skip).
 function probeLua() {
+  const configured = process.env.CAESURA_LUA
+  if (configured !== undefined) {
+    // Like Path.resolve() in caesura_build.py, a relative environment override
+    // is relative to the caller's CWD. spawnSync receives the intact absolute
+    // filename, including spaces/Unicode, without a shell or command splitting.
+    let selected = null
+    try {
+      const path = resolve(configured)
+      if (configured && statSync(path).isFile()) selected = path
+    } catch { /* Missing/inaccessible paths are an explicit configuration error. */ }
+    if (!selected) fail('CAESURA_LUA does not point at a Lua interpreter: ' + (configured || '<empty>'))
+    return selected
+  }
   const candidates = [
     'external/lua/lua.exe', 'external/lua/lua',
     'build/lua/Release/lua.exe', 'build/lua/Release/lua',

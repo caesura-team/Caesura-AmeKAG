@@ -17,6 +17,8 @@
 #include <cstdint>
 #include <cstring>
 #include <unordered_map>
+#include <array>
+#include <cmath>
 
 using namespace Caesura;
 
@@ -47,6 +49,55 @@ TextRenderer::GlyphLookupResult lookupFromTable(uint32_t cp, void* userData) {
         out.fromCjk = false;
     }
     return out;
+}
+
+struct GeometryPoint { double x, y; };
+
+double twiceSignedArea(GeometryPoint a, GeometryPoint b, GeometryPoint c) {
+    return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+}
+
+bool triangleContains(const std::array<GeometryPoint, 3>& triangle, GeometryPoint point) {
+    constexpr double epsilon = 1e-10;
+    if (std::abs(twiceSignedArea(triangle[0], triangle[1], triangle[2])) <= epsilon) return false;
+    const double a = twiceSignedArea(triangle[0], triangle[1], point);
+    const double b = twiceSignedArea(triangle[1], triangle[2], point);
+    const double c = twiceSignedArea(triangle[2], triangle[0], point);
+    return (a >= -epsilon && b >= -epsilon && c >= -epsilon)
+        || (a <= epsilon && b <= epsilon && c <= epsilon);
+}
+
+// Inspect the actual indexed geometry returned by production. Buffer lengths and
+// equality against another call to the same builder cannot detect half a quad.
+void checkQuadCoverage(const std::vector<float>& vertices, const std::vector<uint32_t>& indices,
+                       size_t glyph, uint32_t glyphIndexBase,
+                       double left, double top, double right, double bottom) {
+    REQUIRE(indices.size() >= (glyph + 1) * 6);
+    const uint32_t streamBase = glyphIndexBase * 6;
+    const uint32_t glyphBase = streamBase + static_cast<uint32_t>(glyph) * 6;
+    std::array<std::array<GeometryPoint, 3>, 2> triangles{};
+    for (size_t i = 0; i < 6; ++i) {
+        const uint32_t index = indices[glyph * 6 + i];
+        REQUIRE(index >= glyphBase);
+        REQUIRE(index < glyphBase + 6);
+        const size_t local = size_t(index - streamBase) * 4;
+        REQUIRE(local + 3 < vertices.size());
+        triangles[i / 3][i % 3] = {vertices[local], vertices[local + 1]};
+    }
+    const double first = twiceSignedArea(triangles[0][0], triangles[0][1], triangles[0][2]);
+    const double second = twiceSignedArea(triangles[1][0], triangles[1][1], triangles[1][2]);
+    CHECK(std::abs(first) > 1e-10);
+    CHECK(std::abs(second) > 1e-10);
+    CHECK(first * second > 0.0); // Same winding; neither triangle may degenerate.
+    CHECK((std::abs(first) + std::abs(second)) / 2.0
+          == doctest::Approx(std::abs((right - left) * (bottom - top))));
+    // Interior probes exercise both sides of the diagonal, including the lower
+    // left part previously omitted by the cached text mesh.
+    for (int y = 0; y < 4; ++y) for (int x = 0; x < 4; ++x) {
+        const GeometryPoint point{left + (right - left) * (x + 0.5) / 4,
+                                  top + (bottom - top) * (y + 0.5) / 4};
+        CHECK((triangleContains(triangles[0], point) || triangleContains(triangles[1], point)));
+    }
 }
 
 } // namespace
@@ -197,9 +248,24 @@ TEST_CASE("Text layout: NDC conversion wraps pixel quads to [-1,1]") {
     CHECK(verts[9] == doctest::Approx(-0.111111f));
     CHECK(verts[10] == doctest::Approx(1.0f));   // u1 passthrough
     CHECK(verts[11] == doctest::Approx(1.0f));   // v1 passthrough
-    // indices reference 0..5
+    // Both triangles must reference the six-vertex stream, including bottom-left.
     CHECK(indices[0] == 0);
-    CHECK(indices[5] == 3);
+    CHECK(indices[5] == 5);
+    checkQuadCoverage(verts, indices, 0, 0, 0.0, 0.0, 0.03125, -1.0 / 9.0);
+}
+
+TEST_CASE("Text layout: appended glyph indices preserve two triangles and full coverage") {
+    std::vector<TextRenderer::LaidGlyph> glyphs(2);
+    glyphs[0].gx = 12; glyphs[0].gy = 34; glyphs[0].w = 8; glyphs[0].h = 16;
+    glyphs[1].gx = 41; glyphs[1].gy = 7; glyphs[1].w = 9; glyphs[1].h = 13;
+    std::vector<float> vertices;
+    std::vector<uint32_t> indices;
+    constexpr uint32_t base = 7;
+    TextRenderer::buildQuadVertices(glyphs, 0, 0, vertices, indices, base);
+    REQUIRE(vertices.size() == 48);
+    REQUIRE(indices.size() == 12);
+    checkQuadCoverage(vertices, indices, 0, base, 12, 34, 20, 50);
+    checkQuadCoverage(vertices, indices, 1, base, 41, 7, 50, 20);
 }
 
 TEST_CASE("Text layout: NDC falls back to pixel coords when screen size is 0") {
@@ -906,4 +972,3 @@ TEST_CASE("Kinsoku wrap: a glyph wider than the line still yields non-empty line
     for (size_t i = 1; i < breaks.size(); ++i) CHECK(breaks[i] > breaks[i - 1]);
     CHECK(breaks.back() == text.size());
 }
-

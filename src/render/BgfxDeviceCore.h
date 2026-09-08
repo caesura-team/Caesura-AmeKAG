@@ -4,6 +4,7 @@
 #include "api/IRenderDevice.h"
 #include <unordered_map>
 #include <cstdint>
+#include "BgfxDebugCallback.h"
 
 namespace Caesura {
 
@@ -13,7 +14,8 @@ public:
     static void setOverrideGLContext(void* ctx);
 #endif
 public:
-    BgfxDeviceCore() = default;
+    explicit BgfxDeviceCore(std::shared_ptr<ScreenshotQueue> screenshots = std::make_shared<ScreenshotQueue>())
+        : m_callback(std::move(screenshots)) {}
     ~BgfxDeviceCore();
 
     BgfxDeviceCore(const BgfxDeviceCore&) = delete;
@@ -44,6 +46,13 @@ public:
     void beginFrame();
     void endFrame();
     void commit_frame();
+    void advanceFrame();
+    void beginShutdown() { m_callback.beginShutdown(); }
+    void flagDeviceLost() { m_callback.flagDeviceLost(); }
+    bool consumeDeviceLost() { return m_callback.consumeDeviceLost(); }
+    bool deviceLost() const { return m_callback.deviceLost(); }
+    uint32_t presentWidth() const { return m_backbufferW ? m_backbufferW : static_cast<uint32_t>(m_width); }
+    uint32_t presentHeight() const { return m_backbufferH ? m_backbufferH : static_cast<uint32_t>(m_height); }
     // Present surface size (see IRenderDevice::setPresentSize).
     void setPresentSize(uint16_t w, uint16_t h) { m_backbufferW = w; m_backbufferH = h; }
     void setViewRect(uint16_t v, uint16_t x, uint16_t y, uint16_t w, uint16_t h);
@@ -77,6 +86,8 @@ public:
     }
 
 private:
+    // Owned through bgfx::shutdown(), including its final callback drain.
+    BgfxDebugCallback m_callback;
     float  m_colorFilter[9] = { 0.0f };
     bool   m_colorFilterActive = false;
 
@@ -95,6 +106,7 @@ private:
     uint16_t m_backbufferW = 0;
     uint16_t m_backbufferH = 0;
     bool m_bgfxInitialized = false;
+    std::string m_backendName = "bgfx";
     bool m_shutdownComplete = false;
     struct RTTEntry { bgfx::FrameBufferHandle fb = BGFX_INVALID_HANDLE; bgfx::TextureHandle tex = BGFX_INVALID_HANDLE; uint16_t viewId = VIEW_RTT; };
     uint32_t m_nextHandle = 1;

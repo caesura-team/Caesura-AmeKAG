@@ -2,6 +2,7 @@
 
 > **面向编辑器前端开发者的完整接口文档**（React/Monaco IDE 源码在 `editor/`；发布包内随引擎分发的 `web-editor/dist/index.html` 是单文件调试面板）
 > 最后更新: 2026-08-15
+> 截图与异步存档合同于 2026-09-08 按当前源码同步；其余章节保留各自维护范围。
 
 ---
 
@@ -32,6 +33,8 @@
 > stdio 已接入 breakpoint、Continue、Step、变量检查和调试状态命令。
 > `run` / `eval` 已迁移到 managed coroutine（`startManagedRun` + `pumpManagedRuns`），
 > 可正常执行含 `coroutine.yield()` 的脚本；不再返回 `unsupported_yieldable_execution`。
+> 暂停时只处理实际 yield 的值，保留 native continuation 的关闭守卫；正常结束、错误、
+> abort 与 reload 在释放 registry 引用前关闭协程，以退休挂起截图等资源。
 >
 > **静态根覆盖**：默认 `--editor` 以探测推导的 webRoot 服务 `/` 与 `/index.html`（发布包内为
 > `web-editor/dist` 单文件调试面板：ifstream 直读，不设 mount）。设置环境变量
@@ -402,7 +405,7 @@ Lua 调试器既可通过 stdio RPC 调用（见 §1.12），也可经以下 HTT
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | `GET` | `/api/debug/getState` | 引擎状态（与 `/api/state` 同字段） |
-| `GET` | `/api/debug/getFrame?w=&h=` | 截取当前帧为 base64 PNG（默认 1280×720，上限 8192） |
+| `GET` | `/api/debug/getFrame?w=&h=` | 为本次请求绘制并截取完整帧，返回原始 Base64 PNG（默认 1280×720；单边上限 8192，另受渲染器像素/内存预算约束） |
 | `POST` | `/api/debug/setBreakpoint` | 设置源码行断点（请求体 `source` + `line`） |
 | `POST` | `/api/debug/removeBreakpoint` | 移除断点（请求体 `source` + `line`） |
 | `POST` | `/api/debug/clearBreakpoints` | 清除全部断点 |
@@ -411,6 +414,8 @@ Lua 调试器既可通过 stdio RPC 调用（见 §1.12），也可经以下 HTT
 | `POST` | `/api/debug/stepOver` | 单步跳过（不进入被调用的 Lua 函数） |
 | `POST` | `/api/debug/stepOut` | 单步跳出（运行至当前函数返回） |
 | `GET` | `/api/debug/inspect?name=&frame=&global=` | 检查 Lua 局部或全局变量 |
+
+`getFrame` 在 owner thread 经 Engine 请求自己的截图票据，在完整绘制和后处理后统一呈现一次，并明确等待该票据完成；等待不额外推进空帧，不读取循环命名的旧截图文件。输出按请求的 `w`/`h` 最近邻拉伸，成功响应为 `{"status":"ok","base64":"..."}`，其中图像文本没有 data URI 前缀。HTTP 要求两维均为 1..8192；渲染器还限制总像素与保留字节量，所以维度初检通过不保证接收。headless、不就绪、截图失败或完成等待超时会通过 dispatcher 返回 `capture_failed`，不会伪造旧图。当前 Engine 的完成轮询设有 2 秒期限，超时取消后仍领取/丢弃自己的终态；此期限不能抢占底层驱动、PNG 编码或单次结果领取的互斥等待，不是整个 HTTP 响应的硬实时上限。
 
 `setBreakpoint` / `removeBreakpoint` 请求体（`application/json`）：
 
@@ -623,11 +628,12 @@ into/over/out 和变量检查。KAG scheduler 的所有普通推进均经过同�
 -- 存档/读档绑定注册到 KAG 模块（KAG.save_game, KAG.load_game, ...），
 -- 没有独立的 Save 全局变量。
 -- Backend: BackendRegistry::instance().getSaveManager()
+-- 缩略图: BackendRegistry::instance().getRenderDevice()
 ```
 
 | 函数 | 签名 | 说明 |
 |------|------|------|
-| `save_game` | `(slot: int, data: table)` | 保存到槽位 |
+| `save_game` | `(slot, data, sceneName, tokenIndex, thumbnail?) → bool, error?` | 同步原子保存提供的状态及缩略图文本，不自行截图 |
 | `load_game` | `(slot: int) → table` | 从槽位加载 |
 | `list_saves` | `() → table` | 列出所有存档 |
 | `delete_save` | `(slot: int)` | 删除存档 |
@@ -635,10 +641,16 @@ into/over/out 和变量检查。KAG scheduler 的所有普通推进均经过同�
 | `get_save_dir` | `() → string` | 存档写入目录 |
 | `set_encryption_key` | `(key)` | 设置/派生存档加密密钥 |
 | `clear_encryption_key` | `()` | 清除存档加密密钥 |
-| `capture_thumbnail` | `()` | 捕获当前帧作为存档缩略图 |
+| `capture_thumbnail` | `(cancelToken?) → base64OrNil, status, errorOrNil` | 请求本次 320×180 缩略图，等待自己的票据完成；第一返回值保持原始 Base64 字符串/nil |
 | `configure_cloud` | `(endpoint: string) → bool` | 配置 HTTP 云存档端（`""` 恢复本地）；离线降级不抛错 |
 | `cloud_push` | `(slot: int) → bool` | 把槽位文件推送到云端 |
 | `cloud_pull` | `(slot: int) → bool` | 从云端拉取槽位文件到本地 |
+
+`capture_thumbnail` 的可选参数为现有 `kag.cancel_token` 实例。待完成期间通过 Lua 5.4 continuation 零值 yield，同一次调用在恢复时继续领取原票据；不会以 `nil, 'pending'` 提前返回。结果状态为 `completed`、`failed`、`cancelled`、`unavailable`，失败原因在第三返回值；成功字符串不含 `data:image/png;base64,` 前缀。无 GPU/未就绪时明确无图。不可 yield 的调用若尚未完成，会取消并领取终态后返回 `nil, 'unavailable', 'not-yieldable'`，不泵额外帧。
+
+`[save]` 在等待前固定槽位、状态副本、场景、位置和描述，沿现有 Operation/会话关闭机制取消挂起操作；停止、重载、取消或 owner 替换后的旧操作不再写盘。同 owner/slot 已有挂起保存时返回 `save-busy`。显式缩略图及 `ctx.captureThumbnail(token)` hook 保持原有优先级；普通可选截图失败允许无图存档，并分别记录 `tf.thumbnail_result` / `tf.thumbnail_error` 与 `tf.save_result` / `tf.save_error`。完整签名和状态表见 [Lua Save 模块](lua-modules.md#save-registered-on-the-kag-module)。
+
+正常剧本结束后，宿主可对 runner 保留的最终上下文发起一次新的保存；runner 仅在清理成功后授予此资格，并确认仍是当前 owner、没有调度协程/继续执行状态且不在会话切换中。开始转场或清理失败会清除资格。这不会重新激活旧会话，也不会让已失效的旧挂起保存恢复写盘。新最终状态保存等待期间若被替换，仍须取消；旧上下文及清理/重载中的重入保存继续拒绝。
 
 ### 2.7 Steam 模块（无条件注册，无 SDK 时安全降级）
 

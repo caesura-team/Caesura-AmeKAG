@@ -624,14 +624,14 @@ Script 模块经 `IMiniGameBackend` 接口实现，不能在具体 Bgfx 后端�
 | **生命周期** | `init(hwnd, w, h)` | 初始化渲染设备 |
 | | `isInitialized` | 渲染设备是否已初始化 |
 | | `getBackbufferWidth` / `getBackbufferHeight` | backbuffer 分辨率查询 |
-| | `beginShutdown` | 通知后端进入关闭阶段 |
+| | `beginShutdown` | 关闭截图接收、取消未完成票据；保留 GPU 上下文供显式销毁排空 |
 | | `shutdown` | 先 `flushAllRTT` 再关闭具体渲染后端 |
 | | `flushAllRTT` | 释放所有 RTT framebuffer（GPU 上下文仍存） |
 | | `resize(w, h)` | 窗口大小变化时重建 backbuffer |
 | **帧管理** | `beginFrame` | 开始帧 |
-| | `endFrame` | 结束帧 |
-| | `commit_frame` | 提交帧到 GPU |
-| | `advanceFrame` | 推进后端帧并处理延迟完成工作 |
+| | `endFrame` | `commit_frame` + `advanceFrame` 的便捷入口 |
+| | `commit_frame` | 完成场景/后处理提交与视图复位，不推进 bgfx 帧 |
+| | `advanceFrame` | 为排队截图分配提交帧号并提交 readback，然后推进一次后端帧 |
 | **视图** | `setViewRect(viewId, x, y, w, h)` | 设置视图矩形 |
 | | `setViewClear(viewId, flags, rgba, depth, stencil)` | 设置视图清除 |
 | | `setScreenOffset(dx, dy)` | 设置屏幕偏移（视图变换） |
@@ -657,13 +657,31 @@ Script 模块经 `IMiniGameBackend` 接口实现，不能在具体 Bgfx 后端�
 | | `setColorFilter(preset)` | 设置无障碍色彩滤镜（None/Deuteranopia/Protanopia/Tritanopia/Grayscale/HighContrast），返回 `bool` |
 | **调试** | `setDebugName(viewId, name)` | 设置视图调试名称 |
 | | `drawDebugOverlay(title)` | 绘制调试覆盖层 |
-| | `requestScreenshot(path)` | 请求帧截图 |
+| | `requestScreenshot(path)` | 保留的路径兼容入口；`bool` 仅表示接收，不表示文件完成；同样受渲染器就绪与容量守卫约束 |
+| **截图** | `requestScreenshot(options)` | 返回 `ScreenshotResult`：有效票据 + `Pending` 表示接收，无效票据 + `Failed` 表示拒绝 |
+| | `takeScreenshot(ticket)` | 查询 `Pending` 时保留请求；一次移动领取并移除 `Completed` / `Failed` / `Cancelled` 终态，后续返回 `Unknown` |
+| | `cancelScreenshot(ticket)` | 仅将 `Pending` 转为 `Cancelled` 并返回 `true`；仍须 `takeScreenshot` 领取/丢弃终态 |
 | **设备恢复** | `recoverDevice(hwnd, w, h)` | 重建丢失的渲染设备 |
 | | `flagDeviceLost` / `consumeDeviceLost` | 在线程/帧边界间传递设备丢失状态 |
 | **着色器** | `getDefaultSampler` / `getFallbackProgram` | 返回不透明采样器/程序句柄 |
 | **后端标识** | `getBackendName` | 后端名称 |
 | | `getRuntimeInfo` | 返回 `RenderRuntimeInfo`（backendName, 分辨率, viewCount, shaderReady） |
 | | `setPreferredBackend(name)` | 设置首选渲染后端（返回 `bool`） |
+
+截图类型与方法以 [IRenderDevice.h](../../src/render/api/IRenderDevice.h) 为准：
+
+| 类型 | 字段与合同 |
+|------|------------|
+| `ScreenshotTicket` | `uint64_t requestId, generation`；两者均非零才有效，请求与设备代次共同标识结果 |
+| `ScreenshotOptions` | `uint32_t width, height`；均为 0 时在接收时固定原生尺寸，否则两者须为正；实际输出使用已接收的尺寸 |
+| `ScreenshotStatus` | `Unknown`, `Pending`, `Completed`, `Failed`, `Cancelled` |
+| `ScreenshotResult` | `ticket`, `status`, `frameId`, `width`, `height`, `std::vector<uint8_t> png`, `std::string error`；`frameId` 在 `advanceFrame` 提交时填写，提交前为 0；成功结果独立拥有 PNG 字节 |
+
+截图调用经 `BackendRegistry::getRenderDevice()` 在 owner thread 执行，GPU 回调只交付结果，不调用 Lua 或保存槽位。未初始化、headless、关闭、设备丢失/恢复中或恢复失败时拒绝接收；成功恢复开启新代次，旧回调不能完成新请求。取消清理须先 cancel 再 take：完成可能先于取消，仍须丢弃本次已经完成的结果。关闭接收时普通票据的终态仍可领取，完整后端销毁才释放剩余记录。
+
+当前 [ScreenshotQueue](../../src/render/ScreenshotQueue.h) 对保留票据、尺寸和字节预算设限：最多 8 个保留请求，单边至多 8192、总像素至多 8×1024×1024，并受 PNG/总保留字节预算限制；超过限制返回失败。尺寸变换在渲染模块内按像素中心最近邻拉伸，不保比例留边；格式转换与翻转不改变全局编码器状态。同帧票据可共享一次 backbuffer readback，再生成各自尺寸的 PNG。结果尚未领取时也占用保留容量，调用者必须完成清理。
+
+正常 Engine 帧在完整场景、小游戏绘制和后处理后调用一次 `advanceFrame`，再调用平台 `postFrame`。退出阶段的资源销毁排空有独立用途，不接收新截图。上述为源码合同，真实后端/平台验证范围见 [待实际运行检查项](../solutions/deferred-gpu-tests.md)。
 
 ### 11.2 ILayerManager
 
@@ -975,14 +993,14 @@ load_animation、breakpoints、debug_resume、inspect、kag_debug 等）均定�
 
 ### 16.1 ISaveManager
 
-JSON 存档管理，支持加密策略、显式旧明文导入和 schema 迁移。本节于 2026-09-05 按 [ISaveManager.h](../../src/storage/api/ISaveManager.h) 同步；不代表最新回归已通过。
+JSON 存档管理，支持加密策略、显式旧明文导入和 schema 迁移。本节的截图职责于 2026-09-08 按 [ISaveManager.h](../../src/storage/api/ISaveManager.h) 同步；API 合同不代表完整门禁已通过。
 
 `SaveEncryptionPolicy` 定义在接口头中：`Compatible`（默认，保留旧明文读取；有 key 时仍加密每次写入）和 `RequireEncrypted`（普通读取拒绝明文，缺 key 拒绝写入）。`EngineConfig::saveEncryptionPolicy` 在组合根接入该策略；策略不能从存档文件内容推断。
 
 | 方法 | 说明 |
 |------|------|
 | `init(saveDir)` | 初始化，指定存档目录 |
-| `save(slot, data, sceneName, tokenIndex, thumbnailPng)` | 保存到指定槽位 |
+| `save(slot, data, sceneName, tokenIndex, thumbnailPng)` | 原子保存提供的数据和缩略图文本；Lua 调用方提供原始 Base64 PNG，缺图使用空串 |
 | `load(slot, outMeta=nullptr)` | 加载槽位；失败返回 null JSON 且不改变 `outMeta`；空对象/数组是合法数据 |
 | `loadLegacyPlaintext(slot, outMeta=nullptr)` | 显式只读导入旧明文；拒绝 CAES，不改变策略、不写回源文件；失败不改变 `outMeta` |
 | `listSaves` | 列出所有存档槽位及元数据 |
@@ -998,12 +1016,12 @@ JSON 存档管理，支持加密策略、显式旧明文导入和 schema 迁移�
 | `configureCloudSync(endpoint)` | `""`=本地；HTTP(S)=本地存储加显式同步；`steam`/`steam://`/`steamcloud`=Steam 云存储；配置本身不搬运字节 |
 | `pushSlotToCloud(slot)` | 暂存本地字节，按当前策略/key和存档结构验证，再上传同一份字节 |
 | `pullSlotFromCloud(slot)` | 暂存远端字节，按当前策略/key和存档结构验证，再将同一份字节提交到本地 |
-| `captureThumbnailPNG(w=320, h=180)` | 捕获存档缩略图 PNG |
-| `setGfxReady(ready)` | 设置 GPU 就绪标志（SIGSEGV 守卫：渲染器未初始化前禁截缩略图） |
 | `currentSchemaVersion` | 当前存档格式版本号 |
 | `registerMigration(fromVer, toVer, fn)` | 注册 schema 迁移函数 |
 
 SaveManager 加密整个 JSON 信封，包括 scene、timestamp、schema_version、token_index、thumbnail、engine_version 和 data。CAES 认证失败没有明文回退。内存迁移不自动写盘；迁移返回 null 或抛异常时加载失败且元数据不变。兼容模式允许完整明文替换，两种策略均没有槽位文件名绑定和防重放保证。
+
+`SaveManager` 不持有 GPU 就绪标志，不捕获截图、不推进帧，也不读取或删除固定 `save_thumb.png`。自动缩略图由 `SaveBinding` 经 `IRenderDevice` 请求并等待自己的结果，再调用同一个 `save()` 路径一次提交；显式缩略图和无图保存可直接使用存档管理器。Lua 等待与取消合同见 [Save 模块](lua-modules.md#save-registered-on-the-kag-module)。
 
 ### 16.2 ISaveProvider
 

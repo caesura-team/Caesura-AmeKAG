@@ -38,6 +38,9 @@ class NullRenderDevice final : public IRenderDevice {public:
     void setDebugName(uint16_t handle, const std::string& name) override;
     void drawDebugOverlay(const std::string& text) override;
     bool requestScreenshot(const std::string& path) override;
+    ScreenshotResult requestScreenshot(const ScreenshotOptions& options) override;
+    ScreenshotResult takeScreenshot(const ScreenshotTicket& ticket) override;
+    bool cancelScreenshot(const ScreenshotTicket& ticket) override;
     bool recoverDevice(void* nativeWindowHandle, int width, int height) override;
     void flagDeviceLost() override;
     bool consumeDeviceLost() override;

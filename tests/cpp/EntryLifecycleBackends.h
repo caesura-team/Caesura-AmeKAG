@@ -134,7 +134,7 @@ private:
     int m_height = 0;
 };
 
-class RenderDevice final : public IRenderDevice {
+class RenderDevice : public IRenderDevice {
 public:
     explicit RenderDevice(LifecycleProbe& probe) : m_probe(probe) {}
     ~RenderDevice() override { ++m_probe.destructorCalls; }
@@ -182,6 +182,14 @@ public:
     void setDebugName(uint16_t, const std::string&) override {}
     void drawDebugOverlay(const std::string&) override {}
     bool requestScreenshot(const std::string&) override { return false; }
+    Caesura::ScreenshotResult requestScreenshot(const Caesura::ScreenshotOptions&) override {
+        Caesura::ScreenshotResult result;
+        result.status = Caesura::ScreenshotStatus::Failed;
+        result.error = "screenshots unsupported by test renderer";
+        return result;
+    }
+    Caesura::ScreenshotResult takeScreenshot(const Caesura::ScreenshotTicket&) override { return {}; }
+    bool cancelScreenshot(const Caesura::ScreenshotTicket&) override { return false; }
     bool recoverDevice(void*, int width, int height) override {
         m_width = width;
         m_height = height;

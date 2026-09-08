@@ -64,6 +64,10 @@ set(TEST_SOURCES
     cpp/test_golden_saves.cpp
     cpp/test_mobile_adapter.cpp
     cpp/test_render_device.cpp
+    cpp/test_screenshot_lifecycle.cpp
+    cpp/test_screenshot_queue.cpp
+    cpp/test_screenshot_engine.cpp
+    cpp/test_managed_coroutine_lifecycle.cpp
     cpp/test_render_pipeline.cpp
     cpp/test_render_integration.cpp
     cpp/test_render_postfx.cpp
@@ -180,12 +184,12 @@ add_caesura_doctest(CaesuraStorageTests
 add_caesura_doctest(CaesuraScriptTests
     LABELS script lua
     RESOURCE_LOCK global-singletons
-    ARGS --source-file=*test_lua_manager.cpp,*test_script_bindings.cpp,*test_script_boundary.cpp,*test_restore_binding.cpp,*test_transient_restore.cpp,*test_kag_binding.cpp,*test_kag_integration.cpp,*test_kag_execution.cpp,*test_game_state.cpp
+    ARGS --source-file=*test_lua_manager.cpp,*test_script_bindings.cpp,*test_script_boundary.cpp,*test_managed_coroutine_lifecycle.cpp,*test_save_binding.cpp,*test_restore_binding.cpp,*test_transient_restore.cpp,*test_kag_binding.cpp,*test_kag_integration.cpp,*test_kag_execution.cpp,*test_game_state.cpp
 )
 add_caesura_doctest(CaesuraRenderResourceTests
     LABELS render resource
     RESOURCE_LOCK global-singletons
-    ARGS --source-file=*test_render_device.cpp,*test_render_pipeline.cpp,*test_render_integration.cpp,*test_font_restore.cpp,*test_texture_manager.cpp,*test_texture_budget_edge.cpp,*test_resource.cpp,*test_resource_handle.cpp,*test_async.cpp,*test_async_cancellation.cpp,*test_image_decoder.cpp,*test_gpu_monitor.cpp,*test_rtt_pool.cpp,*test_text_cache.cpp,*test_text_renderer.cpp,*test_quad_batch.cpp,*test_ndc_math.cpp,*test_color_filter.cpp,*test_layer_manager.cpp,*test_particle_system.cpp
+    ARGS --source-file=*test_render_device.cpp,*test_screenshot_lifecycle.cpp,*test_screenshot_queue.cpp,*test_screenshot_engine.cpp,*test_render_pipeline.cpp,*test_render_integration.cpp,*test_font_restore.cpp,*test_texture_manager.cpp,*test_texture_budget_edge.cpp,*test_resource.cpp,*test_resource_handle.cpp,*test_async.cpp,*test_async_cancellation.cpp,*test_image_decoder.cpp,*test_gpu_monitor.cpp,*test_rtt_pool.cpp,*test_text_cache.cpp,*test_text_renderer.cpp,*test_quad_batch.cpp,*test_ndc_math.cpp,*test_color_filter.cpp,*test_layer_manager.cpp,*test_particle_system.cpp
 )
 add_caesura_doctest(CaesuraAudioTests
     LABELS audio
@@ -227,6 +231,10 @@ if(Python3_EXECUTABLE)
         target_link_libraries(CaesuraPresentationColdProbe PRIVATE Caesura::Engine)
         # The adjacent test binary supplies the same native runtime DLLs.
         add_dependencies(CaesuraPresentationColdProbe CaesuraTests)
+        # Opt-in real D3D11 validation; never launched by the headless suite.
+        add_executable(CaesuraScreenshotGpuProbe probes/screenshot_gpu_probe.cpp)
+        target_link_libraries(CaesuraScreenshotGpuProbe PRIVATE Caesura::Engine)
+        add_dependencies(CaesuraScreenshotGpuProbe CaesuraTests)
         add_test(
             NAME CaesuraColdPresentationRestore
             COMMAND ${Python3_EXECUTABLE}
@@ -330,7 +338,9 @@ if(Python3_EXECUTABLE)
     )
     add_test(
         NAME CaesuraHeadlessHttpSmoke
-        COMMAND ${Python3_EXECUTABLE}
+        COMMAND ${CMAKE_COMMAND} -E env
+                "CAESURA_LUA=$<TARGET_FILE:lua_cli>"
+                ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/headless_http_smoke.py
                 $<TARGET_FILE:CaesuraAmeKAG>
     )

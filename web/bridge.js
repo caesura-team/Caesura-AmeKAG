@@ -380,7 +380,10 @@ export async function createPlayer({ scriptsBase, fetchImpl = fetch, wasmFile, a
     end
     function __resume_web_scene(co, ...)
       local result = table.pack(coroutine.resume(co, ...))
-      while result[1] and coroutine.status(co) ~= 'dead' and is_promise(result[2]) do
+      -- Ordinary frame waits yield no value. Nil cannot be a JS Promise;
+      -- retain the original classifier for every non-nil value.
+      while result[1] and coroutine.status(co) ~= 'dead' and result[2] ~= nil
+        and is_promise(result[2]) do
         -- Pass the child :await() yield to Wasmoon's async outer thread.
         -- Its continuation owns the result; a frame dt is not a reply.
         coroutine.yield(result[2])

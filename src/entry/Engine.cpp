@@ -47,6 +47,7 @@ extern "C" {
 #include <atomic>
 #include <cstdio>
 #include <fstream>
+#include <filesystem>
 #include <vector>
 #include <cmath>
 #include <chrono>
@@ -71,6 +72,25 @@ extern "C" void* caesuraAndroidGLContext() { return g_androidGLContext; }
 namespace Caesura {
 
 namespace {
+
+// Wait for this already-submitted readback; never manufacture another bgfx
+// frame or read a filename that could belong to an earlier request.
+ScreenshotResult awaitScreenshot(IRenderDevice& renderer, const ScreenshotTicket& ticket) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    for (;;) {
+        auto result = renderer.takeScreenshot(ticket);
+        if (result.status != ScreenshotStatus::Pending) return result;
+        if (std::chrono::steady_clock::now() >= deadline) {
+            renderer.cancelScreenshot(ticket);
+            result = renderer.takeScreenshot(ticket);
+            // Completion may have won the cancellation race.
+            if (result.status != ScreenshotStatus::Completed)
+                result.error = "Screenshot completion timed out";
+            return result;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+}
 
 constexpr const char* kDebugPausedGlobal = "_CAESURA_DEBUG_PAUSED";
 constexpr const char* kDebugPauseProbeGlobal = "_CAESURA_DEBUG_IS_PAUSED";
@@ -123,6 +143,7 @@ std::unique_ptr<IParticleSystem> createParticleSystem();
 std::unique_ptr<IResourceGenerationTracker> createResourceGenerationTracker();
 std::unique_ptr<ITextureBudget> createTextureBudget();
 std::unique_ptr<ITextureManager> createTextureManager();
+bool initializeTextureManager(ITextureManager& textures, IRenderDevice* renderer, bool gpuMode);
 std::unique_ptr<ILayerManager> createLayerManager(IRenderDevice* renderDevice);
 std::unique_ptr<ISandboxQuota> createSandboxQuota();
 std::unique_ptr<AssetManager> createAssetManager();
@@ -459,7 +480,7 @@ bool Engine::initPlatformPhase() {
     // Texture budget + shared backend registrations
     m_textureBudget->detect();
     BackendRegistry::instance().setTextureBudget(m_textureBudget.get());
-    if (!m_textureManager->initialize(gpuMode)) {
+    if (!initializeTextureManager(*m_textureManager, m_renderDevice.get(), gpuMode)) {
         DEBUG_ERROR(SubSys::Engine, ErrCode::Engine_RenderInitFailed,
                     "Texture manager init failed.");
         return false;
@@ -471,11 +492,6 @@ bool Engine::initPlatformPhase() {
     m_saveManager->init("saves/");
     m_saveManager->setEncryptionPolicy(m_config.saveEncryptionPolicy);
     BackendRegistry::instance().setSaveManager(m_saveManager.get());
-    // Thumbnail capture needs bgfx initialized (audit SIGSEGV guard).
-    // Set AFTER the manager exists AND the render device is up -- the
-    // render-initialized flag, not the raw pointer (which is non-null
-    // from construction even before bgfx init -- review blocking).
-    m_saveManager->setGfxReady(m_renderInitialized);
     if (!m_particleSystem) {
         m_particleSystem = createParticleSystem();
     }
@@ -915,18 +931,44 @@ void Engine::run(const OwnerPump& ownerPump) {
 
         render(static_cast<float>(dt));
 
-        // -- Demo/video export: one PNG per rendered frame (--export-replay
-        // + --frames N). The screenshot is requested AFTER render() and
-        // BEFORE advanceFrame() so the readback fires on THIS frame's
-        // advance -- the debug callback writes frame_%05u.png.
-        if (!m_config.exportReplayFile.empty() && m_renderDevice) {
-            char shotPath[512];
-            snprintf(shotPath, sizeof(shotPath), "%s/frame_%05u.png",
-                     m_config.exportDir.c_str(), m_frameCount);
-            m_renderDevice->requestScreenshot(shotPath);
-        }
+        {
+            ScreenshotTicket exportTicket;
+            if (!m_config.exportReplayFile.empty() && m_renderDevice) {
+                auto request = m_renderDevice->requestScreenshot(ScreenshotOptions{});
+                exportTicket = request.ticket;
+                if (request.status != ScreenshotStatus::Pending || !exportTicket) {
+                    fprintf(stderr, "[Engine] Export capture rejected: %s\n", request.error.c_str());
+                    m_renderFailed = true;
+                    m_running = false;
+                }
+            }
 
-        if (m_renderDevice) m_renderDevice->advanceFrame();
+            presentFrame();
+
+            if (exportTicket) {
+                const auto image = awaitScreenshot(*m_renderDevice, exportTicket);
+                bool written = false;
+                if (image.status == ScreenshotStatus::Completed && !image.png.empty()) {
+                    char filename[32];
+                    snprintf(filename, sizeof(filename), "frame_%05u.png", m_frameCount);
+                    const auto path = std::filesystem::u8path(m_config.exportDir) / filename;
+                    std::ofstream output(path, std::ios::binary | std::ios::trunc);
+                    if (output) {
+                        output.write(reinterpret_cast<const char*>(image.png.data()),
+                                     static_cast<std::streamsize>(image.png.size()));
+                        output.close();
+                        written = output.good();
+                    }
+                }
+                if (!written) {
+                    fprintf(stderr, "[Engine] Export capture failed for frame %u: %s\n",
+                            m_frameCount, image.error.empty() ? "PNG write failed" : image.error.c_str());
+                    m_renderFailed = true;
+                    m_running = false;
+                }
+            }
+        }
+        if (m_renderFailed) break;
 
         // -- Reserved: 3D mini-game update hook (CPU work, future JobSystem target) --
         if (m_miniGameBackend && m_miniGameBackend->isActive() &&
@@ -1441,6 +1483,7 @@ void Engine::processEvents() {
 }
 
 void Engine::render(float dt) {
+    if (m_shutdownComplete || !m_renderInitialized || m_deviceRecoveryPaused || m_renderFailed) return;
     // Headless mode (not editor): no GPU rendering
     if (m_config.headless && !m_config.editorMode) return;
 
@@ -1474,18 +1517,22 @@ void Engine::render(float dt) {
         m_renderDevice->drawDebugOverlay("Caesura (AmeKAG) v1.0.0");
     }
 
-    // Track M device-day: present the GL surface (Android swap) after every
-    // frame's draw pass.
-    if (m_platformBackend) m_platformBackend->postFrame();
-
     // -- Reserved: 3D mini-game render hook (main thread, after KAG pass) --
     if (m_miniGameBackend && m_miniGameBackend->isActive()) {
         m_miniGameBackend->render();
     }
 
-    // t214-followup: postfx chain frame hook (runs staged postfx then swap).
+    // Finalize postfx submissions. Presentation is a separate, single step.
     if (m_renderDevice) m_renderDevice->commit_frame();
 
+}
+
+void Engine::presentFrame() {
+    if (m_shutdownComplete || !m_renderInitialized || m_deviceRecoveryPaused || m_renderFailed) return;
+    if (m_renderDevice) m_renderDevice->advanceFrame();
+    // The external Android GL surface is swapped only after bgfx submits the
+    // complete draw pass, including mini-game and postfx work.
+    if (m_platformBackend) m_platformBackend->postFrame();
 }
 
 
@@ -1565,11 +1612,16 @@ void Engine::handleFatalError(const char* context, const char* luaError) {
         msg,
         "",  // scriptTrace: the runtime traceback is carried inside msg (t212 G4)
         ctxLine,
-        m_renderDevice != nullptr,
+        m_renderInitialized && m_renderDevice && m_renderDevice->isInitialized()
+            && !m_deviceRecoveryPaused && !m_renderFailed,
         ctxCmd,  // t212 G2: failing KAG command (empty when not a command error)
         diag
     );
 
+    if (m_renderFailed) {
+        m_running = false;
+        return;
+    }
     switch (action) {
         case ErrorAction::Retry:
             DEBUG_INFO(SubSys::Engine, ErrCode::Ok, "ErrorUI: Retry requested");
@@ -1590,7 +1642,7 @@ void Engine::handleFatalError(const char* context, const char* luaError) {
 
 
 void Engine::renderOneFrame() {
-    if (!m_initialized || !m_renderInitialized) return;
+    if (!m_initialized || m_shutdownComplete || !m_renderInitialized || m_deviceRecoveryPaused || m_renderFailed) return;
     if (m_config.headless && !m_config.editorMode) return;
     lua_State* L = m_lua->state();
     if (L && !isLuaExecutionPaused()) {
@@ -1601,7 +1653,7 @@ void Engine::renderOneFrame() {
         } else { lua_pop(L, 1); }
     }
     render(0.016f);
-    if (m_renderDevice) m_renderDevice->advanceFrame();
+    presentFrame();
 }
 
 bool Engine::reloadScriptsNow() {
@@ -1611,23 +1663,8 @@ bool Engine::reloadScriptsNow() {
     return m_hotReload->checkAndReload();
 }
 
-static std::string captureFrameBase64(IRenderDevice& renderer, int w, int h) {
-    static int counter = 0;
-    char path[256];
-    snprintf(path, sizeof(path), "editor_frame_%d.png", counter++);
-    if (counter > 99) counter = 0;
-    if (!renderer.requestScreenshot(path)) return "";
-    renderer.advanceFrame();
-    std::ifstream file(path, std::ios::binary | std::ios::ate);
-    if (!file.is_open()) return "";
-    std::streamsize size = file.tellg();
-    if (size <= 0) return "";
-    const auto fileSize = static_cast<size_t>(size);
-    file.seekg(0, std::ios::beg);
-    std::vector<unsigned char> buffer(fileSize);
-    file.read(reinterpret_cast<char*>(buffer.data()), size);
-    file.close();
-    std::remove(path);
+static std::string encodeFrameBase64(const std::vector<uint8_t>& buffer) {
+    const auto fileSize = buffer.size();
     static const char* b64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     std::string result;
     result.reserve(((fileSize + 2) / 3) * 4);
@@ -1644,8 +1681,12 @@ static std::string captureFrameBase64(IRenderDevice& renderer, int w, int h) {
 }
 
 std::string Engine::captureFrameForRpc(int w, int h) {
-    if (!m_initialized || !m_renderInitialized) return "";
-    // Render one frame first; screenshot capture advances the renderer frame.
+    if (!m_initialized || m_shutdownComplete || !m_renderInitialized || !m_renderDevice
+        || m_deviceRecoveryPaused || m_renderFailed) return "";
+    if (m_config.headless && !m_config.editorMode) return "";
+    if (w < 0 || h < 0 || ((w == 0) != (h == 0))) return "";
+    // Keep the existing managed-frame update, then submit its own ticket
+    // before the single presentation. Callback completion is checked explicitly.
     if (!m_config.headless || m_config.editorMode) {
         lua_State* L = m_lua->state();
         if (L && !isLuaExecutionPaused()) {
@@ -1657,8 +1698,12 @@ std::string Engine::captureFrameForRpc(int w, int h) {
         }
         render(0.016f);
     }
-    if (!m_renderDevice) return "";
-    return captureFrameBase64(*m_renderDevice, w, h);
+    auto request = m_renderDevice->requestScreenshot(
+        ScreenshotOptions{static_cast<uint32_t>(w), static_cast<uint32_t>(h)});
+    presentFrame();
+    if (request.status != ScreenshotStatus::Pending || !request.ticket) return "";
+    auto result = awaitScreenshot(*m_renderDevice, request.ticket);
+    return result.status == ScreenshotStatus::Completed ? encodeFrameBase64(result.png) : "";
 }
 
 // -- App lifecycle watcher -------------------------------------------------
@@ -1933,7 +1978,12 @@ void Engine::recoverFromDeviceLoss() {
 
     if (!m_renderDevice || !m_renderDevice->recoverDevice(nwh, w, h)) {
         fprintf(stderr, "[Engine] FATAL: renderer recovery failed after device loss\n");
-        handleFatalError("GPU Recovery", "Renderer recovery failed after device loss");
+        m_renderFailed = true;
+        m_running = false;
+        // Keep teardown ownership: a failed font/resource restoration may
+        // still leave a physical GPU context that shutdown must drain/release.
+        if (!m_config.headless)
+            handleFatalError("GPU Recovery", "Renderer recovery failed after device loss");
         return;
     }
     fprintf(stderr, "[Engine] renderer recovery success (%dx%d)\n", w, h);

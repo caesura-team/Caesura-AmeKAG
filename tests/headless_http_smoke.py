@@ -33,13 +33,20 @@ BASE = "http://127.0.0.1:%d" % port
 
 
 def _repo_root_for_import():
-    # Single-config builds run in build/, multi-config builds in build/Debug
-    # or build/Release. Check both parent depths and keep standalone fallback.
+    # The test's source anchor also covers presets and out-of-tree builds,
+    # whose executable may be more than two parents below (or outside) src/.
+    source = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if os.path.isdir(os.path.join(source, "src")):
+        return source
+    # Keep executable-relative lookup for staged standalone hosts.
     candidate = os.path.abspath(cwd)
-    for _ in range(3):
+    while True:
         if os.path.isdir(os.path.join(candidate, "src")):
             return candidate
-        candidate = os.path.dirname(candidate)
+        parent = os.path.dirname(candidate)
+        if parent == candidate:
+            break
+        candidate = parent
     return os.path.abspath(cwd)
 
 
@@ -594,23 +601,26 @@ def main():
     if os.environ.get("CAESURA_SMOKE_FORCE_NO_WEB") == "1":
         _web_ready = False
     if _web_ready:
+        import uuid
+        # Inspect only this invocation's output, never a prior smoke package.
+        _pkg_name = "smoke_pkg_" + uuid.uuid4().hex
         st, resp = request("/api/package/web",
                            data=json.dumps({"storyPath": "demo/example_game/story.ks",
-                                            "outName": "smoke_pkg"}).encode(),
+                                            "outName": _pkg_name}).encode(),
                            timeout=300)
         check("package-web-ok", st == 200 and resp.get("ok") is True
-              and resp.get("outputDir") == "dist/smoke_pkg"
+              and resp.get("outputDir") == "dist/" + _pkg_name
               and isinstance(resp.get("logTail"), str)
               and "PACKAGE COMPLETE" in resp.get("logTail", ""),
               "%s %s" % (st, str(resp)[:400]))
 
         # Real artifacts must exist on disk (static site + baked story bundle).
         # package_game.mjs resolves dist/ against its source root. Retain the
-        # engine-CWD candidate for staged hosts, and resolve either build depth.
+        # engine-CWD candidate for staged hosts, and use this test's source anchor.
         _repo_root = _repo_root_for_import()
         _pkg_candidates = [
-            os.path.join(cwd, "dist", "smoke_pkg"),
-            os.path.join(_repo_root, "dist", "smoke_pkg"),
+            os.path.join(cwd, "dist", _pkg_name),
+            os.path.join(_repo_root, "dist", _pkg_name),
         ]
         _pkg_dir = next((p for p in _pkg_candidates if os.path.isdir(p)),
                         _pkg_candidates[0])

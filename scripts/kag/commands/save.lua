@@ -13,6 +13,7 @@ local SaveState = require("kag.save_state")
 local Presentation = require("kag.presentation") -- preload before sandbox lockdown
 local Transients = require("kag.transient_state")
 local WaitState = require("kag.wait_state")
+local Operation = require("kag.operation")
 
 local SaveCommands = {}
 
@@ -260,55 +261,103 @@ end
 function SaveCommands.save(ctx, params)
     local slot = resolve_slot(params)
     local desc = params.desc or params.description or ""
-
-    -- Capture context state
-    ctx.saveDescription = desc
-    local captured, state = pcall(capture_state, ctx)
-    if not captured then
-        ctx.tf = ctx.tf or {}
-        ctx.tf.save_result, ctx.tf.save_error = "error", tostring(state)
-        return false, state
-    end
-
-
-
-    -- Thumbnail: capture if available (engine provides via ctx; the
-    -- KAG.capture_thumbnail binding is the fallback -- audit: saves
-    -- previously had NO thumbnail, the C++ capture path was never
-    -- wired into the save flow)
     local thumbnail = params.thumbnail or ""
+    local runner = package.loaded["kag_runner"]
+    local runner_owned = ctx._native_runner_owner or (runner and runner.get_ctx() == ctx)
+    local owner_co = ctx.co
+    local retained_owner = runner_owned and runner
+        and type(runner.can_save_retained_context) == "function"
+        and runner.can_save_retained_context(ctx)
+    local function owner_active()
+        if runner_owned and (package.loaded["kag_runner"] ~= runner
+            or not runner or runner.get_ctx() ~= ctx or ctx.co ~= owner_co) then return false end
+        if retained_owner then return runner.can_save_retained_context(ctx) end
+        return not ctx.stop_flag and ctx._session_active ~= false
+    end
+    local function rejected(reason)
+        ctx.tf = ctx.tf or {}
+        ctx.tf.save_result, ctx.tf.save_error = "error", reason
+        return false, reason
+    end
+    if not owner_active() then return rejected("save-owner-expired") end
+    ctx._pending_save_slots = ctx._pending_save_slots or {}
+    if ctx._pending_save_slots[slot] then return rejected("save-busy") end
+
+    -- Other pending saves own readback leases, not unrestorable scene effects.
+    -- Keep all unrelated operation tokens in the existing transient guard.
+    local capture_ctx, save_tokens = {}, {}
+    for key, value in pairs(ctx) do capture_ctx[key] = value end
+    for _, pending in pairs(ctx._pending_save_slots) do save_tokens[pending.token] = true end
+    capture_ctx.active_operations = {}
+    for _, token in ipairs(ctx.active_operations or {}) do
+        if not save_tokens[token] then
+            capture_ctx.active_operations[#capture_ctx.active_operations+1] = token
+        end
+    end
+    ctx.saveDescription, capture_ctx.saveDescription = desc, desc
+    local captured, state = pcall(capture_state, capture_ctx)
+    if not captured then return rejected(tostring(state)) end
+    local sceneName = state.scene_path ~= "" and state.scene_path or "unknown"
+    local tokenIdx = state.token_index
+
+    local operation_owner = ctx
+    if retained_owner then
+        -- This is a new snapshot request, not resumed scene execution. Share
+        -- the owner's cancellation list so stop/replacement still cancels it,
+        -- without reactivating the completed scheduler or its old operations.
+        ctx.active_operations = ctx.active_operations or {}
+        operation_owner = {active_operations=ctx.active_operations}
+    end
+    local operation <close> = Operation.start(operation_owner)
+    local function release_slot()
+        if ctx._pending_save_slots[slot] == operation then
+            ctx._pending_save_slots[slot] = nil
+        end
+    end
+    operation.token:register(release_slot)
+    ctx._pending_save_slots[slot] = operation
+
+    -- Every persistent argument is frozen before capture may suspend this owner.
+    local thumbnail_result, thumbnail_error = "provided", nil
     if #thumbnail == 0 then
-        if ctx.captureThumbnail then
-            thumbnail = ctx.captureThumbnail() or ""
-        else
-            local okT, thumb = pcall(function()
-                return kag_binding("capture_thumbnail")()
-            end)
-            if okT and type(thumb) == "string" and #thumb > 0 then
-                thumbnail = thumb
+        local capture = ctx.captureThumbnail or kag_binding("capture_thumbnail")
+        thumbnail_result = "unavailable"
+        thumbnail_error = "capture-unavailable"
+        if type(capture) == "function" then
+            -- Lua pcall forwards native continuation yields. A Cancelled result
+            -- is never interchangeable with the ordinary optional-image fallback.
+            local okT, thumb, status, reason = pcall(capture, operation.token)
+            if not okT then
+                thumbnail_result, thumbnail_error = "failed", tostring(thumb)
+            else
+                thumbnail_result = status or (type(thumb)=="string" and #thumb>0
+                    and "completed" or "unavailable")
+                thumbnail_error = reason
+                if thumbnail_result == "completed" and type(thumb)=="string" then
+                    thumbnail = thumb
+                end
             end
         end
     end
-
-    -- Call C++ SaveManager via KAG binding
-    local sceneName = ctx.current_scene or ctx.currentScene or "unknown"
-    local tokenIdx  = state.token_index
-
-    local ok = kag_binding("save_game")(slot, state, sceneName, tokenIdx, thumbnail)
-    -- Phase G8-U1: explicit GC collect after save
+    if operation.token.cancelled or not owner_active() or thumbnail_result == "cancelled" then
+        return rejected("save-cancelled")
+    end
+    ctx.tf = ctx.tf or {}
+    ctx.tf.thumbnail_result, ctx.tf.thumbnail_error = thumbnail_result, thumbnail_error
+    local binding = kag_binding("save_game")
+    if not binding then return rejected("save-backend-unavailable") end
+    -- One synchronous U7 atomic/encrypted commit, with this operation's image.
+    local ok, reason = binding(slot, state, sceneName, tokenIdx, thumbnail)
+    release_slot()
+    operation:complete()
     pcall(function() collectgarbage("collect") end)
-
     if ok then
         print("[SaveCmd] Saved to slot " .. slot .. " (" .. sceneName .. ")")
-        -- Set save result flag for UI feedback
-        ctx.tf = ctx.tf or {}
-        ctx.tf.save_result = "ok"
-        ctx.tf.save_slot   = slot
-    else
-        print("[SaveCmd] Save failed for slot " .. slot)
-        ctx.tf = ctx.tf or {}
-        ctx.tf.save_result = "error"
+        ctx.tf.save_result, ctx.tf.save_error, ctx.tf.save_slot = "ok", nil, slot
+        return true
     end
+    print("[SaveCmd] Save failed for slot " .. slot)
+    return rejected(reason or "save-failed")
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════

@@ -123,11 +123,21 @@ local function restore_seen(value, version)
     return result
 end
 
+-- Private defaults are only inputs to clone. Its per-branch visiting map
+-- gives every missing output field its own empty table, as before.
+local EMPTY_CONTROL_FIELD = {}
 function M.capture_control(ctx)
+    local for_, while_, if_, switch, marks, rewound = ctx._forStack, ctx._whileStack,
+        ctx._ifStack, ctx._switchStack, ctx._forStackMarks, ctx._forRewound
+    if not (for_ or while_ or if_ or switch or marks or rewound) then
+        -- No caller-provided value remains to validate or copy. These six
+        -- fresh empty arrays are the complete default result of M.copy.
+        return {for_={}, while_={}, if_={}, switch={}, for_marks={}, for_rewound={}}
+    end
     return M.copy({
-        for_ = ctx._forStack or {}, while_ = ctx._whileStack or {},
-        if_ = ctx._ifStack or {}, switch = ctx._switchStack or {},
-        for_marks = ctx._forStackMarks or {}, for_rewound = ctx._forRewound or {},
+        for_ = for_ or EMPTY_CONTROL_FIELD, while_ = while_ or EMPTY_CONTROL_FIELD,
+        if_ = if_ or EMPTY_CONTROL_FIELD, switch = switch or EMPTY_CONTROL_FIELD,
+        for_marks = marks or EMPTY_CONTROL_FIELD, for_rewound = rewound or EMPTY_CONTROL_FIELD,
     })
 end
 

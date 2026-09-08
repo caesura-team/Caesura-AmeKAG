@@ -59,8 +59,6 @@ public:
     void setEncryptionPolicy(SaveEncryptionPolicy policy) override { m_encryptionPolicy = policy; }
     SaveEncryptionPolicy getEncryptionPolicy() const override { return m_encryptionPolicy; }
 
-    // Thumbnail capture (SU-4 stub — bgfx readback deferred)
-
     // Pluggable storage provider (SU-6) — default: LocalFileSaveProvider
     void setSaveProvider(std::unique_ptr<class ISaveProvider> provider) override;
     ISaveProvider* getSaveProvider() const override { return m_saveProvider.get(); }
@@ -68,10 +66,6 @@ public:
     bool pushSlotToCloud(int slot) override;
     bool pullSlotFromCloud(int slot) override;
 
-    std::string captureThumbnailPNG(int width = 320, int height = 180) override;
-    void setGfxReady(bool ready) override { s_gfxReady = ready; }
-    bool isGfxReady() const { return s_gfxReady; }
-    static bool s_gfxReady;
 
 private:
     std::string m_saveDir;

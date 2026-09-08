@@ -1173,7 +1173,7 @@ void TextRenderer::buildQuadVertices(const std::vector<LaidGlyph>& glyphs,
         };
         verts.insert(verts.end(), v, v + 24);
         indices.push_back(vbase);     indices.push_back(vbase + 1); indices.push_back(vbase + 2);
-        indices.push_back(vbase);     indices.push_back(vbase + 2); indices.push_back(vbase + 3);
+        indices.push_back(vbase + 3); indices.push_back(vbase + 4); indices.push_back(vbase + 5);
     }
 }
 

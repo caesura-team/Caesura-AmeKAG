@@ -72,6 +72,13 @@ std::unique_ptr<ITextureManager> createTextureManager() {
     return std::make_unique<TextureManager>();
 }
 
+bool initializeTextureManager(ITextureManager& textures, IRenderDevice* renderer,
+                              bool gpuMode) {
+    // This concrete texture service owns bgfx handles. An injected renderer can
+    // render editor frames without initializing bgfx, just as with LayerManager.
+    return textures.initialize(gpuMode && dynamic_cast<BgfxRenderDevice*>(renderer) != nullptr);
+}
+
 std::unique_ptr<ILayerManager> createLayerManager(IRenderDevice* renderDevice) {
     const bool gpuEnabled = dynamic_cast<BgfxRenderDevice*>(renderDevice) != nullptr;
     return std::make_unique<LayerManager>(gpuEnabled);

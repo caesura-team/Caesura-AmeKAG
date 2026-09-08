@@ -78,7 +78,7 @@ bgfx::RendererType::Enum BgfxDeviceCore::platformDefaultBackend() {
 }
 
 const char* BgfxDeviceCore::getBackendName() const {
-    return bgfx::getRendererName(bgfx::getCaps()->rendererType);
+    return m_backendName.c_str();
 }
 
 #if defined(__ANDROID__)
@@ -86,6 +86,9 @@ void BgfxDeviceCore::setOverrideGLContext(void* ctx) { s_overrideGLContext = ctx
 #endif
 
 bool BgfxDeviceCore::init(void* nativeWindowHandle, int width, int height) {
+    if (m_bgfxInitialized) return false;
+    if (width <= 0 || height <= 0) return false;
+    m_callback.reset();
     // [10.2.22] main-thread-only guarantee: bgfx must be driven from
     // the thread that created the context. SDL_IsMainThread is not
     // available in all SDL3 builds, so the engine relies on the
@@ -117,7 +120,7 @@ bool BgfxDeviceCore::init(void* nativeWindowHandle, int width, int height) {
     // Enable debug text for engine HUD overlay
 
     initParams.profile  = false;
-    initParams.callback = &g_bgfxDebugCallback;
+    initParams.callback = &m_callback;
 
     printf("[BgfxRenderDevice] nwh=%p, w=%d, h=%d, backend=%s\n", nativeWindowHandle, width, height, requestedBackendName(s_preferredBackend));
     if (!bgfx::init(initParams)) {
@@ -138,6 +141,7 @@ bool BgfxDeviceCore::init(void* nativeWindowHandle, int width, int height) {
 
     const bgfx::Caps* caps = bgfx::getCaps();
     const char* rendererName = bgfx::getRendererName(caps->rendererType);
+    m_backendName = rendererName;
     printf("[BgfxRenderDevice] Renderer: %s (%s)\n", rendererName,
            caps->homogeneousDepth ? "homogeneous" : "non-homogeneous");
 
@@ -175,6 +179,7 @@ bool BgfxDeviceCore::init(void* nativeWindowHandle, int width, int height) {
 }
 
 void BgfxDeviceCore::resize(int width, int height) {
+    if (!m_bgfxInitialized || m_callback.deviceLost()) return;
     if (width <= 0 || height <= 0) return;
     if (width == m_width && height == m_height) return;
     m_width  = width;
@@ -214,7 +219,7 @@ void BgfxDeviceCore::shutdown() {
 
 
     // 3. Mark shutdown-in-progress to suppress benign D3D11 teardown errors
-    g_bgfxDebugCallback.m_shuttingDown = true;
+    m_callback.beginShutdown();
 
     // 4. Destroy GPU context
     bgfx::shutdown();
@@ -223,7 +228,7 @@ printf("[BgfxRenderDevice] Shutdown complete.\n");
 }
 
 void BgfxDeviceCore::beginFrame() {
-    if (!m_bgfxInitialized) return;
+    if (!m_bgfxInitialized || m_callback.deviceLost()) return;
     CAESURA_ASSERT_MAIN_THREAD();
     // Refresh the present-surface size (stable after frame 1; on Android it
     // is the OS window surface, NOT the configured engine resolution).
@@ -263,13 +268,17 @@ void BgfxDeviceCore::updateBackbufferSize() {
 }
 
 void BgfxDeviceCore::endFrame() {
-    if (!m_bgfxInitialized) return;
-    CAESURA_ASSERT_MAIN_THREAD();
-    bgfx::frame();
+    commit_frame();
+    advanceFrame();
 }
 
 void BgfxDeviceCore::commit_frame() {
+    // Submission finalization belongs to BgfxRenderDevice. No presentation here.
+}
+
+void BgfxDeviceCore::advanceFrame() {
     if (!m_bgfxInitialized) return;
+    CAESURA_ASSERT_MAIN_THREAD();
     bgfx::frame();
 }
 
@@ -311,23 +320,28 @@ void BgfxDeviceCore::setupDefaultViews() {
 
 void BgfxDeviceCore::setViewRect(uint16_t viewId, uint16_t x, uint16_t y,
                                     uint16_t width, uint16_t height) {
+    if (!m_bgfxInitialized || m_callback.deviceLost()) return;
     bgfx::setViewRect(viewId, x, y, width, height);
 }
 
 void BgfxDeviceCore::setViewClear(uint16_t viewId, uint16_t flags,
                                      uint32_t rgba, float depth, uint8_t stencil) {
+    if (!m_bgfxInitialized || m_callback.deviceLost()) return;
     bgfx::setViewClear(viewId, flags, rgba, depth, stencil);
 }
 
 void BgfxDeviceCore::touch(uint16_t viewId) {
+    if (!m_bgfxInitialized || m_callback.deviceLost()) return;
     bgfx::touch(viewId);
 }
 
 void BgfxDeviceCore::setDebugName(uint16_t viewId, const std::string& name) {
+    if (!m_bgfxInitialized || m_callback.deviceLost()) return;
     bgfx::setViewName(viewId, name.c_str());
 }
 
 ViewportHandle BgfxDeviceCore::createRenderTarget(int width, int height) {
+    if (!m_bgfxInitialized || m_callback.deviceLost() || width <= 0 || height <= 0) return {};
     ViewportHandle handle;
     handle.id = m_nextHandle++;
 
@@ -398,6 +412,7 @@ void BgfxDeviceCore::flushAllRTT() {
 
 bgfx::TextureHandle BgfxDeviceCore::getSolidPixel(uint8_t r, uint8_t g,
                                                   uint8_t b, uint8_t a) {
+    if (!m_bgfxInitialized || m_callback.deviceLost()) return BGFX_INVALID_HANDLE;
     const uint32_t key = (uint32_t(r) << 24) | (uint32_t(g) << 16)
                        | (uint32_t(b) << 8) | uint32_t(a);
     if (bgfx::isValid(m_solidPixel) && key == m_solidPixelKey) {

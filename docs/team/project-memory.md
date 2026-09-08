@@ -92,7 +92,7 @@
 - **存储系统**：
   - 快速存档：`slot=-1` $\rightarrow$ `save_quick.json`；
   - 自动存档：`slot=-2` $\rightarrow$ `save_auto.json`；
-  - 截图两阶段：`requestScreenShot` 挂钩下一帧，避免当前帧内重复调用 `bgfx::frame()` 产生双 present。
+  - 截图职责已迁移：renderer 持有带请求 ID/代次的票据，完整帧提交后明确等待并一次领取结果；Lua 保存冻结状态再等待自己的图，取消不落盘。SaveManager 只保存提供的缩略图文本，无 GPU 就绪标志或固定截图文件。当前合同见 [IRenderDevice](../api/cpp-interfaces.md#111-irenderdevice) 与 [Lua Save](../api/lua-modules.md#save-registered-on-the-kag-module)；早期“下一次保存读取上一张图”的实现不再有效，本条不代表本轮 Android 实机验证。
 
 ### 4.3 渲染引擎（Render Architecture）
 - **设计分辨率**：全平台统一 1920×1080，UI 布局基于 `scripts/viewport.lua` 计算相对坐标。
@@ -160,7 +160,7 @@
 | **Platform** | Android 手机旋转时画面错位 | Manifest 横屏配置被 SDL3 默认系统旋转行为覆盖 | 窗口创建前调用 `SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft,LandscapeRight")` | Commit `c6170e39` |
 | **Android** | `adb push` 脚本后应用报 Module not found | su 写入的文件所有者为 `root:root (600)`，应用无读取权限 | 写入后恢复应用实际 UID 的所有权；当时为 `u0_a242`，不得照抄到重新安装的应用 | Plan 027 / Android 指南 |
 | **Android** | `adb shell input` 模拟点击被 MIUI 拦截 | MIUI 限制 uid2000 调用 `INJECT_EVENTS` 接口 | 必须通过 root 通道执行 `su -c input tap <x> <y>` | Plan 027 / Android 指南 |
-| **Audio** | 存档截图时音频微顿与双重 Present | `captureThumbnailPNG` 帧内同步调用 `bgfx::frame()` | 改为挂钩下一帧两阶段异步捕获，消除帧内重复 present | Round 028 / `SaveManager.cpp` |
+| **Render / Storage（历史问题，当前合同已迁移）** | 存档截图时音频微顿与双重 Present；旧固定文件也无法证明图像归属 | 早期存档管理器参与 GPU 帧推进，后续旧实现依赖上一请求的文件 | U15 将截图收敛到 renderer ticket/result：完整绘制后一次正常推进，Lua 等待自己的终态再调用原子保存；取消/重载不发布旧存档，SaveManager 不访问 GPU | Round 028 为历史原因；当前 [截图 API](../api/cpp-interfaces.md#111-irenderdevice) / [异步保存合同](../api/lua-modules.md#save-registered-on-the-kag-module)，真实后端范围见 [待验证项](../solutions/deferred-gpu-tests.md) |
 | **Script** | 帧回调中 `require` 报 not preloaded | 沙箱清除了 searchers，仅允许 `package.loaded` | 所有运行时子模块必须在 `scripts/kag/init.lua` 中预载 | Plan 027 / `sandbox.lua` |
 | **Web** | Web 玩家静态资源 404 报错 | 引擎资源默认带 `assets/` 前缀，Web 侧拼接导致 `/assets/assets/` | 在 `web/main.mjs` 中增加路径归一化剥离多余前缀 | Plan 027 / Track W |
 | **Toolchain** | Windows Python 子进程乱码与管道卡死 | Windows 默认使用 GBK 编码导致 UTF-8 字符解码崩溃 | 子进程显式声明 `encoding="utf-8", errors="replace"` | Commit `31e2fb32` / CLI |

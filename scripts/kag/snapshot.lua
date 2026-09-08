@@ -25,8 +25,11 @@ local REF_KEYS = { "tokens", "macros", "backlog" }
 -- Local deep copy (system.table_deep_copy is a module-local; keep this
 -- module self-contained so the test harness can load it standalone).
 local function deep_copy(orig, copies)
-    copies = copies or {}
     if type(orig) ~= "table" then return orig end
+    -- A top-level empty value has no graph to track. Recursive copies still
+    -- register even empty tables so repeated references preserve identity.
+    if not copies and next(orig) == nil then return {} end
+    copies = copies or {}
     if copies[orig] then return copies[orig] end
     local copy = {}
     copies[orig] = copy
@@ -69,9 +72,12 @@ local function pack_seen_flags(flags)
     local cached_flags=cache.flags
     local added, count = {}, 0
     for index, value in next, flags do
-        if value ~= true then return nil end
         count = count + 1
-        if not cached_flags[index] then
+        -- The private map contains only true entries; next never yields nil
+        -- values. Equality proves both "already known" and "still true" in
+        -- one comparison, while every changed/new value still validates.
+        if cached_flags[index] ~= value then
+            if value ~= true then return nil end
             if type(index) ~= "number" or index % 1 ~= 0
                 or index < 1 or index > 2147483647 then return nil end
             added[#added + 1] = index

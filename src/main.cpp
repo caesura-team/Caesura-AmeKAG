@@ -16,6 +16,7 @@ extern "C" {
 #include "minigame/BgfxMiniGameBackend.h"
 #include "live2d/api/IAnimationBackend.h"
 #include "script/vm/LuaManager.h"
+#include "script/vm/ManagedCoroutine.h"
 #include "entry/Engine.h"
 #include "debug/DebugProtocol.h"
 #include "rpc/EditorServer.h"
@@ -722,10 +723,21 @@ private:
 
     // -- Managed run/eval execution ------------------------------------
 
-    struct ManagedRun {
-        lua_State* co = nullptr;
-        int slot = 0;
-    };
+    using ManagedRun = Caesura::detail::ManagedCoroutine;
+
+    lua_State* managedLuaState() noexcept {
+        // Keep this tied to our Engine, not a replacement VM in the global
+        // registry. Engine::lua() rejects access after Engine shutdown.
+        try { return m_engine.lua().state(); }
+        catch (...) { return nullptr; }
+    }
+
+    static void reportManagedClose(const Caesura::detail::CoroutineDiagnostic& result) noexcept {
+        if (result.status != LUA_OK) {
+            fprintf(stderr, "[RpcRun] coroutine close returned error (%d): %s\n",
+                    result.status, result.message[0] ? result.message : "unknown close error");
+        }
+    }
 
     Caesura::RpcReply kagDebugAction(const Caesura::RpcKagDebugRequest& op) {
         // Drive the kag_debug.lua API through the Lua state. Each action
@@ -874,21 +886,18 @@ private:
             return rpcError(Caesura::RpcReplyStatus::InvalidRequest,
                             "empty_script", "Script must not be empty");
         }
-        lua_State* co = lua_newthread(L);
-        if (luaL_loadstring(co, script.c_str()) != LUA_OK) {
-            const char* err = lua_tostring(co, -1);
-            const std::string msg = err ? err : "compile error";
-            lua_pop(co, 1);
-            lua_pop(L, 1);  // drop the thread
+        ManagedRun run;
+        const auto created = Caesura::detail::createManagedCoroutine(L, script.c_str(), run);
+        if (created.status != LUA_OK) {
             return rpcError(Caesura::RpcReplyStatus::InvalidRequest,
-                            "run_compile_error", msg.c_str());
+                            "run_compile_error", created.message);
         }
-        const int slot = 0x5100 + static_cast<int>(m_managedRuns.size());
-        m_managedRuns.push_back(ManagedRun{co, slot});
-        // Keep the thread alive across GC: registry holds a strong reference.
-        lua_pushvalue(L, -1);
-        lua_rawseti(L, LUA_REGISTRYINDEX, slot);
-        lua_pop(L, 1);
+        try {
+            m_managedRuns.push_back(run);
+        } catch (...) {
+            reportManagedClose(Caesura::detail::closeManagedCoroutine(L, run));
+            throw;
+        }
         Caesura::RpcReply reply = rpcOk();
         reply.message = "started";
         return reply;
@@ -896,37 +905,32 @@ private:
 
     void pumpManagedRuns() {
         if (m_managedRuns.empty()) return;
-        lua_State* L = m_engine.lua().state();
+        lua_State* L = managedLuaState();
         if (!L) {
             m_managedRuns.clear();
             return;
         }
         for (auto it = m_managedRuns.begin(); it != m_managedRuns.end();) {
-            int nresults = 0;
-            const int status = lua_resume(it->co, L, 0, &nresults);
-            if (status == LUA_YIELD) {
+            const auto step = Caesura::detail::resumeManagedCoroutine(L, *it);
+            if (step.status == LUA_YIELD) {
                 ++it;
                 continue;
             }
-            if (status != LUA_OK) {
-                const char* err = lua_tostring(it->co, -1);
+            if (step.status != LUA_OK) {
                 fprintf(stderr, "[RpcRun] script finished with error: %s\n",
-                        err ? err : "unknown error");
+                        step.error[0] ? step.error : "unknown error");
             }
-            lua_settop(it->co, 0);
-            lua_pushnil(L);
-            lua_rawseti(L, LUA_REGISTRYINDEX, it->slot);
+            reportManagedClose(step.closed);
             it = m_managedRuns.erase(it);
         }
     }
 
-    void abortManagedRuns() {
+    void abortManagedRuns() noexcept {
         if (m_managedRuns.empty()) return;
-        lua_State* L = m_engine.lua().state();
+        lua_State* L = managedLuaState();
         if (L) {
-            for (const auto& run : m_managedRuns) {
-                lua_pushnil(L);
-                lua_rawseti(L, LUA_REGISTRYINDEX, run.slot);
+            for (auto& run : m_managedRuns) {
+                reportManagedClose(Caesura::detail::closeManagedCoroutine(L, run));
             }
         }
         m_managedRuns.clear();
@@ -1370,7 +1374,7 @@ extern "C" int main(int argc, char* argv[]) {
         const bool editorOk = editorStdio
             ? (runStdioRpc(engine), true)
             : runHttpEditor(engine, editorToken, editorInsecure);
-        if (!editorOk) return 1;
+        if (!editorOk || engine.hasRenderFailure()) return 1;
         printf("Caesura (AmeKAG) shut down cleanly.\n");
         return 0;
     }
@@ -1387,6 +1391,7 @@ extern "C" int main(int argc, char* argv[]) {
         engine.lua().lockdownScriptEnv();
 
         runStdioRpc(engine);
+        if (engine.hasRenderFailure()) return 1;
         printf("Caesura (AmeKAG) shut down cleanly.\n");
         return 0;
     }
@@ -1452,8 +1457,24 @@ extern "C" int main(int argc, char* argv[]) {
     // kag_runner.update() fires the recorded events (same on_click path);
     // Engine::run writes one PNG per frame into the export dir.
     if (!exportReplayFile.empty()) {
-        std::error_code ec;
-        std::filesystem::create_directories(exportDir, ec);
+        bool directoryReady = false;
+        try {
+            const auto exportPath = std::filesystem::u8path(exportDir);
+            std::error_code error;
+            std::filesystem::create_directories(exportPath, error);
+            if (!error) directoryReady = std::filesystem::is_directory(exportPath, error);
+            if (!directoryReady) {
+                fprintf(stderr, "[main] Cannot prepare export directory '%s': %s\n",
+                        exportDir.c_str(), error ? error.message().c_str() : "not a directory");
+            }
+        } catch (const std::exception& error) {
+            fprintf(stderr, "[main] Cannot prepare export directory '%s': %s\n",
+                    exportDir.c_str(), error.what());
+        }
+        if (!directoryReady) {
+            engine.shutdown();
+            return 1;
+        }
         lua_State* exL = engine.lua().state();
         if (exL) {
             lua_getglobal(exL, "require");
@@ -1480,6 +1501,7 @@ extern "C" int main(int argc, char* argv[]) {
     engine.run();
     engine.shutdown();
 
+    if (engine.hasRenderFailure()) return 1;
     printf("Caesura (AmeKAG) shut down cleanly.\n");
     return 0;
 }

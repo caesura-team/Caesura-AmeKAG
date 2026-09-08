@@ -161,12 +161,23 @@ TEST_CASE("SaveManager::JSON parse error returns empty") {
     CHECK(data.empty());
 }
 
-TEST_CASE("SaveManager thumbnail capture guards on gfx readiness") {
-    SaveManager tm;
-    tm.setGfxReady(false);  // reset: the flag is static, Engine tests set it
-    CHECK_FALSE(tm.isGfxReady());
-    CHECK(tm.captureThumbnailPNG(320, 180) == "");  // skipped, no crash
-    tm.setGfxReady(true);
-    CHECK(tm.isGfxReady());
-    tm.setGfxReady(false);
+TEST_CASE("SaveManager stores supplied thumbnails headlessly without touching stale screenshot files") {
+    TestPaths::ScopedTempDir dir("headless_thumbnail");
+    // SaveManager no longer owns readiness or screenshot requests. Its real
+    // headless persistence path must leave any old screenshot bytes alone.
+    const auto stale = dir.path() / "save_thumb.png";
+    { std::ofstream out(stale, std::ios::binary); out << "old-screenshot-sentinel"; }
+    SaveManager saves;
+    saves.init(dir.string());
+    REQUIRE(saves.save(1, {{"route", "without-image"}}, "headless.ks", 7));
+    SaveMeta meta;
+    CHECK(saves.load(1, &meta).at("route") == "without-image");
+    CHECK(meta.thumbnail.empty());
+    REQUIRE(saves.save(2, {{"route", "with-image"}}, "headless.ks", 8, "provided-base64"));
+    CHECK(saves.load(2, &meta).at("route") == "with-image");
+    CHECK(meta.thumbnail == "provided-base64");
+    std::ifstream input(stale, std::ios::binary);
+    REQUIRE(input.good());
+    const std::string bytes{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+    CHECK(bytes == "old-screenshot-sentinel");
 }

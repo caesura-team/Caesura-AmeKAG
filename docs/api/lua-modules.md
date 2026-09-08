@@ -412,7 +412,7 @@ The current KAG payload version is **3**, inside the native storage envelope ver
 - Slot-owned values include exact `f`, `sf`, `lf`, `mp`, variables, unlock/seen state, call/loop/conditional frames, continuation cursor, language, layers, text, font and BGM. Loading removes future keys absent from the slot. `tf` is rebuilt; `sf.save_list` is derived and excluded.
 - User preferences such as master/bus volumes and favourites remain outside the slot. Voice/SE and unsupported transient effects stop during commit.
 - Scenes and caller frames are reconstructed from trusted current source; saved tokens are never executed. Ordinary call/for/if frames and stable text/wait boundaries are supported. Saved wait/delay state retains the remaining time; old slots without this field restart the wait duration.
-- Saving during a choice, input dialog, menu, history view, active video/particle/model/postfx, unfinished tween or other active operation is rejected with a reason. Macro definitions and streams rewritten by runtime macro expansion are also rejected. Live coroutines and native handles are never serialized.
+- Saving during a choice, input dialog, menu, history view, active video/particle/model/postfx, unfinished tween or other active scene operation is rejected with a reason. Pending screenshot leases from other saves do not represent scene effects; different slots may wait independently, while a second pending save to the same owner/slot returns `save-busy`. Macro definitions and streams rewritten by runtime macro expansion are also rejected. Live coroutines and native handles are never serialized.
 - Parse, migration, validation and resource preparation precede the commit point. Failure before commit preserves the old session. A serious failure after commit stops the candidate, cancels its operations and releases partial resources; a new session may then be started.
 - Values must be finite and serializable: dense arrays or string-keyed maps, valid UTF-8 strings (including embedded NUL), bounded depth/node count. Sparse/mixed-key tables, unsupported values and invalid numbers are rejected without overwriting an existing slot.
 
@@ -422,11 +422,12 @@ The current KAG payload version is **3**, inside the native storage envelope ver
 -- No separate `Save` global; the save/load bindings are registered onto
 -- the KAG module (KAG.save_game, KAG.load_game, ...).
 -- Backend: BackendRegistry::instance().getSaveManager()
+-- Thumbnail capture: BackendRegistry::instance().getRenderDevice()
 ```
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `save_game` | `(slot, data)` | Save game state to slot (int, Lua table) |
+| `save_game` | `(slot, data, sceneName, tokenIndex, thumbnail?) → bool, error?` | Synchronously commit state plus the supplied thumbnail text; this function does not capture an image |
 | `load_game` | `(slot) → table` | Load game state from slot |
 | `list_saves` | `() → table` | List all save slots with metadata |
 | `delete_save` | `(slot)` | Delete save slot |
@@ -434,10 +435,27 @@ The current KAG payload version is **3**, inside the native storage envelope ver
 | `get_save_dir` | `() → string` | Directory where saves are written |
 | `set_encryption_key` | `(key)` | Set/derive the save encryption key |
 | `clear_encryption_key` | `()` | Clear the save encryption key |
-| `capture_thumbnail` | `()` | Capture the current frame as the save thumbnail |
+| `capture_thumbnail` | `(cancelToken?) → base64OrNil, status, errorOrNil` | Request a 320×180 PNG and yield until this call's renderer ticket reaches a terminal state |
 | `configure_cloud` | `(endpoint) → bool` | Configure HTTP cloud-save endpoint ("" = local only); offline-safe |
 | `cloud_push` | `(slot) → bool` | Push slot file to the cloud |
 | `cloud_pull` | `(slot) → bool` | Pull slot file from the cloud |
+
+`KAG.capture_thumbnail()` returns **raw Base64 text**, without a `data:image/png;base64,` prefix. The native renderer resizes to 320×180 using nearest-neighbor stretch. An optional token is an existing `kag.cancel_token` instance; no separate Lua request/poll API is required. Status values are:
+
+| Status | First return value | Meaning |
+|--------|--------------------|---------|
+| `completed` | Base64 string | This request's PNG was consumed successfully; `errorOrNil` is nil |
+| `failed` | nil | An admitted capture or native conversion failed; the third value gives the reason |
+| `cancelled` | nil | The operation, device generation or renderer owner expired; callers must not turn this into a late save |
+| `unavailable` | nil | No renderer, unsupported/not-ready capture, rejected admission, or `not-yieldable` calling context |
+
+Pending capture stays inside the same C binding call using a Lua 5.4 continuation and yields **zero values**; it never returns `nil, 'pending'`. Each resume checks the same ticket and ignores extra resume arguments. A to-be-closed userdata owns the request and native buffers. Token cancellation, coroutine close and GC fallback share idempotent cleanup; cleanup cancels then takes/discards that ticket's terminal even if completion won the race. Owners must close abandoned or errored coroutines; the KAG runner and native managed-run host do so before releasing their references. The binding does not advance frames. A nonyieldable caller consumes an already available result or retires a still-pending request and returns `nil, 'unavailable', 'not-yieldable'`.
+
+The `[save]` handler freezes slot, copied state, scene, token index and description before awaiting a thumbnail. It uses `kag.operation`, checks cancellation/session ownership again before the single `save_game` commit, and releases its owner/slot reservation on completion or close. An explicit nonempty `thumbnail` skips capture. Otherwise `ctx.captureThumbnail(token)` remains preferred over the native binding. An ordinary optional-image failure can still produce a state-only save; `tf.thumbnail_result` / `tf.thumbnail_error` describe that outcome separately from `tf.save_result` / `tf.save_error`. Cancellation, stop, reload or owner replacement prevents the pending save from writing. SaveManager itself owns no GPU state and never reads a previous request's screenshot file.
+
+After normal scene completion, the host may start a **new** save from the runner's retained final context. The runner grants this eligibility only after successful retirement, and must confirm that it still owns that context, has no scheduler coroutine or continuation, and is not changing sessions. Eligibility is cleared before a transition or failed cleanup. This does not reactivate the old session or rescue a capture that was already pending when its owner expired. Replacement cancels even a newly started asynchronous final-state save; stale contexts and cleanup/reload reentry remain rejected.
+
+Sources: [SaveBinding.cpp](../../src/script/bindings/SaveBinding.cpp), [save.lua](../../scripts/kag/commands/save.lua), and [IRenderDevice screenshot contract](cpp-interfaces.md#111-irenderdevice).
 
 ---
 
