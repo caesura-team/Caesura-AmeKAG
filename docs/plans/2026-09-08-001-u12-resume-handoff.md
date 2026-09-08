@@ -77,3 +77,13 @@ Golden旧门禁以至少50次点击代替分支运行证据；全文揭示修复
 `web-u12-final-01` 完整Web为493通过/1失败，源码稳定。1000行场景的原吞吐门槛拒绝了逐字段跨Lua/JS代理读取的成本。Web新增一次传输完整图层树的路径，并继续交给同一Lua验证器检查图层、来源和界限；旧逐字段路径仍用于原生及等价负控制。`web-layer-bulk-red-01` 两项新增用例先失败，`web-layer-bulk-green-01` 为16/16。原预算性能复测三样本1863.2、1787.1、1574.5ms，中位1787.1ms，1.679 token/ms，满足原阈值；这只是定向结果。独立审查确认字段、历史隔离、userdata/活动效果/非法数值/RTT/环与资源所有权合同保留。
 
 最终完整Web与原生profile将在冻结候选上重跑；以上部分/失败结果不会拼接成单次全绿，也未修改任何原性能预算。
+
+## 最终本机验收与组织迁移
+
+冻结候选 `6acb6aea803eb07f3625a9edb0cb951918200af4` 的顺序执行完成：先重新构建Web，再完整Web，最后Windows Debug profile。`web-u12-final-02` 为35文件、496/496用例、0失败/0跳过，78.07秒；1000行场景中位1456.3ms、2.060 token/ms，2000/1000配对中位比率2.2345815，原吞吐、内存与缩放预算全部通过。
+
+原生run `b2c62a50-a4f7-42f1-aaf0-1ea8f99b0fe0` 位于 `artifacts/validation/raw/windows-debug-u12-04/run.json`。11项required检查全部PASS：完整Debug构建、Cpp1292/1292（399001断言、0失败/0跳过）、Lua主147/147和隔离43/43、Python17/7/53/57、耦合、注册、CTest。CTest为25通过、0失败、1个预声明外部AI smoke跳过，共26项，184.37秒。dirty=false，源码和夹具前后摘要相同。collector及严格verifier均PASS；机器manifest位于 `artifacts/validation/u12/evidence/6acb6aea803eb07f3625a9edb0cb951918200af4/b2c62a50-a4f7-42f1-aaf0-1ea8f99b0fe0/windows-debug/manifest.json`。这些计数不等于行/分支覆盖率，也不提供未执行平台或真实GPU证明。
+
+用户随后明确授权把仓库转入新组织并调整协作者。GitHub仓库现在为 `caesura-team/Caesura-AmeKAG`，数据库ID1260362254保持一致；master仍为54553f8b且保护开启，其余协作者角色保留，patrickzhao555-cmd已回查为Maintain。本地origin已同步。当前克隆/徽章/赞助/演示链接及六个验证profile的repository字段同步到新组织，其余门禁字段逐项比对未改变。上述验收发生在迁移前，保留原仓库名和profile摘要，不重写历史receipt；组织仓库最新CI与合并继续单独核验。
+
+U12本机验收完成，当前处于交付阶段；整个U1–U29目标保持进行中。

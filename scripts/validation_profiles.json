@@ -5,7 +5,7 @@
     "windows-debug": {
       "platform": "windows",
       "configuration": "Debug",
-      "repository": "ailiasdesu/Caesura-AmeKAG",
+      "repository": "caesura-team/Caesura-AmeKAG",
       "require_cmake_cache": true,
       "expected_cache": {"CAESURA_REQUIRE_TEST_PREREQUISITES": "ON"},
       "checks": [
@@ -25,7 +25,7 @@
     "windows-release": {
       "platform": "windows",
       "configuration": "Release",
-      "repository": "ailiasdesu/Caesura-AmeKAG",
+      "repository": "caesura-team/Caesura-AmeKAG",
       "require_cmake_cache": true,
       "expected_cache": {"CAESURA_REQUIRE_TEST_PREREQUISITES": "ON"},
       "checks": [
@@ -45,7 +45,7 @@
     "linux-debug": {
       "platform": "linux",
       "configuration": "Debug",
-      "repository": "ailiasdesu/Caesura-AmeKAG",
+      "repository": "caesura-team/Caesura-AmeKAG",
       "require_cmake_cache": true,
       "expected_cache": {"CAESURA_REQUIRE_TEST_PREREQUISITES": "ON"},
       "checks": [
@@ -65,7 +65,7 @@
     "linux-release": {
       "platform": "linux",
       "configuration": "Release",
-      "repository": "ailiasdesu/Caesura-AmeKAG",
+      "repository": "caesura-team/Caesura-AmeKAG",
       "require_cmake_cache": true,
       "expected_cache": {"CAESURA_REQUIRE_TEST_PREREQUISITES": "ON"},
       "checks": [
@@ -85,7 +85,7 @@
     "macos-debug": {
       "platform": "macos",
       "configuration": "Debug",
-      "repository": "ailiasdesu/Caesura-AmeKAG",
+      "repository": "caesura-team/Caesura-AmeKAG",
       "require_cmake_cache": true,
       "expected_cache": {"CAESURA_REQUIRE_TEST_PREREQUISITES": "ON"},
       "checks": [
@@ -105,7 +105,7 @@
     "macos-release": {
       "platform": "macos",
       "configuration": "Release",
-      "repository": "ailiasdesu/Caesura-AmeKAG",
+      "repository": "caesura-team/Caesura-AmeKAG",
       "require_cmake_cache": true,
       "expected_cache": {"CAESURA_REQUIRE_TEST_PREREQUISITES": "ON"},
       "checks": [
