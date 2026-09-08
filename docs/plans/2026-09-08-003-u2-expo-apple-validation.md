@@ -70,8 +70,6 @@ EAS 提供机器/调度/工件保存，不代替原生测试的通过条件。�
 
 第二次运行[01a08082-9af3-7b68-99d0-57bfcb3037b6](https://expo.dev/accounts/ailiasdesus-team/projects/caesura-native-validation/workflows/01a08082-9af3-7b68-99d0-57bfcb3037b6)已从job环境取得正确SHA，完成clone/fetch/checkout和clean校验，随后三个lane在Homebrew安装处失败：自动镜像中没有sdl3配方。现固定官方列出的`macos-tahoe-26.5-xcode-26.6`镜像；macOS安装本机SDL/OpenSSL，iOS只安装必要主机工具，继续从固定提交构建目标SDL/OpenSSL。新运行继续验证同一原生源码SHA，旧失败及原始日志保留。
 
-## 官方来源
-
 ## 第三次云执行与 Simulator 链接修复
 
 [第三次EAS运行01a0808e-5336-786d-8364-c7a01bb36a00](https://expo.dev/accounts/ailiasdesus-team/projects/caesura-native-validation/workflows/01a0808e-5336-786d-8364-c7a01bb36a00)继续验证源码`9e9cfc07c4455b498ea99d465cc6f560bf1eed32`。三个真实工件已下载并检查路径安全后解包，保存在本地`artifacts/validation/eas-third-results/`，原始archive未改写。
