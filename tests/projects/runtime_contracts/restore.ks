@@ -1,0 +1,7 @@
+[set var="lf.owner" value="caller"]
+[set var="f.reward" value=0]
+[ch text="保存之前"]
+[call saved_callee.ks]
+[eval exp="f.returned = lf.owner"]
+[ch text="返回奖励 ${f.reward}"]
+[end]

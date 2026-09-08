@@ -1,9 +1,9 @@
 # Capability Closure Matrix (auto-generated)
 
 > 由 python scripts/capability_closure.py 生成；勿手动编辑。
-> 生成时间（输入源最新 mtime）：2026-09-08T06:51:21Z
+> 生成时间（输入源最新 mtime）：2026-09-08T08:43:37Z
 > 生成命令：python scripts/capability_closure.py
-> 源指纹（输入内容 sha256 前 16 hex）：e1eb4525cca28dfc
+> 源指纹（输入内容 sha256 前 16 hex）：ca62a166046ee064
 > 输出确定性：同源指纹同字节（generated_at 为输入源最新 mtime；跨机 checkout 的 mtime 差异属 by-design，确定性以指纹为准）
 
 ## 概述
@@ -106,7 +106,7 @@
 | blur | Y | Y | n | PARTIAL | ✓4 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/transition.lua:292 |
 | br | Y | Y | n | CLOSED | ✓3 | - ⚠ | - ⚠ | VERIFIED（位置级） ⚠ | scripts/kag.lua:212 |
 | button | Y | Y | n | CLOSED ⚠ | ✓39 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/text.lua:1389 |
-| call | n | Y | n | EXTRA | ✓77 | - | - | ? | scripts/kag.lua:514 |
+| call | n | Y | n | EXTRA | ✓79 | - | - | ? | scripts/kag.lua:514 |
 | camera | Y | Y | Y | CLOSED | ✓6 | - | - | ? | scripts/kag/commands/transition.lua:495 |
 | cancel | Y | Y | Y | CLOSED | ✓7 | - | - | ? | scripts/kag.lua:222 |
 | capture_state | n | Y | n | EXTRA | - | - | - | ? | scripts/kag/commands/save.lua:244 |
@@ -126,7 +126,7 @@
 | div | Y | Y | n | CLOSED ⚠ | ✓15 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/math.lua:124 |
 | edit | Y | Y | Y | CLOSED | ✓1 | - | - | ? | scripts/kag/commands/text.lua:1975 |
 | emb | Y | Y | n | CLOSED | ✓16 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/system.lua:103 |
-| end | n | Y | n | EXTRA | ✓245 | - | - | ? | scripts/kag.lua:86 |
+| end | n | Y | n | EXTRA | ✓253 | - | - | ? | scripts/kag.lua:86 |
 | endbutton | Y | Y | Y | CLOSED | ✓32 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/text.lua:1423 |
 | endform | n | Y | n | EXTRA | ✓1 | - | - | ? | scripts/kag.lua:362 |
 | ending | Y | Y | n | CLOSED ⚠ | ✓25 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/system.lua:339 |
@@ -135,7 +135,7 @@
 | endtag | n | Y | n | EXTRA | ✓1 | - | - | ? | scripts/kag.lua:358 |
 | er | Y | Y | Y | CLOSED | ✓6 | - | - | ? | scripts/kag/commands/text.lua:972 |
 | erasemacro | n | Y | n | EXTRA | ✓8 | - | - | ? | scripts/kag.lua:245 |
-| eval | Y | Y | n | CLOSED | ✓74 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/system.lua:198 |
+| eval | Y | Y | n | CLOSED | ✓83 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/system.lua:198 |
 | fade | Y | Y | Y | CLOSED | ✓2 | - | - | ? | scripts/kag/commands/transition.lua:568 |
 | fadebgm | Y | Y | Y | CLOSED | ✓5 | - | - | ? | scripts/kag/commands/audio.lua:174 |
 | fadeout | Y | Y | n | CLOSED ⚠ | ✓2 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag.lua:373 |
@@ -156,7 +156,7 @@
 | input | Y | Y | Y | CLOSED | ✓1 | - | - | ? | scripts/kag/commands/text.lua:1703 |
 | is_loaded | n | Y | n | EXTRA | - | - | - | ? | scripts/kag/commands/resource.lua:235 |
 | is_pending | n | Y | n | EXTRA | - | - | - | ? | scripts/kag/commands/resource.lua:244 |
-| jump | n | Y | n | EXTRA | ✓182 | - | - | ? | scripts/kag.lua:503 |
+| jump | n | Y | n | EXTRA | ✓184 | - | - | ? | scripts/kag.lua:503 |
 | l | Y | Y | Y | CLOSED | ✓4 | - ⚠ | - ⚠ | VERIFIED（位置级） ⚠ | scripts/kag/commands/text.lua:914 |
 | layfade | Y | Y | Y | CLOSED | ✓5 | - | - | ? | scripts/kag/commands/layer.lua:339 |
 | layopt | Y | Y | Y | CLOSED | ✓1 | - | - | ? | scripts/kag/commands/layer.lua:313 |
@@ -168,7 +168,7 @@
 | live2d_expression | Y | Y | n | EXPERIMENTAL ⚠ | - | - ⚠ | - ⚠ | ? ⚠ | scripts/kag/commands/character.lua:189 |
 | live2d_lip_sync | Y | Y | n | EXPERIMENTAL ⚠ | - | - ⚠ | - ⚠ | ? ⚠ | scripts/kag/commands/character.lua:200 |
 | live2d_motion | Y | Y | n | EXPERIMENTAL ⚠ | - | - ⚠ | - ⚠ | ? ⚠ | scripts/kag/commands/character.lua:177 |
-| load | Y | Y | Y | CLOSED | ✓62 | - | - | ? | scripts/kag/commands/save.lua:341 |
+| load | Y | Y | Y | CLOSED | ✓63 | - | - | ? | scripts/kag/commands/save.lua:341 |
 | loadplace | Y | Y | Y | CLOSED | ✓6 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/save.lua:465 |
 | macro | n | Y | n | EXTRA | ✓65 | - | - | ? | scripts/kag.lua:243 |
 | mod | Y | Y | n | CLOSED ⚠ | ✓13 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/math.lua:125 |
@@ -209,14 +209,14 @@
 | rollback | Y | Y | n | CLOSED | ✓9 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/system.lua:363 |
 | ruby | Y | Y | Y | CLOSED | ✓8 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/text.lua:1081 |
 | s | Y | Y | n | CLOSED | ✓7 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag.lua:305 |
-| save | Y | Y | Y | CLOSED | ✓98 | - | - | ? | scripts/kag/commands/save.lua:260 |
+| save | Y | Y | Y | CLOSED | ✓100 | - | - | ? | scripts/kag/commands/save.lua:260 |
 | saveload | Y | Y | n | CLOSED | ✓12 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/save.lua:406 |
 | saveplace | Y | Y | n | CLOSED ⚠ | ✓7 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/save.lua:461 |
 | scroll | Y | Y | Y | CLOSED | ✓5 | - | - | ? | scripts/kag/commands/transition.lua:215 |
 | se | n | Y | Y | EXTRA | ✓6 | - | - | ? | scripts/kag.lua:445 |
 | sel | n | Y | n | EXTRA | ✓67 | - | - | ? | scripts/kag/commands/text.lua:1561 |
 | select | Y | Y | n | CLOSED ⚠ | ✓34 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/text.lua:1557 |
-| set | Y | Y | n | CLOSED | ✓173 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/system.lua:427 |
+| set | Y | Y | n | CLOSED | ✓178 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/system.lua:427 |
 | setbgmvolume | Y | Y | Y | CLOSED | ✓6 | - | - | ? | scripts/kag/commands/audio.lua:356 |
 | setsevolume | Y | Y | Y | CLOSED | ✓6 | - | - | ? | scripts/kag/commands/audio.lua:361 |
 | setvoicevolume | Y | Y | Y | CLOSED | ✓5 | - | - | ? | scripts/kag/commands/audio.lua:366 |
@@ -238,7 +238,7 @@
 | stopvideo | Y | Y | Y | PARTIAL | ✓3 | - | - | ? | scripts/kag/commands/video.lua:123 |
 | stopvoice | Y | Y | Y | CLOSED | ✓1 | - | - | ? | scripts/kag/commands/audio.lua:308 |
 | sub | Y | Y | n | CLOSED ⚠ | ✓8 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/math.lua:122 |
-| text | Y | Y | Y | CLOSED ⚠ | ✓60 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/text.lua:845 |
+| text | Y | Y | Y | CLOSED ⚠ | ✓61 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/text.lua:845 |
 | textbox | Y | Y | Y | CLOSED | ✓9 | - | - | ? | scripts/kag/commands/text.lua:382 |
 | textspeed | Y | Y | n | CLOSED | ✓42 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/text.lua:1263 |
 | trans* | Y | Y | Y | CLOSED | ✓4 | - | - | ? | scripts/kag/commands/transition.lua:299 |

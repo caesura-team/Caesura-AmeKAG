@@ -1,0 +1,5 @@
+[set var="lf.owner" value="callee"]
+[save slot=41]
+[eval exp="f.reward = f.reward + 1"]
+[ch text="保存之后 ${f.reward}"]
+[return]

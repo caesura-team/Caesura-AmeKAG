@@ -23,6 +23,7 @@ end
 local tokenizer = require("tokenizer")
 local schema = require("kag.schema")
 local exprLang = require("kag.expr")
+local normalize_params = require("kag.compiler").normalize_params
 
 -- Pre-load known command modules so contracts are registered
 pcall(require, "kag.commands.text")
@@ -200,23 +201,20 @@ function semantic.parse(ks_text, filename)
         elseif tok.type == "command" then
             local cmd = tok.cmd
             node.cmd = cmd
-            node.params = {}
+            node.params = normalize_params(cmd, tok.params or {})
             node.named_params = {}
             node.positional_params = {}
             
             -- Process parameters
-            local bare = {}
             for _, p in ipairs(tok.params or {}) do
                 if type(p) == "table" and p[1] ~= nil then
                     local k, v = p[1], p[2]
                     local num_k = tonumber(k)
                     if num_k then
                         node.positional_params[num_k] = v
-                        bare[num_k] = v
                     else
                         node.named_params[k] = v
                     end
-                    node.params[k] = v
                 end
             end
             
@@ -224,9 +222,8 @@ function semantic.parse(ks_text, filename)
             local specs = schema.specs(cmd)
             if specs then
                 for sname, spec in pairs(specs) do
-                    if spec.positional_index and bare[spec.positional_index] ~= nil and node.named_params[sname] == nil then
-                        node.named_params[sname] = bare[spec.positional_index]
-                        node.params[sname] = bare[spec.positional_index]
+                    if spec.positional_index and node.named_params[sname] == nil then
+                        node.named_params[sname] = node.params[sname]
                     end
                 end
             end
