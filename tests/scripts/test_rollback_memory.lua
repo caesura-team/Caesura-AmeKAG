@@ -83,6 +83,98 @@ end
 
 -- 2. variable tables are still deep-copied (rollback isolation): mutating
 --    ctx.f after capture must not affect the snapshot.
+do
+    -- U27 allocation budget: 128 captures of eight changing semantic draws.
+    -- Stop GC only within this bounded measurement so short-lived allocations
+    -- cannot disappear before being counted. This measures allocated Lua KiB,
+    -- not retained heap or throughput; all earlier retention budgets remain.
+    Layers.clear_for_restore()
+    local changing = make_ctx(0, 8)
+    local shared = {value=17}
+    shared.self = shared
+    changing.f = {left=shared, right=shared}
+    snapshot.capture(changing) -- identical cache warmup on both implementations
+    local captures = {}
+    local was_running = collectgarbage("isrunning")
+    local gc_guard <close> = setmetatable({}, {__close=function()
+        if was_running then collectgarbage("restart") end
+    end})
+    collectgarbage("collect")
+    collectgarbage("collect")
+    collectgarbage("collect")
+    collectgarbage("stop")
+    local before = collectgarbage("count")
+    for i=1,128 do
+        for j,draw in ipairs(changing.text_state.draws) do draw.x=i+j end
+        captures[i] = assert(snapshot.capture(changing))
+    end
+    local allocated = collectgarbage("count") - before
+    if was_running then collectgarbage("restart") end
+    -- Fixed before the production change: at most 8 KiB per capture (1 MiB
+    -- total), including the retained snapshot, result array and work buffers.
+    check("changing scalar draw captures allocate under 1 MiB", allocated < 1024,
+        string.format("%.1f KB / 128 captures", allocated))
+    check("allocation workload keeps every historical draw value", #captures==128
+        and #captures[1].text_state.draws==8 and #captures[128].text_state.draws==8
+        and captures[1].text_state.draws[1].x==2
+        and captures[128].text_state.draws[1].x==129
+        and captures[1].text_state.draws[1]~=captures[128].text_state.draws[1])
+    check("allocation workload preserves deep-copy cycles and aliases",
+        captures[1].f.left==captures[1].f.right and captures[1].f.left.self==captures[1].f.left
+        and captures[1].f.left~=shared and captures[1].f.left~=captures[128].f.left)
+    print(string.format("  [alloc] 128 captures, 8 changing draws: %.1f KB", allocated))
+end
+
+do
+    local capture_control = require("kag.save_state").capture_control
+    local default = capture_control({_forStack=false, _ifStack=false})
+    local another = capture_control({})
+    local distinct, keys = {}, {"for_","while_","if_","switch","for_marks","for_rewound"}
+    local independent = true
+    for _,key in ipairs(keys) do
+        local field = default[key]
+        independent = independent and type(field)=="table" and next(field)==nil
+            and not distinct[field] and field~=another[key]
+        distinct[field] = true
+    end
+    default.for_[1] = "changed"
+    check("default control captures own all six empty fields", independent
+        and next(default.while_)==nil and next(capture_control({}).for_)==nil)
+
+    local shared = {}
+    local present = capture_control({_forStack=shared, _whileStack=shared})
+    present.for_[1] = "changed"
+    check("provided empty control fields are independently cloned",
+        present.for_~=shared and present.for_~=present.while_ and next(shared)==nil
+        and next(present.while_)==nil)
+
+    -- Node/depth validation is shared across the whole control record.
+    local left,right = {},{}
+    for i=1,49997 do left[i]=i;right[i]=i end
+    local boundary = {_forStack=left,_whileStack=right}
+    check("control capture accepts the exact shared 100000-node limit",
+        pcall(capture_control,boundary))
+    right[49998]=49998
+    check("control fields cannot each spend an independent node budget",
+        not pcall(capture_control,boundary))
+    local deep = {};local tail=deep
+    for _=1,63 do tail.child={};tail=tail.child end
+    check("control depth includes its outer record",pcall(capture_control,{_forStack=deep}))
+    tail.child={}
+    check("control depth beyond 64 still rejects",not pcall(capture_control,{_forStack=deep}))
+    local cycle={};cycle.self=cycle
+    check("control capture still rejects cycles and invalid values",
+        not pcall(capture_control,{_forStack=cycle})
+        and not pcall(capture_control,{_forStack={math.huge}})
+        and not pcall(capture_control,{_forStack={[false]=1}}))
+
+    local context=make_ctx(0,0)
+    context.f={left=shared,right=shared}
+    local copied=snapshot.capture(context)
+    check("recursive empty snapshot values retain aliases in their own graph",
+        copied.f.left==copied.f.right and copied.f.left~=shared)
+end
+
 ctx.f.flag_1 = 999
 check("vars deep-copied (isolation)", snap.f.flag_1 == 1)
 

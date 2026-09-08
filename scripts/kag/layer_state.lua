@@ -9,6 +9,8 @@ local active_owner
 local scalar_fields = {"x","y","w","h","z","opacity","scale","scaleX","scaleY",
     "rotation","originX","originY","alpha","pos_x","pos_y","clipX","clipY","clipW","clipH",
     "imgX","imgY","imgW","imgH","layer_type"}
+local named_fields = {"name","tag","blend_mode"}
+local transient_effects = {"quake","shake","fade"}
 
 local function number(value, low, high, integer)
     return type(value)=="number" and value==value and value>=low and value<=high
@@ -57,7 +59,7 @@ local function node_value(node)
     end
     if node.visible~=nil and type(node.visible)~="boolean" then error("Invalid saved visibility",0) end
     result.visible=node.visible~=false
-    for _,key in ipairs({"name","tag","blend_mode"}) do
+    for _,key in ipairs(named_fields) do
         local value=node[key]
         if value~=nil then
             local valid=type(value)=="string" and #value<=128
@@ -75,7 +77,7 @@ function M.capture()
     local function walk(node,parent,depth)
         if depth>64 or #nodes>=256 or seen[node] then error("Layer tree exceeds restore limits",0) end
         seen[node]=true
-        for _,key in ipairs({"quake","shake","fade"}) do
+        for _,key in ipairs(transient_effects) do
             if node[key] and node[key].active then error("Cannot save an active layer effect",0) end
         end
         if node.userdata~=nil then error("Cannot save an opaque layer payload",0) end
