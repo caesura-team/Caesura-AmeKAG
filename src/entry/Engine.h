@@ -102,6 +102,12 @@ public:
 private:
     void requireInitialized() const;
     void processEvents();
+    void dispatchPlatformEvent(const SDL_Event& event, bool internalTouch = false);
+    void dispatchTouchEvent(const SDL_Event& event);
+    void pumpGestures(double nowMs);
+    void cancelPointerInput();
+    bool isLifecyclePaused() const;
+    void updateLifecyclePause(bool wasPaused);
     void render(float dt);
     void presentFrame();
 
@@ -115,6 +121,9 @@ private:
     bool isLuaExecutionPaused() const;
     void publishDebugPauseState();
     void notifyKagDebugResume();
+    void updateAudioSuspension();
+    bool pendingVoiceOwnerMatches(lua_State* L) const;
+    void clearPendingVoiceCompletions(lua_State* L);
 
     // T2: Init phase methods
     bool initPlatformPhase();
@@ -132,6 +141,16 @@ private:
     // Coalesce mouse clicks: at most one _KAG_onClick dispatch per frame
     // (event storms from auto-clickers/touch ghosts must not batch-resume).
     bool         m_clickPending = false;
+    float        m_clickX = 0.0f, m_clickY = 0.0f;
+    float        m_pointerX = 0.0f, m_pointerY = 0.0f;
+    bool         m_pointerLeftDown = false;
+    struct TouchContact {
+        SDL_TouchID device = 0;
+        SDL_FingerID finger = 0;
+        bool active = false;
+    };
+    TouchContact m_touchContacts[GestureDetector::kMaxFingers];
+    uint64_t m_touchGeneration = 0;
     // Auto-save timer: triggerAutoSave() fires every m_autoSaveIntervalSec
     // of accumulated frame time (0 disables; Lua System.setAutoSaveInterval).
     double       m_autoSaveAccum = 0.0;
@@ -140,6 +159,14 @@ private:
     bool         m_renderInitialized = false;
     bool         m_renderFailed = false;
     bool         m_audioInitialized = false;
+    // Independently paired reasons; one resume event cannot clear another
+    // source's pause. The backend sees only aggregate state transitions.
+    bool         m_lifecycleBackground = false;
+    bool         m_lifecyclePaused = false;
+    bool         m_windowFocusLost = false;
+    bool         m_audioFocusLost = false;
+    bool         m_audioInterrupted = false;
+    bool         m_audioSuspended = false;
     bool         m_textureManagerInitialized = false;
     bool         m_layerManagerInitialized = false;
     bool         m_sandboxQuotaBound = false;
@@ -153,6 +180,9 @@ private:
     bool         m_miniGameInitialized = false;
     bool         m_animationInitialized = false;
     unsigned int m_audioVoiceCompletionsPending = 0;
+    // Positive Lua registry reference pins the batch's runner table. Zero
+    // denotes engine-owned audio outside a runner, not a raw table address.
+    int m_audioCompletionOwnerRef = 0;
     int  m_gcFrameCounter = 0;
     // Rendered-frame counter; when m_config.frameLimit > 0 the main loop
     // stops deterministically after that many frames (--frames N).
@@ -167,8 +197,7 @@ private:
     std::unique_ptr<IPlatformBackend>  m_platformBackend;
     std::unique_ptr<IDisplayService>   m_displayService;
     std::unique_ptr<MobileAdapter>     m_mobileAdapter;
-    // Raw finger stream -> long-press / pinch gesture events (P7 dispatch
-    // to IMobileAdapter::onLongPress/onPinch; was implemented but unwired).
+    // Owner-thread gesture classification shares the bounded contact slots.
     std::unique_ptr<GestureDetector>   m_gestureDetector;
     std::unique_ptr<ILifecycleService>  m_lifecycleService;
     std::unique_ptr<IAudioFocusService>  m_audioFocusService;

@@ -1,16 +1,17 @@
 // MobileAdapter -- Mobile platform adapter.
 // Spec [10.2.64]: Touch input mapping, lifecycle events, DPI scaling.
-// Core mapping is implemented and unit-tested (see class doc); native mobile
-// platform integration is not wired into the Engine yet.
+// Engine maps native SDL contact identities and lifecycle events into this adapter.
 // Namespace: Caesura (consistent with engine layering).
 #pragma once
 #include "api/IMobileAdapter.h"
 #include <cmath>
 #include <cstdint>
+#include <functional>
 #include <string>
 
 // Forward declaration for Lua state (avoid full include in header)
 struct lua_State;
+union SDL_Event;
 
 namespace Caesura {
 
@@ -23,12 +24,10 @@ struct TouchPoint {
 };
 
 /// Mobile platform adapter -- lifecycle + touch → input mapping.
-/// Core mapping (touch → SDL mouse/wheel events, DPI scale, pause/resume
-/// Lua callbacks) is implemented and unit-tested. Native mobile platform
-/// integration (real OS lifecycle hooks) is NOT wired into the Engine yet --
-/// the platform layer must call these methods. Audio suspend/resume on
-/// backgrounding is handled at the composition root
-/// (Engine::appLifecycleWatch -> IAudioBackend, round 29).
+/// Engine feeds SDL contacts through stable integer slots, classifies gestures,
+/// and receives synthetic input synchronously. Standalone users retain the
+/// default SDL queue route. Lifecycle callbacks live here; the composition root
+/// owns audio suspension and independently paired focus/background reasons.
 class MobileAdapter : public IMobileAdapter {
 public:
     MobileAdapter() = default;
@@ -37,11 +36,11 @@ public:
     // ── Lifecycle ──────────────────────────────────────────────────────
 
     /// Called when app goes to background.
-    /// Pauses SoLoud audio and invokes Lua _G.onPause().
+    /// Publishes paused state and invokes Lua _G.onPause().
     void onPause(lua_State* L) override;
 
     /// Called when app returns to foreground.
-    /// Resumes audio and invokes Lua _G.onResume(savedData).
+    /// Publishes resumed state and invokes Lua _G.onResume(savedData).
     void onResume(lua_State* L, const std::string& savedData = "") override;
 
     /// Display orientation change -> Lua _G.onOrientationChanged(name).
@@ -55,13 +54,22 @@ public:
 
     // ── Touch → Mouse Mapping ──────────────────────────────────────────
 
-    /// Single finger down -- maps to left mouse button press at (x, y).
+    // Concrete host configuration; the public IMobileAdapter stays unchanged.
+    // An empty sink preserves immediate SDL_PushEvent delivery. A configured
+    // sink receives the same event synchronously, with no duplicate queueing.
+    void setEventSink(std::function<void(const SDL_Event&)> sink);
+    // Deferred mode classifies a complete contact sequence before left-click.
+    // Changing mode cancels old contacts and releases any emitted left button.
+    void setDeferredTouchClicks(bool enabled);
+    void cancelTouches();
+
+    /// Single finger down -- immediate left press unless deferred mode is set.
     void onFingerDown(float x, float y, int fingerId = 0) override;
 
     /// Finger moved -- maps to mouse motion at (x, y).
     void onFingerMotion(float x, float y, int fingerId = 0) override;
 
-    /// Finger lifted -- maps to left mouse button release at (x, y).
+    /// Finger lifted -- immediate release, or a classified deferred tap pair.
     void onFingerUp(float x, float y, int fingerId = 0) override;
 
     // ── Gesture Input ──────────────────────────────────────────────────
@@ -137,14 +145,39 @@ public:
     bool isFingerDown(int fingerId) const override;
 
 private:
+    struct TouchOrigin {
+        float x = 0.0f, y = 0.0f, maxTravelSq = 0.0f;
+    };
+    struct EmittedButton {
+        bool down = false;
+        uint64_t owner = 0;
+        float x = 0.0f, y = 0.0f;
+    };
+    void emitEvent(const SDL_Event& event);
+    EmittedButton& emittedButton(uint8_t button);
+    uint64_t emitButtonDown(uint8_t button, float x, float y);
+    void emitButtonUp(uint8_t button, float x, float y);
+    void emitButtonPair(uint8_t button, float x, float y);
+    void rememberTouchPosition(int fingerId, float x, float y);
+    void consumeTouchTap();
+
     bool  m_paused = false;
     float m_displayScale = 1.0f;
     float m_lastPinchScale = 0.0f;
     int   m_activeTouches = 0;
+    std::function<void(const SDL_Event&)> m_eventSink;
+    bool m_deferredTouchClicks = false;
+    bool m_sequenceTapSuppressed = false;
+    // Contact state is retired BEFORE calling the sink. Button ownership is
+    // independent: a new deferred contact still permits the old balancing up,
+    // whereas a new emitted down supersedes the old pair's release authority.
+    uint64_t m_buttonSerial = 0;
+    EmittedButton m_leftButton, m_rightButton;
 
     /// Last known positions per finger (up to 10 simultaneous touches)
     static constexpr int MAX_TOUCH_POINTS = 10;
     TouchPoint m_touchPoints[MAX_TOUCH_POINTS];
+    TouchOrigin m_touchOrigins[MAX_TOUCH_POINTS];
 };
 
 } // namespace Caesura

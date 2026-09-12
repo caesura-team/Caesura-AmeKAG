@@ -79,11 +79,23 @@ uint64_t SDL3PlatformBackend::getTicksMs() const {
     return SDL_GetTicks();
 }
 
+int SDL3PlatformBackend::getWindowWidth() const {
+    int width = 0;
+    return m_window && SDL_GetWindowSize(m_window, &width, nullptr) && width > 0
+        ? width : m_width;
+}
+
+int SDL3PlatformBackend::getWindowHeight() const {
+    int height = 0;
+    return m_window && SDL_GetWindowSize(m_window, nullptr, &height) && height > 0
+        ? height : m_height;
+}
+
 void SDL3PlatformBackend::resizeWindow(int width, int height) {
-    if (m_window) {
-        SDL_SetWindowSize(m_window, width, height);
-        m_width = width;
-        m_height = height;
+    if (m_window && SDL_SetWindowSize(m_window, width, height)) {
+        // SDL/OS resize requests may be asynchronous. Expose the actual
+        // current window units; the Engine owns polling, not this backend.
+        SDL_GetWindowSize(m_window, &m_width, &m_height);
     }
 }
 

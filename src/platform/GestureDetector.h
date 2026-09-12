@@ -21,7 +21,8 @@ namespace Caesura {
 //   SwipeUp         — single finger vertical upward swipe (dy <= -50 px, |dy| >= 1.5|dx|).
 //
 // Coords stay in the input domain (window px); the adapter applies its own
-// display scale. Finger capacity mirrors the adapter's MAX_TOUCH_POINTS (8).
+// display scale. Engine maps native identities into these eight slots; the
+// standalone MobileAdapter retains its separate capacity of ten contacts.
 //
 // ── Two-端语义对齐 (C6 native ⇄ C7 web) ────────────────────────────────────
 // web/touch-gestures.js implements the SAME four gestures for the DOM player.

@@ -870,6 +870,11 @@ function kag_runner.update(dt)
                         auto_advance_ms = ctx.skip_rate or 60
                     else
                         auto_advance_ms = 0
+                        -- Unread text prevents skipping, not the natural
+                        -- completion of a voice that is already playing.
+                        if ctx._voice_wait_poll then
+                            return resume_scheduler("update", delta_ms)
+                        end
                         return false, "waiting-input"
                     end
                 end
@@ -902,6 +907,11 @@ function kag_runner.update(dt)
                     return kag_runner.on_click()
                 end
             end
+        end
+        -- A voice wait still accepts the click/skip branches above, but
+        -- unlike [p] it must observe natural completion without input.
+        if ctx._voice_wait_poll then
+            return resume_scheduler("update", delta_ms)
         end
         return false, "waiting-input"
     end

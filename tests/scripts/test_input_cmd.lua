@@ -228,6 +228,8 @@ check("strict sandbox installed _KAG_onKeyDown", type(_G._KAG_onKeyDown) == "fun
 _G._KAG_onTextInput("Test")
 _G._KAG_onTextEditing("comp", 0, 4)
 _G._KAG_onKeyDown(8, "backspace")
+-- Backspace belongs to the IME; the host reports preedit completion separately.
+_G._KAG_onTextEditing("", 0, 0)
 _G._KAG_onKeyDown(13, "return")
 
 check("strict sandbox input completed", ctx_sandbox.f.hero_name == "StrictTest")

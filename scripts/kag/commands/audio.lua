@@ -278,11 +278,23 @@ function AudioCommands.voice_wait(ctx, params)
     -- Click detection uses the runner's consumed flag (on_click clears it
     -- and batch-resumes) -- _KAG_onClick is a permanent callback function,
     -- always truthy, and must NOT be used as a click indicator.
-    -- waiting_input is the runner's BLOCKING flag: blocking tokens set it
-    -- true (frame loop refuses to resume) and on_click clears it before
-    -- batch-resuming. So we block WHILE it is true and treat a clear as
-    -- the click-to-skip signal (mirrors waitforclick semantics).
-    if ctx then ctx.waiting_input = true end
+    -- waiting_input retains the runner's consumed-click signal: on_click
+    -- clears it before batch-resuming. Ordinary frames preserve the flag.
+    -- Unlike an ordinary click wait, voice completion must be polled by
+    -- the runner every frame. Keep waiting_input for its existing click/skip
+    -- arbitration; the dedicated marker permits exactly one frame resume.
+    -- Coroutine close on stop/replacement also clears this owner's marker.
+    local wait_scope <close> = setmetatable({}, { __close = function()
+        if ctx then
+            ctx.waiting_input = false
+            ctx._voice_wait_poll = nil
+        end
+        _G._CAESURA_AUDIO_EVENT = nil
+    end })
+    if ctx then
+        ctx.waiting_input = true
+        ctx._voice_wait_poll = true
+    end
     local ok, err = pcall(function()
         while backend.audio_is_playing and backend.audio_is_playing("voice") do
             if ctx and not ctx.waiting_input then  -- click cleared it: skip

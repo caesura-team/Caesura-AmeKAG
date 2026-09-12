@@ -243,11 +243,8 @@ bool Engine::init() {
     // Android audio-focus bridge (t211): install the drain sink up front;
     // per-frame drain is a no-op until focus events arrive on the UI thread.
     Caesura::setMobileNativeAudioFocusSink([](int code) {
-        AudioFocusEvent ev = (code == -1) ? AudioFocusEvent::FocusLost
-                          : ((code == -2 || code == -3) ? AudioFocusEvent::InterruptionBegin
-                                                        : AudioFocusEvent::FocusGained);
         if (auto* s = BackendRegistry::instance().getAudioFocusService()) {
-            s->post(ev);
+            s->post(audioFocusEventForAndroidChange(code));
         }
     });
 #endif
@@ -376,6 +373,14 @@ bool Engine::initPlatformPhase() {
     m_mobileAdapter = std::make_unique<MobileAdapter>();
     BackendRegistry::instance().setMobileAdapter(m_mobileAdapter.get());
     m_gestureDetector = std::make_unique<GestureDetector>();
+    m_mobileAdapter->setDeferredTouchClicks(m_inputRouter->getFocus() == InputFocus::KAG);
+    m_mobileAdapter->setEventSink([this](const SDL_Event& event) { dispatchPlatformEvent(event, true); });
+    m_inputRouter->registerFocusChangeCallback([this](InputFocus) {
+        if (m_shutdownComplete) return;
+        cancelPointerInput();
+        if (!m_shutdownComplete && m_mobileAdapter)
+            m_mobileAdapter->setDeferredTouchClicks(m_inputRouter->getFocus() == InputFocus::KAG);
+    });
     // SDL app-lifecycle events are delivered only via event watches
     // (they are never queued); register once here.
     SDL_AddEventWatch(&Engine::appLifecycleWatch, this);
@@ -459,6 +464,7 @@ bool Engine::initPlatformPhase() {
         }
     }
     m_audioInitialized = true;
+    updateAudioSuspension();
     BackendRegistry::instance().setAudioBackend(m_audioBackend.get());
     BackendRegistry::instance().setAudioRestore(dynamic_cast<IAudioRestore*>(m_audioBackend.get()));
 
@@ -775,43 +781,7 @@ void Engine::run(const OwnerPump& ownerPump) {
 
         GpuQuality gpuQ = m_gpuMonitor->update(static_cast<double>(dt));
 
-        // Gesture polling: long-press fires on a held still finger; pinch
-        // pulses on two-finger distance changes. Dispatching at most one
-        // event per frame keeps the SDL event queue from being flooded.
-        if (m_mobileAdapter && m_gestureDetector) {
-            const GestureEvent ge = m_gestureDetector->tick(
-                static_cast<double>(SDL_GetTicks()));
-            switch (ge.kind) {
-            case GestureEvent::Kind::LongPress:
-                m_mobileAdapter->onLongPress(ge.x, ge.y);
-                break;
-            case GestureEvent::Kind::Pinch:
-                m_mobileAdapter->onPinch(ge.x, ge.y, ge.scale);
-                break;
-            // Multi-finger gestures (audit fix): the detector and the adapter
-            // both grew TwoFingerTap/ThreeFingerHold/SwipeDown/SwipeUp, but
-            // this dispatch forwarded only the first two kinds, so the new
-            // gestures were unreachable at runtime and only unit tests ever
-            // saw them. A swipe reports its END point in x/y and its travel
-            // in deltaX/deltaY, hence the start reconstruction below.
-            case GestureEvent::Kind::TwoFingerTap:
-                m_mobileAdapter->onTwoFingerTap(ge.x, ge.y);
-                break;
-            case GestureEvent::Kind::ThreeFingerHold:
-                m_mobileAdapter->onThreeFingerHold(ge.x, ge.y);
-                break;
-            case GestureEvent::Kind::SwipeDown:
-                m_mobileAdapter->onSwipeDown(ge.x - ge.deltaX, ge.y - ge.deltaY,
-                                             ge.x, ge.y);
-                break;
-            case GestureEvent::Kind::SwipeUp:
-                m_mobileAdapter->onSwipeUp(ge.x - ge.deltaX, ge.y - ge.deltaY,
-                                           ge.x, ge.y);
-                break;
-            case GestureEvent::Kind::None:
-                break;
-            }
-        }
+        if (!isLuaExecutionPaused()) pumpGestures(static_cast<double>(SDL_GetTicks()));
 
         // Auto-save timer (0 disables; Lua System.setAutoSaveInterval).
         if (m_autoSaveIntervalSec > 0.0 && dt > 0.0 && !isLuaExecutionPaused()) {
@@ -830,14 +800,22 @@ void Engine::run(const OwnerPump& ownerPump) {
             // Lua update (mirrors the pre-existing _KAG_onClick behavior).
             if (m_clickPending && !isLuaExecutionPaused()) {
                 m_clickPending = false;
-                lua_getglobal(L, "_KAG_onClick");
-                if (lua_isfunction(L, -1)) {
-                    if (lua_pcall(L, 0, 0, 0) != LUA_OK) {
-                        const char* err = lua_tostring(L, -1);
-                        fprintf(stderr, "_KAG_onClick: %s\n", err ? err : "unknown");
-                        lua_pop(L, 1);
-                    }
-                } else { lua_pop(L, 1); }
+                if (m_inputRouter->getFocus() == InputFocus::KAG) {
+                    // A later move/up in this frame must not retarget the
+                    // accepted click. Restore the latest pointer afterwards.
+                    lua_pushnumber(L, m_clickX); lua_setglobal(L, "_GAME_MOUSE_X");
+                    lua_pushnumber(L, m_clickY); lua_setglobal(L, "_GAME_MOUSE_Y");
+                    lua_getglobal(L, "_KAG_onClick");
+                    if (lua_isfunction(L, -1)) {
+                        if (lua_pcall(L, 0, 0, 0) != LUA_OK) {
+                            const char* err = lua_tostring(L, -1);
+                            fprintf(stderr, "_KAG_onClick: %s\n", err ? err : "unknown");
+                            lua_pop(L, 1);
+                        }
+                    } else { lua_pop(L, 1); }
+                    lua_pushnumber(L, m_pointerX); lua_setglobal(L, "_GAME_MOUSE_X");
+                    lua_pushnumber(L, m_pointerY); lua_setglobal(L, "_GAME_MOUSE_Y");
+                }
             }
             if (!isLuaExecutionPaused()) {
                 lua_getglobal(L, "engine_update");
@@ -893,8 +871,17 @@ void Engine::run(const OwnerPump& ownerPump) {
         // multiple natural completions lossless while Lua is debugger-paused.
         if (m_audioBackend) {
             m_audioBackend->update(static_cast<float>(dt));
+            if (m_audioVoiceCompletionsPending > 0 && !pendingVoiceOwnerMatches(L)) {
+                clearPendingVoiceCompletions(L);
+                if (L) {
+                    lua_pushboolean(L, 0);
+                    lua_setglobal(L, "_CAESURA_VOICE_COMPLETE");
+                }
+            }
             const unsigned int completed =
                 m_audioBackend->consumeVoiceCompletions();
+            if (completed > 0 && m_audioVoiceCompletionsPending == 0 && L && GameState::push(L))
+                m_audioCompletionOwnerRef = luaL_ref(L, LUA_REGISTRYINDEX);
             const unsigned int capacity =
                 std::numeric_limits<unsigned int>::max() -
                 m_audioVoiceCompletionsPending;
@@ -908,6 +895,15 @@ void Engine::run(const OwnerPump& ownerPump) {
 
             while (m_audioVoiceCompletionsPending > 0 &&
                    !isLuaExecutionPaused() && L) {
+                // A callback can stop/replace the runner. Remaining events
+                // still belong to the original batch, never its successor.
+                if (!pendingVoiceOwnerMatches(L)) {
+                    clearPendingVoiceCompletions(L);
+                    lua_pushboolean(L, 0);
+                    lua_setglobal(L, "_CAESURA_VOICE_COMPLETE");
+                    break;
+                }
+                --m_audioVoiceCompletionsPending;
                 lua_pushboolean(L, 1);
                 lua_setglobal(L, "_CAESURA_VOICE_COMPLETE");
                 lua_getglobal(L, "_onVoiceComplete");
@@ -919,8 +915,8 @@ void Engine::run(const OwnerPump& ownerPump) {
                         lua_pop(L, 1);
                     }
                 } else { lua_pop(L, 1); }
-                --m_audioVoiceCompletionsPending;
             }
+            if (m_audioVoiceCompletionsPending == 0) clearPendingVoiceCompletions(L);
 
             // A completion callback may start the next line immediately.
             if (m_audioBackend->isVoicePlaying() && L) {
@@ -1019,8 +1015,27 @@ bool Engine::pumpDebugger() {
 }
 
 bool Engine::isLuaExecutionPaused() const {
-    return m_deviceRecoveryPaused || m_skipLuaCallbacksThisFrame ||
+    return isLifecyclePaused() || m_deviceRecoveryPaused || m_skipLuaCallbacksThisFrame ||
            (m_debugProtocol && m_debugProtocol->isDebugActive());
+}
+
+bool Engine::pendingVoiceOwnerMatches(lua_State* L) const {
+    if (!L || !GameState::push(L)) return m_audioCompletionOwnerRef == 0;
+    bool same = false;
+    if (m_audioCompletionOwnerRef > 0) {
+        lua_rawgeti(L, LUA_REGISTRYINDEX, m_audioCompletionOwnerRef);
+        same = lua_rawequal(L, -1, -2) != 0;
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1);
+    return same;
+}
+
+void Engine::clearPendingVoiceCompletions(lua_State* L) {
+    if (L && m_audioCompletionOwnerRef > 0)
+        luaL_unref(L, LUA_REGISTRYINDEX, m_audioCompletionOwnerRef);
+    m_audioCompletionOwnerRef = 0;
+    m_audioVoiceCompletionsPending = 0;
 }
 
 void Engine::publishDebugPauseState() {
@@ -1107,6 +1122,117 @@ void Engine::dispatchAsyncLoad(std::unique_ptr<CompletedLoad> completed) {
     }
 }
 
+void Engine::pumpGestures(double nowMs) {
+    if (!m_mobileAdapter || !m_gestureDetector || isLuaExecutionPaused()) return;
+    const auto generation = m_touchGeneration;
+    for (int count = 0; count < GestureDetector::kMaxPendingEvents; ++count) {
+        const GestureEvent ge = m_gestureDetector->tick(nowMs);
+        switch (ge.kind) {
+        case GestureEvent::Kind::LongPress:
+            m_mobileAdapter->onLongPress(ge.x, ge.y);
+            break;
+        case GestureEvent::Kind::Pinch:
+            m_mobileAdapter->onPinch(ge.x, ge.y, ge.scale);
+            break;
+        // Multi-finger gestures (audit fix): the detector and the adapter
+        // both grew TwoFingerTap/ThreeFingerHold/SwipeDown/SwipeUp, but
+        // this dispatch forwarded only the first two kinds, so the new
+        // gestures were unreachable at runtime and only unit tests ever
+        // saw them. A swipe reports its END point in x/y and its travel
+        // in deltaX/deltaY, hence the start reconstruction below.
+        case GestureEvent::Kind::TwoFingerTap:
+            m_mobileAdapter->onTwoFingerTap(ge.x, ge.y);
+            break;
+        case GestureEvent::Kind::ThreeFingerHold:
+            m_mobileAdapter->onThreeFingerHold(ge.x, ge.y);
+            break;
+        case GestureEvent::Kind::SwipeDown:
+            m_mobileAdapter->onSwipeDown(ge.x - ge.deltaX, ge.y - ge.deltaY,
+                                         ge.x, ge.y);
+            break;
+        case GestureEvent::Kind::SwipeUp:
+            m_mobileAdapter->onSwipeUp(ge.x - ge.deltaX, ge.y - ge.deltaY,
+                                       ge.x, ge.y);
+            break;
+        case GestureEvent::Kind::None:
+            return;
+        }
+        if (m_shutdownComplete || generation != m_touchGeneration || isLuaExecutionPaused()) return;
+    }
+}
+
+void Engine::cancelPointerInput() {
+    ++m_touchGeneration;
+    for (auto& contact : m_touchContacts) contact = {};
+    if (m_gestureDetector) m_gestureDetector->reset();
+    m_clickPending = false;
+    m_pointerLeftDown = false;
+    if (m_inputRouter) m_inputRouter->consumeKAGClick();
+    if (m_lua && m_lua->state()) {
+        auto* L = m_lua->state();
+        for (const char* name : {"_GAME_MOUSE_DOWN", "_GAME_KEY_BACKSPACE", "_GAME_KEY_F4",
+             "_GAME_KEY_F5", "_GAME_KEY_F6", "_GAME_KEY_W", "_GAME_KEY_A", "_GAME_KEY_S",
+             "_GAME_KEY_D", "_GAME_KEY_UP", "_GAME_KEY_DOWN", "_GAME_KEY_ENTER", "_GAME_KEY_ESC",
+             "_GAME_KEY_H", "_GAME_KEY_F", "_GAME_KEY_LEFT", "_GAME_KEY_RIGHT", "_GAME_KEY_V"}) {
+            lua_pushboolean(L, 0); lua_setglobal(L, name);
+        }
+    }
+    // Publish all old-state retirement before a synchronous balancing release.
+    if (m_mobileAdapter) m_mobileAdapter->cancelTouches();
+}
+
+void Engine::dispatchTouchEvent(const SDL_Event& event) {
+    if (!m_mobileAdapter || !m_gestureDetector || isLuaExecutionPaused()) return;
+    const auto& touch = event.tfinger;
+    int slot = -1;
+    for (int i=0; i<GestureDetector::kMaxFingers; ++i) {
+        const auto& contact = m_touchContacts[i];
+        if (contact.active && contact.device == touch.touchID && contact.finger == touch.fingerID) {
+            slot=i; break;
+        }
+    }
+    if (event.type == SDL_EVENT_FINGER_CANCELED) {
+        // A known cancellation consumes the whole gesture sequence. An unknown
+        // device/finger cannot cancel a different contact with the same low bits.
+        if (slot >= 0) cancelPointerInput();
+        return;
+    }
+    if (!std::isfinite(touch.x) || !std::isfinite(touch.y)) return;
+    const float x = touch.x * float(m_platformBackend->getWindowWidth());
+    const float y = touch.y * float(m_platformBackend->getWindowHeight());
+    if (!std::isfinite(x) || !std::isfinite(y)) return;
+    const double now = static_cast<double>(SDL_GetTicks());
+    const auto generation = m_touchGeneration;
+    if (event.type == SDL_EVENT_FINGER_DOWN) {
+        if (slot < 0) {
+            for (int i=0; i<GestureDetector::kMaxFingers; ++i) {
+                if (!m_touchContacts[i].active) { slot=i; break; }
+            }
+            if (slot < 0) return;
+            m_touchContacts[slot] = {touch.touchID, touch.fingerID, true};
+            m_gestureDetector->onFingerDown(slot, x, y, now);
+        } else {
+            m_gestureDetector->onFingerMove(slot, x, y, now);
+        }
+        m_mobileAdapter->onFingerDown(x, y, slot);
+    } else if (slot >= 0) {
+        m_gestureDetector->onFingerMove(slot, x, y, now);
+        if (event.type == SDL_EVENT_FINGER_MOTION) {
+            m_mobileAdapter->onFingerMotion(x, y, slot);
+        } else if (event.type == SDL_EVENT_FINGER_UP) {
+            // The final point and elapsed hold must be classified while the
+            // contact still exists, before the adapter decides whether to tap.
+            pumpGestures(now);
+            if (m_shutdownComplete || generation != m_touchGeneration) return;
+            m_gestureDetector->onFingerUp(slot, now);
+            m_touchContacts[slot] = {};
+            m_mobileAdapter->onFingerUp(x, y, slot);
+            if (m_gestureDetector->activeFingerCount() == 0) m_mobileAdapter->resetPinch();
+        }
+    }
+    if (!m_shutdownComplete && generation == m_touchGeneration) pumpGestures(now);
+}
+
 void Engine::processEvents() {
     // Steam callbacks every frame
     m_steamBackend->runCallbacks();
@@ -1153,343 +1279,349 @@ void Engine::processEvents() {
     }
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
-        if (m_renderDevice && (event.type == SDL_EVENT_WINDOW_RESIZED
-                               || event.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED)) {
-            if (auto* window = SDL_GetWindowFromID(event.window.windowID)) {
-                int pixelWidth = 0, pixelHeight = 0;
-                if (SDL_GetWindowSizeInPixels(window, &pixelWidth, &pixelHeight)
-                    && pixelWidth > 0 && pixelHeight > 0)
-                    m_renderDevice->setPresentSize(uint32_t(pixelWidth), uint32_t(pixelHeight));
-            }
-        }
-        // -- Window resize: propagate to registered callbacks (layer tree
-        // rebuild + dirty marking). Was documented-but-unwired: the
-        // InputRouter callback list never fired because no event handler
-        // existed here.
-        if (event.type == SDL_EVENT_WINDOW_RESIZED) {
-            static int s_resizeAll = 0;
-            if (s_resizeAll++ < 24) {
-                fprintf(stderr, "[RESIZE-ALL] %ux%u\n",
-                        (unsigned)event.window.data1, (unsigned)event.window.data2);
-            }
-            if (m_inputRouter) {
-                m_inputRouter->notifyResize(event.window.data1,
-                                            event.window.data2);
-            }
-            // Track M device-day: the device window is portrait (e.g.
-            // 1080x2276) while the engine initializes desktop-sized
-            // (1280x720); without this the scene renders into a 720-high
-            // band and appears squeezed to the bottom of the screen.
-            // Only propagate when the size really changed (Android can
-            // resend identical resize events every frame; that storms RTT
-            // rebuilds and flickers).
-            if (m_renderDevice && (uint32_t(event.window.data1) != m_renderLastW
-                                || uint32_t(event.window.data2) != m_renderLastH)) {
-                static int s_resizeLog = 0;
-                if (s_resizeLog++ < 12) {
-                    fprintf(stderr, "[RESIZE] %ux%u\n",
-                            (unsigned)event.window.data1, (unsigned)event.window.data2);
-                }
-                m_renderDevice->resize(event.window.data1, event.window.data2);
-                m_renderLastW = uint32_t(event.window.data1);
-                m_renderLastH = uint32_t(event.window.data2);
-            }
-        }
-        // -- GPU device reset from SDL (triggers recovery at next loop iteration) --
-        if (event.type == SDL_EVENT_RENDER_DEVICE_RESET) {
-            if (m_renderDevice) m_renderDevice->flagDeviceLost();
-        }
-        // -- Mobile touch (P7): SDL finger events -> MobileAdapter (which
-        // injects mouse events and tracks multi-touch). Finger coords are
-        // normalized 0..1; the adapter expects window pixels.
-        if (m_mobileAdapter) {
-            // SDL finger coordinates are normalized 0..1; scale to window
-            // pixels for the adapter's touch -> mouse injection.
-            const float winW = m_platformBackend
-                ? static_cast<float>(m_platformBackend->getWindowWidth()) : 1280.0f;
-            const float winH = m_platformBackend
-                ? static_cast<float>(m_platformBackend->getWindowHeight()) : 720.0f;
-            switch (event.type) {
-                case SDL_EVENT_FINGER_DOWN: {
-                    const float fx = event.tfinger.x * winW;
-                    const float fy = event.tfinger.y * winH;
-                    if (m_gestureDetector) {
-                        m_gestureDetector->onFingerDown(
-                            static_cast<int>(event.tfinger.fingerID), fx, fy,
-                            static_cast<double>(SDL_GetTicks()));
-                    }
-                    m_mobileAdapter->onFingerDown(
-                        fx, fy, static_cast<int>(event.tfinger.fingerID));
-                    break;
-                }
-                case SDL_EVENT_FINGER_MOTION: {
-                    const float fx = event.tfinger.x * winW;
-                    const float fy = event.tfinger.y * winH;
-                    if (m_gestureDetector) {
-                        m_gestureDetector->onFingerMove(
-                            static_cast<int>(event.tfinger.fingerID), fx, fy,
-                            static_cast<double>(SDL_GetTicks()));
-                    }
-                    m_mobileAdapter->onFingerMotion(
-                        fx, fy, static_cast<int>(event.tfinger.fingerID));
-                    break;
-                }
-                case SDL_EVENT_FINGER_UP: {
-                    const float fx = event.tfinger.x * winW;
-                    const float fy = event.tfinger.y * winH;
-                    if (m_gestureDetector) {
-                        m_gestureDetector->onFingerUp(
-                            static_cast<int>(event.tfinger.fingerID),
-                            static_cast<double>(SDL_GetTicks()));
-                    }
-                    m_mobileAdapter->onFingerUp(
-                        fx, fy, static_cast<int>(event.tfinger.fingerID));
-                    break;
-                }
-                default:
-                    break;
-            }
-        }
-
-        // -- G8-U3: Async load completion (custom SDL event from AsyncLoader) --
-        if (event.type == CAESURA_EVENT_ASYNC_LOAD &&
-            event.user.data2 == m_asyncLoader.get()) {
-            dispatchAsyncLoad(std::unique_ptr<CompletedLoad>(
-                static_cast<CompletedLoad*>(event.user.data1)));
-            continue;
-        }
-
-        if ((event.type == SDL_EVENT_MOUSE_MOTION ||
-             event.type == SDL_EVENT_MOUSE_BUTTON_DOWN ||
-             event.type == SDL_EVENT_MOUSE_BUTTON_UP) && L) {
-            float mx = 0, my = 0;
-            SDL_GetMouseState(&mx, &my);
-
-            int winW = m_platformBackend ? m_platformBackend->getWindowWidth() : 0;
-            int winH = m_platformBackend ? m_platformBackend->getWindowHeight() : 0;
-            int logW = m_renderDevice ? m_renderDevice->getBackbufferWidth() : m_config.width;
-            int logH = m_renderDevice ? m_renderDevice->getBackbufferHeight() : m_config.height;
-            if (winW > 0 && winH > 0 && logW > 0 && logH > 0) {
-                mx = mx * ((float)logW / (float)winW);
-                my = my * ((float)logH / (float)winH);
-            }
-
-            IPlatformBackend::MouseState mouse;
-            mouse.x = mx; mouse.y = my;
-            mouse.leftDown = (SDL_GetMouseState(nullptr, nullptr) & SDL_BUTTON_LMASK) != 0;
-            lua_pushnumber(L, mouse.x); lua_setglobal(L, "_GAME_MOUSE_X");
-            lua_pushnumber(L, mouse.y); lua_setglobal(L, "_GAME_MOUSE_Y");
-            lua_pushboolean(L, mouse.leftDown ? 1 : 0);
-            lua_setglobal(L, "_GAME_MOUSE_DOWN");
-
-
-            if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN &&
-                m_inputRouter->getFocus() == InputFocus::KAG &&
-                !isLuaExecutionPaused()) {
-                if (event.button.button == SDL_BUTTON_RIGHT) {
-                    // Right-click dispatches immediately (not the advance path).
-                    lua_getglobal(L, "_KAG_onRightClick");
-                    if (lua_isfunction(L, -1)) {
-                        if (lua_pcall(L, 0, 0, 0) != LUA_OK) {
-                            const char* err = lua_tostring(L, -1);
-                            fprintf(stderr, "_KAG_onRightClick: %s\n", err ? err : "unknown");
-                            lua_pop(L, 1);
-                        }
-                    } else { lua_pop(L, 1); }
-                } else {
-                    // Coalesce left clicks: the frame loop dispatches at
-                    // most one _KAG_onClick per frame (event storms must
-                    // not batch-resume the scheduler or deep-copy rollback
-                    // snapshots per event).
-                    m_clickPending = true;
-                }
-            }
-
-        }
-
-        // D9.7: Mouse wheel is a distinct SDL event, not a mouse-button event.
-        if (event.type == SDL_EVENT_MOUSE_WHEEL && L &&
-            m_inputRouter->getFocus() == InputFocus::KAG &&
-            !isLuaExecutionPaused()) {
-            lua_pushnumber(L, event.wheel.y); lua_setglobal(L, "_KAG_MOUSE_WHEEL_Y");
-            lua_getglobal(L, "_KAG_onMouseWheel");
-            if (lua_isfunction(L, -1)) {
-                if (lua_pcall(L, 0, 0, 0) != LUA_OK) {
-                    const char* err = lua_tostring(L, -1);
-                    fprintf(stderr, "_KAG_onMouseWheel: %s\n", err ? err : "unknown");
-                    lua_pop(L, 1);
-                }
-            } else { lua_pop(L, 1); }
-        }
-
-        // -- IME / Virtual Keyboard Text Input & Editing --------------------
-        if (event.type == SDL_EVENT_TEXT_INPUT && L && !isLuaExecutionPaused()) {
-            lua_getglobal(L, "_KAG_onTextInput");
-            if (lua_isfunction(L, -1)) {
-                lua_pushstring(L, event.text.text ? event.text.text : "");
-                if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
-                    const char* err = lua_tostring(L, -1);
-                    fprintf(stderr, "_KAG_onTextInput error: %s\n", err ? err : "unknown");
-                    lua_pop(L, 1);
-                }
-            } else { lua_pop(L, 1); }
-        }
-
-        if (event.type == SDL_EVENT_TEXT_EDITING && L && !isLuaExecutionPaused()) {
-            lua_getglobal(L, "_KAG_onTextEditing");
-            if (lua_isfunction(L, -1)) {
-                lua_pushstring(L, event.edit.text ? event.edit.text : "");
-                lua_pushinteger(L, event.edit.start);
-                lua_pushinteger(L, event.edit.length);
-                if (lua_pcall(L, 3, 0, 0) != LUA_OK) {
-                    const char* err = lua_tostring(L, -1);
-                    fprintf(stderr, "_KAG_onTextEditing error: %s\n", err ? err : "unknown");
-                    lua_pop(L, 1);
-                }
-            } else { lua_pop(L, 1); }
-        }
-
-        if ((event.type == SDL_EVENT_KEY_DOWN || event.type == SDL_EVENT_KEY_UP) && L) {
-            if (event.type == SDL_EVENT_KEY_DOWN) {
-                if (event.key.key == SDLK_BACKSPACE) {
-                    lua_pushboolean(L, 1); lua_setglobal(L, "_GAME_KEY_BACKSPACE");
-                    if (!isLuaExecutionPaused()) {
-                        lua_getglobal(L, "_KAG_onKeyDown");
-                        if (lua_isfunction(L, -1)) {
-                            lua_pushinteger(L, event.key.key);
-                            lua_pushstring(L, "backspace");
-                            if (lua_pcall(L, 2, 0, 0) != LUA_OK) { lua_pop(L, 1); }
-                        } else { lua_pop(L, 1); }
-                    }
-                }
-                if (event.key.key == SDLK_F4) {
-                    lua_pushboolean(L, 1); lua_setglobal(L, "_GAME_KEY_F4");
-                    if (!event.key.repeat && !isLuaExecutionPaused()) {
-                        lua_getglobal(L, "_KAG_onF4");
-                        if (lua_isfunction(L, -1)) {
-                            if (lua_pcall(L, 0, 0, 0) != LUA_OK) {
-                                const char* err = lua_tostring(L, -1);
-                                fprintf(stderr, "_KAG_onF4: %s\n", err ? err : "unknown");
-                                lua_pop(L, 1);
-                            }
-                        } else { lua_pop(L, 1); }
-                    }
-                }
-                if (event.key.key == SDLK_F5) {
-                    lua_pushboolean(L, 1); lua_setglobal(L, "_GAME_KEY_F5");
-                    if (!event.key.repeat && !isLuaExecutionPaused()) quicksave();
-                }
-                if (event.key.key == SDLK_F6) {
-                    lua_pushboolean(L, 1); lua_setglobal(L, "_GAME_KEY_F6");
-                    if (!event.key.repeat && !isLuaExecutionPaused()) quickload();
-                }
-                if (event.key.key == SDLK_W)    { lua_pushboolean(L, 1); lua_setglobal(L, "_GAME_KEY_W"); }
-                // A: auto-mode toggle -- key-repeat guarded like V/Ctrl so a
-                // held A doesn't flap auto_mode ~30x/sec via SDL auto-repeat.
-                if (event.key.key == SDLK_A && !event.key.repeat) {
-                    lua_pushboolean(L, 1); lua_setglobal(L, "_GAME_KEY_A");
-                }
-                if (event.key.key == SDLK_S)    { lua_pushboolean(L, 1); lua_setglobal(L, "_GAME_KEY_S"); }
-                if (event.key.key == SDLK_D)    { lua_pushboolean(L, 1); lua_setglobal(L, "_GAME_KEY_D"); }
-                if (event.key.key == SDLK_UP)   { lua_pushboolean(L, 1); lua_setglobal(L, "_GAME_KEY_UP"); }
-                if (event.key.key == SDLK_DOWN) { lua_pushboolean(L, 1); lua_setglobal(L, "_GAME_KEY_DOWN"); }
-                if (event.key.key == SDLK_RETURN || event.key.key == SDLK_KP_ENTER) {
-                    lua_pushboolean(L, 1); lua_setglobal(L, "_GAME_KEY_ENTER");
-                    if (!isLuaExecutionPaused()) {
-                        lua_getglobal(L, "_KAG_onKeyDown");
-                        if (lua_isfunction(L, -1)) {
-                            lua_pushinteger(L, event.key.key);
-                            lua_pushstring(L, "return");
-                            if (lua_pcall(L, 2, 0, 0) != LUA_OK) { lua_pop(L, 1); }
-                        } else { lua_pop(L, 1); }
-                    }
-                }
-                if (event.key.key == SDLK_ESCAPE) {
-                    lua_pushboolean(L, 1); lua_setglobal(L, "_GAME_KEY_ESC");
-                    if (!isLuaExecutionPaused()) {
-                        lua_getglobal(L, "_KAG_onKeyDown");
-                        if (lua_isfunction(L, -1)) {
-                            lua_pushinteger(L, event.key.key);
-                            lua_pushstring(L, "escape");
-                            if (lua_pcall(L, 2, 0, 0) != LUA_OK) { lua_pop(L, 1); }
-                        } else { lua_pop(L, 1); }
-                    }
-                }
-                if (event.key.key == SDLK_H)    { lua_pushboolean(L, 1); lua_setglobal(L, "_GAME_KEY_H"); }
-                if (event.key.key == SDLK_F)    { lua_pushboolean(L, 1); lua_setglobal(L, "_GAME_KEY_F"); }
-                if (event.key.key == SDLK_LEFT)  { lua_pushboolean(L, 1); lua_setglobal(L, "_GAME_KEY_LEFT"); }
-                if (event.key.key == SDLK_RIGHT) { lua_pushboolean(L, 1); lua_setglobal(L, "_GAME_KEY_RIGHT"); }
-                if (event.key.key == SDLK_V && !event.key.repeat) {
-                    lua_pushboolean(L, 1); lua_setglobal(L, "_GAME_KEY_V");
-                }
-                // D9.6: Ctrl triggers skip mode via Lua (only on the initial
-                // press -- key-repeat events would re-toggle skip ~30x/sec)
-                if ((event.key.key == SDLK_LCTRL || event.key.key == SDLK_RCTRL) &&
-                    !event.key.repeat && !isLuaExecutionPaused()) {
-                    lua_getglobal(L, "_KAG_onCtrlDown");
-                    if (lua_isfunction(L, -1)) {
-                        if (lua_pcall(L, 0, 0, 0) != LUA_OK) { lua_pop(L, 1); }
-                    } else { lua_pop(L, 1); }
-                }
-                // t109: native SwipeDown/SwipeUp consumers (MobileAdapter maps
-                // them to SDLK_SPACE / SDLK_PAGEUP, MobileAdapter.cpp:305-330);
-                // mirror the WEB gesture semantics (web/main.mjs:634-647) --
-                // SPACE toggles the message-layer UI overlay, PAGEUP opens the
-                // backlog view. Same guard style as _KAG_onCtrlDown above.
-                if (event.key.key == SDLK_SPACE && !event.key.repeat && !isLuaExecutionPaused()) {
-                    lua_getglobal(L, "_KAG_onKeySpace");
-                    if (lua_isfunction(L, -1)) {
-                        if (lua_pcall(L, 0, 0, 0) != LUA_OK) {
-                            const char* err = lua_tostring(L, -1);
-                            fprintf(stderr, "_KAG_onKeySpace: %s\n", err ? err : "unknown");
-                            lua_pop(L, 1);
-                        }
-                    } else { lua_pop(L, 1); }
-                }
-                if (event.key.key == SDLK_PAGEUP && !event.key.repeat && !isLuaExecutionPaused()) {
-                    lua_getglobal(L, "_KAG_onKeyPageUp");
-                    if (lua_isfunction(L, -1)) {
-                        if (lua_pcall(L, 0, 0, 0) != LUA_OK) {
-                            const char* err = lua_tostring(L, -1);
-                            fprintf(stderr, "_KAG_onKeyPageUp: %s\n", err ? err : "unknown");
-                            lua_pop(L, 1);
-                        }
-                    } else { lua_pop(L, 1); }
-                }
-            }
-            if (event.type == SDL_EVENT_KEY_UP) {
-                if (event.key.key == SDLK_BACKSPACE) { lua_pushboolean(L, 0); lua_setglobal(L, "_GAME_KEY_BACKSPACE"); }
-                if (event.key.key == SDLK_F4) { lua_pushboolean(L, 0); lua_setglobal(L, "_GAME_KEY_F4"); }
-                if (event.key.key == SDLK_F5) { lua_pushboolean(L, 0); lua_setglobal(L, "_GAME_KEY_F5"); }
-                if (event.key.key == SDLK_F6) { lua_pushboolean(L, 0); lua_setglobal(L, "_GAME_KEY_F6"); }
-                if (event.key.key == SDLK_W)    { lua_pushboolean(L, 0); lua_setglobal(L, "_GAME_KEY_W"); }
-                if (event.key.key == SDLK_A)    { lua_pushboolean(L, 0); lua_setglobal(L, "_GAME_KEY_A"); }
-                if (event.key.key == SDLK_S)    { lua_pushboolean(L, 0); lua_setglobal(L, "_GAME_KEY_S"); }
-                if (event.key.key == SDLK_D)    { lua_pushboolean(L, 0); lua_setglobal(L, "_GAME_KEY_D"); }
-                if (event.key.key == SDLK_UP)   { lua_pushboolean(L, 0); lua_setglobal(L, "_GAME_KEY_UP"); }
-                if (event.key.key == SDLK_DOWN) { lua_pushboolean(L, 0); lua_setglobal(L, "_GAME_KEY_DOWN"); }
-                if (event.key.key == SDLK_RETURN || event.key.key == SDLK_KP_ENTER) {
-                    lua_pushboolean(L, 0); lua_setglobal(L, "_GAME_KEY_ENTER");
-                }
-                if (event.key.key == SDLK_ESCAPE) { lua_pushboolean(L, 0); lua_setglobal(L, "_GAME_KEY_ESC"); }
-                if (event.key.key == SDLK_H)    { lua_pushboolean(L, 0); lua_setglobal(L, "_GAME_KEY_H"); }
-                if (event.key.key == SDLK_F)    { lua_pushboolean(L, 0); lua_setglobal(L, "_GAME_KEY_F"); }
-                if (event.key.key == SDLK_LEFT)  { lua_pushboolean(L, 0); lua_setglobal(L, "_GAME_KEY_LEFT"); }
-                if (event.key.key == SDLK_RIGHT) { lua_pushboolean(L, 0); lua_setglobal(L, "_GAME_KEY_RIGHT"); }
-                if (event.key.key == SDLK_V)    { lua_pushboolean(L, 0); lua_setglobal(L, "_GAME_KEY_V"); }
-                // D9.6: Ctrl skip mode toggle release
-                if ((event.key.key == SDLK_LCTRL || event.key.key == SDLK_RCTRL) &&
-                    !isLuaExecutionPaused()) {
-                    lua_getglobal(L, "_KAG_onCtrlUp");
-                    if (lua_isfunction(L, -1)) {
-                        if (lua_pcall(L, 0, 0, 0) != LUA_OK) { lua_pop(L, 1); }
-                    } else { lua_pop(L, 1); }
-                }
-            }
-        }
-        m_inputRouter->processEvent(event);
+        dispatchPlatformEvent(event);
+        if (m_shutdownComplete) return;
     }
 }
+
+void Engine::dispatchPlatformEvent(const SDL_Event& event, bool internalTouch) {
+    if (m_shutdownComplete) return;
+    lua_State* L = m_lua ? m_lua->state() : nullptr;
+    // MobileAdapter uses this same owner-thread dispatcher synchronously so a
+    // later focus/cancel event cannot be overtaken by queued synthetic input.
+    SDL_WindowID eventWindow = 0;
+    if (event.type >= SDL_EVENT_WINDOW_FIRST && event.type <= SDL_EVENT_WINDOW_LAST)
+        eventWindow = event.window.windowID;
+    else if (event.type >= SDL_EVENT_FINGER_DOWN && event.type <= SDL_EVENT_FINGER_CANCELED)
+        eventWindow = event.tfinger.windowID;
+    else if (event.type == SDL_EVENT_TEXT_INPUT) eventWindow = event.text.windowID;
+    else if (event.type == SDL_EVENT_TEXT_EDITING) eventWindow = event.edit.windowID;
+    else if (event.type == SDL_EVENT_KEY_DOWN || event.type == SDL_EVENT_KEY_UP)
+        eventWindow = event.key.windowID;
+    else if (event.type == SDL_EVENT_MOUSE_WHEEL) eventWindow = event.wheel.windowID;
+    else if (event.type == SDL_EVENT_MOUSE_MOTION) eventWindow = event.motion.windowID;
+    else if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN || event.type == SDL_EVENT_MOUSE_BUTTON_UP)
+        eventWindow = event.button.windowID;
+    if (eventWindow) {
+        auto* window = getSDLWindow(m_platformBackend.get());
+        if (!window || SDL_GetWindowID(window) != eventWindow) return;
+    }
+    if (event.type == SDL_EVENT_WINDOW_FOCUS_LOST || event.type == SDL_EVENT_WINDOW_FOCUS_GAINED) {
+        const bool wasPaused = isLifecyclePaused();
+        m_windowFocusLost = event.type == SDL_EVENT_WINDOW_FOCUS_LOST;
+        updateLifecyclePause(wasPaused);
+        if (m_shutdownComplete) return;
+    }
+    if (m_mobileAdapter &&
+        ((event.type == SDL_EVENT_MOUSE_MOTION && event.motion.which == SDL_TOUCH_MOUSEID) ||
+         ((event.type == SDL_EVENT_MOUSE_BUTTON_DOWN || event.type == SDL_EVENT_MOUSE_BUTTON_UP) &&
+          event.button.which == SDL_TOUCH_MOUSEID))) return;
+    // A background key/down is discarded; its matching up must never revive a
+    // stale held state. Lifecycle transitions clear already accepted input.
+    // The adapter must still balance a press already accepted by a GAME
+    // callback. Only our synchronous release may cross the pause boundary.
+    const bool balancingTouchRelease = internalTouch && event.type == SDL_EVENT_MOUSE_BUTTON_UP;
+    if (isLifecyclePaused() && !balancingTouchRelease &&
+        ((event.type >= SDL_EVENT_MOUSE_MOTION && event.type <= SDL_EVENT_MOUSE_WHEEL) ||
+         event.type == SDL_EVENT_KEY_DOWN || event.type == SDL_EVENT_KEY_UP ||
+         event.type == SDL_EVENT_TEXT_INPUT || event.type == SDL_EVENT_TEXT_EDITING)) return;
+    if (m_renderDevice && (event.type == SDL_EVENT_WINDOW_RESIZED
+                           || event.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED)) {
+        if (auto* window = SDL_GetWindowFromID(event.window.windowID)) {
+            int pixelWidth = 0, pixelHeight = 0;
+            if (SDL_GetWindowSizeInPixels(window, &pixelWidth, &pixelHeight)
+                && pixelWidth > 0 && pixelHeight > 0)
+                m_renderDevice->setPresentSize(uint32_t(pixelWidth), uint32_t(pixelHeight));
+        }
+    }
+    // -- Window resize: propagate to registered callbacks (layer tree
+    // rebuild + dirty marking). Was documented-but-unwired: the
+    // InputRouter callback list never fired because no event handler
+    // existed here.
+    if (event.type == SDL_EVENT_WINDOW_RESIZED) {
+        static int s_resizeAll = 0;
+        if (s_resizeAll++ < 24) {
+            fprintf(stderr, "[RESIZE-ALL] %ux%u\n",
+                    (unsigned)event.window.data1, (unsigned)event.window.data2);
+        }
+        if (m_inputRouter) {
+            m_inputRouter->notifyResize(event.window.data1,
+                                        event.window.data2);
+        }
+        // Track M device-day: the device window is portrait (e.g.
+        // 1080x2276) while the engine initializes desktop-sized
+        // (1280x720); without this the scene renders into a 720-high
+        // band and appears squeezed to the bottom of the screen.
+        // Only propagate when the size really changed (Android can
+        // resend identical resize events every frame; that storms RTT
+        // rebuilds and flickers).
+        if (m_renderDevice && (uint32_t(event.window.data1) != m_renderLastW
+                            || uint32_t(event.window.data2) != m_renderLastH)) {
+            static int s_resizeLog = 0;
+            if (s_resizeLog++ < 12) {
+                fprintf(stderr, "[RESIZE] %ux%u\n",
+                        (unsigned)event.window.data1, (unsigned)event.window.data2);
+            }
+            m_renderDevice->resize(event.window.data1, event.window.data2);
+            m_renderLastW = uint32_t(event.window.data1);
+            m_renderLastH = uint32_t(event.window.data2);
+        }
+    }
+    // -- GPU device reset from SDL (triggers recovery at next loop iteration) --
+    if (event.type == SDL_EVENT_RENDER_DEVICE_RESET) {
+        if (m_renderDevice) m_renderDevice->flagDeviceLost();
+    }
+    if (event.type >= SDL_EVENT_FINGER_DOWN && event.type <= SDL_EVENT_FINGER_CANCELED) {
+        dispatchTouchEvent(event);
+        if (!m_shutdownComplete && !isLuaExecutionPaused()) m_inputRouter->processEvent(event);
+        return;
+    }
+
+    // -- G8-U3: Async load completion (custom SDL event from AsyncLoader) --
+    if (event.type == CAESURA_EVENT_ASYNC_LOAD &&
+        event.user.data2 == m_asyncLoader.get()) {
+        dispatchAsyncLoad(std::unique_ptr<CompletedLoad>(
+            static_cast<CompletedLoad*>(event.user.data1)));
+        return;
+    }
+
+    if ((event.type == SDL_EVENT_MOUSE_MOTION ||
+         event.type == SDL_EVENT_MOUSE_BUTTON_DOWN ||
+         event.type == SDL_EVENT_MOUSE_BUTTON_UP) && L) {
+        const bool motion = event.type == SDL_EVENT_MOUSE_MOTION;
+        float mx = motion ? event.motion.x : event.button.x;
+        float my = motion ? event.motion.y : event.button.y;
+        if (!std::isfinite(mx) || !std::isfinite(my)) return;
+
+        int winW = m_platformBackend ? m_platformBackend->getWindowWidth() : 0;
+        int winH = m_platformBackend ? m_platformBackend->getWindowHeight() : 0;
+        int logW = m_renderDevice ? m_renderDevice->getBackbufferWidth() : m_config.width;
+        int logH = m_renderDevice ? m_renderDevice->getBackbufferHeight() : m_config.height;
+        if (winW > 0 && winH > 0 && logW > 0 && logH > 0) {
+            mx = mx * ((float)logW / (float)winW);
+            my = my * ((float)logH / (float)winH);
+        }
+
+        m_pointerX = mx; m_pointerY = my;
+        if (motion) m_pointerLeftDown = (event.motion.state & SDL_BUTTON_LMASK) != 0;
+        else if (event.button.button == SDL_BUTTON_LEFT)
+            m_pointerLeftDown = event.type == SDL_EVENT_MOUSE_BUTTON_DOWN;
+        lua_pushnumber(L, mx); lua_setglobal(L, "_GAME_MOUSE_X");
+        lua_pushnumber(L, my); lua_setglobal(L, "_GAME_MOUSE_Y");
+        lua_pushboolean(L, m_pointerLeftDown ? 1 : 0);
+        lua_setglobal(L, "_GAME_MOUSE_DOWN");
+
+
+        if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN &&
+            m_inputRouter->getFocus() == InputFocus::KAG &&
+            !isLuaExecutionPaused()) {
+            if (event.button.button == SDL_BUTTON_RIGHT) {
+                // Right-click dispatches immediately (not the advance path).
+                lua_getglobal(L, "_KAG_onRightClick");
+                if (lua_isfunction(L, -1)) {
+                    if (lua_pcall(L, 0, 0, 0) != LUA_OK) {
+                        const char* err = lua_tostring(L, -1);
+                        fprintf(stderr, "_KAG_onRightClick: %s\n", err ? err : "unknown");
+                        lua_pop(L, 1);
+                    }
+                } else { lua_pop(L, 1); }
+            } else if (event.button.button == SDL_BUTTON_LEFT && !m_clickPending) {
+                // Coalesce left clicks: the frame loop dispatches at
+                // most one _KAG_onClick per frame (event storms must
+                // not batch-resume the scheduler or deep-copy rollback
+                // snapshots per event).
+                m_clickPending = true;
+                m_clickX = mx; m_clickY = my;
+            }
+        }
+
+    }
+
+    // D9.7: Mouse wheel is a distinct SDL event, not a mouse-button event.
+    if (event.type == SDL_EVENT_MOUSE_WHEEL && L &&
+        m_inputRouter->getFocus() == InputFocus::KAG &&
+        !isLuaExecutionPaused()) {
+        lua_pushnumber(L, event.wheel.y); lua_setglobal(L, "_KAG_MOUSE_WHEEL_Y");
+        lua_getglobal(L, "_KAG_onMouseWheel");
+        if (lua_isfunction(L, -1)) {
+            if (lua_pcall(L, 0, 0, 0) != LUA_OK) {
+                const char* err = lua_tostring(L, -1);
+                fprintf(stderr, "_KAG_onMouseWheel: %s\n", err ? err : "unknown");
+                lua_pop(L, 1);
+            }
+        } else { lua_pop(L, 1); }
+    }
+
+    // -- IME / Virtual Keyboard Text Input & Editing --------------------
+    if (event.type == SDL_EVENT_TEXT_INPUT && L && m_inputRouter->getFocus() == InputFocus::KAG
+        && !isLuaExecutionPaused()) {
+        lua_getglobal(L, "_KAG_onTextInput");
+        if (lua_isfunction(L, -1)) {
+            lua_pushstring(L, event.text.text ? event.text.text : "");
+            if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+                const char* err = lua_tostring(L, -1);
+                fprintf(stderr, "_KAG_onTextInput error: %s\n", err ? err : "unknown");
+                lua_pop(L, 1);
+            }
+        } else { lua_pop(L, 1); }
+    }
+
+    if (event.type == SDL_EVENT_TEXT_EDITING && L && m_inputRouter->getFocus() == InputFocus::KAG
+        && !isLuaExecutionPaused()) {
+        lua_getglobal(L, "_KAG_onTextEditing");
+        if (lua_isfunction(L, -1)) {
+            lua_pushstring(L, event.edit.text ? event.edit.text : "");
+            lua_pushinteger(L, event.edit.start);
+            lua_pushinteger(L, event.edit.length);
+            if (lua_pcall(L, 3, 0, 0) != LUA_OK) {
+                const char* err = lua_tostring(L, -1);
+                fprintf(stderr, "_KAG_onTextEditing error: %s\n", err ? err : "unknown");
+                lua_pop(L, 1);
+            }
+        } else { lua_pop(L, 1); }
+    }
+
+    if ((event.type == SDL_EVENT_KEY_DOWN || event.type == SDL_EVENT_KEY_UP) && L) {
+        if (event.type == SDL_EVENT_KEY_DOWN) {
+            if (event.key.key == SDLK_BACKSPACE) {
+                lua_pushboolean(L, 1); lua_setglobal(L, "_GAME_KEY_BACKSPACE");
+                if (m_inputRouter->getFocus() == InputFocus::KAG && !isLuaExecutionPaused()) {
+                    lua_getglobal(L, "_KAG_onKeyDown");
+                    if (lua_isfunction(L, -1)) {
+                        lua_pushinteger(L, event.key.key);
+                        lua_pushstring(L, "backspace");
+                        if (lua_pcall(L, 2, 0, 0) != LUA_OK) { lua_pop(L, 1); }
+                    } else { lua_pop(L, 1); }
+                }
+            }
+            if (event.key.key == SDLK_F4) {
+                lua_pushboolean(L, 1); lua_setglobal(L, "_GAME_KEY_F4");
+                if (!event.key.repeat && m_inputRouter->getFocus() == InputFocus::KAG && !isLuaExecutionPaused()) {
+                    lua_getglobal(L, "_KAG_onF4");
+                    if (lua_isfunction(L, -1)) {
+                        if (lua_pcall(L, 0, 0, 0) != LUA_OK) {
+                            const char* err = lua_tostring(L, -1);
+                            fprintf(stderr, "_KAG_onF4: %s\n", err ? err : "unknown");
+                            lua_pop(L, 1);
+                        }
+                    } else { lua_pop(L, 1); }
+                }
+            }
+            if (event.key.key == SDLK_F5) {
+                lua_pushboolean(L, 1); lua_setglobal(L, "_GAME_KEY_F5");
+                if (!event.key.repeat && !isLuaExecutionPaused()) quicksave();
+            }
+            if (event.key.key == SDLK_F6) {
+                lua_pushboolean(L, 1); lua_setglobal(L, "_GAME_KEY_F6");
+                if (!event.key.repeat && !isLuaExecutionPaused()) quickload();
+            }
+            if (event.key.key == SDLK_W)    { lua_pushboolean(L, 1); lua_setglobal(L, "_GAME_KEY_W"); }
+            // A: auto-mode toggle -- key-repeat guarded like V/Ctrl so a
+            // held A doesn't flap auto_mode ~30x/sec via SDL auto-repeat.
+            if (event.key.key == SDLK_A && !event.key.repeat) {
+                lua_pushboolean(L, 1); lua_setglobal(L, "_GAME_KEY_A");
+            }
+            if (event.key.key == SDLK_S)    { lua_pushboolean(L, 1); lua_setglobal(L, "_GAME_KEY_S"); }
+            if (event.key.key == SDLK_D)    { lua_pushboolean(L, 1); lua_setglobal(L, "_GAME_KEY_D"); }
+            if (event.key.key == SDLK_UP)   { lua_pushboolean(L, 1); lua_setglobal(L, "_GAME_KEY_UP"); }
+            if (event.key.key == SDLK_DOWN) { lua_pushboolean(L, 1); lua_setglobal(L, "_GAME_KEY_DOWN"); }
+            if (event.key.key == SDLK_RETURN || event.key.key == SDLK_KP_ENTER) {
+                lua_pushboolean(L, 1); lua_setglobal(L, "_GAME_KEY_ENTER");
+                if (m_inputRouter->getFocus() == InputFocus::KAG && !isLuaExecutionPaused()) {
+                    lua_getglobal(L, "_KAG_onKeyDown");
+                    if (lua_isfunction(L, -1)) {
+                        lua_pushinteger(L, event.key.key);
+                        lua_pushstring(L, "return");
+                        if (lua_pcall(L, 2, 0, 0) != LUA_OK) { lua_pop(L, 1); }
+                    } else { lua_pop(L, 1); }
+                }
+            }
+            if (event.key.key == SDLK_ESCAPE) {
+                lua_pushboolean(L, 1); lua_setglobal(L, "_GAME_KEY_ESC");
+                if (m_inputRouter->getFocus() == InputFocus::KAG && !isLuaExecutionPaused()) {
+                    lua_getglobal(L, "_KAG_onKeyDown");
+                    if (lua_isfunction(L, -1)) {
+                        lua_pushinteger(L, event.key.key);
+                        lua_pushstring(L, "escape");
+                        if (lua_pcall(L, 2, 0, 0) != LUA_OK) { lua_pop(L, 1); }
+                    } else { lua_pop(L, 1); }
+                }
+            }
+            if (event.key.key == SDLK_H)    { lua_pushboolean(L, 1); lua_setglobal(L, "_GAME_KEY_H"); }
+            if (event.key.key == SDLK_F)    { lua_pushboolean(L, 1); lua_setglobal(L, "_GAME_KEY_F"); }
+            if (event.key.key == SDLK_LEFT)  { lua_pushboolean(L, 1); lua_setglobal(L, "_GAME_KEY_LEFT"); }
+            if (event.key.key == SDLK_RIGHT) { lua_pushboolean(L, 1); lua_setglobal(L, "_GAME_KEY_RIGHT"); }
+            if (event.key.key == SDLK_V && !event.key.repeat) {
+                lua_pushboolean(L, 1); lua_setglobal(L, "_GAME_KEY_V");
+            }
+            // D9.6: Ctrl triggers skip mode via Lua (only on the initial
+            // press -- key-repeat events would re-toggle skip ~30x/sec)
+            if ((event.key.key == SDLK_LCTRL || event.key.key == SDLK_RCTRL) &&
+                !event.key.repeat && m_inputRouter->getFocus() == InputFocus::KAG && !isLuaExecutionPaused()) {
+                lua_getglobal(L, "_KAG_onCtrlDown");
+                if (lua_isfunction(L, -1)) {
+                    if (lua_pcall(L, 0, 0, 0) != LUA_OK) { lua_pop(L, 1); }
+                } else { lua_pop(L, 1); }
+            }
+            // t109: native SwipeDown/SwipeUp consumers (MobileAdapter maps
+            // them to SDLK_SPACE / SDLK_PAGEUP, MobileAdapter.cpp:305-330);
+            // mirror the WEB gesture semantics (web/main.mjs:634-647) --
+            // SPACE toggles the message-layer UI overlay, PAGEUP opens the
+            // backlog view. Same guard style as _KAG_onCtrlDown above.
+            if (event.key.key == SDLK_SPACE && !event.key.repeat && m_inputRouter->getFocus() == InputFocus::KAG && !isLuaExecutionPaused()) {
+                lua_getglobal(L, "_KAG_onKeySpace");
+                if (lua_isfunction(L, -1)) {
+                    if (lua_pcall(L, 0, 0, 0) != LUA_OK) {
+                        const char* err = lua_tostring(L, -1);
+                        fprintf(stderr, "_KAG_onKeySpace: %s\n", err ? err : "unknown");
+                        lua_pop(L, 1);
+                    }
+                } else { lua_pop(L, 1); }
+            }
+            if (event.key.key == SDLK_PAGEUP && !event.key.repeat && m_inputRouter->getFocus() == InputFocus::KAG && !isLuaExecutionPaused()) {
+                lua_getglobal(L, "_KAG_onKeyPageUp");
+                if (lua_isfunction(L, -1)) {
+                    if (lua_pcall(L, 0, 0, 0) != LUA_OK) {
+                        const char* err = lua_tostring(L, -1);
+                        fprintf(stderr, "_KAG_onKeyPageUp: %s\n", err ? err : "unknown");
+                        lua_pop(L, 1);
+                    }
+                } else { lua_pop(L, 1); }
+            }
+        }
+        if (event.type == SDL_EVENT_KEY_UP) {
+            if (event.key.key == SDLK_BACKSPACE) { lua_pushboolean(L, 0); lua_setglobal(L, "_GAME_KEY_BACKSPACE"); }
+            if (event.key.key == SDLK_F4) { lua_pushboolean(L, 0); lua_setglobal(L, "_GAME_KEY_F4"); }
+            if (event.key.key == SDLK_F5) { lua_pushboolean(L, 0); lua_setglobal(L, "_GAME_KEY_F5"); }
+            if (event.key.key == SDLK_F6) { lua_pushboolean(L, 0); lua_setglobal(L, "_GAME_KEY_F6"); }
+            if (event.key.key == SDLK_W)    { lua_pushboolean(L, 0); lua_setglobal(L, "_GAME_KEY_W"); }
+            if (event.key.key == SDLK_A)    { lua_pushboolean(L, 0); lua_setglobal(L, "_GAME_KEY_A"); }
+            if (event.key.key == SDLK_S)    { lua_pushboolean(L, 0); lua_setglobal(L, "_GAME_KEY_S"); }
+            if (event.key.key == SDLK_D)    { lua_pushboolean(L, 0); lua_setglobal(L, "_GAME_KEY_D"); }
+            if (event.key.key == SDLK_UP)   { lua_pushboolean(L, 0); lua_setglobal(L, "_GAME_KEY_UP"); }
+            if (event.key.key == SDLK_DOWN) { lua_pushboolean(L, 0); lua_setglobal(L, "_GAME_KEY_DOWN"); }
+            if (event.key.key == SDLK_RETURN || event.key.key == SDLK_KP_ENTER) {
+                lua_pushboolean(L, 0); lua_setglobal(L, "_GAME_KEY_ENTER");
+            }
+            if (event.key.key == SDLK_ESCAPE) { lua_pushboolean(L, 0); lua_setglobal(L, "_GAME_KEY_ESC"); }
+            if (event.key.key == SDLK_H)    { lua_pushboolean(L, 0); lua_setglobal(L, "_GAME_KEY_H"); }
+            if (event.key.key == SDLK_F)    { lua_pushboolean(L, 0); lua_setglobal(L, "_GAME_KEY_F"); }
+            if (event.key.key == SDLK_LEFT)  { lua_pushboolean(L, 0); lua_setglobal(L, "_GAME_KEY_LEFT"); }
+            if (event.key.key == SDLK_RIGHT) { lua_pushboolean(L, 0); lua_setglobal(L, "_GAME_KEY_RIGHT"); }
+            if (event.key.key == SDLK_V)    { lua_pushboolean(L, 0); lua_setglobal(L, "_GAME_KEY_V"); }
+            // D9.6: Ctrl skip mode toggle release
+            if ((event.key.key == SDLK_LCTRL || event.key.key == SDLK_RCTRL) &&
+                m_inputRouter->getFocus() == InputFocus::KAG && !isLuaExecutionPaused()) {
+                lua_getglobal(L, "_KAG_onCtrlUp");
+                if (lua_isfunction(L, -1)) {
+                    if (lua_pcall(L, 0, 0, 0) != LUA_OK) { lua_pop(L, 1); }
+                } else { lua_pop(L, 1); }
+            }
+        }
+    }
+    m_inputRouter->processEvent(event);
+}
+
 
 void Engine::render(float dt) {
     if (m_shutdownComplete || !m_renderInitialized || m_deviceRecoveryPaused || m_renderFailed) return;
@@ -1790,45 +1922,74 @@ bool Engine::appLifecycleWatch(void* userdata, SDL_Event* event) {
 }
 
 void Engine::onLifecycleEvent(LifecycleEvent event) {
+    if (m_shutdownComplete) return;
     auto* L = m_lua ? m_lua->state() : nullptr;
+    const bool wasPaused = isLifecyclePaused();
     switch (event) {
         case LifecycleEvent::Background:
+            m_lifecycleBackground = true;
+            break;
         case LifecycleEvent::Pause:
-            if (m_mobileAdapter) m_mobileAdapter->onPause(L);
-            // Mobile backgrounding must silence audio without unloading
-            // assets (composition-root concern, unchanged since round 29).
-            if (m_audioBackend) m_audioBackend->suspend();
+            m_lifecyclePaused = true;
             break;
         case LifecycleEvent::Foreground:
+            m_lifecycleBackground = false;
+            break;
         case LifecycleEvent::Resume:
-            if (m_mobileAdapter) m_mobileAdapter->onResume(L);
-            if (m_audioBackend) m_audioBackend->resume();
+            m_lifecyclePaused = false;
             break;
         case LifecycleEvent::LowMemory:
             if (m_mobileAdapter) m_mobileAdapter->onLowMemory(L);
-            break;
+            return;
         case LifecycleEvent::Terminate:
             // Notification only: teardown order is unchanged (the SDL watch
             // is unregistered first in Engine::shutdown).
             if (m_mobileAdapter) m_mobileAdapter->onTerminate(L);
-            break;
+            return;
     }
+    updateLifecyclePause(wasPaused);
+}
+
+bool Engine::isLifecyclePaused() const {
+    return m_lifecycleBackground || m_lifecyclePaused || m_windowFocusLost;
+}
+
+void Engine::updateLifecyclePause(bool wasPaused) {
+    if (isLifecyclePaused() && !wasPaused) cancelPointerInput();
+    if (m_shutdownComplete) return;
+    auto* L = m_lua ? m_lua->state() : nullptr;
+    // A balancing input release can synchronously resume the lifecycle. Compare
+    // the current aggregate with the adapter's already published callback state,
+    // not the pre-cancellation reasons. MobileAdapter publishes before Lua too.
+    const bool paused = isLifecyclePaused();
+    if (m_mobileAdapter && paused != m_mobileAdapter->isPaused()) {
+        if (paused) m_mobileAdapter->onPause(L);
+        else m_mobileAdapter->onResume(L);
+    }
+    // Callbacks can reenter a lifecycle transition, so derive audio state
+    // from the current reasons after notifying Lua.
+    updateAudioSuspension();
 }
 
 void Engine::onAudioFocusEvent(AudioFocusEvent event) {
-    // Pause/resume the whole audio engine on focus loss / interruptions;
-    // SoLoud suspend is idempotent (safe with the lifecycle background
-    // suspend). An interruption end that never began is a resume no-op.
+    if (m_shutdownComplete) return;
     switch (event) {
-        case AudioFocusEvent::FocusLost:
-        case AudioFocusEvent::InterruptionBegin:
-            if (m_audioBackend) m_audioBackend->suspend();
-            break;
-        case AudioFocusEvent::FocusGained:
-        case AudioFocusEvent::InterruptionEnd:
-            if (m_audioBackend) m_audioBackend->resume();
-            break;
+        case AudioFocusEvent::FocusLost: m_audioFocusLost = true; break;
+        case AudioFocusEvent::FocusGained: m_audioFocusLost = false; break;
+        case AudioFocusEvent::InterruptionBegin: m_audioInterrupted = true; break;
+        case AudioFocusEvent::InterruptionEnd: m_audioInterrupted = false; break;
     }
+    updateAudioSuspension();
+}
+
+void Engine::updateAudioSuspension() {
+    if (m_shutdownComplete || !m_audioInitialized || !m_audioBackend) return;
+    const bool suspended = isLifecyclePaused()
+        || m_audioFocusLost || m_audioInterrupted;
+    if (suspended == m_audioSuspended) return;
+    m_audioSuspended = suspended;
+    if (suspended) m_audioBackend->suspend();
+    else m_audioBackend->resume();
 }
 
 void Engine::shutdown() {
@@ -1856,6 +2017,7 @@ void Engine::shutdown() {
     if (m_luaInitialized && !GameState::stopRunner(m_lua->state())) {
         fprintf(stderr, "[Engine] Runner cleanup failed during shutdown.\n");
     }
+    clearPendingVoiceCompletions(m_lua ? m_lua->state() : nullptr);
     if (m_asyncLoaderInitialized) cancelRenderAsyncLoads(m_lua->state());
     m_deferredAsyncLoads.clear();
     if (m_jobSystemInitialized) m_jobSystem->shutdown();

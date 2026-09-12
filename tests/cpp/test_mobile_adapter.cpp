@@ -7,6 +7,11 @@ extern "C" {
 }
 #include <SDL3/SDL.h>
 #include <cmath>
+#include <algorithm>
+#include <array>
+#include <functional>
+#include <utility>
+#include <vector>
 
 using namespace Caesura;
 
@@ -353,4 +358,343 @@ TEST_CASE("MobileAdapter::unified lifecycle swallows callback errors safely") {
     CHECK_NOTHROW(ma.onLowMemory(L));
     CHECK(lua_gettop(L) == before);
     lua_close(L);
+}
+
+// Actual SDL queue for the legacy/default route; synchronous copied events for
+// the new sink route. The capability adapters only let the unchanged legacy
+// implementation compile for a real behavioral RED run.
+
+namespace {
+using U17TouchSink = std::function<void(const SDL_Event&)>;
+template<class T> constexpr bool u17HasTouchSink = requires(T& a, U17TouchSink sink) { a.setEventSink(sink); };
+template<class T> constexpr bool u17HasDeferredTouches = requires(T& a) { a.setDeferredTouchClicks(true); };
+template<class T> constexpr bool u17HasCancelTouches = requires(T& a) { a.cancelTouches(); };
+
+template<class T> bool u17InstallTouchSink(T& adapter, U17TouchSink sink) {
+    if constexpr (u17HasTouchSink<T>) { adapter.setEventSink(std::move(sink)); return true; }
+    return false;
+}
+template<class T> void u17SetDeferred(T& adapter, bool enabled) {
+    if constexpr (u17HasDeferredTouches<T>) adapter.setDeferredTouchClicks(enabled);
+}
+template<class T> void u17Cancel(T& adapter) {
+    if constexpr (u17HasCancelTouches<T>) adapter.cancelTouches();
+}
+
+struct U17TouchEvents {
+    U17TouchEvents() {
+        REQUIRE(SDL_InitSubSystem(SDL_INIT_EVENTS));
+        clear();
+    }
+    ~U17TouchEvents() { clear(); SDL_QuitSubSystem(SDL_INIT_EVENTS); }
+    static void clear() {
+        // No pointer-bearing async/user events are discarded.
+        SDL_FlushEvents(SDL_EVENT_MOUSE_MOTION, SDL_EVENT_MOUSE_WHEEL);
+        SDL_FlushEvents(SDL_EVENT_KEY_DOWN, SDL_EVENT_KEY_UP);
+    }
+};
+
+std::vector<SDL_Event> u17TakeQueuedTouchInput() {
+    std::vector<SDL_Event> result;
+    std::array<SDL_Event, 64> events{};
+    for (const auto range : {std::pair{SDL_EVENT_MOUSE_MOTION, SDL_EVENT_MOUSE_WHEEL},
+                             std::pair{SDL_EVENT_KEY_DOWN, SDL_EVENT_KEY_UP}}) {
+        const int count = SDL_PeepEvents(events.data(), int(events.size()), SDL_GETEVENT,
+                                         range.first, range.second);
+        REQUIRE(count >= 0);
+        result.insert(result.end(), events.begin(), events.begin() + count);
+    }
+    return result;
+}
+
+bool u17IsButton(const SDL_Event& event, Uint32 type, Uint8 button) {
+    return event.type == type && event.button.button == button;
+}
+size_t u17ButtonCount(const std::vector<SDL_Event>& events, Uint32 type, Uint8 button) {
+    return size_t(std::count_if(events.begin(), events.end(), [&](const SDL_Event& event) {
+        return u17IsButton(event, type, button);
+    }));
+}
+
+struct U17CapturedTouch {
+    U17TouchEvents eventSubsystem;
+    MobileAdapter adapter;
+    std::vector<SDL_Event> events;
+    U17TouchSink afterEvent;
+    bool directSink = false;
+    U17CapturedTouch() {
+        directSink = u17InstallTouchSink(adapter, [this](const SDL_Event& event) { observe(event); });
+        if (!directSink) SDL_AddEventWatch(watchLegacy, this);
+    }
+    ~U17CapturedTouch() { if (!directSink) SDL_RemoveEventWatch(watchLegacy, this); }
+    static bool SDLCALL watchLegacy(void* data, SDL_Event* event) {
+        static_cast<U17CapturedTouch*>(data)->observe(*event);
+        return true;
+    }
+    void observe(const SDL_Event& event) {
+        if ((event.type >= SDL_EVENT_MOUSE_MOTION && event.type <= SDL_EVENT_MOUSE_WHEEL)
+            || event.type == SDL_EVENT_KEY_DOWN || event.type == SDL_EVENT_KEY_UP) {
+            events.push_back(event);
+            const auto callback = afterEvent;
+            if (callback) callback(event);
+        }
+    }
+};
+
+void u17CheckTapPair(const std::vector<SDL_Event>& events, size_t first, float x, float y) {
+    REQUIRE(events.size() >= first + 2);
+    CHECK(u17IsButton(events[first], SDL_EVENT_MOUSE_BUTTON_DOWN, SDL_BUTTON_LEFT));
+    CHECK(events[first].button.down);
+    CHECK(events[first].button.x == doctest::Approx(x));
+    CHECK(events[first].button.y == doctest::Approx(y));
+    CHECK(u17IsButton(events[first + 1], SDL_EVENT_MOUSE_BUTTON_UP, SDL_BUTTON_LEFT));
+    CHECK_FALSE(events[first + 1].button.down);
+    CHECK(events[first + 1].button.x == doctest::Approx(x));
+    CHECK(events[first + 1].button.y == doctest::Approx(y));
+}
+} // namespace
+
+TEST_CASE("U17 MobileAdapter: concrete classification API is available") {
+    CHECK(u17HasTouchSink<MobileAdapter>);
+    CHECK(u17HasDeferredTouches<MobileAdapter>);
+    CHECK(u17HasCancelTouches<MobileAdapter>);
+}
+
+TEST_CASE("U17 MobileAdapter: default route remains immediate in actual SDL queue") {
+    U17TouchEvents eventSubsystem;
+    MobileAdapter adapter;
+    adapter.setDisplayScale(2);
+    adapter.onFingerDown(10, 20, 0);
+    adapter.onFingerMotion(12, 23, 0);
+    adapter.onFingerUp(12, 23, 0);
+    const auto events = u17TakeQueuedTouchInput();
+    REQUIRE(events.size() == 3);
+    CHECK(u17IsButton(events[0], SDL_EVENT_MOUSE_BUTTON_DOWN, SDL_BUTTON_LEFT));
+    CHECK(events[0].button.x == doctest::Approx(20));
+    CHECK(events[0].button.y == doctest::Approx(40));
+    CHECK(events[1].type == SDL_EVENT_MOUSE_MOTION);
+    CHECK(events[1].motion.x == doctest::Approx(24));
+    CHECK(events[1].motion.y == doctest::Approx(46));
+    CHECK((events[1].motion.state & SDL_BUTTON_LMASK) != 0);
+    CHECK(u17IsButton(events[2], SDL_EVENT_MOUSE_BUTTON_UP, SDL_BUTTON_LEFT));
+    CHECK_FALSE(events[2].button.down);
+    CHECK(adapter.activeTouchCount() == 0);
+}
+
+TEST_CASE("U17 MobileAdapter: deferred small tap emits one release-position pair through sink") {
+    U17CapturedTouch capture;
+    auto& adapter = capture.adapter;
+    u17SetDeferred(adapter, true);
+    adapter.setDisplayScale(2);
+    adapter.onFingerDown(10, 20, 0);
+    CHECK(capture.events.empty());
+    CHECK(adapter.activeTouchCount() == 1);
+    adapter.onFingerMotion(12, 23, 0);
+    REQUIRE(capture.events.size() == 1);
+    CHECK(capture.events[0].type == SDL_EVENT_MOUSE_MOTION);
+    CHECK((capture.events[0].motion.state & SDL_BUTTON_LMASK) == 0);
+    bool releaseStatePublished = false;
+    capture.afterEvent = [&](const SDL_Event& event) {
+        if (u17IsButton(event, SDL_EVENT_MOUSE_BUTTON_DOWN, SDL_BUTTON_LEFT))
+            releaseStatePublished = adapter.activeTouchCount() == 0 && !adapter.isFingerDown(0);
+    };
+    adapter.onFingerUp(12, 23, 0);
+    REQUIRE(capture.events.size() == 3);
+    u17CheckTapPair(capture.events, 1, 24, 46);
+    CHECK(releaseStatePublished);
+    adapter.onFingerUp(12, 23, 0); // A duplicate terminal event cannot click twice.
+    CHECK(capture.events.size() == 3);
+    CHECK(u17TakeQueuedTouchInput().empty()); // A configured sink must not also enqueue.
+}
+
+TEST_CASE("U17 MobileAdapter: displacement includes final up and maximum travel with existing 16px slop") {
+    for (int variation = 0; variation != 4; ++variation) {
+        CAPTURE(variation);
+        U17CapturedTouch capture;
+        auto& adapter = capture.adapter;
+        u17SetDeferred(adapter, true);
+        adapter.onFingerDown(20, 20, 0);
+        if (variation == 0) adapter.onFingerUp(36, 20, 0); // Exactly 16: positive boundary.
+        if (variation == 1) adapter.onFingerUp(37, 20, 0); // Final coordinates alone cross slop.
+        if (variation == 2) {
+            adapter.onFingerMotion(37, 20, 0);
+            adapter.onFingerMotion(20, 20, 0);
+            adapter.onFingerUp(20, 20, 0); // Returning to origin does not restore tap eligibility.
+        }
+        if (variation == 3) {
+            adapter.onFingerDown(37, 20, 0); // Duplicate down updates position, not origin/count.
+            CHECK(adapter.activeTouchCount() == 1);
+            adapter.onFingerUp(20, 20, 0);
+        }
+        CHECK(u17ButtonCount(capture.events, SDL_EVENT_MOUSE_BUTTON_DOWN, SDL_BUTTON_LEFT)
+            == size_t(variation == 0 ? 1 : 0));
+        CHECK(adapter.activeTouchCount() == 0);
+        capture.events.clear();
+        adapter.onFingerDown(5, 6, 7);
+        u17SetDeferred(adapter, true); // Same mode must not cancel this new contact.
+        adapter.onFingerUp(5, 6, 7);
+        REQUIRE(capture.events.size() == 2);
+        u17CheckTapPair(capture.events, 0, 5, 6);
+    }
+}
+
+TEST_CASE("U17 MobileAdapter: multiple contacts suppress the complete sequence then permit a fresh tap") {
+    U17CapturedTouch capture;
+    auto& adapter = capture.adapter;
+    u17SetDeferred(adapter, true);
+    adapter.onFingerDown(10, 10, 0);
+    adapter.onFingerDown(20, 20, 1);
+    CHECK(adapter.activeTouchCount() == 2);
+    adapter.onFingerUp(20, 20, 1);
+    CHECK(adapter.activeTouchCount() == 1);
+    adapter.onFingerUp(10, 10, 0);
+    CHECK(capture.events.empty());
+    CHECK(adapter.activeTouchCount() == 0);
+    adapter.onFingerDown(7, 8, 7);
+    adapter.onFingerUp(7, 8, 7);
+    REQUIRE(capture.events.size() == 2);
+    u17CheckTapPair(capture.events, 0, 7, 8);
+}
+
+TEST_CASE("U17 MobileAdapter: recognized gestures retain their mapping and consume ordinary deferred tap") {
+    for (int gesture = 0; gesture != 6; ++gesture) {
+        CAPTURE(gesture);
+        U17CapturedTouch capture;
+        auto& adapter = capture.adapter;
+        u17SetDeferred(adapter, true);
+        adapter.onFingerDown(50, 60, 0);
+        if (gesture == 0) adapter.onLongPress(50, 60);
+        if (gesture == 1) { adapter.onPinch(50, 60, 1); adapter.onPinch(50, 60, 1.25f); }
+        if (gesture == 2) adapter.onTwoFingerTap(50, 60);
+        if (gesture == 3) adapter.onThreeFingerHold(50, 60);
+        if (gesture == 4) adapter.onSwipeDown(50, 60, 50, 140);
+        if (gesture == 5) adapter.onSwipeUp(50, 60, 50, -20);
+        adapter.onFingerUp(50, 60, 0);
+        CHECK(u17ButtonCount(capture.events, SDL_EVENT_MOUSE_BUTTON_DOWN, SDL_BUTTON_LEFT) == 0);
+        if (gesture == 0 || gesture == 2) {
+            CHECK(u17ButtonCount(capture.events, SDL_EVENT_MOUSE_BUTTON_DOWN, SDL_BUTTON_RIGHT) == 1);
+            CHECK(u17ButtonCount(capture.events, SDL_EVENT_MOUSE_BUTTON_UP, SDL_BUTTON_RIGHT) == 1);
+        } else {
+            REQUIRE(capture.events.size() == 1);
+            if (gesture == 1) {
+                CHECK(capture.events[0].type == SDL_EVENT_MOUSE_WHEEL);
+                CHECK(capture.events[0].wheel.y == doctest::Approx(25));
+            } else {
+                CHECK(capture.events[0].type == SDL_EVENT_KEY_DOWN);
+                CHECK(capture.events[0].key.key == (gesture == 3 ? SDLK_LCTRL
+                    : gesture == 4 ? SDLK_SPACE : SDLK_PAGEUP));
+            }
+        }
+        CHECK(u17TakeQueuedTouchInput().empty());
+        capture.events.clear();
+        adapter.onFingerDown(3, 4, 0);
+        adapter.onFingerUp(3, 4, 0);
+        REQUIRE(capture.events.size() == 2);
+        u17CheckTapPair(capture.events, 0, 3, 4);
+    }
+}
+
+TEST_CASE("U17 MobileAdapter: cancel and mode changes clear contacts and release an emitted left button") {
+    U17CapturedTouch capture;
+    auto& adapter = capture.adapter;
+    adapter.onFingerDown(10, 20, 0); // Compatibility mode holds a synthetic left button.
+    adapter.onFingerMotion(12, 23, 0);
+    bool clearedBeforeRelease = false;
+    capture.afterEvent = [&](const SDL_Event& event) {
+        if (u17IsButton(event, SDL_EVENT_MOUSE_BUTTON_UP, SDL_BUTTON_LEFT))
+            clearedBeforeRelease = adapter.activeTouchCount() == 0 && !adapter.isFingerDown(0);
+    };
+    u17SetDeferred(adapter, true);
+    CHECK(clearedBeforeRelease);
+    CHECK(adapter.activeTouchCount() == 0);
+    CHECK(u17ButtonCount(capture.events, SDL_EVENT_MOUSE_BUTTON_UP, SDL_BUTTON_LEFT) == 1);
+    const size_t previous = capture.events.size();
+    adapter.onFingerUp(12, 23, 0);
+    CHECK(capture.events.size() == previous);
+    capture.afterEvent = {};
+    capture.events.clear();
+    adapter.onFingerDown(30, 40, 0);
+    adapter.onPinch(30, 40, 1);
+    u17Cancel(adapter);
+    CHECK(adapter.activeTouchCount() == 0);
+    CHECK_FALSE(adapter.isFingerDown(0));
+    CHECK(adapter.getLastPinchScale() == 0);
+    adapter.onFingerUp(30, 40, 0);
+    CHECK(capture.events.empty());
+    adapter.onFingerDown(5, 6, 1);
+    u17SetDeferred(adapter, false);
+    CHECK(adapter.activeTouchCount() == 0);
+    adapter.onFingerUp(5, 6, 1);
+    CHECK(capture.events.empty());
+    adapter.onFingerDown(80, 90, 7);
+    adapter.onFingerMotion(81, 91, 7);
+    u17Cancel(adapter);
+    REQUIRE(capture.events.size() == 3);
+    CHECK((capture.events[1].motion.state & SDL_BUTTON_LMASK) != 0);
+    CHECK(u17IsButton(capture.events[2], SDL_EVENT_MOUSE_BUTTON_UP, SDL_BUTTON_LEFT));
+    u17Cancel(adapter);
+    CHECK(capture.events.size() == 3);
+}
+
+TEST_CASE("U17 MobileAdapter: sink cancellation balances old down before a reentrant new immediate down") {
+    for (const bool initiallyDeferred : {false, true}) {
+        CAPTURE(initiallyDeferred);
+        U17CapturedTouch capture;
+        auto& adapter = capture.adapter;
+        u17SetDeferred(adapter, initiallyDeferred);
+        const int successorSlot = initiallyDeferred ? 0 : 1;
+        bool reentered = false;
+        capture.afterEvent = [&](const SDL_Event& event) {
+            if (!reentered && u17IsButton(event, SDL_EVENT_MOUSE_BUTTON_DOWN, SDL_BUTTON_LEFT)) {
+                reentered = true;
+                u17Cancel(adapter); // Must emit old UP with old ownership already cleared.
+                u17SetDeferred(adapter, false);
+                adapter.onFingerDown(80, 90, successorSlot);
+            }
+        };
+        adapter.onFingerDown(10, 20, 0);
+        adapter.onFingerUp(10, 20, 0);
+        REQUIRE(capture.events.size() == 3);
+        CHECK(u17IsButton(capture.events[0], SDL_EVENT_MOUSE_BUTTON_DOWN, SDL_BUTTON_LEFT));
+        CHECK(u17IsButton(capture.events[1], SDL_EVENT_MOUSE_BUTTON_UP, SDL_BUTTON_LEFT));
+        CHECK(u17IsButton(capture.events[2], SDL_EVENT_MOUSE_BUTTON_DOWN, SDL_BUTTON_LEFT));
+        CHECK(capture.events[2].button.x == doctest::Approx(80));
+        CHECK(adapter.activeTouchCount() == 1);
+        CHECK(adapter.isFingerDown(successorSlot));
+        if (successorSlot != 0) CHECK_FALSE(adapter.isFingerDown(0));
+        adapter.onFingerMotion(81, 91, successorSlot);
+        REQUIRE(capture.events.size() == 4);
+        CHECK(capture.events[3].type == SDL_EVENT_MOUSE_MOTION);
+        CHECK((capture.events[3].motion.state & SDL_BUTTON_LMASK) != 0);
+        adapter.onFingerUp(81, 91, successorSlot);
+        REQUIRE(capture.events.size() == 5);
+        CHECK(u17IsButton(capture.events[4], SDL_EVENT_MOUSE_BUTTON_UP, SDL_BUTTON_LEFT));
+        CHECK(adapter.activeTouchCount() == 0);
+    }
+}
+
+TEST_CASE("U17 MobileAdapter: reentrant new deferred contact survives old tap's balancing release") {
+    U17CapturedTouch capture;
+    auto& adapter = capture.adapter;
+    u17SetDeferred(adapter, true);
+    bool reentered = false;
+    capture.afterEvent = [&](const SDL_Event& event) {
+        if (!reentered && u17IsButton(event, SDL_EVENT_MOUSE_BUTTON_DOWN, SDL_BUTTON_LEFT)) {
+            reentered = true;
+            adapter.onFingerDown(80, 90, 0); // Reuse released slot; no cancel or new emitted left-down.
+        }
+    };
+    adapter.onFingerDown(10, 20, 0);
+    adapter.onFingerUp(10, 20, 0);
+    REQUIRE(capture.events.size() == 2);
+    u17CheckTapPair(capture.events, 0, 10, 20);
+    CHECK(adapter.activeTouchCount() == 1);
+    CHECK(adapter.isFingerDown(0));
+    adapter.onFingerMotion(81, 91, 0);
+    REQUIRE(capture.events.size() == 3);
+    CHECK((capture.events[2].motion.state & SDL_BUTTON_LMASK) == 0);
+    adapter.onFingerUp(81, 91, 0);
+    REQUIRE(capture.events.size() == 5);
+    u17CheckTapPair(capture.events, 3, 81, 91);
+    CHECK(adapter.activeTouchCount() == 0);
 }

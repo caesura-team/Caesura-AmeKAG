@@ -190,7 +190,7 @@ GestureEvent GestureDetector::tick(double nowMs) {
     }
 
     // 2. Long press: one finger, held still, past the timeout.
-    if (m_active == 1 && !m_longPressFired) {
+    if (m_active == 1 && m_seqMaxFingers == 1 && !m_longPressFired) {
         for (const auto& f : m_fingers) {
             if (!f.active) continue;
             if (!f.moved && (nowMs - f.downAtMs) >= kLongPressMs) {
