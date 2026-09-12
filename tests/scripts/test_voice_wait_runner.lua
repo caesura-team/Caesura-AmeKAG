@@ -201,8 +201,11 @@ do
     state.query_error = false; frames(4)
     check("default audio failure never executes following commands", ctx.f.done == nil and ctx.f.beyond_page == nil)
     check("click cannot resume failed audio owner", runner.on_click() == false and ctx.f.done == nil)
+    check("failed audio presentation remains owned before explicit stop", runner.get_ctx() == ctx
+        and state.playing and state.stops == before)
     assert(runner.stop())
     check("explicit stop retires failed presentation audio once", state.stops - before == 1 and not state.playing)
+    check("explicit stop clears the retained audio owner", runner.get_ctx() == nil)
     local successor, after_stop = begin(true)
     state.playing = false; frames(4)
     at_page("fresh session after default audio failure", successor, after_stop, 0)

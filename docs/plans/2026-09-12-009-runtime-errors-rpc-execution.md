@@ -108,3 +108,11 @@ Lua失败来自U17语音查询异常测试：旧测试在默认handler后要求�
 coupling发现entry因OwnerRpcQueue增加rpc依赖而达到15/14。最终将同一队列实现归入`src/rpc/OwnerRpcQueue.h/.cpp`和既有CaesuraRpc静态库，仍仅由main组合根创建；不改变队列算法或公共接口。`u18-coupling-correction-01`为entry14/14、rpc2/4并通过，迁移后的完整Debug构建通过；同一队列定向回归9项122断言通过。
 
 两项CTest失败由本工作区首次CMake发现`C:/Windows/System32/bash.exe`（WSL启动器）造成，它不能以Git Bash方式解释含括号的Windows脚本路径。仅将本地CAESURA_BASH_PROGRAM配置为已安装的`C:/Program Files/Git/bin/bash.exe`，未跳过或修改用例；`u18-bash-tests-01`中Golden VN和ValidationOutputPaths两项通过。完整批次将重新固定源码及配置执行，不能把这些定向结果拼作首轮全绿。
+
+## 第二轮完整原生结果与Web边界
+
+源码2552e225e99da3999270b38cd94ae1fc6b5388fe的`u18-native-candidate-02`完整profile、collector与严格verifier均通过，run_id为17b2547f-2f0c-448a-ba53-bd7daa8be31c。实际Debug构建、C++1378/1378（402148断言、0失败0跳过）、Lua主147/147、隔离48/48，以及验证工具17/7/53/57、coupling、注册检查全部通过。CTest发现32项、31通过、0失败；CaesuraHeadlessAiSmoke是profile此前已声明的唯一可选跳过。dirty=false，源码及夹具运行期间均未变化。此结论仅为该windows-debug范围，不代表发布或其他平台。
+
+同一源码的`u18-web-full-01`先用当前Lua编译24个demo场景/6资产，再用Node22.23.2构建Vite和完整Web套件。38文件中37通过、1失败；511项中510通过、1失败、0跳过。唯一失败为perf-baseline中带history的1000行场景，median约2776.4ms，frames/ms约1.4407低于既定2门槛；没有放宽断言或原样重跑取绿。源码、Node和Lua的hash在运行前后保持一致。其他Web功能检查通过，但本地完整Web结果仍是FAIL，须与后续CI性能结果分别记录；U27长跑/性能总目标仍未验收。
+
+错误及RPC/输出/恢复增量的独立审查已经收束，未发现需要生产修复的剩余问题。最后补充语音错误presentation保留/显式stop销毁两个时点断言；这仅加强测试，不改变2552e225的生产源码。该测试增量的Lua证据与后续最终候选CI另行记录，不把旧完整receipt重新标成新SHA。
