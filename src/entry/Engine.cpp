@@ -817,22 +817,7 @@ void Engine::run(const OwnerPump& ownerPump) {
                     lua_pushnumber(L, m_pointerY); lua_setglobal(L, "_GAME_MOUSE_Y");
                 }
             }
-            if (!isLuaExecutionPaused()) {
-                lua_getglobal(L, "engine_update");
-                if (lua_isfunction(L, -1)) {
-                    lua_pushnumber(L, dt);
-                    if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
-                        // S6: a per-frame script error is NOT fatal -- log it
-                        // and keep the frame loop alive (the game continues;
-                        // the KAG runner/scheduler has its own error recovery).
-                        // Only OOM / render-loop failures stay fatal.
-                        const char* err = lua_tostring(L, -1);
-                        fprintf(stderr, "engine_update (recoverable): %s\n",
-                                err ? err : "unknown");
-                        lua_pop(L, 1);
-                    }
-                } else { lua_pop(L, 1); }
-            }
+            if (!isLuaExecutionPaused() && !updateLuaFrame(dt)) break;
             publishDebugPauseState();
 
             const int gpuQv = static_cast<int>(gpuQ);
@@ -1782,17 +1767,52 @@ void Engine::handleFatalError(const char* context, const char* luaError) {
 }
 
 
+bool Engine::updateLuaFrame(float dt) {
+    if (m_luaMemoryFailed) return false;
+    lua_State* L = m_lua ? m_lua->state() : nullptr;
+    if (!L) return true;
+    lua_getglobal(L, "engine_update");
+    if (!lua_isfunction(L, -1)) {
+        lua_pop(L, 1);
+        m_updateErrorCount = 0;
+        return true;
+    }
+    lua_pushnumber(L, dt);
+    const int result = lua_pcall(L, 1, 0, 0);
+    if (result == LUA_ERRMEM) {
+        // Do not allocate a traceback or enter ErrorUI's Lua diagnostics on an
+        // exhausted VM. Stop before publishing any further Lua frame state.
+        fprintf(stderr, "[Engine] FATAL: engine_update Lua memory allocation failed; stopping.\n");
+        lua_pop(L, 1);
+        m_luaMemoryFailed = true;
+        m_running = false;
+        return false;
+    }
+    if (result != LUA_OK) {
+        if (m_updateErrorCount < std::numeric_limits<uint64_t>::max()) ++m_updateErrorCount;
+        if (m_updateErrorCount <= 3) {
+            // lua_tostring can allocate when converting numbers. Inspect only
+            // existing strings; arbitrary error values still get a diagnostic.
+            const char* error = lua_type(L, -1) == LUA_TSTRING ? lua_tostring(L, -1) : nullptr;
+            fprintf(stderr, "engine_update (recoverable): %s\n", error ? error : "non-string Lua error");
+            if (m_updateErrorCount == 3)
+                fprintf(stderr, "[Engine] Further engine_update errors suppressed until recovery.\n");
+        }
+        lua_pop(L, 1);
+        return true;
+    }
+    if (m_updateErrorCount != 0) {
+        fprintf(stderr, "[Engine] engine_update recovered after %llu consecutive errors.\n",
+                static_cast<unsigned long long>(m_updateErrorCount));
+        m_updateErrorCount = 0;
+    }
+    return true;
+}
+
 void Engine::renderOneFrame() {
     if (!m_initialized || m_shutdownComplete || !m_renderInitialized || m_deviceRecoveryPaused || m_renderFailed) return;
     if (m_config.headless && !m_config.editorMode) return;
-    lua_State* L = m_lua->state();
-    if (L && !isLuaExecutionPaused()) {
-        lua_getglobal(L, "engine_update");
-        if (lua_isfunction(L, -1)) {
-            lua_pushnumber(L, 0.016);
-            if (lua_pcall(L, 1, 0, 0) != LUA_OK) { lua_pop(L, 1); }
-        } else { lua_pop(L, 1); }
-    }
+    if (!isLuaExecutionPaused() && !updateLuaFrame(0.016f)) return;
     render(0.016f);
     presentFrame();
 }
@@ -1829,14 +1849,7 @@ std::string Engine::captureFrameForRpc(int w, int h) {
     // Keep the existing managed-frame update, then submit its own ticket
     // before the single presentation. Callback completion is checked explicitly.
     if (!m_config.headless || m_config.editorMode) {
-        lua_State* L = m_lua->state();
-        if (L && !isLuaExecutionPaused()) {
-            lua_getglobal(L, "engine_update");
-            if (lua_isfunction(L, -1)) {
-                lua_pushnumber(L, 0.016);
-                if (lua_pcall(L, 1, 0, 0) != LUA_OK) { lua_pop(L, 1); }
-            } else { lua_pop(L, 1); }
-        }
+        if (!isLuaExecutionPaused() && !updateLuaFrame(0.016f)) return "";
         render(0.016f);
     }
     auto request = m_renderDevice->requestScreenshot(

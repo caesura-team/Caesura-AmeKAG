@@ -990,6 +990,9 @@ end
 
 function TextCommands.p(ctx, params)
     ctx.waiting_input = true
+    -- Reached the actual handler, beyond either Lua/KAG debugger pause.
+    -- A restored scheduler no longer needs to reconstruct this suspension.
+    ctx._resumePageWait = nil
 
     -- Keep the current page visible while waiting, then clear it only after
     -- the scheduler resumes this coroutine for the accepted click.

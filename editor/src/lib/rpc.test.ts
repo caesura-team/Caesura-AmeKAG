@@ -29,6 +29,40 @@ function mockFetch(status: number, body: unknown, _headers?: Record<string, stri
 }
 
 describe('EngineClient', () => {
+  it.each(['evalRaw', 'run', 'reload', 'stop'] as const)(
+    '%s preserves an unknown outcome and never automatically resubmits the mutation',
+    async method => {
+      const payload = {
+        status: 'busy', code: 'result_unknown',
+        message: 'Request 27 started; result unknown. Do not automatically retry.',
+      }
+      const fetchMock = vi.fn<FetchFn>()
+        .mockResolvedValueOnce(new Response(JSON.stringify(payload), { status: 503 }))
+        .mockResolvedValueOnce(new Response(JSON.stringify({ status: 'ok', result: 'fresh' })))
+      const client = new EngineClient('/api', fetchMock)
+      const invoke = () => method === 'evalRaw' || method === 'run'
+        ? client[method]('return 1') : client[method]()
+      await expect(invoke()).rejects.toMatchObject({
+        name: 'RpcError', status: 503, body: payload,
+        message: expect.stringContaining('result_unknown'),
+      })
+      await Promise.resolve()
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      await expect(invoke()).resolves.toBeDefined()
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+    },
+  )
+
+  it('evalRaw preserves a real non-JSON failure body after one fetch', async () => {
+    const fetchMock = vi.fn<FetchFn>().mockResolvedValue(new Response('transport unavailable', { status: 502 }))
+    const client = new EngineClient('/api', fetchMock)
+    await expect(client.evalRaw('return 1')).rejects.toMatchObject({
+      name: 'RpcError', status: 502, body: 'transport unavailable',
+      message: expect.stringContaining('transport unavailable'),
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
   it('GET request hits base + path with Accept header', async () => {
     const fetchMock = mockFetch(200, { status: 'ok' })
     const client = new EngineClient('/api', fetchMock)

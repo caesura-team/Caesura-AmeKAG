@@ -737,7 +737,7 @@ void EditorServer::serverLoop(int port) {
             return;
         }
 
-        pushLog("info", "Scene script completed.");
+        pushLog("info", "Scene script submitted.");
         res.set_content("{\"status\":\"ok\"}", "application/json");
     });
 

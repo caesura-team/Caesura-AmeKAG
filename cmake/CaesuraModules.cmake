@@ -314,6 +314,7 @@ caesura_add_module(Resource
 
 caesura_add_module(Rpc
     src/rpc/RpcServer.cpp
+    src/rpc/StdioRpcOutput.cpp
     src/rpc/EditorServer.cpp
     src/rpc/services/ProjectService.cpp
     src/rpc/services/PackagingService.cpp
@@ -416,6 +417,7 @@ add_library(CaesuraEntry STATIC
     src/entry/Engine_Backends.cpp
     src/entry/Engine_Gpu.cpp
     src/entry/Engine_LuaRegistry.cpp
+    src/entry/OwnerRpcQueue.cpp
     src/entry/StartupScripts.cpp
     src/entry/StartupValidation.cpp
     src/entry/ErrorUI.cpp

@@ -11,6 +11,14 @@
 
 local scheduler = {}
 
+-- Error values may have a __tostring metamethod which also throws. Keep
+-- diagnostics usable without letting formatting escape the error boundary.
+function scheduler.error_text(value)
+    local ok, message = pcall(tostring, value)
+    if ok then return message end
+    return "non-string Lua error (" .. type(value) .. "; tostring failed)"
+end
+
 -- Hot path: hoisted schema reference (isMigrated/coerce run per token);
 -- require() itself is cached but the per-token lookup still costs.
 local schemaModule = require("kag.schema")
@@ -1467,24 +1475,32 @@ function scheduler.run(ctx, tokens, start_index)
                 if handler then
                     local status, err = pcall(handler, ctx, params)
                     if not status then
+                        local error_message = scheduler.error_text(err)
                         -- Lua-side error reporting (with scene:line)
                         print(string.format(
                             "[ERROR] KAG command '%s' failed at %s:%s: %s",
                             actual_cmd,
                             ctx.current_scene or ctx.currentScene or "?",
-                            tostring(ctx.token_index or ctx.tokenIndex or "?"),
-                            tostring(err)))
+                            tostring(i),
+                            error_message))
                         -- t212 G2: the ErrorUI chain needs scene + line
                         -- (previously only the print carried them); stash the
                         -- same fields on ctx so Engine::handleFatalError can
                         -- read them for the DiagnosticInfo.
                         ctx.error_command = actual_cmd
-                        ctx.error_token_line = ctx.token_index or ctx.tokenIndex or 0
+                        ctx.error_token_line = i
                         if ctx.handle_error then
-                            pcall(ctx.handle_error, actual_cmd, tostring(err),
+                            local handled, handler_error = pcall(ctx.handle_error, actual_cmd, error_message,
                                   ctx.current_scene or ctx.currentScene or "",
-                                  ctx.token_index or ctx.tokenIndex or 0)
+                                  i)
+                            if not handled then
+                                ctx.stop_flag, ctx._command_error = true, true
+                                ctx.error_handler_error = scheduler.error_text(handler_error)
+                            end
+                        else
+                            ctx.stop_flag, ctx._command_error = true, true
                         end
+                        if ctx._command_error then return end
                     end
                 end
             end

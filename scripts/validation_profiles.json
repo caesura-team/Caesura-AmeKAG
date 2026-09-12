@@ -10,7 +10,7 @@
       "expected_cache": {"CAESURA_REQUIRE_TEST_PREREQUISITES": "ON"},
       "checks": [
         {"id":"build","parser":"exit-code","required":true,"command":["cmake","--build","{build_dir}","--config","{config}","--parallel","4"],"cwd":"{repo}","timeout_seconds":1800},
-        {"id":"cpp","parser":"doctest","required":true,"min_discovered":1361,"allowed_skips":[],"command":["{cpp_binary}","--no-colors"],"cwd":"{test_dir}","binary":"{cpp_binary}","timeout_seconds":600},
+        {"id":"cpp","parser":"doctest","required":true,"min_discovered":1378,"allowed_skips":[],"command":["{cpp_binary}","--no-colors"],"cwd":"{test_dir}","binary":"{cpp_binary}","timeout_seconds":600},
         {"id":"lua-main","parser":"lua","required":true,"min_discovered":147,"allowed_skips":[],"command":["{lua_binary}","tests/scripts/run_lua_tests.lua"],"cwd":"{repo}","binary":"{lua_binary}","timeout_seconds":600},
         {"id":"lua-orphan","parser":"lua","required":true,"min_discovered":48,"allowed_skips":[],"command":["{lua_binary}","tests/scripts/run_orphan_tests.lua"],"cwd":"{repo}","binary":"{lua_binary}","timeout_seconds":300},
         {"id":"validation-runner","parser":"unittest","required":true,"min_discovered":17,"allowed_skips":[],"command":["{python}","tests/scripts/test_validation_runner.py"],"cwd":"{repo}","binary":"{python}","timeout_seconds":120},
@@ -19,7 +19,7 @@
         {"id":"rc-adversarial","parser":"unittest","required":true,"min_discovered":57,"allowed_skips":[],"command":["{python}","tests/scripts/test_rc_adversarial_mutations.py"],"cwd":"{repo}","binary":"{python}","timeout_seconds":120},
         {"id":"coupling","parser":"exit-code","required":true,"command":["{python}","scripts/count_coupling.py","--ci"],"cwd":"{repo}","binary":"{python}","timeout_seconds":60},
         {"id":"test-registration","parser":"exit-code","required":true,"command":["{python}","tests/scripts/check_test_coverage.py"],"cwd":"{repo}","binary":"{python}","timeout_seconds":60},
-        {"id":"ctest","parser":"ctest-junit","required":true,"min_discovered":28,"allowed_skips":["CaesuraHeadlessAiSmoke"],"command":["ctest","--test-dir","{build_dir}","-C","{config}","--output-on-failure","--output-junit","{run_dir}/ctest.xml"],"cwd":"{repo}","report":"{run_dir}/ctest.xml","timeout_seconds":2400}
+        {"id":"ctest","parser":"ctest-junit","required":true,"min_discovered":32,"allowed_skips":["CaesuraHeadlessAiSmoke"],"command":["ctest","--test-dir","{build_dir}","-C","{config}","--output-on-failure","--output-junit","{run_dir}/ctest.xml"],"cwd":"{repo}","report":"{run_dir}/ctest.xml","timeout_seconds":2400}
       ]
     },
     "windows-release": {
@@ -30,7 +30,7 @@
       "expected_cache": {"CAESURA_REQUIRE_TEST_PREREQUISITES": "ON"},
       "checks": [
         {"id":"build","parser":"exit-code","required":true,"command":["cmake","--build","{build_dir}","--config","{config}","--parallel","4"],"cwd":"{repo}","timeout_seconds":1800},
-        {"id":"cpp","parser":"doctest","required":true,"min_discovered":1361,"allowed_skips":[],"command":["{cpp_binary}","--no-colors"],"cwd":"{test_dir}","binary":"{cpp_binary}","timeout_seconds":600},
+        {"id":"cpp","parser":"doctest","required":true,"min_discovered":1378,"allowed_skips":[],"command":["{cpp_binary}","--no-colors"],"cwd":"{test_dir}","binary":"{cpp_binary}","timeout_seconds":600},
         {"id":"lua-main","parser":"lua","required":true,"min_discovered":147,"allowed_skips":[],"command":["{lua_binary}","tests/scripts/run_lua_tests.lua"],"cwd":"{repo}","binary":"{lua_binary}","timeout_seconds":600},
         {"id":"lua-orphan","parser":"lua","required":true,"min_discovered":48,"allowed_skips":[],"command":["{lua_binary}","tests/scripts/run_orphan_tests.lua"],"cwd":"{repo}","binary":"{lua_binary}","timeout_seconds":300},
         {"id":"validation-runner","parser":"unittest","required":true,"min_discovered":17,"allowed_skips":[],"command":["{python}","tests/scripts/test_validation_runner.py"],"cwd":"{repo}","binary":"{python}","timeout_seconds":120},
@@ -39,7 +39,7 @@
         {"id":"rc-adversarial","parser":"unittest","required":true,"min_discovered":57,"allowed_skips":[],"command":["{python}","tests/scripts/test_rc_adversarial_mutations.py"],"cwd":"{repo}","binary":"{python}","timeout_seconds":120},
         {"id":"coupling","parser":"exit-code","required":true,"command":["{python}","scripts/count_coupling.py","--ci"],"cwd":"{repo}","binary":"{python}","timeout_seconds":60},
         {"id":"test-registration","parser":"exit-code","required":true,"command":["{python}","tests/scripts/check_test_coverage.py"],"cwd":"{repo}","binary":"{python}","timeout_seconds":60},
-        {"id":"ctest","parser":"ctest-junit","required":true,"min_discovered":28,"allowed_skips":["CaesuraHeadlessAiSmoke"],"command":["ctest","--test-dir","{build_dir}","-C","{config}","--output-on-failure","--output-junit","{run_dir}/ctest.xml"],"cwd":"{repo}","report":"{run_dir}/ctest.xml","timeout_seconds":2400}
+        {"id":"ctest","parser":"ctest-junit","required":true,"min_discovered":32,"allowed_skips":["CaesuraHeadlessAiSmoke"],"command":["ctest","--test-dir","{build_dir}","-C","{config}","--output-on-failure","--output-junit","{run_dir}/ctest.xml"],"cwd":"{repo}","report":"{run_dir}/ctest.xml","timeout_seconds":2400}
       ]
     },
     "linux-debug": {
@@ -50,7 +50,7 @@
       "expected_cache": {"CAESURA_REQUIRE_TEST_PREREQUISITES": "ON"},
       "checks": [
         {"id":"build","parser":"exit-code","required":true,"command":["cmake","--build","{build_dir}","--config","{config}","--parallel","4"],"cwd":"{repo}","timeout_seconds":1800},
-        {"id":"cpp","parser":"doctest","required":true,"min_discovered":1323,"allowed_skips":[],"command":["{cpp_binary}","--no-colors"],"cwd":"{test_dir}","binary":"{cpp_binary}","timeout_seconds":600},
+        {"id":"cpp","parser":"doctest","required":true,"min_discovered":1340,"allowed_skips":[],"command":["{cpp_binary}","--no-colors"],"cwd":"{test_dir}","binary":"{cpp_binary}","timeout_seconds":600},
         {"id":"lua-main","parser":"lua","required":true,"min_discovered":147,"allowed_skips":[],"command":["{lua_binary}","tests/scripts/run_lua_tests.lua"],"cwd":"{repo}","binary":"{lua_binary}","timeout_seconds":600},
         {"id":"lua-orphan","parser":"lua","required":true,"min_discovered":48,"allowed_skips":[],"command":["{lua_binary}","tests/scripts/run_orphan_tests.lua"],"cwd":"{repo}","binary":"{lua_binary}","timeout_seconds":300},
         {"id":"validation-runner","parser":"unittest","required":true,"min_discovered":17,"allowed_skips":[],"command":["{python}","tests/scripts/test_validation_runner.py"],"cwd":"{repo}","binary":"{python}","timeout_seconds":120},
@@ -59,7 +59,7 @@
         {"id":"rc-adversarial","parser":"unittest","required":true,"min_discovered":57,"allowed_skips":[],"command":["{python}","tests/scripts/test_rc_adversarial_mutations.py"],"cwd":"{repo}","binary":"{python}","timeout_seconds":120},
         {"id":"coupling","parser":"exit-code","required":true,"command":["{python}","scripts/count_coupling.py","--ci"],"cwd":"{repo}","binary":"{python}","timeout_seconds":60},
         {"id":"test-registration","parser":"exit-code","required":true,"command":["{python}","tests/scripts/check_test_coverage.py"],"cwd":"{repo}","binary":"{python}","timeout_seconds":60},
-        {"id":"ctest","parser":"ctest-junit","required":true,"min_discovered":28,"allowed_skips":["CaesuraHeadlessAiSmoke"],"command":["ctest","--test-dir","{build_dir}","-C","{config}","--output-on-failure","--output-junit","{run_dir}/ctest.xml"],"cwd":"{repo}","report":"{run_dir}/ctest.xml","timeout_seconds":2400}
+        {"id":"ctest","parser":"ctest-junit","required":true,"min_discovered":32,"allowed_skips":["CaesuraHeadlessAiSmoke"],"command":["ctest","--test-dir","{build_dir}","-C","{config}","--output-on-failure","--output-junit","{run_dir}/ctest.xml"],"cwd":"{repo}","report":"{run_dir}/ctest.xml","timeout_seconds":2400}
       ]
     },
     "linux-release": {
@@ -70,7 +70,7 @@
       "expected_cache": {"CAESURA_REQUIRE_TEST_PREREQUISITES": "ON"},
       "checks": [
         {"id":"build","parser":"exit-code","required":true,"command":["cmake","--build","{build_dir}","--config","{config}","--parallel","4"],"cwd":"{repo}","timeout_seconds":1800},
-        {"id":"cpp","parser":"doctest","required":true,"min_discovered":1323,"allowed_skips":[],"command":["{cpp_binary}","--no-colors"],"cwd":"{test_dir}","binary":"{cpp_binary}","timeout_seconds":600},
+        {"id":"cpp","parser":"doctest","required":true,"min_discovered":1340,"allowed_skips":[],"command":["{cpp_binary}","--no-colors"],"cwd":"{test_dir}","binary":"{cpp_binary}","timeout_seconds":600},
         {"id":"lua-main","parser":"lua","required":true,"min_discovered":147,"allowed_skips":[],"command":["{lua_binary}","tests/scripts/run_lua_tests.lua"],"cwd":"{repo}","binary":"{lua_binary}","timeout_seconds":600},
         {"id":"lua-orphan","parser":"lua","required":true,"min_discovered":48,"allowed_skips":[],"command":["{lua_binary}","tests/scripts/run_orphan_tests.lua"],"cwd":"{repo}","binary":"{lua_binary}","timeout_seconds":300},
         {"id":"validation-runner","parser":"unittest","required":true,"min_discovered":17,"allowed_skips":[],"command":["{python}","tests/scripts/test_validation_runner.py"],"cwd":"{repo}","binary":"{python}","timeout_seconds":120},
@@ -79,7 +79,7 @@
         {"id":"rc-adversarial","parser":"unittest","required":true,"min_discovered":57,"allowed_skips":[],"command":["{python}","tests/scripts/test_rc_adversarial_mutations.py"],"cwd":"{repo}","binary":"{python}","timeout_seconds":120},
         {"id":"coupling","parser":"exit-code","required":true,"command":["{python}","scripts/count_coupling.py","--ci"],"cwd":"{repo}","binary":"{python}","timeout_seconds":60},
         {"id":"test-registration","parser":"exit-code","required":true,"command":["{python}","tests/scripts/check_test_coverage.py"],"cwd":"{repo}","binary":"{python}","timeout_seconds":60},
-        {"id":"ctest","parser":"ctest-junit","required":true,"min_discovered":28,"allowed_skips":["CaesuraHeadlessAiSmoke"],"command":["ctest","--test-dir","{build_dir}","-C","{config}","--output-on-failure","--output-junit","{run_dir}/ctest.xml"],"cwd":"{repo}","report":"{run_dir}/ctest.xml","timeout_seconds":2400}
+        {"id":"ctest","parser":"ctest-junit","required":true,"min_discovered":32,"allowed_skips":["CaesuraHeadlessAiSmoke"],"command":["ctest","--test-dir","{build_dir}","-C","{config}","--output-on-failure","--output-junit","{run_dir}/ctest.xml"],"cwd":"{repo}","report":"{run_dir}/ctest.xml","timeout_seconds":2400}
       ]
     },
     "macos-debug": {
@@ -90,7 +90,7 @@
       "expected_cache": {"CAESURA_REQUIRE_TEST_PREREQUISITES": "ON"},
       "checks": [
         {"id":"build","parser":"exit-code","required":true,"command":["cmake","--build","{build_dir}","--config","{config}","--parallel","4"],"cwd":"{repo}","timeout_seconds":1800},
-        {"id":"cpp","parser":"doctest","required":true,"min_discovered":1210,"allowed_skips":[],"command":["{cpp_binary}","--no-colors"],"cwd":"{test_dir}","binary":"{cpp_binary}","timeout_seconds":600},
+        {"id":"cpp","parser":"doctest","required":true,"min_discovered":1227,"allowed_skips":[],"command":["{cpp_binary}","--no-colors"],"cwd":"{test_dir}","binary":"{cpp_binary}","timeout_seconds":600},
         {"id":"lua-main","parser":"lua","required":true,"min_discovered":147,"allowed_skips":[],"command":["{lua_binary}","tests/scripts/run_lua_tests.lua"],"cwd":"{repo}","binary":"{lua_binary}","timeout_seconds":600},
         {"id":"lua-orphan","parser":"lua","required":true,"min_discovered":48,"allowed_skips":[],"command":["{lua_binary}","tests/scripts/run_orphan_tests.lua"],"cwd":"{repo}","binary":"{lua_binary}","timeout_seconds":300},
         {"id":"validation-runner","parser":"unittest","required":true,"min_discovered":17,"allowed_skips":[],"command":["{python}","tests/scripts/test_validation_runner.py"],"cwd":"{repo}","binary":"{python}","timeout_seconds":120},
@@ -99,7 +99,7 @@
         {"id":"rc-adversarial","parser":"unittest","required":true,"min_discovered":57,"allowed_skips":[],"command":["{python}","tests/scripts/test_rc_adversarial_mutations.py"],"cwd":"{repo}","binary":"{python}","timeout_seconds":120},
         {"id":"coupling","parser":"exit-code","required":true,"command":["{python}","scripts/count_coupling.py","--ci"],"cwd":"{repo}","binary":"{python}","timeout_seconds":60},
         {"id":"test-registration","parser":"exit-code","required":true,"command":["{python}","tests/scripts/check_test_coverage.py"],"cwd":"{repo}","binary":"{python}","timeout_seconds":60},
-        {"id":"ctest","parser":"ctest-junit","required":true,"min_discovered":28,"allowed_skips":["CaesuraHeadlessAiSmoke"],"command":["ctest","--test-dir","{build_dir}","-C","{config}","--output-on-failure","--output-junit","{run_dir}/ctest.xml"],"cwd":"{repo}","report":"{run_dir}/ctest.xml","timeout_seconds":2400}
+        {"id":"ctest","parser":"ctest-junit","required":true,"min_discovered":32,"allowed_skips":["CaesuraHeadlessAiSmoke"],"command":["ctest","--test-dir","{build_dir}","-C","{config}","--output-on-failure","--output-junit","{run_dir}/ctest.xml"],"cwd":"{repo}","report":"{run_dir}/ctest.xml","timeout_seconds":2400}
       ]
     },
     "macos-release": {
@@ -110,7 +110,7 @@
       "expected_cache": {"CAESURA_REQUIRE_TEST_PREREQUISITES": "ON"},
       "checks": [
         {"id":"build","parser":"exit-code","required":true,"command":["cmake","--build","{build_dir}","--config","{config}","--parallel","4"],"cwd":"{repo}","timeout_seconds":1800},
-        {"id":"cpp","parser":"doctest","required":true,"min_discovered":1210,"allowed_skips":[],"command":["{cpp_binary}","--no-colors"],"cwd":"{test_dir}","binary":"{cpp_binary}","timeout_seconds":600},
+        {"id":"cpp","parser":"doctest","required":true,"min_discovered":1227,"allowed_skips":[],"command":["{cpp_binary}","--no-colors"],"cwd":"{test_dir}","binary":"{cpp_binary}","timeout_seconds":600},
         {"id":"lua-main","parser":"lua","required":true,"min_discovered":147,"allowed_skips":[],"command":["{lua_binary}","tests/scripts/run_lua_tests.lua"],"cwd":"{repo}","binary":"{lua_binary}","timeout_seconds":600},
         {"id":"lua-orphan","parser":"lua","required":true,"min_discovered":48,"allowed_skips":[],"command":["{lua_binary}","tests/scripts/run_orphan_tests.lua"],"cwd":"{repo}","binary":"{lua_binary}","timeout_seconds":300},
         {"id":"validation-runner","parser":"unittest","required":true,"min_discovered":17,"allowed_skips":[],"command":["{python}","tests/scripts/test_validation_runner.py"],"cwd":"{repo}","binary":"{python}","timeout_seconds":120},
@@ -119,7 +119,7 @@
         {"id":"rc-adversarial","parser":"unittest","required":true,"min_discovered":57,"allowed_skips":[],"command":["{python}","tests/scripts/test_rc_adversarial_mutations.py"],"cwd":"{repo}","binary":"{python}","timeout_seconds":120},
         {"id":"coupling","parser":"exit-code","required":true,"command":["{python}","scripts/count_coupling.py","--ci"],"cwd":"{repo}","binary":"{python}","timeout_seconds":60},
         {"id":"test-registration","parser":"exit-code","required":true,"command":["{python}","tests/scripts/check_test_coverage.py"],"cwd":"{repo}","binary":"{python}","timeout_seconds":60},
-        {"id":"ctest","parser":"ctest-junit","required":true,"min_discovered":28,"allowed_skips":["CaesuraHeadlessAiSmoke"],"command":["ctest","--test-dir","{build_dir}","-C","{config}","--output-on-failure","--output-junit","{run_dir}/ctest.xml"],"cwd":"{repo}","report":"{run_dir}/ctest.xml","timeout_seconds":2400}
+        {"id":"ctest","parser":"ctest-junit","required":true,"min_discovered":32,"allowed_skips":["CaesuraHeadlessAiSmoke"],"command":["ctest","--test-dir","{build_dir}","-C","{config}","--output-on-failure","--output-junit","{run_dir}/ctest.xml"],"cwd":"{repo}","report":"{run_dir}/ctest.xml","timeout_seconds":2400}
       ]
     }
   }

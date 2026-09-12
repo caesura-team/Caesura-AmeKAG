@@ -18,6 +18,7 @@ extern "C" {
 #include "script/vm/LuaManager.h"
 #include "script/vm/ManagedCoroutine.h"
 #include "entry/Engine.h"
+#include "entry/OwnerRpcQueue.h"
 #include "debug/DebugProtocol.h"
 #include "rpc/EditorServer.h"
 #include <nlohmann_json.hpp>
@@ -71,6 +72,9 @@ static void caesura_tee_stderr() {
 #endif
 #include <windows.h>
 #include <shellapi.h>
+#include <io.h>
+#else
+#include <unistd.h>
 #endif
 
 namespace Caesura {
@@ -176,95 +180,41 @@ Caesura::RpcReply rpcOk() {
 class EngineRpcDispatcher final : public Caesura::IRpcDispatcher {
 public:
     explicit EngineRpcDispatcher(Caesura::Engine& engine)
-        : m_engine(engine), m_ownerThread(std::this_thread::get_id()) {}
+        : m_engine(engine),
+          m_queue([this](const Caesura::RpcRequest& request) { return executeSafely(request); },
+                  [](const Caesura::OwnerRpcQueue::Event& event) {
+                      fprintf(stderr,
+                          "[RpcRequest] id=%llu op=%s phase=%s status=%d code=%s elapsed_ms=%lld\n",
+                          static_cast<unsigned long long>(event.requestId), event.operation,
+                          Caesura::OwnerRpcQueue::phaseName(event.phase), static_cast<int>(event.status),
+                          event.code.empty() ? "none" : event.code.c_str(),
+                          static_cast<long long>(event.elapsed.count()));
+                  }) {}
 
     ~EngineRpcDispatcher() override { close(); }
 
     Caesura::RpcReply dispatch(const Caesura::RpcRequest& request) override {
-        if (std::this_thread::get_id() == m_ownerThread) {
-            {
-                std::lock_guard<std::mutex> lock(m_queueMutex);
-                if (!m_accepting) return unavailable();
-            }
-            return executeSafely(request);
-        }
-
-        auto pending = std::make_shared<Pending>(request);
-        {
-            std::lock_guard<std::mutex> lock(m_queueMutex);
-            if (!m_accepting) return unavailable();
-            m_pending.push_back(pending);
-        }
-
-        std::unique_lock<std::mutex> lock(pending->mutex);
-        // Bounded wait: a stalled engine main thread (e.g. a GPU/driver
-        // present hang) must not let HTTP worker threads pile up until the
-        // accept backlog exhausts (observed as connection-refused on the IDE).
-        // Default 5s; override with CAESURA_RPC_DISPATCH_TIMEOUT_MS.
-        if (!pending->ready.wait_for(
-                lock, std::chrono::milliseconds(dispatchTimeoutMs()),
-                [&pending] { return pending->completed; })) {
-            return rpcError(Caesura::RpcReplyStatus::Busy, "engine_busy",
-                            "Engine main thread did not service the request in time");
-        }
-        return pending->reply;
+        return m_queue.dispatch(request, std::chrono::milliseconds(dispatchTimeoutMs()));
     }
 
     void pump() {
         if (const char* stall = std::getenv("CAESURA_TEST_STALL_MS")) {
-            // Diagnostic-only hook for end-to-end stall verification:
-            // simulates a stalled engine main thread so the bounded dispatch
-            // wait can be exercised without GPU/hardware involvement.
             char* end = nullptr;
             const long v = std::strtol(stall, &end, 10);
-            if (end && *end == '\0' && v > 0) {
+            if (end && *end == '\0' && v > 0)
                 std::this_thread::sleep_for(std::chrono::milliseconds(v));
-            }
         }
-        std::deque<std::shared_ptr<Pending>> batch;
-        {
-            std::lock_guard<std::mutex> lock(m_queueMutex);
-            batch.swap(m_pending);
-        }
-        for (const auto& pending : batch) {
-            complete(pending, executeSafely(pending->request));
-        }
+        m_queue.pump();
         pumpManagedRuns();
     }
 
     void close() {
-        std::deque<std::shared_ptr<Pending>> cancelled;
-        {
-            std::lock_guard<std::mutex> lock(m_queueMutex);
-            if (!m_accepting) return;
-            m_accepting = false;
-            cancelled.swap(m_pending);
-        }
-        for (const auto& pending : cancelled) {
-            complete(pending, unavailable());
-        }
+        m_queue.close();
         abortManagedRuns();
     }
 
 private:
-    struct Pending {
-        explicit Pending(const Caesura::RpcRequest& value) : request(value) {}
-
-        Caesura::RpcRequest request;
-        std::mutex mutex;
-        std::condition_variable ready;
-        bool completed = false;
-        Caesura::RpcReply reply;
-    };
-
-    static Caesura::RpcReply unavailable() {
-        return rpcError(Caesura::RpcReplyStatus::Unavailable,
-                        "dispatcher_closed",
-                        "Engine RPC dispatcher is closed");
-    }
-
-    // Bounded dispatch-wait budget. Default 5000ms; override with
-    // CAESURA_RPC_DISPATCH_TIMEOUT_MS (diagnostics / slow-environment tuning).
+    // Preserve the existing per-request environment override and 5s default.
     static long dispatchTimeoutMs() {
         const char* env = std::getenv("CAESURA_RPC_DISPATCH_TIMEOUT_MS");
         if (env) {
@@ -274,18 +224,6 @@ private:
         }
         return 5000L;
     }
-
-    static void complete(const std::shared_ptr<Pending>& pending,
-                         Caesura::RpcReply reply) {
-        {
-            std::lock_guard<std::mutex> lock(pending->mutex);
-            if (pending->completed) return;
-            pending->reply = std::move(reply);
-            pending->completed = true;
-        }
-        pending->ready.notify_one();
-    }
-
     Caesura::RpcReply executeSafely(const Caesura::RpcRequest& request) {
         try {
             return execute(request);
@@ -322,6 +260,7 @@ private:
             } else if constexpr (std::is_same_v<Operation, Caesura::RpcKagDebugRequest>) {
                 return kagDebugAction(operation);
             } else if constexpr (std::is_same_v<Operation, Caesura::RpcStopRequest>) {
+                m_queue.close(); // Stop retires the unstarted remainder of this batch.
                 abortManagedRuns();
                 m_engine.quit();
                 return rpcOk();
@@ -723,7 +662,23 @@ private:
 
     // -- Managed run/eval execution ------------------------------------
 
-    using ManagedRun = Caesura::detail::ManagedCoroutine;
+    struct ManagedRun {
+        Caesura::detail::ManagedCoroutine coroutine;
+        std::uint64_t requestId = 0;
+        std::chrono::steady_clock::time_point submittedAt = std::chrono::steady_clock::now();
+    };
+
+    // All phase/code arguments below are fixed
+    // labels; user script, error body and credentials never enter this log.
+    static void reportManagedRun(const ManagedRun& run, const char* phase,
+                                 const char* code, int status = LUA_OK,
+                                 int closeStatus = LUA_OK) noexcept {
+        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - run.submittedAt);
+        fprintf(stderr, "[RpcRun] id=%llu phase=%s code=%s lua_status=%d close_status=%d elapsed_ms=%lld\n",
+                static_cast<unsigned long long>(run.requestId), phase, code, status, closeStatus,
+                static_cast<long long>(elapsed.count()));
+    }
 
     lua_State* managedLuaState() noexcept {
         // Keep this tied to our Engine, not a replacement VM in the global
@@ -732,11 +687,45 @@ private:
         catch (...) { return nullptr; }
     }
 
-    static void reportManagedClose(const Caesura::detail::CoroutineDiagnostic& result) noexcept {
-        if (result.status != LUA_OK) {
-            fprintf(stderr, "[RpcRun] coroutine close returned error (%d): %s\n",
-                    result.status, result.message[0] ? result.message : "unknown close error");
+    struct RpcStackRestore {
+        lua_State* state;
+        int top;
+        ~RpcStackRestore() { lua_settop(state, top); }
+    };
+
+    static int stringifyRpcValue(lua_State* state) {
+        // All locals are trivial: user __tostring may longjmp to lua_pcall.
+        size_t length = 0;
+        luaL_tolstring(state, 1, &length);
+        return 1;
+    }
+
+    static Caesura::detail::CoroutineDiagnostic formatRpcValue(
+        lua_State* state, int index, std::string& value) {
+        Caesura::detail::CoroutineDiagnostic result;
+        const int top = lua_gettop(state);
+        const int absoluteIndex = lua_absindex(state, index);
+        RpcStackRestore restore{state, top};
+        if (!lua_checkstack(state, 2)) {
+            result.status = LUA_ERRMEM;
+            constexpr char message[] = "cannot grow RPC result formatting stack";
+            Caesura::detail::copyCoroutineMessage(result.message, sizeof(result.message),
+                                                  message, sizeof(message) - 1);
+            return result;
         }
+        lua_pushcfunction(state, &EngineRpcDispatcher::stringifyRpcValue);
+        lua_pushvalue(state, absoluteIndex);
+        result.status = lua_pcall(state, 1, 1, 0);
+        if (result.status != LUA_OK) {
+            // Never invoke __tostring again while describing its failure.
+            Caesura::detail::copyCoroutineError(state, result.message, sizeof(result.message),
+                                                "non-string RPC result formatting error");
+            return result;
+        }
+        size_t length = 0;
+        const char* text = lua_tolstring(state, -1, &length); // protected function returned a string
+        value.assign(text, length);
+        return result;
     }
 
     Caesura::RpcReply kagDebugAction(const Caesura::RpcKagDebugRequest& op) {
@@ -769,7 +758,7 @@ private:
                    + "return 'ok'";
         } else if (op.action == "continue") {
             code = "local kr = require('kag_runner'); "
-                   "local ok = pcall(kr.debug_resume); "
+                   "local ok = pcall(kr.continue_scene_debugger); "
                    "return ok and 'ok' or 'runner-not-ready'";
         } else if (op.action == "step") {
             code = "local kr = require('kag_runner'); "
@@ -798,6 +787,7 @@ private:
         }
 
         const int top = lua_gettop(L);
+        RpcStackRestore restore{L, top};
         if (luaL_loadstring(L, code.c_str()) != LUA_OK) {
             const char* err = lua_tostring(L, -1);
             const std::string msg = err ? err : "compile error";
@@ -813,13 +803,12 @@ private:
             return rpcError(Caesura::RpcReplyStatus::Failed,
                             "kag_debug_error", msg.c_str());
         }
-        std::string value = "nil";
-        if (!lua_isnil(L, -1)) {
-            size_t len = 0;
-            const char* str = luaL_tolstring(L, -1, &len);
-            if (str) value.assign(str, len);
-        }
+        std::string value;
+        const auto formatted = formatRpcValue(L, -1, value);
         lua_settop(L, top);
+        if (formatted.status != LUA_OK)
+            return rpcError(Caesura::RpcReplyStatus::Failed,
+                            "kag_debug_result_error", formatted.message);
         Caesura::RpcReply reply = rpcOk();
         reply.payload = Caesura::RpcKagDebugResult{std::move(value)};
         return reply;
@@ -846,7 +835,9 @@ private:
         if (!L) {
             return rpcError(Caesura::RpcReplyStatus::Unavailable,
                             "lua_unavailable", "Lua VM is unavailable");
-        }        const int top = lua_gettop(L);
+        }
+        const int top = lua_gettop(L);
+        RpcStackRestore restore{L, top};
         if (luaL_loadstring(L, code.c_str()) != LUA_OK) {
             const char* err = lua_tostring(L, -1);
             const std::string msg = err ? err : "compile error";
@@ -864,13 +855,12 @@ private:
             return rpcError(Caesura::RpcReplyStatus::Failed,
                             "eval_error", msg.c_str());
         }
-        std::string value = "nil";
-        if (!lua_isnil(L, -1)) {
-            size_t len = 0;
-            const char* str = luaL_tolstring(L, -1, &len);
-            if (str) value.assign(str, len);
-        }
+        std::string value;
+        const auto formatted = formatRpcValue(L, -1, value);
         lua_settop(L, top);
+        if (formatted.status != LUA_OK)
+            return rpcError(Caesura::RpcReplyStatus::Failed,
+                            "eval_result_error", formatted.message);
         Caesura::RpcReply reply = rpcOk();
         reply.payload = Caesura::RpcEvaluateResult{std::move(value)};
         return reply;
@@ -887,7 +877,8 @@ private:
                             "empty_script", "Script must not be empty");
         }
         ManagedRun run;
-        const auto created = Caesura::detail::createManagedCoroutine(L, script.c_str(), run);
+        run.requestId = m_queue.currentRequestId();
+        const auto created = Caesura::detail::createManagedCoroutine(L, script.c_str(), run.coroutine);
         if (created.status != LUA_OK) {
             return rpcError(Caesura::RpcReplyStatus::InvalidRequest,
                             "run_compile_error", created.message);
@@ -895,11 +886,13 @@ private:
         try {
             m_managedRuns.push_back(run);
         } catch (...) {
-            reportManagedClose(Caesura::detail::closeManagedCoroutine(L, run));
+            const auto closed = Caesura::detail::closeManagedCoroutine(L, run.coroutine);
+            reportManagedRun(run, "failed", "run_registration_failed", LUA_ERRMEM, closed.status);
             throw;
         }
+        reportManagedRun(run, "accepted", "run_submitted");
         Caesura::RpcReply reply = rpcOk();
-        reply.message = "started";
+        reply.message = "started"; // Preserve acceptance reply, not final script completion.
         return reply;
     }
 
@@ -907,20 +900,23 @@ private:
         if (m_managedRuns.empty()) return;
         lua_State* L = managedLuaState();
         if (!L) {
-            m_managedRuns.clear();
+            for (const auto& run : m_managedRuns)
+                reportManagedRun(run, "cancelled", "run_vm_unavailable", LUA_ERRRUN);
+            m_managedRuns.clear(); // No Lua access after the VM is gone.
             return;
         }
         for (auto it = m_managedRuns.begin(); it != m_managedRuns.end();) {
-            const auto step = Caesura::detail::resumeManagedCoroutine(L, *it);
+            const auto step = Caesura::detail::resumeManagedCoroutine(L, it->coroutine);
             if (step.status == LUA_YIELD) {
                 ++it;
                 continue;
             }
-            if (step.status != LUA_OK) {
-                fprintf(stderr, "[RpcRun] script finished with error: %s\n",
-                        step.error[0] ? step.error : "unknown error");
-            }
-            reportManagedClose(step.closed);
+            if (step.status != LUA_OK)
+                reportManagedRun(*it, "failed", "run_error", step.status, step.closed.status);
+            else if (step.closed.status != LUA_OK)
+                reportManagedRun(*it, "failed", "run_close_error", step.status, step.closed.status);
+            else
+                reportManagedRun(*it, "completed", "run_completed");
             it = m_managedRuns.erase(it);
         }
     }
@@ -928,20 +924,21 @@ private:
     void abortManagedRuns() noexcept {
         if (m_managedRuns.empty()) return;
         lua_State* L = managedLuaState();
-        if (L) {
-            for (auto& run : m_managedRuns) {
-                reportManagedClose(Caesura::detail::closeManagedCoroutine(L, run));
-            }
+        while (!m_managedRuns.empty()) {
+            // Retire the record before user __close can reenter cleanup.
+            ManagedRun run = m_managedRuns.front();
+            m_managedRuns.pop_front();
+            const auto closed = Caesura::detail::closeManagedCoroutine(L, run.coroutine);
+            if (closed.status != LUA_OK)
+                reportManagedRun(run, "failed", "run_cancel_close_error", LUA_OK, closed.status);
+            else
+                reportManagedRun(run, "cancelled", L ? "run_cancelled" : "run_vm_unavailable");
         }
-        m_managedRuns.clear();
     }
 
     Caesura::Engine& m_engine;
-    std::thread::id m_ownerThread;
-    std::mutex m_queueMutex;
-    std::deque<std::shared_ptr<Pending>> m_pending;
+    Caesura::OwnerRpcQueue m_queue;
     std::deque<ManagedRun> m_managedRuns;
-    bool m_accepting = true;
 };
 
 // Explicit instantiations: on the Android NDK toolchain (libc++ `__ndk1` +
@@ -965,9 +962,31 @@ template Caesura::RpcReply EngineRpcDispatcher::executeDebug<Caesura::RpcInspect
 template Caesura::RpcReply EngineRpcDispatcher::executeDebug<Caesura::RpcGetDebugStateRequest>(
     Caesura::RpcGetDebugStateRequest const&);
 
-void runStdioRpc(Caesura::Engine& engine) {
+bool runStdioRpc(Caesura::Engine& engine) {
     auto dispatcher = std::make_shared<EngineRpcDispatcher>(engine);
+    // Preserve the startup banner, then reserve the captured descriptor for
+    // protocol JSON. Keep console output on stderr through main's final exit
+    // messages and C/C++ teardown, so it cannot refill the protocol pipe.
+    fflush(stdout);
     Caesura::RpcServer rpc;
+    if (!rpc.outputReady()) {
+        fprintf(stderr, "[RpcServer] Could not retain protocol stdout.\n");
+        engine.quit();
+        engine.shutdown();
+        return false;
+    }
+#if defined(_WIN32)
+    const bool redirected = ::_dup2(::_fileno(stderr), ::_fileno(stdout)) == 0
+        && SetStdHandle(STD_OUTPUT_HANDLE, GetStdHandle(STD_ERROR_HANDLE));
+#else
+    const bool redirected = ::dup2(STDERR_FILENO, STDOUT_FILENO) >= 0;
+#endif
+    if (!redirected) {
+        fprintf(stderr, "[RpcServer] Could not reserve stdout for the protocol.\n");
+        engine.quit();
+        engine.shutdown();
+        return false;
+    }
     rpc.setDispatcher(dispatcher);
 
     std::atomic<bool> transportFinished{false};
@@ -986,6 +1005,7 @@ void runStdioRpc(Caesura::Engine& engine) {
     rpc.setDispatcher({});
     if (transport.joinable()) transport.join();
     engine.shutdown();
+    return true;
 }
 
 bool runHttpEditor(Caesura::Engine& engine, const std::string& authToken,
@@ -1372,7 +1392,7 @@ extern "C" int main(int argc, char* argv[]) {
         engine.lua().lockdownScriptEnv();
 
         const bool editorOk = editorStdio
-            ? (runStdioRpc(engine), true)
+            ? runStdioRpc(engine)
             : runHttpEditor(engine, editorToken, editorInsecure);
         if (!editorOk || engine.hasRenderFailure()) return 1;
         printf("Caesura (AmeKAG) shut down cleanly.\n");
@@ -1390,7 +1410,7 @@ extern "C" int main(int argc, char* argv[]) {
         engine.lua().loadScript((scriptDir + "kag/init.lua").c_str());
         engine.lua().lockdownScriptEnv();
 
-        runStdioRpc(engine);
+        if (!runStdioRpc(engine)) return 1;
         if (engine.hasRenderFailure()) return 1;
         printf("Caesura (AmeKAG) shut down cleanly.\n");
         return 0;

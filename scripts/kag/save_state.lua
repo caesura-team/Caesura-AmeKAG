@@ -280,6 +280,18 @@ function M.prepare(state, safe_path, loader)
     candidate._locale = require("i18n").prepare(candidate.language, candidate.language_default)
     candidate.text_snapshot = require("kag.text_scene").prepare_restore(
         state.text_snapshot or {state=candidate.text_state})
+    if state.resume_page_wait ~= nil and type(state.resume_page_wait) ~= "boolean" then
+        error("Invalid saved page wait marker", 0)
+    end
+    local resume_token = candidate.tokens[candidate._resume_index]
+    local resume_command = resume_token and (resume_token[1] or resume_token.cmd)
+    if state.resume_page_wait == true
+        and (resume_command ~= "p" or not candidate.text_snapshot.waiting_input) then
+        error("Invalid saved page wait cursor", 0)
+    end
+    -- Legacy slots have no unambiguous page-wait identity; do not infer one
+    -- merely because the next token is [p].
+    candidate._resumePageWait = state.resume_page_wait == true
     candidate._presentation = require("kag.presentation").prepare(state)
     return candidate
 end
@@ -287,6 +299,7 @@ end
 function M.apply_values(ctx, candidate)
     ctx._waitState=nil
     ctx._restoredWait=candidate._restoredWait
+    ctx._resumePageWait=candidate._resumePageWait
     ctx.textbox_style=candidate.textbox_style -- nil also clears a reused host context
     for key, value in pairs(candidate) do
         if key ~= "control" and key ~= "language" and key ~= "language_default" and key ~= "_locale" and key ~= "text_snapshot"
