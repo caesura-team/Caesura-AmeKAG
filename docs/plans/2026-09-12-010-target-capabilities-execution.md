@@ -79,3 +79,5 @@ Palette后续审查又复现夜间模式在应用失败时仍宣称成功，以�
 首次完整Web管线u19-web-full-01包含24场景/6资产bake、Vite与全Vitest，39文件528/528、零失败零跳过，102.77秒。工作树指纹46335a10403095f4b7a9cae00e00bdc75217a4f4a1283f371b0ebd1c250dcbd1前后相同，Node22.23.2与实际Lua二进制hash未变。原性能阈值未修改；故事median886.9ms，1000行样本median1594.5ms。这一结果不解释其与旧本机样本差异的因果，也不替代U27独立进程/Release/长跑验收。
 
 现有Web画面与存档夹具读取示例作品的显式能力声明，断言真实降级诊断；没有把省略的后处理当作已实现。Audio UI通过受控AudioContext边界检查真实AudioEngine owner与DOM（5/5），不是物理解码或声卡验证。实际浏览器、最终原生receipt和候选CI仍需记录。未测量覆盖率；接口、SDK OFF、Null、ManualMix、Wasmoon/jsdom和真实GPU/浏览器的证据不得互换。
+
+干净候选36b15aae的u19-native-candidate-01真实receipt为fdf94dce-d959-463e-836d-0f5998859f34：完整Debug、C++1397/1397（402490断言）、Lua147/147与54/54通过；CTest为30通过、2失败、1项预声明AI跳过，源/夹具前后稳定。失败分别是build CLI诊断丢失ks_check/普通lint跳过提示，以及显式无效Lua路径在核验前先查询另一无效引擎、导致路径验证超时。恢复准确且有边界的诊断提示，并在任何外部进程前验证Lua选择后，原有CLI35/35与路径12/12通过；不修改旧测试断言，也不允许skip-check绕过能力。此修复仍须进入新的完整候选门禁。PR #22已作为草稿启动CI，未合并。

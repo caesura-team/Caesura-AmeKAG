@@ -497,6 +497,9 @@ def _require_capability_inputs(report, project):
 def run_capability_check(project: Path, scenes, target: str, *, engine=None,
                          skip_syntax=False, output=None) -> dict:
     """One real Lua checker owns declarations and statically identifiable calls."""
+    # Reject an invalid authoritative interpreter before starting the selected
+    # engine or any other external process, including when lint is skipped.
+    lua = find_lua()
     project = project.resolve()
     scenes = list(scenes)
     inputs = _capability_inputs(project, scenes)
@@ -519,7 +522,7 @@ def run_capability_check(project: Path, scenes, target: str, *, engine=None,
             metadata = scratch / "legacy-project.json"
             metadata.write_text("{}\n", encoding="utf-8")
         report_path = scratch / "report.json"
-        command = [find_lua(), str(ROOT / "scripts" / "ks_check.lua"),
+        command = [lua, str(ROOT / "scripts" / "ks_check.lua"),
                    "--target", target, "--profile", str(profile_path),
                    "--project", str(metadata), "--json-output", str(report_path)]
         if skip_syntax: command.append("--capabilities-only")
@@ -544,7 +547,9 @@ def run_capability_check(project: Path, scenes, target: str, *, engine=None,
         if output is not None:
             Path(output).write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         if result.returncode != 0 or report.get("passed") is not True:
-            raise BuildError("Required target capabilities are not satisfied:\n" + text[-12000:])
+            raise BuildError("ks_check: Scene contracts or required target capabilities are not satisfied:\n"
+                             + text[-12000:]
+                             + "\n--skip-check skips ordinary scene lint only; required capabilities still apply.")
         details = "\n".join(line for line in text.splitlines() if not line.startswith("Target capabilities:"))
         if details.strip(): print(details.rstrip())
         print("Target capabilities: PASS; %d unproved dynamic span(s) or Lua file(s)" % len(report["not_proven"]))
