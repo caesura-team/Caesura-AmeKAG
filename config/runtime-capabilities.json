@@ -44,7 +44,7 @@
     },
     "audio.fade": {
       "native": {"status": "supported", "available": "audio"},
-      "web": {"status": "unsupported", "reason": "backend_not_implemented"}
+      "web": {"status": "supported", "available": "audio"}
     },
     "audio.crossfade": {
       "native": {"status": "unsupported", "reason": "backend_route_not_wired"},

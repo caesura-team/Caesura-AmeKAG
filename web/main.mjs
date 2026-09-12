@@ -368,6 +368,9 @@ const syncEndings = () => {
 
 const syncAudioStatus = () => {
   const bus = player.core.audioBus
+  for (const kind of ['bgm', 'se', 'voice']) {
+    if (bus[kind]?.playing && !player.audio.isPlaying(kind)) player.core.audioEnded(kind)
+  }
   const parts = []
   if (bus.bgm && bus.bgm.playing) parts.push('BGM: ' + bus.bgm.path.split('/').pop())
   // audioPlay(kind, ...) stores the played entry directly on audioBus[kind],
@@ -402,13 +405,13 @@ async function runScene(name) {
     const ks = await (await fetch(DEMO_BASE + name)).text()
     out = await player.runScene(ks, name, runOpts)
   }
+  statusEl.textContent = 'parked: ' + out
+  log('result: ' + out)
   syncTextures()
   await renderer.render()
   syncBacklog()
   syncEndings()
   syncAudioStatus()
-  statusEl.textContent = 'parked: ' + out
-  log('result: ' + out)
 }
 
 async function advance() {
@@ -433,13 +436,13 @@ async function advance() {
     const ks = await (await fetch(DEMO_BASE + sel)).text()
     out = await player.runScene(ks, sel, advOpts)
   }
+  statusEl.textContent = 'advance: ' + out
+  log('advance: ' + out)
   syncTextures()
   await renderer.render()
   syncBacklog()
   syncEndings()
   syncAudioStatus()
-  statusEl.textContent = 'advance: ' + out
-  log('advance: ' + out)
 }
 
 await loadStoryBundle()
@@ -566,7 +569,10 @@ let autoTimer = null
 document.getElementById('auto').textContent = autoMode ? '⏸ Auto' : '⏩ Auto'
 const scheduleAuto = () => {
   if (!autoMode) return
-  autoTimer = setTimeout(() => { void advance(); scheduleAuto() }, 1200)
+  autoTimer = setTimeout(() => {
+    if (!player.isWaitingForAudio) void advance()
+    scheduleAuto()
+  }, 1200)
 }
 
 // render loop: sync core state to DOM every frame (CSS transitions
@@ -583,6 +589,15 @@ const scheduleAuto = () => {
 // rejection is reported instead of becoming an unhandled rejection (main.mjs
 // counts those as page errors via window.__caesuraErrors).
 const frame = () => {
+  if (player.isWaitingForAudio) {
+    void player.tickAudio().then((out) => {
+      if (out == null) return
+      syncTextures()
+      statusEl.textContent = 'parked: ' + out
+    }).catch((error) => {
+      log('audio wait error: ' + String(error?.message || error).slice(0, 120))
+    })
+  }
   void renderer.render().catch((e) => {
     log('render error: ' + String((e && e.message) || e).slice(0, 120))
   })

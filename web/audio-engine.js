@@ -5,6 +5,41 @@ export const MAX_AUDIO_BYTES = 64 * 1024 * 1024
 const MAX_DECODED_AUDIO_BYTES = 256 * 1024 * 1024
 const BUSES = ['bgm', 'se', 'voice']
 
+const validDuration = value => Number.isFinite(value) && value >= 0
+const validGain = value => Number.isFinite(value) && value >= 0 && value <= 16
+const validTime = value => Number.isFinite(value) && value >= 0
+
+// Only the current linear segment is retained; WebAudio renders the curve.
+function gainAt(segment, fallback, time) {
+  if (!segment) return fallback
+  if (time >= segment.end) return segment.to
+  if (time <= segment.start) return segment.from
+  return segment.from + (segment.to - segment.from) * (time - segment.start) / (segment.end - segment.start)
+}
+
+function canRamp(param) {
+  return typeof param?.setValueAtTime === 'function'
+    && typeof param.linearRampToValueAtTime === 'function'
+    && (typeof param.cancelAndHoldAtTime === 'function' || typeof param.cancelScheduledValues === 'function')
+}
+
+function cancelGain(param, time) {
+  if (typeof param.cancelAndHoldAtTime === 'function') param.cancelAndHoldAtTime(time)
+  else if (typeof param.cancelScheduledValues === 'function') param.cancelScheduledValues(time)
+  else throw new Error('AudioParam cancellation is unavailable')
+}
+
+function rampGain(param, from, to, time, duration) {
+  const end = time + duration
+  if (!canRamp(param) || !validTime(time) || !validTime(end) || !validGain(from) || !validGain(to)) {
+    throw new Error('AudioParam automation is unavailable or invalid')
+  }
+  cancelGain(param, time)
+  param.setValueAtTime(from, time)
+  param.linearRampToValueAtTime(to, end)
+  return { from, to, start: time, end }
+}
+
 function validateBuffer(buffer) {
   if (!buffer || !Number.isFinite(buffer.duration) || buffer.duration <= 0 || buffer.duration > 86400
       || !Number.isSafeInteger(buffer.length) || buffer.length <= 0
@@ -22,7 +57,9 @@ export class AudioEngine {
     this._fetchImpl = opts.fetchImpl
     this._buffers = new Map()
     this._sources = new Map()
+    this._retiring = new Set()
     this._busGains = new Map()
+    this._busFades = new Map()
     this._busVolumes = new Map(BUSES.map(kind => [kind, 1]))
     this._generations = new Map()
     this._pending = new Map()
@@ -55,6 +92,11 @@ export class AudioEngine {
     const generation = (this._generations.get(kind) ?? 0) + 1
     this._generations.set(kind, generation)
     return generation
+  }
+
+  // Cancellation generations and committed source identities are distinct.
+  isCurrentPlayback(kind, owner) {
+    return owner != null && this._sources.get(kind)?.identity === owner && this.isPlaying(kind)
   }
 
   /** Decode owned bytes without starting or stopping any source. The packet is
@@ -107,6 +149,8 @@ export class AudioEngine {
   _release(record, stop) {
     if (record.released) return
     record.released = true
+    this._retiring.delete(record)
+    record.envelope = null
     if (stop) { try { record.source.stop() } catch { /* Already stopped or not started. */ } }
     try { record.source.disconnect() } catch { /* Detached source. */ }
     try { record.clipGain?.disconnect() } catch { /* Detached gain. */ }
@@ -119,15 +163,17 @@ export class AudioEngine {
     this._release(record, true)
   }
 
-  _start(kind, packet, { path, position = 0, gain = 1, looping = false }) {
+  _start(kind, packet, { path, position = 0, gain = 1, looping = false, fadein = 0 }) {
     this._validatePrepared(packet, position, gain)
     const context = this._ctx
+    if (!validDuration(fadein) || !validTime(context.currentTime)) throw new Error('Invalid audio envelope time')
     const source = context.createBufferSource()
-    const record = { source, clipGain: null, gain: this._busGains.get(kind), path,
+    const record = { source, kind, context, identity: Symbol('audio-source'), clipGain: null, gain: this._busGains.get(kind), path, envelope: null,
       started: context.currentTime, offset: position, duration: packet.buffer.duration, released: false }
     try {
       record.clipGain = context.createGain()
-      record.clipGain.gain.value = gain
+      record.clipGain.gain.value = fadein > 0 ? 0 : gain
+      if (fadein > 0) record.envelope = rampGain(record.clipGain.gain, 0, gain, record.started, fadein)
       source.buffer = packet.buffer
       source.loop = looping
       source.connect(record.clipGain)
@@ -139,7 +185,7 @@ export class AudioEngine {
       this._stopSource(kind)
       this._sources.set(kind, record)
       source.start(0, position)
-      return true
+      return record
     } catch (error) {
       if (this._sources.get(kind) === record) this._sources.delete(kind)
       this._release(record, true)
@@ -148,31 +194,67 @@ export class AudioEngine {
   }
 
   async play(kind, path, opts = {}) {
-    if (!BUSES.includes(kind)) return false
-    const generation = this._nextGeneration(kind)
+    return (await this.playWithReceipt(kind, path, opts)).played
+  }
+
+  async playWithReceipt(kind, path, opts = {}) {
+    const failed = {played: false, owner: null}
+    if (!BUSES.includes(kind)) return failed
+    let generation
     try {
+      const fadein = opts.fadein ?? 0
+      if (!validDuration(fadein)) return failed
+      generation = this._nextGeneration(kind)
       const context = this.ensureContext()
-      if (!context) return false
+      if (!context) return failed
       this._pending.set(kind, generation)
       const packet = await this._load(path, opts.assetUrl, context)
-      if (!packet || this._generations.get(kind) !== generation || context !== this._ctx) return false
-      return this._start(kind, packet, { path, position: opts.position ?? 0,
-        gain: opts.volume == null ? 1 : Number(opts.volume), looping: !!opts.loop })
-    } catch { return false }
-    finally { if (this._pending.get(kind) === generation) this._pending.delete(kind) }
+      if (!packet || this._generations.get(kind) !== generation || context !== this._ctx) return failed
+      const record = this._start(kind, packet, { path, position: opts.position ?? 0,
+        gain: opts.volume == null ? 1 : Number(opts.volume), looping: !!opts.loop, fadein })
+      return {played: true, owner: record.identity}
+    } catch { return failed }
+    finally { if (generation !== undefined && this._pending.get(kind) === generation) this._pending.delete(kind) }
   }
 
   /** Apply a fully decoded candidate synchronously, preserving user bus gains. */
   applyPreparedBgm(packet, state) {
     this._validatePrepared(packet, state.position, state.gain)
     this.stopAll()
-    return this._start('bgm', packet, state)
+    this._start('bgm', packet, { ...state, fadein: 0 })
+    return true
   }
 
-  stop(kind) {
+  stop(kind, opts = {}) {
+    if (!BUSES.includes(kind)) return false
+    const fadeout = opts?.fadeout ?? 0
+    if (!validDuration(fadeout)) return false
     this._nextGeneration(kind)
     this._pending.delete(kind)
-    this._stopSource(kind)
+    if (fadeout === 0) {
+      this._stopSource(kind)
+      for (const record of this._retiring) if (record.kind === kind) this._release(record, true)
+      return true
+    }
+    const record = this._sources.get(kind)
+    if (!record) return false // Pending work is cancelled, but no fade ran.
+    this._sources.delete(kind)
+    this._retiring.add(record)
+    try {
+      const context = this._ctx
+      if (!context || context !== record.context || context.state === 'closed' || !this.ready) {
+        throw new Error('Audio fade-out context is unavailable')
+      }
+      const now = context.currentTime
+      const from = gainAt(record.envelope, record.clipGain.gain.value, now)
+      record.envelope = rampGain(record.clipGain.gain, from, 0, now, fadeout)
+      record.source.stop(record.envelope.end)
+      return true
+    } catch {
+      // A failed requested envelope still performs immediate cleanup.
+      this._release(record, true)
+      return false
+    }
   }
 
   isPlaying(kind) {
@@ -188,7 +270,7 @@ export class AudioEngine {
     const looping = record.source.loop === true
     const elapsed = record.offset + Math.max(0, this._ctx.currentTime - record.started)
     const position = looping ? elapsed % record.duration : elapsed
-    const gain = record.clipGain.gain.value
+    const gain = gainAt(record.envelope, record.clipGain.gain.value, this._ctx.currentTime)
     if (!Number.isFinite(position) || !Number.isFinite(gain) || gain < 0 || gain > 16) {
       throw new Error('Invalid active BGM state')
     }
@@ -199,15 +281,55 @@ export class AudioEngine {
     if (!BUSES.includes(kind)) return
     const number = Number(value)
     const volume = Number.isFinite(number) ? Math.max(0, Math.min(16, number)) : 1
-    this._busVolumes.set(kind, volume)
     const gain = this._busGains.get(kind)
-    if (gain) gain.gain.value = volume
+    if (gain) {
+      if (this._busFades.has(kind)) cancelGain(gain.gain, this._ctx.currentTime)
+      gain.gain.value = volume
+    }
+    this._busFades.delete(kind)
+    this._busVolumes.set(kind, volume)
+  }
+
+  fadeVolume(kind, target, duration) {
+    if (!BUSES.includes(kind) || !validGain(target) || !validDuration(duration)) return false
+    const context = this._ctx
+    const param = this._busGains.get(kind)?.gain
+    if (!context || context.state === 'closed' || !this.ready || !param || !validTime(context.currentTime)) return false
+    const now = context.currentTime
+    if (!validTime(now + duration) || (duration > 0 && !canRamp(param))) return false
+    const from = gainAt(this._busFades.get(kind), param.value, now)
+    if (!validGain(from)) return false
+    try {
+      if (duration > 0) {
+        const segment = rampGain(param, from, target, now, duration)
+        this._busFades.set(kind, segment)
+      } else {
+        if (this._busFades.has(kind)) cancelGain(param, now)
+        param.value = target
+        this._busFades.delete(kind)
+      }
+      this._busVolumes.set(kind, target)
+      return true
+    } catch {
+      // Host scheduling can fail after cancellation. Do not publish the new
+      // target; best-effort hold the previous instantaneous value instead.
+      this._busFades.delete(kind)
+      try {
+        cancelGain(param, now)
+        param.setValueAtTime(from, now)
+      } catch {
+        try { param.cancelScheduledValues?.(now) } catch { /* Broken host API. */ }
+        try { param.value = from } catch { /* No success is reported. */ }
+      }
+      return false
+    }
   }
 
   stopAll() { for (const kind of BUSES) this.stop(kind) }
   suspend() { return this._ctx?.suspend?.() }
   resume() { return this._ctx?.resume?.() }
   get state() { return this._ctx ? (this._ctx.state ?? 'running') : 'none' }
+  get currentTime() { return this._ctx?.currentTime ?? 0 }
 
   // Eligibility only: a user gesture, a valid asset and successful decoding
   // are still required. Querying this never creates/unlocks an AudioContext.
@@ -217,11 +339,16 @@ export class AudioEngine {
   }
 
   async unlock() {
-    const context = this.ensureContext()
+    let context
+    try { context = this.ensureContext() }
+    catch { return false } // A later gesture may retry context construction.
     if (!context) return false
+    const revision = this._revision
     try { if (context.state === 'suspended') await context.resume?.() }
     catch { /* A later trusted gesture can retry. */ }
-    return this.state === 'running'
+    // A delayed resume belongs to its original context lifetime, even when
+    // a replacement context has already started playing successfully.
+    return context === this._ctx && revision === this._revision && this.state === 'running'
   }
 
   destroy() {
@@ -231,6 +358,7 @@ export class AudioEngine {
     this._ctx = null
     this.ready = false
     this._busGains.clear()
+    this._busFades.clear()
     this._buffers.clear()
   }
 }

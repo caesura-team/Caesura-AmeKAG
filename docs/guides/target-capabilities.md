@@ -81,13 +81,17 @@ if result then print(result.status, result.feature, result.reason) end
 | `video.play` | 基础 MPEG 路径不依赖 FFmpeg | 未实现 |
 | `video.ffmpeg` | 需要实际编译 FFmpeg 且视频后端可用 | 未实现 |
 | `audio.play` | 需要实际音频会话 | 需要 AudioContext；本次加载/解码仍可能失败 |
-| `audio.fade` | 需要音频会话 | U19 尚未实现，后续由 U20 验收 |
+| `audio.fade` | 需要音频会话 | 支持 clip 淡入/淡出和 bus 音量渐变；需要 AudioContext，本次调度仍可能失败 |
 | `audio.crossfade` | 当前 Lua backend 路径未接线 | 未实现 |
 | `live2d.cubism` | 需要实际编译 Cubism 且模型后端可用 | 未实现 |
 | `kag.live2d_motion/expression/lip_sync` | 三个 KAG 命令尚未接入实际模型操作 | 同样不支持 |
 | `steam.achievements/stats/cloud` | 需要实际编译 Steam 且会话可用 | 未实现 |
 
 Null、PNG 回退、SDK 文件夹存在、配置开关请求开启都不能证明相应后端可用。SoLoud ManualMix 的测试结果也不代表物理声卡输出。
+
+Web 的 `playbgm` 淡入和 `stopbgm`/`playbgmstop` 淡出只作用于当前声音的 clip 增益；`fadebgm`/`fadevol` 改变 bus 增益。停止不会将 bus 留在零音量。脚本渐变不写入用户持久音量设置，用户直接调节会覆盖已有 bus 渐变。
+
+v1 音频存档记录保存瞬间的 BGM clip 增益和位置。恢复时将该增益作为静态值，清除旧声音及其淡出尾音，保留当前 bus 音量与用户设置；不恢复剩余渐变曲线。实际 Web Audio PCM、手势解锁与暂停恢复的复核入口为 `node scripts/web_audio_smoke.mjs --out artifacts/validation/web-audio-check`，输出目录必须未存在。该检查使用静音输出端分析 PCM，不证明扬声器或耳机的实际听感。
 
 ## 未证明的动态范围
 

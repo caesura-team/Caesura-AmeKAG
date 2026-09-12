@@ -1227,9 +1227,11 @@ function kag_runner.on_click()
 
     ctx._rollback_waiting = nil
     ctx.waiting_input = false
-    -- Batch resume through all non-blocking tokens until next [p]
+    -- Batch resume only to the next input/audio wait. An existing voice_wait
+    -- consumes this click once; a newly entered audio wait needs real frames.
     local count = 0
     while kag_co and coroutine.status(kag_co) ~= "dead" and not ctx.waiting_input
+        and (not ctx._audio_wait or (count == 0 and ctx._voice_wait_poll))
         and not ctx._pendingRollback and count < 200 do
         local resumed, resume_reason = resume_scheduler("click")
         if not resumed then

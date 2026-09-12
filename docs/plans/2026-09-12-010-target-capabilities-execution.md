@@ -91,3 +91,9 @@ Palette后续审查又复现夜间模式在应用失败时仍宣称成功，以�
 - CI34715182298对应2dfe451e：Windows Debug/Release、macOS、Linux、iOS CMake probe、Android静态合同与CMake probe共七个执行job成功；三个PR发布包job按条件跳过。Windows Debug和Linux的真实Node包CLI均23/23通过，三桌面Lua均147/54，CTest33均无失败（可选AI跳过仍单列）。旧36b15aae的CI34714593601已由更新候选替代并取消，不能记为通过。
 
 SDK ON/账号、其他浏览器与设备、仓外完整作者旅程和发行包验收仍按原计划继续。本轮没有测量覆盖率，没有把测试通过数或源文件清单当作覆盖率、发布批准或全动态路径证明。
+
+## 合并后状态复核
+
+最终文档候选716e6ee31ad7780a54c20eefce1d016536b483bd的CI34716396395七个执行job成功，三个PR包job按条件跳过。PR #22于2026-09-12T20:44:13Z合并为98aa63c0748c6ba9dc02e87515fe096312198e1c，树与文档候选一致。
+
+随后master CI34717963659并非全绿：Windows Debug的Web synthetic1000帧吞吐1.976459未达到原>2预算，532项中499通过、1失败、32按该Windows lane条件跳过；Windows Release、Linux、macOS、两项Android及iOS执行成功，macOS/Linux包成功，依赖失败的Windows Release包未执行。此结果不抹去候选验证，也不能称master全部通过。原始失败日志保存在U20工作区artifacts/validation/u19-master-ci-34717963659-failed.log，U27继续核验性能，阈值保持不变。

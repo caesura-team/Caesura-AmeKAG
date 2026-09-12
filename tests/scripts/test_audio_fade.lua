@@ -63,6 +63,90 @@ Audio.xfadebgm(ctx, { { "storag", "x.ogg" }, time = 1000 })
 check("xfade typo pair safe", #calls == 0)
 _G._CAESURA_BACKEND = real_backend
 
+-- U20: execute the actual schema/handlers/backend proxy. Only the host audio
+-- boundary records requests and its configured bus values; no mixer is faked.
+do
+    local backend = require("backend")
+    local requests, active_path = {}, nil
+    local bus_values = { bgm = 1, se = 1, voice = 1 }
+    _G._CAESURA_BACKEND = {
+        audio = function(command, ...)
+            local args = { ... }
+            requests[#requests + 1] = { command, ... }
+            if command == "set_bus_volume" or command == "fade_volume" then
+                bus_values[args[1]] = args[2]
+            elseif command == "play_bgm" then active_path = args[1]
+            elseif command == "stop_bgm" then active_path = nil end
+            return true
+        end,
+    }
+    local function setup_owner()
+        backend.audio_set_bus_volume("bgm", 0.6)
+        backend.audio_set_bus_volume("se", 0.4)
+        backend.audio_set_bus_volume("voice", 0.8)
+        backend.audio_play("bgm", "assets/bgm/old.ogg", { fadein = 0 })
+        requests = {}
+    end
+    local function same_bus_values()
+        return bus_values.bgm == 0.6 and bus_values.se == 0.4 and bus_values.voice == 0.8
+    end
+    for _, case in ipairs({
+        { name = "positive", input = { fadeout = 250 }, seconds = 0.25 },
+        { name = "ordinary zero", input = { fadeout = 0 }, seconds = 0 },
+        { name = "default", input = {}, seconds = 0 },
+        { name = "coerced time shadow", input = { time = 900 }, seconds = 0 },
+        { name = "schema upper bound", input = { fadeout = 999999 }, seconds = 30 },
+    }) do
+        setup_owner()
+        Audio.stopbgm(ctx, schema.coerce("stopbgm", case.input, ctx))
+        check("stopbgm single exact clip stop: " .. case.name,
+            #requests == 1 and requests[1][1] == "stop_bgm" and requests[1][2] == case.seconds)
+        check("stopbgm preserves configured buses: " .. case.name, same_bus_values())
+        check("stopbgm releases the routed owner: " .. case.name, active_path == nil)
+    end
+
+    setup_owner()
+    Audio.stopbgm(ctx, schema.coerce("stopbgm", { fadeout = 500 }, ctx))
+    Audio.playbgm(ctx, schema.coerce("playbgm", { storage = "assets/bgm/next.ogg", fadein = 750 }, ctx))
+    check("stop then play preserves request order, path and seconds",
+        #requests == 2 and requests[1][1] == "stop_bgm" and requests[1][2] == 0.5
+        and requests[2][1] == "play_bgm" and requests[2][2] == "assets/bgm/next.ogg" and requests[2][3] == 0.75)
+    check("stop then play cannot leave the next clip on a muted bus",
+        active_path == "assets/bgm/next.ogg" and same_bus_values())
+
+    for _, milliseconds in ipairs({ 0, 400 }) do
+        setup_owner()
+        Audio.playbgmstop(ctx, schema.coerce("playbgmstop", {
+            file = "assets/bgm/replacement.ogg", fadeout = milliseconds, fadein = 1250,
+        }, ctx))
+        check("playbgmstop submits one clip stop before play: " .. milliseconds,
+            #requests == 2 and requests[1][1] == "stop_bgm" and requests[1][2] == milliseconds / 1000
+            and requests[2][1] == "play_bgm" and requests[2][2] == "assets/bgm/replacement.ogg"
+            and requests[2][3] == 1.25)
+        check("playbgmstop preserves buses and replacement path: " .. milliseconds,
+            same_bus_values() and active_path == "assets/bgm/replacement.ogg")
+    end
+    setup_owner()
+    Audio.playbgmstop(ctx, schema.coerce("playbgmstop", { fadeout = 350 }, ctx))
+    check("playbgmstop without a file only stops once at the requested time",
+        #requests == 1 and requests[1][1] == "stop_bgm" and requests[1][2] == 0.35
+        and active_path == nil and same_bus_values())
+
+    requests = {}
+    Audio.fadebgm(ctx, schema.coerce("fadebgm", { volume = 0.3, time = 2000 }, ctx))
+    check("explicit fadebgm still changes only its bus at requested seconds",
+        #requests == 1 and requests[1][1] == "fade_volume" and requests[1][2] == "bgm"
+        and requests[1][3] == 0.3 and requests[1][4] == 2 and bus_values.bgm == 0.3
+        and bus_values.se == 0.4 and bus_values.voice == 0.8)
+    requests = {}
+    Audio.fadevol(ctx, schema.coerce("fadevol", { volume = 0.2, time = 1500 }, ctx))
+    check("explicit fadevol keeps the default bus fade contract",
+        #requests == 1 and requests[1][1] == "fade_volume" and requests[1][2] == "bgm"
+        and requests[1][3] == 0.2 and requests[1][4] == 1.5 and bus_values.bgm == 0.2
+        and bus_values.se == 0.4 and bus_values.voice == 0.8)
+    _G._CAESURA_BACKEND = real_backend
+end
+
 -- guard sweep (audit): layer resolve_file + layfade layerName +
 -- eval/emb exp all reject the pair table from named params
 local Layer3 = require("kag.commands.layer")
@@ -100,5 +184,6 @@ check("exp guarded in live handlers", gcount == 2)
 package.loaded["layers"] = layers3
 _G._CAESURA_BACKEND = be3
 
+print(string.format("AUDIO FADE ROUTING: %d passed, %d failed", passed, failed))
 if failed > 0 then os.exit(1) end
 print("AUDIO FADE TESTS DONE")
