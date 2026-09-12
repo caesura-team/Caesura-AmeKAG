@@ -125,6 +125,8 @@ public:
 
     bool init() override { return true; }
     void shutdown() override {}
+    // The in-memory transport is ready at construction in these tests.
+    bool isAvailable() const override { return true; }
     void runCallbacks() override {}
     bool isOverlayActive() const override { return false; }
     bool unlockAchievement(const char*) override { return true; }

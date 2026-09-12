@@ -65,10 +65,16 @@ TEST_CASE("Demo E2E: tokenizer and scheduler modules load") {
     CHECK(requireModule(L, "scheduler"));
 }
 
-// Execute the production tokenizer/compiler/scheduler; only backend command
-// handlers are replaced. Their observed payloads are the test oracle.
+// Execute the production tokenizer/compiler/scheduler with command stubs in a
+// no-host VM. Observed dispatch payloads are the oracle, not native availability.
 static void installDemoDriver(lua_State* L) {
     const char* code = R"lua(
+        assert(package.loaded['capability_runtime'] == nil,
+               'dispatch fixture must select its no-host boundary before capture')
+        rawset(Engine, 'get_capability_profile', nil)
+        local runtime = require('capability_runtime')
+        assert(not runtime.has_host(), 'dispatch fixture has no native backend proof')
+        assert(runtime.query('audio.play').proven == false)
         function runDemoWithStubs(script, maxFrames)
             local dispatched = {}
             package.loaded['kag'] = setmetatable({}, {

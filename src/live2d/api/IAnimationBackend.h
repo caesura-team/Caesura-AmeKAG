@@ -17,6 +17,11 @@ public:
     virtual bool init() = 0;
     virtual void shutdown() = 0;
 
+    // Owner-thread session query; do not race init/shutdown. True means the
+    // Cubism implementation is initialized, not that a model or motion loaded.
+    // Static-image fallbacks return false even when their init() succeeds.
+    virtual bool isCubismAvailable() const = 0;
+
     // Model lifecycle
     virtual int  loadModel(const std::string& path, const std::string& name) = 0;
     virtual void unloadModel(int handle) = 0;

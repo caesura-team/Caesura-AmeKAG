@@ -1,5 +1,6 @@
 // test_script_boundary.cpp - E3 boundary tests (KAG error recovery, GameState, bindings)
 #include "doctest.h"
+#include "EntryLifecycleBackends.h"
 #include "script/vm/LuaManager.h"
 #include "script/bindings/KAGBinding.h"
 #include "script/bindings/RenderBinding.h"
@@ -9,6 +10,7 @@
 #include "script/state/GameState.h"
 #include "di/BackendRegistry.h"
 #include "render/ParticleSystem.h"
+#include <memory>
 
 extern "C" {
 #include <lua.h>
@@ -258,9 +260,45 @@ TEST_CASE("E3 VFX: create_emitter rejects negative rate") {
 }
 
 TEST_CASE("E3 VFX: create_emitter clamps lifeMax below lifeMin") {
-    ParticleSystem particles;
-    BackendRegistry::instance().setParticleSystem(&particles);
-    auto* lm = initBindingLua();
+    // Only readiness is supplied by this boundary. The production Lua binding
+    // must clamp the observed config; real ParticleSystem storage owns ID zero.
+    // No GPU initialization or particle-rendering result is claimed here.
+    class ObservedParticles final : public ParticleSystem {
+    public:
+        bool isInitialized() const override { return true; }
+        int createEmitter(const ParticleEmitterConfig& cfg) override {
+            ++createCalls;
+            received = cfg;
+            return ParticleSystem::createEmitter(cfg);
+        }
+        ParticleEmitterConfig received;
+        int createCalls = 0;
+    } particles;
+    Test::LifecycleProbe renderProbe;
+    Test::RenderDevice render(renderProbe);
+    REQUIRE(render.init(nullptr, 64, 64));
+    Test::ServiceProbe quotaProbe;
+    Test::SandboxQuotaBackend quota(quotaProbe);
+    auto& registry = BackendRegistry::instance();
+    struct RestoreBindings {
+        BackendRegistry& registry;
+        IRenderDevice* render;
+        IParticleSystem* particles;
+        ISandboxQuota* quota;
+        ~RestoreBindings() {
+            registry.setRenderDevice(render);
+            registry.setParticleSystem(particles);
+            registry.setSandboxQuota(quota);
+        }
+    } restore{registry, registry.getRenderDevice(), registry.getParticleSystem(),
+              registry.getSandboxQuota()};
+    registry.setRenderDevice(&render);
+    registry.setParticleSystem(&particles);
+    registry.setSandboxQuota(&quota);
+    auto closeLua = [](LuaManager* value) {
+        if (value) { value->shutdown(); delete value; }
+    };
+    std::unique_ptr<LuaManager, decltype(closeLua)> lm(initBindingLua(), closeLua);
     REQUIRE(lm != nullptr);
     lua_State* L = lm->state();
     lua_getglobal(L, "VFX");
@@ -271,9 +309,19 @@ TEST_CASE("E3 VFX: create_emitter clamps lifeMax below lifeMin") {
     int r = lua_pcall(L, 1, 1, 0);
     CHECK(r == LUA_OK);
     CHECK(lua_tointeger(L, -1) >= 0);  // should succeed with clamped values
+    CHECK(lua_tointeger(L, -1) == 0);
+    CHECK(particles.createCalls == 1);
+    CHECK(particles.received.lifeMin == doctest::Approx(5.0f));
+    CHECK(particles.received.lifeMax == doctest::Approx(5.0f));
+    CHECK(particles.activeEmitterCount() == 1);
+    CHECK(quotaProbe.tryAllocCalls == 1);
     lua_pop(L, 2);
-    delete lm;
-    BackendRegistry::instance().setParticleSystem(nullptr);
+    REQUIRE(luaL_dostring(L, "return VFX.particles_destroy_emitter(0)") == LUA_OK);
+    CHECK(lua_isboolean(L, -1));
+    CHECK(lua_toboolean(L, -1));
+    CHECK(particles.activeEmitterCount() == 0);
+    CHECK(quotaProbe.releaseCalls == 1);
+    lua_pop(L, 1);
 }
 
 // -- E3 Step 6: GameState survives coroutine context switch --

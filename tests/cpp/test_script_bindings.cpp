@@ -29,6 +29,8 @@ namespace {
 
 class UnlockingSteamBackend final : public NullSteamBackend {
 public:
+    // This fixture supplies an available simulated achievement service.
+    bool isAvailable() const override { return true; }
     bool unlockAchievement(const char* id) override {
         lastAchievement = id ? id : "";
         return true;
@@ -303,6 +305,8 @@ TEST_CASE("Bindings: Steam module resolves backend through BackendRegistry") {
 
 class RecordingCloudBackend final : public NullSteamBackend {
 public:
+    // This fixture supplies an available in-memory cloud service.
+    bool isAvailable() const override { return true; }
     std::map<std::string, std::string> files;
     std::string lastWritten;
     std::string lastRead;

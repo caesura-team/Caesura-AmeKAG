@@ -1,0 +1,82 @@
+{
+  "schema": 1,
+  "description": "Implementation capability catalog. Build eligibility, runtime availability and executed evidence are distinct.",
+  "features": {
+    "render.postfx.bloom": {
+      "native": {"status": "supported", "available": "postfx.bloom"},
+      "web": {"status": "unsupported", "reason": "backend_not_implemented"}
+    },
+    "render.postfx.vignette": {
+      "native": {"status": "supported", "available": "postfx.vignette"},
+      "web": {"status": "unsupported", "reason": "backend_not_implemented"}
+    },
+    "render.postfx.lut": {
+      "native": {"status": "supported", "available": "postfx.lut"},
+      "web": {"status": "unsupported", "reason": "backend_not_implemented"}
+    },
+    "render.postfx.softblur": {
+      "native": {"status": "supported", "available": "postfx.softblur"},
+      "web": {"status": "unsupported", "reason": "backend_not_implemented"}
+    },
+    "render.postfx.lut3d": {
+      "native": {"status": "supported", "available": "postfx.lut3d"},
+      "web": {"status": "approximate", "reason": "css_fixed_grade"}
+    },
+    "render.particles": {
+      "native": {"status": "supported", "available": "particles"},
+      "web": {"status": "unsupported", "reason": "backend_not_implemented"}
+    },
+    "render.blur": {
+      "native": {"status": "unsupported", "reason": "command_not_wired"},
+      "web": {"status": "unsupported", "reason": "backend_not_implemented"}
+    },
+    "video.play": {
+      "native": {"status": "supported", "available": "video"},
+      "web": {"status": "unsupported", "reason": "backend_not_implemented"}
+    },
+    "video.ffmpeg": {
+      "native": {"status": "supported", "compiled": "ffmpeg", "available": "video"},
+      "web": {"status": "unsupported", "reason": "backend_not_implemented"}
+    },
+    "audio.play": {
+      "native": {"status": "supported", "available": "audio"},
+      "web": {"status": "supported", "available": "audio"}
+    },
+    "audio.fade": {
+      "native": {"status": "supported", "available": "audio"},
+      "web": {"status": "unsupported", "reason": "backend_not_implemented"}
+    },
+    "audio.crossfade": {
+      "native": {"status": "unsupported", "reason": "backend_route_not_wired"},
+      "web": {"status": "unsupported", "reason": "backend_not_implemented"}
+    },
+    "live2d.cubism": {
+      "native": {"status": "supported", "compiled": "live2d", "available": "cubism"},
+      "web": {"status": "unsupported", "reason": "backend_not_implemented"}
+    },
+    "kag.live2d_motion": {
+      "native": {"status": "unsupported", "reason": "command_not_wired"},
+      "web": {"status": "unsupported", "reason": "command_not_wired"}
+    },
+    "kag.live2d_expression": {
+      "native": {"status": "unsupported", "reason": "command_not_wired"},
+      "web": {"status": "unsupported", "reason": "command_not_wired"}
+    },
+    "kag.live2d_lip_sync": {
+      "native": {"status": "unsupported", "reason": "command_not_wired"},
+      "web": {"status": "unsupported", "reason": "command_not_wired"}
+    },
+    "steam.achievements": {
+      "native": {"status": "supported", "compiled": "steam", "available": "steam"},
+      "web": {"status": "unsupported", "reason": "backend_not_implemented"}
+    },
+    "steam.stats": {
+      "native": {"status": "supported", "compiled": "steam", "available": "steam"},
+      "web": {"status": "unsupported", "reason": "backend_not_implemented"}
+    },
+    "steam.cloud": {
+      "native": {"status": "supported", "compiled": "steam", "available": "steam"},
+      "web": {"status": "unsupported", "reason": "backend_not_implemented"}
+    }
+  }
+}

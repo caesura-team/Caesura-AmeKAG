@@ -427,12 +427,14 @@ static int lua_Render_submit_vfx(lua_State* L) {
 // Null/software renderers report isPostFxSupported=false; set_postfx then
 // returns 0 (no-op) without touching the device.
 
-static IRenderDevice::PostFxKind resolvePostFxKind(const char* name) {
-    if (strcmp(name, "vignette") == 0) return IRenderDevice::PostFxKind::Vignette;
-    if (strcmp(name, "lut") == 0)      return IRenderDevice::PostFxKind::LutColorGrade;
-    if (strcmp(name, "softblur") == 0) return IRenderDevice::PostFxKind::SoftBlur;
-    if (strcmp(name, "lut3d") == 0)  return IRenderDevice::PostFxKind::Lut3D;
-    return IRenderDevice::PostFxKind::Bloom; // "bloom" (default)
+static bool resolvePostFxKind(const char* name, IRenderDevice::PostFxKind& kind) {
+    if (strcmp(name, "bloom") == 0)         kind = IRenderDevice::PostFxKind::Bloom;
+    else if (strcmp(name, "vignette") == 0) kind = IRenderDevice::PostFxKind::Vignette;
+    else if (strcmp(name, "lut") == 0)      kind = IRenderDevice::PostFxKind::LutColorGrade;
+    else if (strcmp(name, "softblur") == 0) kind = IRenderDevice::PostFxKind::SoftBlur;
+    else if (strcmp(name, "lut3d") == 0)    kind = IRenderDevice::PostFxKind::Lut3D;
+    else return false;
+    return true;
 }
 
 static float postFxField(lua_State* L, int tableIdx, const char* key, float def) {
@@ -534,9 +536,10 @@ static void postFxStoreHandle(lua_State* L, int kindIndex, uint32_t handle) {
 static int lua_Render_set_postfx(lua_State* L) {
     const char* kindName = luaL_checkstring(L, 1);
     luaL_checktype(L, 2, LUA_TTABLE); // params table
+    IRenderDevice::PostFxKind kind;
+    if (!resolvePostFxKind(kindName, kind)) { lua_pushinteger(L, 0); return 1; }
     IRenderDevice* dev = getRender(L);
     if (!dev) { lua_pushinteger(L, 0); return 1; }
-    const IRenderDevice::PostFxKind kind = resolvePostFxKind(kindName);
     if (!dev->isPostFxSupported(kind)) { lua_pushinteger(L, 0); return 1; }
 
     IRenderDevice::PostFxParams params = resolvePostFxParams(L, 2);
@@ -557,9 +560,10 @@ static int lua_Render_set_postfx(lua_State* L) {
 // -- Render.destroy_postfx(kind) -> bool -----------------------------------
 static int lua_Render_destroy_postfx(lua_State* L) {
     const char* kindName = luaL_checkstring(L, 1);
+    IRenderDevice::PostFxKind kind;
+    if (!resolvePostFxKind(kindName, kind)) { lua_pushboolean(L, 0); return 1; }
     IRenderDevice* dev = getRender(L);
     if (!dev) { lua_pushboolean(L, 0); return 1; }
-    const IRenderDevice::PostFxKind kind = resolvePostFxKind(kindName);
     const uint32_t handle = postFxHandle(L, 1);
     if (handle != 0 && dev->isPostFxSupported(kind)) {
         dev->destroyPostFx(handle);
@@ -591,9 +595,11 @@ static int lua_Render_clear_postfx(lua_State* L) {
 // -- Render.is_postfx_supported(kind) -> bool ------------------------------
 static int lua_Render_is_postfx_supported(lua_State* L) {
     const char* kindName = luaL_checkstring(L, 1);
+    IRenderDevice::PostFxKind kind;
+    if (!resolvePostFxKind(kindName, kind)) { lua_pushboolean(L, 0); return 1; }
     IRenderDevice* dev = getRender(L);
     if (!dev) { lua_pushboolean(L, 0); return 1; }
-    lua_pushboolean(L, dev->isPostFxSupported(resolvePostFxKind(kindName)) ? 1 : 0);
+    lua_pushboolean(L, dev->isPostFxSupported(kind) ? 1 : 0);
     return 1;
 }
 

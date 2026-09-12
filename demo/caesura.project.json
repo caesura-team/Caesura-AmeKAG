@@ -1,0 +1,13 @@
+{
+  "capabilities": {
+    "optional": [
+      "audio.play",
+      "audio.fade",
+      "audio.crossfade",
+      "render.postfx.vignette",
+      "render.postfx.bloom",
+      "render.particles"
+    ],
+    "accept_approximate": ["render.postfx.lut3d"]
+  }
+}

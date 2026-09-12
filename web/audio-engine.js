@@ -209,6 +209,13 @@ export class AudioEngine {
   resume() { return this._ctx?.resume?.() }
   get state() { return this._ctx ? (this._ctx.state ?? 'running') : 'none' }
 
+  // Eligibility only: a user gesture, a valid asset and successful decoding
+  // are still required. Querying this never creates/unlocks an AudioContext.
+  isPlaybackAvailable() {
+    if (this._ctx) return this.ready && this._ctx.state !== 'closed'
+    return typeof globalThis.AudioContext === 'function' || typeof globalThis.webkitAudioContext === 'function'
+  }
+
   async unlock() {
     const context = this.ensureContext()
     if (!context) return false

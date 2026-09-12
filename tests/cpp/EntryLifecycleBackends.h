@@ -246,11 +246,17 @@ public:
     explicit AudioBackend(LifecycleProbe& probe) : m_probe(probe) {}
     ~AudioBackend() override { ++m_probe.destructorCalls; }
 
-    bool init() override { ++m_probe.initCalls; return m_probe.initResult; }
+    bool init() override {
+        ++m_probe.initCalls;
+        m_initialized = m_probe.initResult;
+        return m_initialized;
+    }
     void shutdown() override {
         ++m_probe.shutdownCalls;
+        m_initialized = false;
         if (m_probe.onShutdown) m_probe.onShutdown();
     }
+    bool isPlaybackAvailable() const override { return m_initialized; }
     void update(float) override { ++m_probe.audioUpdateCalls; }
     void suspend() override { ++m_probe.audioSuspendCalls; }
     void resume() override { ++m_probe.audioResumeCalls; }
@@ -291,6 +297,7 @@ public:
 
 private:
     LifecycleProbe& m_probe;
+    bool m_initialized = false;
 };
 
 class MiniGameBackend final : public IMiniGameBackend {
@@ -326,6 +333,8 @@ public:
         ++m_probe.shutdownCalls;
         if (m_probe.onShutdown) m_probe.onShutdown();
     }
+    // The lifecycle fixture has no Cubism implementation.
+    bool isCubismAvailable() const override { return false; }
     int loadModel(const std::string&, const std::string&) override { return 0; }
     void unloadModel(int) override {}
     bool isLoaded(int) const override { return false; }

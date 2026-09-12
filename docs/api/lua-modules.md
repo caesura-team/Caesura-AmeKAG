@@ -540,6 +540,7 @@ Sources: [SaveBinding.cpp](../../src/script/bindings/SaveBinding.cpp), [save.lua
 | `select_audio_backend` | `(name) → bool` | Create and select an audio backend. `nil + err` on unknown backend. |
 | `select_platform_backend` | `(name) → bool` | Create and select a platform backend. `nil + err` on unknown backend. |
 | `get_backend_info` | `() → table` | Current backend names: `{ render = ..., audio = ..., platform = ... }` |
+| `get_capability_profile` | `() → table` 或 `nil, reason` | 读取有效编译条件与当前 Registry 后端，返回新的 runtime profile；异常只返回固定原因。见[目标能力](../guides/target-capabilities.md)。 |
 
 ---
 

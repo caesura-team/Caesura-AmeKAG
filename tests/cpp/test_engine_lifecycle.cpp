@@ -90,6 +90,7 @@ namespace {
 struct FailingAudioBackend : IAudioBackend {
     bool init() override { return false; }
     void shutdown() override {}
+    bool isPlaybackAvailable() const override { return false; }
     void update(float) override {}
     void suspend() override {}
     void resume() override {}

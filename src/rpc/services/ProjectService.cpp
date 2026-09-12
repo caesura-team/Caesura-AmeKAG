@@ -491,7 +491,11 @@ ServiceResult ProjectService::metaGet(const std::string& path) {
             std::ifstream in(metaFile);
             std::ostringstream buf;
             buf << in.rdbuf();
-            overlayStringMeta(meta, Json::parse(buf.str()));
+            const Json stored = Json::parse(buf.str());
+            overlayStringMeta(meta, stored);
+            // Capability requirements are authored data, not host support
+            // facts. Keep even malformed declarations for the CLI to reject.
+            if (stored.contains("capabilities")) meta["capabilities"] = stored["capabilities"];
             inferred = false;
         } catch (const std::exception&) { /* keep defaults */ }
     }
@@ -531,12 +535,35 @@ ServiceResult ProjectService::metaSave(const std::string& path, Json meta) {
     if (!fs::exists(projectDir, ec)) return ServiceResult::err(404, "Project not found");
 
     Json final_meta = defaultProjectMeta(name);
+    // This existing endpoint edits string metadata, not capability policy.
+    // In particular, an old client must not replace or clear disk requirements.
+    if (meta.is_object()) meta.erase("capabilities");
     overlayStringMeta(final_meta, meta);
+    const fs::path metaFile = projectDir / "caesura.project.json";
+    try {
+        if (fs::exists(metaFile)) {
+            std::ifstream in(metaFile, std::ios::binary);
+            if (!in) return ServiceResult::err(500, "Failed to read existing metadata");
+            const Json stored = Json::parse(in);
+            if (in.bad() || !stored.is_object())
+                return ServiceResult::err(500, "Failed to read existing metadata");
+            // Preserve any JSON value, including invalid types/null. Validation
+            // belongs to the capability checker and cannot be bypassed here.
+            if (stored.contains("capabilities"))
+                final_meta["capabilities"] = stored["capabilities"];
+        }
+    } catch (const std::exception&) {
+        // Do not truncate a file whose declaration we could not preserve.
+        return ServiceResult::err(500, "Failed to read existing metadata");
+    }
     try {
         const std::string now = nowIsoUtc();
         final_meta["modified"] = now;
-        std::ofstream out(projectDir / "caesura.project.json", std::ios::trunc);
-        out << final_meta.dump(2);
+        const std::string serialized = final_meta.dump(2);
+        std::ofstream out(metaFile, std::ios::trunc);
+        out << serialized;
+        out.flush();
+        if (!out) return ServiceResult::err(500, "Failed to save metadata");
     } catch (const std::exception&) {
         return ServiceResult::err(500, "Failed to save metadata");
     }

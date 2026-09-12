@@ -11,6 +11,7 @@ import { createAssetRestore } from './restore-assets.js'
 import { installSaveValueBridge } from './save-value-bridge.js'
 import { createFontRestore } from './restore-font.js'
 import { createAudioRestore } from './restore-audio.js'
+import { catalogSha256 } from './capability-catalog.js'
 
 // modules whose Lua source lives in scripts/ (NOT bindings)
 // layers/audio/etc are C++-binding modules stubbed in JS below (the real
@@ -86,11 +87,19 @@ function syncRestoredHistory(lua, core) {
   lua.global.set('__RESTORED_WEB_BACKLOG', null)
 }
 
-export async function createPlayer({ scriptsBase, fetchImpl = fetch, wasmFile, audioContext, audioAssetUrl = defaultAudioAssetUrl, assetUrl = defaultAudioAssetUrl, decodeImage, storageBackend, langBase = langBaseFromScripts(scriptsBase), langs = ['en', 'zh', 'ja'] }) {
+export async function createPlayer({ scriptsBase, fetchImpl = fetch, wasmFile, audioContext, audioAssetUrl = defaultAudioAssetUrl, assetUrl = defaultAudioAssetUrl, decodeImage, storageBackend, capabilities, langBase = langBaseFromScripts(scriptsBase), langs = ['en', 'zh', 'ja'] }) {
+  if (capabilities !== undefined && (!capabilities || typeof capabilities !== 'object' || Array.isArray(capabilities))) {
+    throw new TypeError('Project capabilities must be a JSON object')
+  }
+  const projectCapabilityJson = JSON.stringify(capabilities === undefined ? {} : {capabilities})
   const factory = await Lua.load(wasmFile ? { wasmFile } : undefined)
   const lua = factory.createState()
   const core = new AdapterCore()
   const audio = new AudioEngine({ctx:audioContext,fetchImpl})
+  lua.global.set('__CAESURA_CAPABILITY_PROFILE_JSON', () => JSON.stringify({
+    schema: 1, target: 'web', platform: 'browser', scope: 'runtime', catalog_sha256: catalogSha256,
+    compiled: {}, available: { audio: audio.isPlaybackAvailable() },
+  }))
   const audioRestore = createAudioRestore({audio,fetchImpl,assetUrl:audioAssetUrl})
   const imageRestore = createAssetRestore({core, fetchImpl, assetUrl, decodeImage})
   const fontRestore = typeof globalThis.FontFace === 'function' && globalThis.document?.fonts
@@ -101,6 +110,13 @@ export async function createPlayer({ scriptsBase, fetchImpl = fetch, wasmFile, a
     const id = imageRestore.materialize_image(imageRestore.prepare_color(...rgba))
     core.textures.get(id).ordinaryColor = key
     return id
+  }
+  function setCssPalette(handle, intensity, size) {
+    const id = Number(handle ?? 0)
+    if (id === 0) { core.setPalette(null, 0, 0); return true }
+    if (!Number.isSafeInteger(id) || !core.textures.has(id) || !Number.isFinite(Number(intensity))) return false
+    core.setPalette(id, Math.max(0, Math.min(1, Number(intensity))), Number(size) || 0)
+    return true
   }
 
   // ---- lang dictionaries (round 91 i18n web parity) ------------------
@@ -305,14 +321,12 @@ export async function createPlayer({ scriptsBase, fetchImpl = fetch, wasmFile, a
     // backend.* entries (load_image / is_valid / set_palette /
     // destroy_texture). Earlier load_image+set_palette were missing, so
     // [palette effect=night] crashed at palette.lua:39 (field load_image)
-    // once lut_available() returned true. The web LUT is real: the LUT
-    // image registers through the same core texture pipeline as atlases
-    // /sprites, and set_palette drives core.palette which the DOM
-    // renderer turns into a color-grading filter on the render output.
+    // once lut_available() returned true. Web grading is a fixed CSS
+    // approximation: the LUT pixels are not sampled by the DOM renderer.
     load_image: (f) => core.loadTexture(String(f ?? '')),
     is_valid: (h) => core.textures.has(Number(h)),
     is_valid_handle: (type, h) => core.textures.has(Number(h)), // t214: real-name alias (palette.lua); HandleType::TEXTURE=0
-    set_palette: (h, intensity, size) => core.setPalette(h, intensity, size),
+    set_palette: setCssPalette,
     font_render_text: () => 1, font_clear: () => {}, line_height: () => 22,
     // Lua contract: render_text(text, x, y, r, g, b, a) — the text is the
     // first arg; x/y/r/g/b/a are render coordinates we ignore in the DOM
@@ -320,16 +334,18 @@ export async function createPlayer({ scriptsBase, fetchImpl = fetch, wasmFile, a
     render_text: (...args) => { const t = args[0]; if (typeof t === 'string') core.appendText(t); return 1 }, clear_text: () => core.clearText(),
     text_render_ruby: () => {}, text_set_font: () => {}, text_reset_state: () => {},
     create_lut_texture: () => 0, render_frame: () => {}, set_screen_offset: () => {},
-    is_postfx_supported: (kind) => true,
-    // t214: unify the palette surface -- "lut3d" drives the real DOM color
-    // grade (core.setPalette); other postfx kinds stay no-op on the DOM path.
+    is_postfx_supported: (kind) => kind === 'lut3d',
+    // The Lua boundary additionally requires the author to accept this
+    // approximate grade, and returns its status alongside the legacy ACK.
     set_postfx: (kind, pf) => {
       if (kind === 'lut3d') {
-        core.setPalette((pf && pf.lutId) || 0, (pf && typeof pf.intensity === 'number') ? pf.intensity : 1.0, (pf && pf.lutSize) || 0)
+        return setCssPalette(pf?.lutId ?? 0, pf?.intensity ?? pf?.strength ?? 1, pf?.lutSize ?? 0)
       }
+      return false
     },
-    clear_postfx: () => {},
-    particles_create_emitter: () => 0, particles_emit: () => {}, particles_destroy_emitter: () => {}, clear_particles: () => {},
+    destroy_postfx: kind => kind === 'lut3d' ? setCssPalette(0, 0, 0) : false,
+    clear_postfx: () => setCssPalette(0, 0, 0),
+    particles_create_emitter: () => -1, particles_emit: () => false, particles_destroy_emitter: () => false, clear_particles: () => {},
     video_stop: () => {}, video_play: () => 0, video_is_playing: () => false,
     ai_available: () => false, ai_query_async: () => {}, ai_cancel: () => {},
   }
@@ -462,6 +478,24 @@ export async function createPlayer({ scriptsBase, fetchImpl = fetch, wasmFile, a
     -- io.open of assets/lang/*.lua and falls back to built-in dictionaries.
     pcall(function() _G.i18n = require('i18n') end)
   `)
+
+  // Policy is instance-local and checked before author commands can run.
+  // Rejected boot configuration releases the resources already acquired here.
+  lua.global.set('__CAESURA_PROJECT_CAPABILITY_JSON', projectCapabilityJson)
+  try {
+    await lua.doString(`
+      local runtime = require('capability_runtime')
+      local ok, reason, detail = runtime.configure_project_json(__CAESURA_PROJECT_CAPABILITY_JSON)
+      __CAESURA_PROJECT_CAPABILITY_JSON = nil
+      if not ok then error('Project capability configuration rejected: ' .. (detail and runtime.message(detail) or reason), 0) end
+      require('capability_backend').install(backend)
+    `)
+  } catch (error) {
+    for (const cleanup of [()=>imageRestore.dispose(),()=>fontRestore?.dispose(),()=>audioRestore.dispose(),()=>audio.destroy(),()=>lua.global.close()]) {
+      try { cleanup() } catch { /* Preserve the original configuration error. */ }
+    }
+    throw error
+  }
 
   // ---- load the real kag command table ----
   await installLayerBridge(lua, core)

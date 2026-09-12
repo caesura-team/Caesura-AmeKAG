@@ -62,6 +62,12 @@ local tests = {
     "test_hr",
     "test_errorui_wiring",
     "test_palette",
+    "test_capability_json",
+    "test_schema_static",
+    "test_target_capabilities",
+    "test_capability_resource_results",
+    "test_capability_runtime",
+    "test_capability_audio_cleanup",
 }
 
 local passed, failed = 0, 0

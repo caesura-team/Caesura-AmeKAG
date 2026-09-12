@@ -1,5 +1,7 @@
 # Engine Capability Matrix (Mermaid)
 
+> 下表保留历史代码能力快照。当前目标差异、有效构建条件与运行时可用性由 [runtime-capabilities.json](../../config/runtime-capabilities.json) 和实际宿主查询决定，参见[目标能力指南](../guides/target-capabilities.md)；本表不能覆盖其 unsupported/approximate 结果。
+
 > 2026-08-16 readiness audit (阶段 G 终态 / refreshed to round 113): this matrix tracks **82 code-level capability surfaces** (existing rows refreshed through round 98; round 97-98 script robustness: expr nesting budget + schema coerce semantics corrections; **round 102-113 stage G: post-processing stack [R11], declarative tween [S13], declarative layout [S14], Scene Builder, i18n/迁移工具链以说明方式纳入（见文末「工具链边界」）**).
 > A present interface or conditional implementation is not counted as release validation.
 

@@ -23,6 +23,7 @@ public:
 
     bool init() override;
     void shutdown() override;
+    bool isAvailable() const override { return m_initialized; }
     void runCallbacks() override;
     bool isOverlayActive() const override;
 

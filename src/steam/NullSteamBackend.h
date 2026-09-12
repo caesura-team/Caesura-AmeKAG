@@ -10,6 +10,7 @@ class NullSteamBackend : public ISteamBackend {
 public:
     bool init() override { return false; }
     void shutdown() override {}
+    bool isAvailable() const override { return false; }
     void runCallbacks() override {}
     bool isOverlayActive() const override { return false; }
 

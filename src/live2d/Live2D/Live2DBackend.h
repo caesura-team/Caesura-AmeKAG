@@ -28,6 +28,7 @@ public:
     ~Live2DBackend() override;
     bool init() override;
     void shutdown() override;
+    bool isCubismAvailable() const override { return m_initialized; }
 
     int  loadModel(const std::string& path, const std::string& name) override;
     void unloadModel(int handle) override;

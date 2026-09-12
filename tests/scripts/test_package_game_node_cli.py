@@ -126,6 +126,10 @@ class PackageGameCliTest(unittest.TestCase):
             injection = Path(temp) / 'copy-boundary.mjs'
             callee = Path(temp) / 'callee.ks'
             callee.write_text('[end]\n', encoding='utf-8')
+            first_scene = Path(temp) / 'story.ks'
+            shutil.copy2(ROOT / FIRST_VN_KS, first_scene)
+            shutil.copy2(ROOT / 'tests/projects/first_vn/caesura.project.json',
+                         Path(temp) / 'caesura.project.json')
             destination = self.out_path / 'cache/story/story.lua'
             injection.write_text('''import fs from 'node:fs';
 import {resolve} from 'node:path';
@@ -156,8 +160,14 @@ syncBuiltinESMExports();
                                      ('missing-scene', 'missing-bundle-scene:callee.ks'),
                                      ('missing-runtime', "module 'kag' not found")):
                 with self.subTest(mutation=mutation):
+                    # Each mutation starts from a fresh test-owned delivery;
+                    # a failed prior copy deliberately has no package marker.
+                    if self.out_path.exists():
+                        self.assertTrue(self.out_path.resolve().is_relative_to((ROOT / 'dist').resolve()))
+                        self.assertTrue(self.out_path.name.startswith('t179-cli-'))
+                        shutil.rmtree(self.out_path)
                     env = dict(os.environ, NODE_OPTIONS='--import=' + injection.as_uri(), U14_COPY_MUTATION=mutation)
-                    rc, out, err = run_cli_full('--out', self.out_name, FIRST_VN_KS,
+                    rc, out, err = run_cli_full('--out', self.out_name, first_scene.relative_to(ROOT).as_posix(),
                                                 callee.relative_to(ROOT).as_posix(), env=env)
                     self.assertEqual(rc, 1, out + err)
                     self.assertIn(reason, out + err)
@@ -376,7 +386,10 @@ class PackageLuaSelectionCliTest(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory(prefix="u2-package-lua-", dir=ROOT / "tmp")
         self.addCleanup(self.temporary.cleanup)
         self.fixture = Path(self.temporary.name)
-        for relative in ("scripts/package_game.mjs", "scripts/copy_tree.mjs", "web/lua-value.js"):
+        for relative in ("scripts/package_game.mjs", "scripts/copy_tree.mjs",
+                         "scripts/web_capability_profile.mjs", "web/lua-value.js",
+                         "web/capability-catalog.js", "web/package.json",
+                         "config/runtime-capabilities.json"):
             target = self.fixture / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT / relative, target)
@@ -423,7 +436,7 @@ os.exit(42)'''
                 self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
                 self.assertIn("U2-LUA-EXECUTED:" + name + ":Lua 5.4", result.stdout)
                 self.assertEqual(result.stdout.count("U2-LUA-EXECUTED:"), 1)
-                self.assertIn("FAIL: contract check failed", result.stdout)
+                self.assertIn("required Web capabilities or scene contracts are not satisfied", result.stderr)
                 self.assertNotIn("PACKAGE COMPLETE", result.stdout)
 
     def test_13_invalid_explicit_lua_never_falls_back(self):
@@ -451,8 +464,165 @@ os.exit(42)'''
                 self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
                 self.assertIn("U2-LUA-EXECUTED:" + self.executable + ":Lua 5.4", result.stdout)
                 self.assertEqual(result.stdout.count("U2-LUA-EXECUTED:"), 1)
-                self.assertIn("FAIL: contract check failed", result.stdout)
+                self.assertIn("required Web capabilities or scene contracts are not satisfied", result.stderr)
                 candidate.unlink()
+
+
+class PackageWebCapabilitiesCliTest(unittest.TestCase):
+    """Use the real Node packager, Lua preflight and a copy of the built player."""
+
+    @classmethod
+    def setUpClass(cls):
+        if NODE is None:
+            raise unittest.SkipTest("node not found on PATH")
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import caesura_build
+        cls.lua = caesura_build.find_lua()
+        if not (ROOT / "web/dist/capabilities-build.json").is_file():
+            raise RuntimeError("Build the real Web player before running packaging capability tests")
+
+    def setUp(self):
+        (ROOT / "tmp").mkdir(exist_ok=True)
+        self.temp = tempfile.TemporaryDirectory(prefix="u19-node-capabilities-", dir=ROOT / "tmp")
+        self.addCleanup(self.temp.cleanup)
+        self.fixture = Path(self.temp.name)
+        for directory in ("scripts", "config", "web"):
+            shutil.copytree(ROOT / directory, self.fixture / directory,
+                            ignore=shutil.ignore_patterns("node_modules", "__pycache__", "dist"))
+        shutil.copytree(ROOT / "web/dist", self.fixture / "web/dist")
+        for name in ("package.json", "package-lock.json", "npm-shrinkwrap.json"):
+            if (ROOT / name).is_file():
+                shutil.copy2(ROOT / name, self.fixture / name)
+        (self.fixture / "assets").mkdir()
+        self.project = self.fixture / "项目 空格"
+        self.project.mkdir()
+        (self.project / "story.ks").write_text("[end]\n", encoding="utf-8")
+        self.out = self.fixture / "output"
+        self.out.mkdir()
+        self.original = b"previous deliverable must remain byte-identical"
+        (self.out / "MANIFEST.txt").write_text("Caesura (AmeKAG) web package: old\n", encoding="utf-8")
+        (self.out / "sentinel.bin").write_bytes(self.original)
+        self.old_files = {p.name: p.read_bytes() for p in self.out.iterdir()}
+
+    def declare(self, capabilities):
+        (self.project / "caesura.project.json").write_text(
+            json.dumps({"capabilities": capabilities}), encoding="utf-8")
+
+    def cli(self, *args, extra_env=None):
+        env = dict(os.environ, CAESURA_LUA=str(self.lua))
+        env.pop("NODE_OPTIONS", None)
+        env.update(extra_env or {})
+        return subprocess.run([NODE, str(self.fixture / "scripts/package_game.mjs"),
+                               "--no-web-build", "--out", str(self.out), *map(str, args)],
+                              cwd=self.fixture, env=env, capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", timeout=60)
+
+    def unchanged(self, result, reason):
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn(reason, result.stdout + result.stderr)
+        self.assertNotIn("PACKAGE COMPLETE", result.stdout)
+        self.assertEqual({p.name for p in self.out.iterdir()}, set(self.old_files))
+        self.assertEqual({p.name: p.read_bytes() for p in self.out.iterdir()}, self.old_files)
+
+    def reprofile(self):
+        driver = """import fs from 'node:fs';
+const {createWebCapabilityProfile,collectWebSourceFiles}=await import(process.argv[1]);
+fs.writeFileSync(process.argv[2]+'/capabilities-build.json',JSON.stringify(createWebCapabilityProfile(process.argv[2],{sourceFiles:collectWebSourceFiles()})));"""
+        result = subprocess.run([NODE, "--input-type=module", "-e", driver,
+                                 (self.fixture / "scripts/web_capability_profile.mjs").as_uri(),
+                                 str(self.fixture / "web/dist")], cwd=self.fixture,
+                                capture_output=True, text=True, encoding="utf-8", timeout=30)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_required_declaration_survives_skip_check(self):
+        self.declare({"required": ["video.play"]})
+        for flags in ((), ("--skip-check",)):
+            with self.subTest(flags=flags):
+                self.unchanged(self.cli(*flags, self.project), "video.play")
+
+    def test_nested_scene_is_checked(self):
+        nested = self.project / "chapter"
+        nested.mkdir()
+        (nested / "opening.ks").write_text('[video file="opening.mpg"]\n[end]\n', encoding="utf-8")
+        self.unchanged(self.cli("--skip-check", self.project), "video.play")
+
+    def test_explicit_entry_outside_selected_files_is_checked(self):
+        opening = self.project / "opening.ks"
+        opening.write_text('[video file="opening.mpg"]\n[end]\n', encoding="utf-8")
+        self.unchanged(self.cli("--skip-check", "--entry", opening, self.project / "story.ks"), "video.play")
+
+    def test_invalid_html_rejects_before_replacing_previous_package(self):
+        (self.fixture / "web/dist/index.html").write_text("<html><body>no head</body></html>", encoding="utf-8")
+        self.reprofile()
+        self.unchanged(self.cli(self.project), "metadata insertion point")
+
+    def test_optional_feature_has_inspectable_delivered_report(self):
+        self.declare({"optional": ["video.play"]})
+        (self.project / "story.ks").write_text('[video file="opening.mpg"]\n[end]\n', encoding="utf-8")
+        result = self.cli(self.project)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        report = json.loads((self.out / "CAPABILITIES.json").read_text(encoding="utf-8"))
+        self.assertTrue(report["passed"])
+        self.assertIn('"decision": "skip"', json.dumps(report))
+        self.assertIn("self.__CAESURA_PROJECT_CAPABILITIES__", (self.out / "index.html").read_text(encoding="utf-8"))
+        self.assertIn("story.ks", report["checked_inputs"])
+        profile = json.loads((self.out / "capabilities-build.json").read_text(encoding="utf-8"))
+        self.assertEqual(report["profile"], profile)
+        import hashlib
+        for file, digest in profile["bundle_files"].items():
+            self.assertEqual(hashlib.sha256((self.out / file).read_bytes()).hexdigest(), digest, file)
+
+    def test_modified_built_runtime_rejects_before_replacing_output(self):
+        with (self.fixture / "web/dist/scripts/capability_runtime.lua").open("a", encoding="utf-8") as stream:
+            stream.write("\n-- altered after profile\n")
+        self.unchanged(self.cli(self.project), "after capability profiling changed")
+
+    def test_source_runtime_changes_make_no_web_build_stale(self):
+        with (self.fixture / "scripts/target_capabilities.lua").open("a", encoding="utf-8") as stream:
+            stream.write("\n-- changed after selected Web build\n")
+        self.unchanged(self.cli(self.project), "build source changed")
+
+    def test_modified_service_worker_cannot_keep_the_previous_profile(self):
+        worker = self.fixture / "web/dist/sw.js"
+        self.assertTrue(worker.is_file(), "actual Vite fixture must include its Service Worker")
+        with worker.open("a", encoding="utf-8") as stream:
+            stream.write("\n// modified after profile\n")
+        self.unchanged(self.cli(self.project), "after capability profiling changed: sw.js")
+
+    def test_copied_player_mutation_cannot_receive_a_success_profile(self):
+        injection = self.fixture / "mutate-copy.mjs"
+        injection.write_text("""import fs from 'node:fs';
+import {resolve} from 'node:path';
+import {syncBuiltinESMExports} from 'node:module';
+const target=resolve(process.env.U19_COPY_TARGET);
+const copy=fs.copyFileSync;
+fs.copyFileSync=function(source,destination,...args) {
+  const value=copy(source,destination,...args);
+  if(resolve(String(destination))===target) {
+    fs.appendFileSync(destination,'\\n'+process.env.U19_COPY_COMMENT+' changed final copy\\n');
+    console.log('U19_REAL_COPY_MUTATED');
+  }
+  return value;
+};
+syncBuiltinESMExports();
+""", encoding="utf-8")
+        for file, comment in (("scripts/capability_runtime.lua", "--"), ("sw.js", "//")):
+            with self.subTest(file=file):
+                result = self.cli(self.project, extra_env={
+                    "NODE_OPTIONS": "--import=" + injection.as_uri(),
+                    "U19_COPY_TARGET": str(self.out / file), "U19_COPY_COMMENT": comment})
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("U19_REAL_COPY_MUTATED", result.stdout)
+                self.assertIn("Copied Web player changed: " + file, result.stderr)
+                self.assertNotIn("PACKAGE COMPLETE", result.stdout)
+                self.assertFalse((self.out / "CAPABILITIES.json").exists())
+                self.assertFalse((self.out / "MANIFEST.txt").exists())
+                # Restore only this test-owned incomplete output for the next mutation.
+                self.assertTrue(self.out.resolve().is_relative_to(self.fixture.resolve()))
+                shutil.rmtree(self.out)
+                self.out.mkdir()
+                for name, contents in self.old_files.items():
+                    (self.out / name).write_bytes(contents)
 
 
 if __name__ == "__main__":

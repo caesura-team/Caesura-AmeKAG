@@ -19,6 +19,12 @@ public:
     virtual void shutdown() = 0;
     virtual void update(float deltaTime) = 0;
 
+    // Owner-thread session query; do not race init/shutdown. True means an
+    // initialized playback implementation (including a host-driven mixer),
+    // not proof that a particular asset plays or a physical device is audible.
+    // Silent fallbacks return false even when their init() succeeds.
+    virtual bool isPlaybackAvailable() const = 0;
+
     // -- App-lifecycle audio suspend/resume (mobile backgrounding) ----------
     // Suspends all playback (mixer paused) without releasing loaded assets;
     // resume() continues from the suspended position. Used by the engine's

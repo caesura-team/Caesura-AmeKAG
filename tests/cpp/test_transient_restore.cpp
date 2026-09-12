@@ -57,6 +57,8 @@ class TransientAnimation final : public IAnimationBackend {
 public:
     bool init() override { ++initializations; return true; }
     void shutdown() override { ++shutdowns; }
+    // This fixture simulates model ownership, not Cubism motion support.
+    bool isCubismAvailable() const override { return false; }
     int loadModel(const std::string&, const std::string&) override { ++models; return 1; }
     void unloadModel(int) override {}
     bool isLoaded(int) const override { return false; }

@@ -18,6 +18,13 @@ local luts = {}
 -- texture before releasing it; the chain also isValid-guards each frame).
 local active_id = nil
 
+-- Native PostFxHandle is uint32 with zero invalid; a Web effect may instead
+-- return true as an applied ACK. Lua truthiness also accepts invalid zero.
+local function valid_postfx_result(value)
+    return value == true or (type(value) == "number" and value > 0
+        and value <= 4294967295 and value % 1 == 0)
+end
+
 -- Resolve the backend surface (global first, module fallback).
 local function get_backend()
     local g = rawget(_G, "backend")
@@ -89,25 +96,33 @@ function palette.apply(lut_id, intensity)
     -- not supported on this device (visible degradation).
     local b = get_backend()
     -- strength = native PostFxParams field; intensity = web jsBackend field.
-    local ok = b.set_postfx("lut3d", {
+    local applied, result = b.set_postfx("lut3d", {
         lutId = entry.handle,
         strength = intensity, intensity = intensity,
         lutSize = entry.size,
     })
-    if not ok then lut_noop("apply") return false end
+    if not valid_postfx_result(applied) then
+        if type(result)=="table" and type(result.status)=="string" then
+            print(require("capability_runtime").message(result))
+        else
+            print("[palette] apply: backend did not apply the effect")
+        end
+        return false, result
+    end
     active_id = lut_id
 
-    return true
+    return true, result
 end
 
 --- Clear/disable the active palette.
--- @return true
+-- @return true on success, false plus the backend result on failure
 function palette.clear()
-    if not lut_available() then lut_noop("clear") return end
+    if not lut_available() then lut_noop("clear") return false end
     local b = get_backend()
-    b.set_postfx("lut3d", { lutId = 0, intensity = 0, lutSize = 0 })
+    local cleared, result = b.set_postfx("lut3d", { lutId = 0, intensity = 0, lutSize = 0 })
+    if not valid_postfx_result(cleared) then return false, result end
     active_id = nil
-    return true
+    return true, result
 end
 
 --- Unload a specific LUT from memory.
@@ -122,18 +137,28 @@ function palette.unload(lut_id)
 
     -- If the unloaded LUT is the active one, clear the stage first so a
     -- destroyed texture is never referenced (chain also guards isValid).
-    if active_id == lut_id then palette.clear() end
+    local result
+    if active_id == lut_id then
+        local cleared
+        cleared, result = palette.clear()
+        if not cleared then return false, result end
+    end
     local b = get_backend()
     if entry.handle and b.is_valid_handle and b.is_valid_handle(0, entry.handle) then
         b.destroy_texture(entry.handle)
     end
     luts[lut_id] = nil
-    return true
+    return true, result
 end
 
 --- Unload all LUTs.
 function palette.unload_all()
-    if active_id then palette.clear() end
+    local result
+    if active_id then
+        local cleared
+        cleared, result = palette.clear()
+        if not cleared then return false, result end
+    end
     local b = get_backend()
     for id, entry in pairs(luts) do
         if entry.handle and b.is_valid_handle and b.is_valid_handle(0, entry.handle) then
@@ -141,6 +166,7 @@ function palette.unload_all()
         end
     end
     luts = {}
+    return true, result
 end
 
 --- Day/night mode state
@@ -150,42 +176,39 @@ palette._nightLutId = "__night_preset"
 --- Activate day mode (neutral/no color grading).
 -- Clears any active LUT. Safe to call repeatedly.
 function palette.set_day_mode()
+    local cleared, result = palette.clear()
+    if not cleared then return false, result end
     palette._mode = "day"
-    palette.clear()
-    return true
+    return true, result
 end
 
 --- Activate night mode (blue-dark color grading).
--- Tries to load assets/lut/night.png LUT. Falls back to clear if missing.
+-- Tries to load assets/lut/night.png LUT. Failure preserves the current mode.
 -- The LUT is cached after first load so subsequent calls are cheap.
 function palette.set_night_mode()
-    palette._mode = "night"
-
     -- Try loading the night LUT if not already loaded
     if not luts[palette._nightLutId] then
         local nightPath = "assets/lut/night.png"
-        local ok = palette.load(palette._nightLutId, nightPath)
-        if not ok then
-            -- No night LUT file available; clear and exit gracefully
-            palette.clear()
-            return true, "night mode (no LUT file -- using neutral)"
-        end
+        local loaded, result = palette.load(palette._nightLutId, nightPath)
+        if not loaded then return false, result end
     end
 
-    palette.apply(palette._nightLutId, 1.0)
-    return true
+    local applied, result = palette.apply(palette._nightLutId, 1.0)
+    if not applied then return false, result end
+    palette._mode = "night"
+    return true, result
 end
 
 --- Toggle between day and night mode.
--- @return "day" or "night"
+-- @return actual "day" or "night" mode, plus the attempted operation result
 function palette.toggle_mode()
+    local _, result
     if palette._mode == "day" then
-        palette.set_night_mode()
-        return "night"
+        _, result = palette.set_night_mode()
     else
-        palette.set_day_mode()
-        return "day"
+        _, result = palette.set_day_mode()
     end
+    return palette._mode, result
 end
 
 --- Get the current mode.

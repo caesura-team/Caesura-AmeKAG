@@ -19,6 +19,7 @@ extern "C" {
 #include "script/vm/ManagedCoroutine.h"
 #include "entry/Engine.h"
 #include "rpc/OwnerRpcQueue.h"
+#include "CaesuraCapabilityBuild.h"
 #include "debug/DebugProtocol.h"
 #include "rpc/EditorServer.h"
 #include <nlohmann_json.hpp>
@@ -1168,6 +1169,14 @@ extern "C" int main(int argc, char* argv[]) {
     // from any working directory with zero side effects).
     for (int i = 1; i < argc; i++) {
         const std::string a = argv[i];
+        if (a == "--capabilities-json") {
+            if (argc != 2) {
+                fprintf(stderr, "[main] ERROR: --capabilities-json must be used alone.\n");
+                return 1;
+            }
+            puts(Caesura::capability_build::Json);
+            return 0;
+        }
         if (a == "--help" || a == "-h") {
             const std::string argv0 = argv[0] ? argv[0] : "CaesuraAmeKAG";
             const size_t lastSlash = argv0.find_last_of("/\\");
@@ -1177,6 +1186,7 @@ extern "C" int main(int argc, char* argv[]) {
             printf("Caesura (AmeKAG) -- cross-platform visual novel engine.\n");
             printf("\n");
             printf("Options:\n");
+            printf("  --capabilities-json   print effective build capability facts and exit\n");
             printf("  --resource-root <dir> resource directory containing assets/\n");
             printf("  --carc-trust <mode>   CARC policy: compatible (default) or pinned\n");
             printf("  --carc-public-key <f> 32 raw public-key bytes; requires --carc-trust pinned\n");
