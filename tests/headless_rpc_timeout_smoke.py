@@ -127,7 +127,9 @@ def probe(transport, outcome):
             _, fresh = request('eval', "return require('kag')._u18_count")
             record['fresh_response'] = fresh
             record['checks']['mutation_once_and_fresh_request_works'] = fresh.get('status') == 'ok' and fresh.get('result') == '1'
-            _, stopped = request('stop')
+            stop_status, stopped = request('stop')
+            record['stop_status'] = stop_status
+            record['stop_response'] = stopped
             record['checks']['stop_acknowledged'] = (stopped.get('result') == 'ok' if transport == 'stdio' else stopped.get('status') == 'ok')
             proc.wait(timeout=10)
         record['checks']['natural_exit'] = proc.returncode == 0
@@ -148,6 +150,7 @@ def probe(transport, outcome):
         record['checks']['readers_joined'] = all(not reader.is_alive() for reader in readers)
         proc.stdout.close(); proc.stderr.close()
         record['exit_code'] = proc.returncode
+        record['stop_events'] = [line for line in errors if '[RpcRequest]' in line and 'op=stop ' in line]
         (out / (name + '.stdout.log')).write_text(''.join(lines), encoding='utf-8')
         (out / (name + '.stderr.log')).write_text(''.join(errors), encoding='utf-8')
     if 'internal_request_id' in record:

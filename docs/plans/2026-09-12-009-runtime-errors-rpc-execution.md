@@ -118,3 +118,16 @@ coupling发现entry因OwnerRpcQueue增加rpc依赖而达到15/14。最终将同�
 错误及RPC/输出/恢复增量的独立审查已经收束，未发现需要生产修复的剩余问题。最后补充语音错误presentation保留/显式stop销毁两个时点断言；这仅加强测试，不改变2552e225的生产源码。该测试增量的Lua证据与后续最终候选CI另行记录，不把旧完整receipt重新标成新SHA。
 
 该测试增量提交为10a6d9fcd08ebb512f0ddda6ff628c06f6cbddf2，`u18-voice-error-contract-02`为69/69；`u18-final-orphan-increment-01`为完整隔离套件48/48。平台状态YAML只更新源码新鲜度锚点，不修改任何历史平台状态、设备证据或时间。跨平台CI尚待执行，U18仍未合并。
+
+## PR #21 首轮跨平台失败与有界修正（2026-09-12）
+
+CI 34702706010、head e91d15a9257d1945030b7767fc070edc1a1a8415的macOS Test有两项失败，保持失败记录，不以本地Windows通过代替。原始job日志保存在artifacts/validation/u18-macos-ci-job-01.log。
+
+- CaesuraStdioBackpressure的disconnected-running：变更执行一次、迟到终态一次、检测到断输出均通过，但进程exit=-13（SIGPIPE），自然退出断言失败。Apple [XNU fp_writev](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/sys_generic.c)在管道EPIPE分支调用进程级psignal；现有writer线程的pthread_sigmask不能阻止信号投递给其他线程。按Apple [fcntl说明](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/man/man2/fcntl.2)使用F_SETNOSIGPIPE只抑制此协议流信号，保留EPIPE错误和既有失败通知，不修改全局signal处理。因dup共享open-file状态，构造保存原值，正常析构恢复；标志查询/设置失败时恢复O_NONBLOCK并拒绝该输出。既有关闭消费者用例补原值0/1及析构恢复断言；真正的macOS进程通过证据仍待新CI。
+- CaesuraRpcTimeoutSmoke的http-late-success：最初result_unknown、变更一次及新eval均通过，随后stop_acknowledged=false，等待10秒后仍存活，最终清理强制终止。旧报告丢弃了stop响应及其事件，不能确定是100ms测试超时导致Queued取消还是其他问题。补保存stop HTTP状态、响应及全部op=stop事件；100ms、单次stop、ACK与自然退出断言不变。macOS失败时CI保存原始进程报告/日志，避免只剩过滤后的eval事件。没有声称HTTP根因已修复，也没有改测试为GPU替身或放宽阈值。
+
+修正后本地完整Debug构建u18-darwin-output-build-01退出0，Stdio定向6例/294断言通过（1372未选中）；这是Windows路径，Apple-only分支尚未执行。原生2552e225整批通过凭证仍只代表该源码，不能改写成此次Darwin修正后的凭证。
+
+同一构建的Windows真实进程增量也通过：u18-darwin-output-windows-process-01为3/3（包括1MiB完整回包、暂停消费者、Running后断开），u18-timeout-observation-windows-01为6/6；共9个本轮PID自然exit0，无forced termination，二进制前后hash稳定。HTTP两项late用例的stop状态均200、正文status=ok。这只增加Windows路径证据，仍不解释上轮macOS的stop失败。
+
+首轮CI最终为Linux GCC、Windows Debug/Release、Android静态/交叉编译包、iOS编译均成功，macOS失败；3个发布包job按PR事件规则跳过。该CI整体FAIL，不满足合并门禁。

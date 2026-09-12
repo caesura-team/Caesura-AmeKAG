@@ -40,6 +40,9 @@ private:
 #if !defined(_WIN32)
     int m_originalFlags = -1;
 #endif
+#if defined(__APPLE__)
+    int m_originalNoSigPipe = -1;
+#endif
     std::function<void()> m_onFailure;
     std::mutex m_mutex;
     std::condition_variable m_changed;

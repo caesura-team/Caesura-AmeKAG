@@ -11,6 +11,7 @@
 #include <fcntl.h>
 #include <io.h>
 #else
+#include <fcntl.h>
 #include <unistd.h>
 #endif
 
@@ -135,11 +136,29 @@ TEST_CASE("Stdio RPC output rejects overflow and wakes its owner once") {
 TEST_CASE("Stdio RPC output handles closed consumers and invalid descriptors") {
     OutputPipe pipe;
     REQUIRE(pipe.valid());
+#if defined(__APPLE__)
+    int originalNoSigPipe = 0;
+    SUBCASE("caller uses default SIGPIPE policy") {}
+    SUBCASE("caller already suppresses SIGPIPE") { originalNoSigPipe = 1; }
+    REQUIRE(::fcntl(pipe.writer(), F_SETNOSIGPIPE, originalNoSigPipe) == 0);
+    const int originalFlags = ::fcntl(pipe.writer(), F_GETFL);
+    REQUIRE(originalFlags >= 0);
+#endif
     pipe.closeRead();
-    Caesura::StdioRpcOutput output(pipe.writer());
-    CHECK(output.writeLine("closed-reader"));
-    output.finish();
-    CHECK(output.failed());
+    {
+        Caesura::StdioRpcOutput output(pipe.writer());
+        REQUIRE(output.ready());
+#if defined(__APPLE__)
+        CHECK(::fcntl(pipe.writer(), F_GETNOSIGPIPE) == 1);
+#endif
+        CHECK(output.writeLine("closed-reader"));
+        output.finish();
+        CHECK(output.failed());
+    }
+#if defined(__APPLE__)
+    CHECK(::fcntl(pipe.writer(), F_GETNOSIGPIPE) == originalNoSigPipe);
+    CHECK(::fcntl(pipe.writer(), F_GETFL) == originalFlags);
+#endif
     Caesura::StdioRpcOutput invalid(-1);
     CHECK_FALSE(invalid.writeLine("invalid"));
     CHECK(invalid.failed());

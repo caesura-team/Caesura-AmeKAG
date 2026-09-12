@@ -46,6 +46,20 @@ StdioRpcOutput::StdioRpcOutput(int descriptor, std::function<void()> onFailure)
             ::close(m_descriptor);
             m_descriptor = -1;
         }
+#if defined(__APPLE__)
+        if (m_descriptor >= 0) {
+            // Darwin raises pipe EPIPE as a process-directed SIGPIPE, so the
+            // writer's thread mask alone cannot protect the Engine owner.
+            // Suppress generation on this stream; leave process handlers alone.
+            m_originalNoSigPipe = ::fcntl(m_descriptor, F_GETNOSIGPIPE);
+            if (m_originalNoSigPipe < 0
+                || ::fcntl(m_descriptor, F_SETNOSIGPIPE, 1) < 0) {
+                ::fcntl(m_descriptor, F_SETFL, m_originalFlags);
+                ::close(m_descriptor);
+                m_descriptor = -1;
+            }
+        }
+#endif
     }
 #endif
     // Never invoke a callback into RpcServer while it is being constructed.
@@ -61,6 +75,11 @@ StdioRpcOutput::~StdioRpcOutput() {
         // dup shares status flags with the supplied descriptor. Restore them
         // for callers that did not redirect stdout (e.g. in-process tests).
         if (m_originalFlags >= 0) ::fcntl(m_descriptor, F_SETFL, m_originalFlags);
+#if defined(__APPLE__)
+        // Like O_NONBLOCK, Darwin's flag belongs to the shared open file.
+        if (m_originalNoSigPipe >= 0)
+            ::fcntl(m_descriptor, F_SETNOSIGPIPE, m_originalNoSigPipe);
+#endif
         ::close(m_descriptor);
 #endif
     }
