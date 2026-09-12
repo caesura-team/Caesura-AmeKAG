@@ -184,12 +184,15 @@ async function runScene(name) {
 
 // Every completed click writes a log entry, including [ch] -> explicit [p]
 // boundaries that keep the same display-token status and visible page.
+// An audio boundary finishes later through RAF and publishes "parked:";
+// require that settled page as well as this click's successful receipt.
 async function advanceOnce() {
   const before = $('log').textContent.split('\n').filter(line => line.startsWith('advance: ')).length
   $('advance').click()
   return waitFor(() => {
-    const completed = $('log').textContent.split('\n').filter(line => line.startsWith('advance: ')).length
-    return completed > before && /^advance: (WAIT:|DONE:)/.test(statusText())
+    const completed = $('log').textContent.split('\n').filter(line => line.startsWith('advance: '))
+    return completed.length > before && /^advance: (WAIT:|WAIT_AUDIO:|DONE:)/.test(completed.at(-1))
+      && /^(advance|parked): (WAIT:|DONE:)/.test(statusText())
   }, 'advance completes its input boundary', 60000)
 }
 

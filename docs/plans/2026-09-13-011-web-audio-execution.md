@@ -77,3 +77,7 @@ u20-unlock-lifecycle使用实际`audio-engine.test.js`：RED41通过/3失败，G
 追加审查发现共同`kag_runner.on_click`仍能在进入waitsound/waitbgm后批量resume200次，nil帧值会提前消耗约3秒预算。59.9秒边界两例真实RED后，点击批量循环在新音频等待处停止；已有voice_wait仍能接受当前点击一次。另一例独立时钟RED发现异步发布后重读时钟会漏计区间；现在Web runner按等待scope身份保存已消费时钟截止点，下一帧消费发布期间的新增音频时间，新scope另设起点。
 
 最终`artifacts/validation/u20-wait-green-03.log`两文件20/20，保留原14例，覆盖自然结束、重复tick、真实backend stop、手动skip、Auto计时器不skip、暂停中的120秒墙钟前进、59.999/60.001秒保护边界、并发tick、新场景已建立后的旧decode迟到，以及发布期间时钟推进。独立增量审查已关闭这些finding。共同Lua主147/147与隔离54/54在首个scope实现后通过；最终点击循环补丁仍需进入候选完整门禁。
+
+代码5fd87b70及仅同步平台来源锚点的ebd0c7e5已进入草稿PR #23。干净ebd0c7e5的`u20-web-full-02`共42文件598项：597通过、1失败、0跳过，源码指纹57fcd7ded898d5352b151b004696132cadea226381131fe160ca3df4beac5b6f稳定。失败为旧Audio UI助手仅接受advance:WAIT/DONE，无法接受音频自然完成后RAF发布的parked:WAIT。助手现在要求本次click的成功回执，以及advance/parked两种来源的已完成页面；不接受WAIT_AUDIO作为完成，也不接受ERR回执。原有音源及设置断言保留，六项完整UI随后通过。
+
+本次原性能预算全部通过，synthetic1000样本2240.7/1994.2/1719.6ms，中位1994.2ms；规模比中位2.1585。此前性能FAIL仍保留，不据此宣称所有主机稳定。CI34721310444的Linux在相同旧UI助手失败：597通过/1失败；新增真实Audio步骤46项通过，Chrome152.0.7977.82，源码稳定、调试端点实际关闭。该旧候选CI不能算全绿，更新后的候选需重新验证。
