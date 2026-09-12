@@ -1,4 +1,5 @@
 #include "doctest.h"
+#include "render/TextRenderer.h"
 
 #include <cctype>
 #include <filesystem>
@@ -588,8 +589,56 @@ TEST_CASE("TextRenderer owns FreeType without a global context") {
     CHECK(engineHeader.find("freeTypeInitialized") == std::string::npos);
     CHECK(renderer.find("FreeTypeContext") == std::string::npos);
     CHECK(font.find("FreeTypeContext") == std::string::npos);
-    CHECK(font.find("FT_Init_FreeType(&font.ftLib)") != std::string::npos);
-    CHECK(font.find("FT_New_Memory_Face(font.ftLib") != std::string::npos);
+    // Exercise ownership instead of requiring a particular local variable's
+    // dot/arrow spelling. Both real faces must outlive the caller's bytes;
+    // destroying one atlas must not invalidate the other atlas's FT context.
+    auto fontBytes = readFile(repoRoot / "assets" / "fonts" / "NotoSansCJKsc-Regular.otf");
+    REQUIRE_FALSE(fontBytes.empty());
+    using Atlas = Caesura::TextRenderer::GlyphAtlas;
+    const auto* data = reinterpret_cast<const uint8_t*>(fontBytes.data());
+    auto first = Atlas::create(data, fontBytes.size(), 28);
+    auto second = Atlas::create(data, fontBytes.size(), 14);
+    REQUIRE(first != nullptr);
+    REQUIRE(second != nullptr);
+    fontBytes.assign(fontBytes.size(), '\0');
+    std::string{}.swap(fontBytes);
+    const auto referenceBytes = readFile(repoRoot / "assets" / "fonts" / "NotoSansCJKsc-Regular.otf");
+    const auto verifyNewGlyph = [&](Atlas& atlas, unsigned size, uint32_t codepoint) {
+        struct Reference {
+            FT_Library library = nullptr;
+            FT_Face face = nullptr;
+            ~Reference() {
+                if (face) FT_Done_Face(face);
+                if (library) FT_Done_FreeType(library);
+            }
+        } reference;
+        REQUIRE(FT_Init_FreeType(&reference.library) == 0);
+        REQUIRE(FT_New_Memory_Face(reference.library,
+            reinterpret_cast<const uint8_t*>(referenceBytes.data()),
+            static_cast<FT_Long>(referenceBytes.size()),0,&reference.face) == 0);
+        REQUIRE(FT_Set_Pixel_Sizes(reference.face,0,size) == 0);
+        REQUIRE(FT_Load_Char(reference.face,codepoint,FT_LOAD_RENDER) == 0);
+        REQUIRE(atlas.prepareGlyph(codepoint) == Atlas::PrepareStatus::Added);
+        const auto* glyph = atlas.find(codepoint);
+        REQUIRE(glyph != nullptr);
+        const auto& ft = *reference.face->glyph;
+        REQUIRE(glyph->w == static_cast<int>(ft.bitmap.width));
+        REQUIRE(glyph->h == static_cast<int>(ft.bitmap.rows));
+        CHECK(glyph->advance == (ft.advance.x >> 6));
+        CHECK(glyph->offsetX == ft.bitmap_left);
+        CHECK(glyph->offsetY == ft.bitmap_top);
+        REQUIRE(glyph->w > 0);
+        REQUIRE(glyph->h > 0);
+        bool pixelsMatch = true;
+        for (int y=0;y<glyph->h;++y) for (int x=0;x<glyph->w;++x)
+            pixelsMatch &= atlas.pixels()[(size_t(glyph->y+y)*atlas.width()+glyph->x+x)*4+3]
+                == ft.bitmap.buffer[y*ft.bitmap.pitch+x];
+        CHECK(pixelsMatch);
+    };
+    verifyNewGlyph(*first,28,0x6f22);
+    verifyNewGlyph(*second,14,0x6f22);
+    first.reset();
+    verifyNewGlyph(*second,14,0x5b57);
     CHECK(modules.find("FreeTypeContext.cpp") == std::string::npos);
 }
 

@@ -41,7 +41,7 @@ public:
     void beginBatch();
     void flushBatch();
     void blitTexture(uint16_t targetView, uint32_t textureId, float x, float y, float w, float h, uint8_t opacity);
-    void blitTexture(uint16_t targetView, bgfx::TextureHandle tex, float x, float y, float w, float h, uint8_t opacity);
+    void blitTexture(uint16_t targetView, bgfx::TextureHandle tex, float x, float y, float w, float h, uint8_t opacity, bool flipV = false);
 
     void stretchBlt(uint16_t targetView, uint32_t dstTexId, float dx, float dy, float dw, float dh,
                     uint32_t srcTexId, float sx, float sy, float sw, float sh, int filterType);

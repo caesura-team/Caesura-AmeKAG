@@ -152,6 +152,7 @@ public:
     bool isPostFxActive() const override { return active; }
     RenderUniformHandle getDefaultSampler() const override { return {}; }
     RenderProgramHandle getFallbackProgram() const override { return {}; }
+    RenderProgramHandle getModulatedTextureProgram() const override { return {}; }
     const char* getBackendName() const override { return "TransientRender"; }
     RenderRuntimeInfo getRuntimeInfo() const override { return {}; }
     bool setPreferredBackend(const char*) override { return false; }

@@ -1,5 +1,5 @@
 ﻿// Caesura (AmeKAG) - Fullscreen Quad Vertex Shader (Metal)
-// Procedural quad from vertex ID (no vertex buffer needed)
+// Standard NDC POSITION/TEXCOORD quad, matching the production draw buffers.
 // Corresponds to shaders/dx11/vs_fullscreen.hlsl
 
 #include <metal_stdlib>
@@ -9,11 +9,14 @@ struct VSOutput {
     float4 position [[position]];
     float2 texcoord;
 };
+struct VSInput {
+    float2 position [[attribute(0)]];
+    float2 texcoord [[attribute(1)]];
+};
 
-vertex VSOutput vs_fullscreen(uint vertexID [[vertex_id]]) {
+vertex VSOutput vs_fullscreen(VSInput in [[stage_in]]) {
     VSOutput out;
-    float2 uv = float2((vertexID << 1) & 2, vertexID & 2);
-    out.position = float4(uv * float2(2.0, -2.0) + float2(-1.0, 1.0), 0.0, 1.0);
-    out.texcoord = uv * float2(0.5, -0.5) + float2(0.0, 1.0);
+    out.position = float4(in.position, 0.0, 1.0);
+    out.texcoord = in.texcoord;
     return out;
 }

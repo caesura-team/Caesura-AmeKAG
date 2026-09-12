@@ -5,8 +5,7 @@ Texture2D    s_blendTex : register(t1);
 SamplerState s_blendSamp : register(s1);
 cbuffer BlendParams : register(b0) {
     float4 u_opacity;
-    int    u_blendMode;
-    float3 u_pad;
+    float4 u_pad; // CPU uploads two vec4s; mode is u_opacity.w, not offset 16.
 };
 struct PSInput { float4 p : SV_POSITION; float2 t : TEXCOORD0; };
 
@@ -29,7 +28,7 @@ float4 main(PSInput i) : SV_TARGET {
     float4 base  = s_baseTex.Sample(s_baseSamp, i.t) * u_opacity.x;
     float4 blend = s_blendTex.Sample(s_blendSamp, i.t) * u_opacity.y;
     float3 c;
-    switch(u_blendMode) {
+    switch(int(u_opacity.w)) {
         case 1: c=bAdd(base.rgb,blend.rgb); break;
         case 2: c=bSub(base.rgb,blend.rgb); break;
         case 3: c=bMul(base.rgb,blend.rgb); break;

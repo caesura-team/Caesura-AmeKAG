@@ -1153,6 +1153,15 @@ void Engine::processEvents() {
     }
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
+        if (m_renderDevice && (event.type == SDL_EVENT_WINDOW_RESIZED
+                               || event.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED)) {
+            if (auto* window = SDL_GetWindowFromID(event.window.windowID)) {
+                int pixelWidth = 0, pixelHeight = 0;
+                if (SDL_GetWindowSizeInPixels(window, &pixelWidth, &pixelHeight)
+                    && pixelWidth > 0 && pixelHeight > 0)
+                    m_renderDevice->setPresentSize(uint32_t(pixelWidth), uint32_t(pixelHeight));
+            }
+        }
         // -- Window resize: propagate to registered callbacks (layer tree
         // rebuild + dirty marking). Was documented-but-unwired: the
         // InputRouter callback list never fired because no event handler

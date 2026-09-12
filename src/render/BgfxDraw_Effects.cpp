@@ -201,7 +201,8 @@ void BgfxDraw::fillViewport(ViewportHandle handle,
     bgfx::setState(state);
     bgfx::submit(vpView, m_state->shaders->getFallbackProgram());
 
-    bgfx::destroy(colorTex);
+    // The core owns this cached texture and releases it on color replacement
+    // or shutdown. This draw only borrows the handle, including same-color reuse.
 
     printf("[BgfxRenderDevice] fillViewport #%u: (%d,%d,%d,%d) -> view %u\n",
            handle.id, r, g, b, a, (unsigned)vpView);

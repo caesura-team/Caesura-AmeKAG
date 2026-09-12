@@ -627,7 +627,8 @@ Script 模块经 `IMiniGameBackend` 接口实现，不能在具体 Bgfx 后端�
 | | `beginShutdown` | 关闭截图接收、取消未完成票据；保留 GPU 上下文供显式销毁排空 |
 | | `shutdown` | 先 `flushAllRTT` 再关闭具体渲染后端 |
 | | `flushAllRTT` | 释放所有 RTT framebuffer（GPU 上下文仍存） |
-| | `resize(w, h)` | 窗口大小变化时重建 backbuffer |
+| | `resize(w, h)` | 更新逻辑场景尺寸及文字缓存；未指定独立呈现尺寸时同步重建 backbuffer |
+| | `setPresentSize(w, h)` | 以实际 drawable 像素尺寸调整 GPU backbuffer，保留逻辑坐标；不额外推进帧，设备恢复保留此前显式尺寸 |
 | **帧管理** | `beginFrame` | 开始帧 |
 | | `endFrame` | `commit_frame` + `advanceFrame` 的便捷入口 |
 | | `commit_frame` | 完成场景/后处理提交与视图复位，不推进 bgfx 帧 |
@@ -663,9 +664,10 @@ Script 模块经 `IMiniGameBackend` 接口实现，不能在具体 Bgfx 后端�
 | | `cancelScreenshot(ticket)` | 仅将 `Pending` 转为 `Cancelled` 并返回 `true`；仍须 `takeScreenshot` 领取/丢弃终态 |
 | **设备恢复** | `recoverDevice(hwnd, w, h)` | 重建丢失的渲染设备 |
 | | `flagDeviceLost` / `consumeDeviceLost` | 在线程/帧边界间传递设备丢失状态 |
-| **着色器** | `getDefaultSampler` / `getFallbackProgram` | 返回不透明采样器/程序句柄 |
+| **着色器** | `getDefaultSampler` / `getFallbackProgram` | 返回不透明采样器/未调制纹理程序句柄 |
+| | `getModulatedTextureProgram` | 返回逐次绘制以 `u_color` RGBA 调制纹理的程序；未提供该程序的后端返回无效句柄，普通 Fallback 不表示支持颜色或透明度调制 |
 | **后端标识** | `getBackendName` | 后端名称 |
-| | `getRuntimeInfo` | 返回 `RenderRuntimeInfo`（backendName, 分辨率, viewCount, shaderReady） |
+| | `getRuntimeInfo` | 返回 `RenderRuntimeInfo`（backendName, 分辨率, viewCount, shaderReady）；`shaderReady` 表示设备可渲染且核心程序完整，Noop、IFH、丢失、退出或任一核心程序失败均为 false；可选效果失败不影响完整核心的就绪状态 |
 | | `setPreferredBackend(name)` | 设置首选渲染后端（返回 `bool`） |
 
 截图类型与方法以 [IRenderDevice.h](../../src/render/api/IRenderDevice.h) 为准：

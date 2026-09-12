@@ -1,0 +1,5023 @@
+{
+  "schema_version": 1,
+  "suite_id": "u16-render-contracts-v4",
+  "required_backends": [
+    "dx11",
+    "opengl"
+  ],
+  "defaults": {
+    "width": 640,
+    "height": 360,
+    "case_timeout_seconds": 60,
+    "rgb_tolerance": 2,
+    "effect_tolerance": 3,
+    "edge_tolerance": 4
+  },
+  "font": {
+    "path": "assets/fonts/NotoSansCJKsc-Regular.otf",
+    "sha256": "2c76254f6fc379fddfce0a7e84fb5385bb135d3e399294f6eeb6680d0365b74b",
+    "pixel_size": 28,
+    "load_flags": "FT_LOAD_DEFAULT",
+    "render_mode": "FT_RENDER_MODE_NORMAL",
+    "sampling": "pixel-center-bilinear-zero-extended",
+    "minimum_opaque_pixels": 64,
+    "minimum_edge_pixels": 16,
+    "opaque_tolerance": 2,
+    "edge_tolerance": 4,
+    "center_tolerance": 0.75
+  },
+  "cases": [
+    {
+      "id": "text-cjk-ruby",
+      "expected": "rendered",
+      "fault_requested": "none",
+      "failed_programs": [],
+      "required_checks": [
+        "actual_backend",
+        "shutdown",
+        "core_ready",
+        "not_ifh",
+        "capture:text-opaque",
+        "capture:text-alpha",
+        "capture:ruby-cjk",
+        "capture:ruby-ascii"
+      ],
+      "recipe": {
+        "kind": "text-cjk-ruby"
+      },
+      "captures": [
+        {
+          "id": "text-opaque",
+          "width": 640,
+          "height": 360,
+          "background": [
+            18,
+            35,
+            52,
+            255
+          ],
+          "parameters": {},
+          "regions": [],
+          "font": {
+            "runs": [
+              {
+                "text": "GPU 15",
+                "x": 32,
+                "y": 56,
+                "scale": 1
+              },
+              {
+                "text": "汉字かな",
+                "x": 32,
+                "y": 112,
+                "scale": 1
+              }
+            ],
+            "color": [
+              255,
+              255,
+              255,
+              255
+            ],
+            "rect": [
+              16,
+              32,
+              320,
+              232
+            ]
+          }
+        },
+        {
+          "id": "text-alpha",
+          "width": 640,
+          "height": 360,
+          "background": [
+            18,
+            35,
+            52,
+            255
+          ],
+          "parameters": {},
+          "regions": [],
+          "font": {
+            "runs": [
+              {
+                "text": "GPU 15",
+                "x": 32,
+                "y": 56,
+                "scale": 1
+              },
+              {
+                "text": "汉字かな",
+                "x": 32,
+                "y": 112,
+                "scale": 1
+              }
+            ],
+            "color": [
+              231,
+              199,
+              151,
+              128
+            ],
+            "rect": [
+              16,
+              32,
+              320,
+              232
+            ]
+          }
+        },
+        {
+          "id": "ruby-cjk",
+          "width": 640,
+          "height": 360,
+          "background": [
+            18,
+            35,
+            52,
+            255
+          ],
+          "parameters": {},
+          "regions": [],
+          "font": {
+            "runs": [
+              {
+                "text": "漢字",
+                "x": 64,
+                "y": 176,
+                "scale": 1
+              },
+              {
+                "text": "かんじ",
+                "x": 64,
+                "y": 160,
+                "scale": 0.5,
+                "center_over": 0
+              }
+            ],
+            "color": [
+              255,
+              255,
+              255,
+              255
+            ],
+            "rect": [
+              16,
+              32,
+              320,
+              232
+            ]
+          }
+        },
+        {
+          "id": "ruby-ascii",
+          "width": 640,
+          "height": 360,
+          "background": [
+            18,
+            35,
+            52,
+            255
+          ],
+          "parameters": {},
+          "regions": [],
+          "font": {
+            "runs": [
+              {
+                "text": "AB",
+                "x": 64,
+                "y": 176,
+                "scale": 1
+              },
+              {
+                "text": "iii",
+                "x": 64,
+                "y": 160,
+                "scale": 0.5,
+                "center_over": 0
+              }
+            ],
+            "color": [
+              255,
+              255,
+              255,
+              255
+            ],
+            "rect": [
+              16,
+              32,
+              320,
+              232
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "alpha-layers-batch",
+      "expected": "rendered",
+      "fault_requested": "none",
+      "failed_programs": [],
+      "required_checks": [
+        "actual_backend",
+        "shutdown",
+        "core_ready",
+        "not_ifh",
+        "capture:alpha-texture",
+        "capture:opacity-unbatched",
+        "capture:opacity-batched",
+        "capture:multitexture-unbatched",
+        "capture:multitexture-batched"
+      ],
+      "recipe": {
+        "kind": "alpha-layers-batch",
+        "alpha_texture": {
+          "width": 64,
+          "height": 64,
+          "rgb": [
+            234,
+            170,
+            106
+          ],
+          "quadrant_alpha": [
+            0,
+            64,
+            128,
+            255
+          ],
+          "rect_xywh": [
+            32,
+            48,
+            64,
+            64
+          ]
+        },
+        "opacity_texture": {
+          "rgb": [
+            234,
+            170,
+            106
+          ],
+          "draws": [
+            {
+              "rect_xywh": [
+                128,
+                48,
+                64,
+                64
+              ],
+              "opacity": 128
+            },
+            {
+              "rect_xywh": [
+                224,
+                48,
+                64,
+                64
+              ],
+              "opacity": 0
+            }
+          ]
+        },
+        "textures": {
+          "A": [
+            220,
+            40,
+            60,
+            255
+          ],
+          "B": [
+            30,
+            200,
+            90,
+            255
+          ],
+          "C": [
+            50,
+            80,
+            230,
+            255
+          ]
+        },
+        "draws": [
+          {
+            "texture": "A",
+            "rect_xywh": [
+              32,
+              48,
+              128,
+              96
+            ]
+          },
+          {
+            "texture": "B",
+            "rect_xywh": [
+              96,
+              80,
+              128,
+              96
+            ]
+          },
+          {
+            "texture": "A",
+            "rect_xywh": [
+              256,
+              48,
+              96,
+              96
+            ]
+          },
+          {
+            "texture": "C",
+            "rect_xywh": [
+              144,
+              112,
+              128,
+              96
+            ]
+          }
+        ]
+      },
+      "captures": [
+        {
+          "id": "alpha-texture",
+          "width": 640,
+          "height": 360,
+          "background": [
+            18,
+            35,
+            52,
+            255
+          ],
+          "parameters": {},
+          "regions": [
+            {
+              "rect": [
+                36,
+                52,
+                60,
+                76
+              ],
+              "expect": {
+                "kind": "alpha_over",
+                "src": [
+                  234,
+                  170,
+                  106
+                ],
+                "dst": [
+                  18,
+                  35,
+                  52
+                ],
+                "texture_alpha": 0,
+                "opacity": 255
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                68,
+                52,
+                92,
+                76
+              ],
+              "expect": {
+                "kind": "alpha_over",
+                "src": [
+                  234,
+                  170,
+                  106
+                ],
+                "dst": [
+                  18,
+                  35,
+                  52
+                ],
+                "texture_alpha": 64,
+                "opacity": 255
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                36,
+                84,
+                60,
+                108
+              ],
+              "expect": {
+                "kind": "alpha_over",
+                "src": [
+                  234,
+                  170,
+                  106
+                ],
+                "dst": [
+                  18,
+                  35,
+                  52
+                ],
+                "texture_alpha": 128,
+                "opacity": 255
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                68,
+                84,
+                92,
+                108
+              ],
+              "expect": {
+                "kind": "alpha_over",
+                "src": [
+                  234,
+                  170,
+                  106
+                ],
+                "dst": [
+                  18,
+                  35,
+                  52
+                ],
+                "texture_alpha": 255,
+                "opacity": 255
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                400,
+                240,
+                432,
+                272
+              ],
+              "expect": {
+                "kind": "rgb",
+                "value": [
+                  18,
+                  35,
+                  52
+                ]
+              },
+              "tolerance": 2
+            }
+          ]
+        },
+        {
+          "id": "opacity-unbatched",
+          "width": 640,
+          "height": 360,
+          "background": [
+            18,
+            35,
+            52,
+            255
+          ],
+          "parameters": {},
+          "regions": [
+            {
+              "rect": [
+                136,
+                56,
+                184,
+                104
+              ],
+              "expect": {
+                "kind": "alpha_over",
+                "src": [
+                  234,
+                  170,
+                  106
+                ],
+                "dst": [
+                  18,
+                  35,
+                  52
+                ],
+                "texture_alpha": 255,
+                "opacity": 128
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                232,
+                56,
+                280,
+                104
+              ],
+              "expect": {
+                "kind": "rgb",
+                "value": [
+                  18,
+                  35,
+                  52
+                ]
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                400,
+                240,
+                432,
+                272
+              ],
+              "expect": {
+                "kind": "rgb",
+                "value": [
+                  18,
+                  35,
+                  52
+                ]
+              },
+              "tolerance": 2
+            }
+          ]
+        },
+        {
+          "id": "opacity-batched",
+          "width": 640,
+          "height": 360,
+          "background": [
+            18,
+            35,
+            52,
+            255
+          ],
+          "parameters": {},
+          "regions": [
+            {
+              "rect": [
+                136,
+                56,
+                184,
+                104
+              ],
+              "expect": {
+                "kind": "alpha_over",
+                "src": [
+                  234,
+                  170,
+                  106
+                ],
+                "dst": [
+                  18,
+                  35,
+                  52
+                ],
+                "texture_alpha": 255,
+                "opacity": 128
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                232,
+                56,
+                280,
+                104
+              ],
+              "expect": {
+                "kind": "rgb",
+                "value": [
+                  18,
+                  35,
+                  52
+                ]
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                400,
+                240,
+                432,
+                272
+              ],
+              "expect": {
+                "kind": "rgb",
+                "value": [
+                  18,
+                  35,
+                  52
+                ]
+              },
+              "tolerance": 2
+            }
+          ],
+          "compare_to": "opacity-unbatched"
+        },
+        {
+          "id": "multitexture-unbatched",
+          "width": 640,
+          "height": 360,
+          "background": [
+            18,
+            35,
+            52,
+            255
+          ],
+          "parameters": {},
+          "regions": [
+            {
+              "rect": [
+                40,
+                56,
+                80,
+                72
+              ],
+              "expect": {
+                "kind": "rgb",
+                "value": [
+                  220,
+                  40,
+                  60
+                ]
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                112,
+                88,
+                136,
+                104
+              ],
+              "expect": {
+                "kind": "rgb",
+                "value": [
+                  30,
+                  200,
+                  90
+                ]
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                160,
+                128,
+                208,
+                160
+              ],
+              "expect": {
+                "kind": "rgb",
+                "value": [
+                  50,
+                  80,
+                  230
+                ]
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                288,
+                72,
+                320,
+                112
+              ],
+              "expect": {
+                "kind": "rgb",
+                "value": [
+                  220,
+                  40,
+                  60
+                ]
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                400,
+                240,
+                432,
+                272
+              ],
+              "expect": {
+                "kind": "rgb",
+                "value": [
+                  18,
+                  35,
+                  52
+                ]
+              },
+              "tolerance": 2
+            }
+          ]
+        },
+        {
+          "id": "multitexture-batched",
+          "width": 640,
+          "height": 360,
+          "background": [
+            18,
+            35,
+            52,
+            255
+          ],
+          "parameters": {},
+          "regions": [
+            {
+              "rect": [
+                40,
+                56,
+                80,
+                72
+              ],
+              "expect": {
+                "kind": "rgb",
+                "value": [
+                  220,
+                  40,
+                  60
+                ]
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                112,
+                88,
+                136,
+                104
+              ],
+              "expect": {
+                "kind": "rgb",
+                "value": [
+                  30,
+                  200,
+                  90
+                ]
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                160,
+                128,
+                208,
+                160
+              ],
+              "expect": {
+                "kind": "rgb",
+                "value": [
+                  50,
+                  80,
+                  230
+                ]
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                288,
+                72,
+                320,
+                112
+              ],
+              "expect": {
+                "kind": "rgb",
+                "value": [
+                  220,
+                  40,
+                  60
+                ]
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                400,
+                240,
+                432,
+                272
+              ],
+              "expect": {
+                "kind": "rgb",
+                "value": [
+                  18,
+                  35,
+                  52
+                ]
+              },
+              "tolerance": 2
+            }
+          ],
+          "compare_to": "multitexture-unbatched"
+        }
+      ]
+    },
+    {
+      "id": "rtt-fill-resize",
+      "expected": "rendered",
+      "fault_requested": "none",
+      "failed_programs": [],
+      "required_checks": [
+        "actual_backend",
+        "shutdown",
+        "core_ready",
+        "not_ifh",
+        "capture:fill-control",
+        "capture:fill-first-a",
+        "capture:fill-same-a",
+        "capture:fill-changed-b",
+        "capture:resized",
+        "capture:returned",
+        "capture:recreated",
+        "capture:rtt-orientation",
+        "fill_cache_reuse",
+        "resize_roundtrip",
+        "rtt_recreated"
+      ],
+      "recipe": {
+        "kind": "rtt-fill-resize",
+        "rtt_size": [
+          96,
+          96
+        ],
+        "sentinel": [
+          18,
+          35,
+          52,
+          255
+        ],
+        "A": [
+          31,
+          97,
+          163,
+          255
+        ],
+        "B": [
+          163,
+          47,
+          89,
+          255
+        ],
+        "normal_frames_between_A_uses": 2,
+        "rect_xywh": [
+          256,
+          96,
+          96,
+          96
+        ],
+        "resized_rect_xywh": [
+          320,
+          120,
+          120,
+          120
+        ],
+        "resize_sizes": [
+          [
+            800,
+            450
+          ],
+          [
+            640,
+            360
+          ]
+        ],
+        "orientation": {
+          "top": [
+            42,
+            186,
+            75,
+            255
+          ],
+          "bottom": [
+            219,
+            53,
+            126,
+            255
+          ],
+          "top_rect_xywh": [
+            0,
+            0,
+            640,
+            180
+          ],
+          "bottom_rect_xywh": [
+            0,
+            180,
+            640,
+            180
+          ]
+        }
+      },
+      "captures": [
+        {
+          "id": "fill-control",
+          "width": 640,
+          "height": 360,
+          "background": [
+            5,
+            11,
+            17,
+            255
+          ],
+          "parameters": {},
+          "regions": [
+            {
+              "rect": [
+                276,
+                116,
+                328,
+                168
+              ],
+              "expect": {
+                "kind": "rgb",
+                "value": [
+                  18,
+                  35,
+                  52
+                ]
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                560,
+                260,
+                608,
+                304
+              ],
+              "expect": {
+                "kind": "rgb",
+                "value": [
+                  5,
+                  11,
+                  17
+                ]
+              },
+              "tolerance": 2
+            }
+          ]
+        },
+        {
+          "id": "fill-first-a",
+          "width": 640,
+          "height": 360,
+          "background": [
+            5,
+            11,
+            17,
+            255
+          ],
+          "parameters": {},
+          "regions": [
+            {
+              "rect": [
+                276,
+                116,
+                328,
+                168
+              ],
+              "expect": {
+                "kind": "rgb",
+                "value": [
+                  31,
+                  97,
+                  163
+                ]
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                560,
+                260,
+                608,
+                304
+              ],
+              "expect": {
+                "kind": "rgb",
+                "value": [
+                  5,
+                  11,
+                  17
+                ]
+              },
+              "tolerance": 2
+            }
+          ]
+        },
+        {
+          "id": "fill-same-a",
+          "width": 640,
+          "height": 360,
+          "background": [
+            5,
+            11,
+            17,
+            255
+          ],
+          "parameters": {},
+          "regions": [
+            {
+              "rect": [
+                276,
+                116,
+                328,
+                168
+              ],
+              "expect": {
+                "kind": "rgb",
+                "value": [
+                  31,
+                  97,
+                  163
+                ]
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                560,
+                260,
+                608,
+                304
+              ],
+              "expect": {
+                "kind": "rgb",
+                "value": [
+                  5,
+                  11,
+                  17
+                ]
+              },
+              "tolerance": 2
+            }
+          ]
+        },
+        {
+          "id": "fill-changed-b",
+          "width": 640,
+          "height": 360,
+          "background": [
+            5,
+            11,
+            17,
+            255
+          ],
+          "parameters": {},
+          "regions": [
+            {
+              "rect": [
+                276,
+                116,
+                328,
+                168
+              ],
+              "expect": {
+                "kind": "rgb",
+                "value": [
+                  163,
+                  47,
+                  89
+                ]
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                560,
+                260,
+                608,
+                304
+              ],
+              "expect": {
+                "kind": "rgb",
+                "value": [
+                  5,
+                  11,
+                  17
+                ]
+              },
+              "tolerance": 2
+            }
+          ],
+          "font": {
+            "runs": [
+              {
+                "text": "GPU 15",
+                "x": 32,
+                "y": 260,
+                "scale": 1
+              }
+            ],
+            "color": [
+              255,
+              255,
+              255,
+              255
+            ],
+            "rect": [
+              16,
+              244,
+              240,
+              336
+            ]
+          }
+        },
+        {
+          "id": "resized",
+          "width": 800,
+          "height": 450,
+          "background": [
+            5,
+            11,
+            17,
+            255
+          ],
+          "parameters": {},
+          "regions": [
+            {
+              "rect": [
+                348,
+                148,
+                400,
+                200
+              ],
+              "expect": {
+                "kind": "rgb",
+                "value": [
+                  163,
+                  47,
+                  89
+                ]
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                700,
+                326,
+                760,
+                380
+              ],
+              "expect": {
+                "kind": "rgb",
+                "value": [
+                  5,
+                  11,
+                  17
+                ]
+              },
+              "tolerance": 2
+            }
+          ],
+          "font": {
+            "runs": [
+              {
+                "text": "GPU 15",
+                "x": 32,
+                "y": 260,
+                "scale": 1
+              }
+            ],
+            "color": [
+              255,
+              255,
+              255,
+              255
+            ],
+            "rect": [
+              16,
+              244,
+              240,
+              336
+            ]
+          }
+        },
+        {
+          "id": "returned",
+          "width": 640,
+          "height": 360,
+          "background": [
+            5,
+            11,
+            17,
+            255
+          ],
+          "parameters": {},
+          "regions": [
+            {
+              "rect": [
+                276,
+                116,
+                328,
+                168
+              ],
+              "expect": {
+                "kind": "rgb",
+                "value": [
+                  163,
+                  47,
+                  89
+                ]
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                560,
+                260,
+                608,
+                304
+              ],
+              "expect": {
+                "kind": "rgb",
+                "value": [
+                  5,
+                  11,
+                  17
+                ]
+              },
+              "tolerance": 2
+            }
+          ],
+          "font": {
+            "runs": [
+              {
+                "text": "GPU 15",
+                "x": 32,
+                "y": 260,
+                "scale": 1
+              }
+            ],
+            "color": [
+              255,
+              255,
+              255,
+              255
+            ],
+            "rect": [
+              16,
+              244,
+              240,
+              336
+            ]
+          }
+        },
+        {
+          "id": "recreated",
+          "width": 640,
+          "height": 360,
+          "background": [
+            5,
+            11,
+            17,
+            255
+          ],
+          "parameters": {},
+          "regions": [
+            {
+              "rect": [
+                276,
+                116,
+                328,
+                168
+              ],
+              "expect": {
+                "kind": "rgb",
+                "value": [
+                  31,
+                  97,
+                  163
+                ]
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                560,
+                260,
+                608,
+                304
+              ],
+              "expect": {
+                "kind": "rgb",
+                "value": [
+                  5,
+                  11,
+                  17
+                ]
+              },
+              "tolerance": 2
+            }
+          ]
+        },
+        {
+          "id": "rtt-orientation",
+          "width": 640,
+          "height": 360,
+          "background": [
+            5,
+            11,
+            17,
+            255
+          ],
+          "parameters": {},
+          "regions": [
+            {
+              "rect": [
+                272,
+                108,
+                336,
+                132
+              ],
+              "expect": {
+                "kind": "rgb",
+                "value": [
+                  42,
+                  186,
+                  75
+                ]
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                272,
+                156,
+                336,
+                180
+              ],
+              "expect": {
+                "kind": "rgb",
+                "value": [
+                  219,
+                  53,
+                  126
+                ]
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                560,
+                260,
+                608,
+                304
+              ],
+              "expect": {
+                "kind": "rgb",
+                "value": [
+                  5,
+                  11,
+                  17
+                ]
+              },
+              "tolerance": 2
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "transition",
+      "expected": "rendered",
+      "fault_requested": "none",
+      "failed_programs": [],
+      "required_checks": [
+        "actual_backend",
+        "shutdown",
+        "core_ready",
+        "not_ifh",
+        "capture:blend-0",
+        "capture:blend-025",
+        "capture:blend-050",
+        "capture:blend-1",
+        "capture:wipe-half",
+        "capture:rule-half"
+      ],
+      "recipe": {
+        "kind": "transition",
+        "from": [
+          204,
+          51,
+          17,
+          255
+        ],
+        "to": [
+          17,
+          102,
+          221,
+          255
+        ],
+        "rule": {
+          "width": 64,
+          "height": 64,
+          "left": 0,
+          "right": 255
+        }
+      },
+      "captures": [
+        {
+          "id": "blend-0",
+          "width": 640,
+          "height": 360,
+          "background": [
+            18,
+            35,
+            52,
+            255
+          ],
+          "parameters": {
+            "method": 0,
+            "progress": 0
+          },
+          "regions": [
+            {
+              "rect": [
+                32,
+                32,
+                608,
+                328
+              ],
+              "expect": {
+                "kind": "lerp",
+                "from": [
+                  204,
+                  51,
+                  17
+                ],
+                "to": [
+                  17,
+                  102,
+                  221
+                ],
+                "progress": 0
+              },
+              "tolerance": 3
+            }
+          ]
+        },
+        {
+          "id": "blend-025",
+          "width": 640,
+          "height": 360,
+          "background": [
+            18,
+            35,
+            52,
+            255
+          ],
+          "parameters": {
+            "method": 0,
+            "progress": 0.25
+          },
+          "regions": [
+            {
+              "rect": [
+                32,
+                32,
+                608,
+                328
+              ],
+              "expect": {
+                "kind": "lerp",
+                "from": [
+                  204,
+                  51,
+                  17
+                ],
+                "to": [
+                  17,
+                  102,
+                  221
+                ],
+                "progress": 0.25
+              },
+              "tolerance": 3
+            }
+          ]
+        },
+        {
+          "id": "blend-050",
+          "width": 640,
+          "height": 360,
+          "background": [
+            18,
+            35,
+            52,
+            255
+          ],
+          "parameters": {
+            "method": 0,
+            "progress": 0.5
+          },
+          "regions": [
+            {
+              "rect": [
+                32,
+                32,
+                608,
+                328
+              ],
+              "expect": {
+                "kind": "lerp",
+                "from": [
+                  204,
+                  51,
+                  17
+                ],
+                "to": [
+                  17,
+                  102,
+                  221
+                ],
+                "progress": 0.5
+              },
+              "tolerance": 3
+            }
+          ]
+        },
+        {
+          "id": "blend-1",
+          "width": 640,
+          "height": 360,
+          "background": [
+            18,
+            35,
+            52,
+            255
+          ],
+          "parameters": {
+            "method": 0,
+            "progress": 1
+          },
+          "regions": [
+            {
+              "rect": [
+                32,
+                32,
+                608,
+                328
+              ],
+              "expect": {
+                "kind": "lerp",
+                "from": [
+                  204,
+                  51,
+                  17
+                ],
+                "to": [
+                  17,
+                  102,
+                  221
+                ],
+                "progress": 1
+              },
+              "tolerance": 3
+            }
+          ]
+        },
+        {
+          "id": "wipe-half",
+          "width": 640,
+          "height": 360,
+          "background": [
+            18,
+            35,
+            52,
+            255
+          ],
+          "parameters": {
+            "method": 2,
+            "progress": 0.5
+          },
+          "regions": [
+            {
+              "rect": [
+                64,
+                128,
+                192,
+                192
+              ],
+              "expect": {
+                "kind": "rgb",
+                "value": [
+                  17,
+                  102,
+                  221
+                ]
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                448,
+                128,
+                576,
+                192
+              ],
+              "expect": {
+                "kind": "rgb",
+                "value": [
+                  204,
+                  51,
+                  17
+                ]
+              },
+              "tolerance": 3
+            }
+          ]
+        },
+        {
+          "id": "rule-half",
+          "width": 640,
+          "height": 360,
+          "background": [
+            18,
+            35,
+            52,
+            255
+          ],
+          "parameters": {
+            "method": 1,
+            "progress": 0.5
+          },
+          "regions": [
+            {
+              "rect": [
+                64,
+                128,
+                192,
+                192
+              ],
+              "expect": {
+                "kind": "rgb",
+                "value": [
+                  17,
+                  102,
+                  221
+                ]
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                448,
+                128,
+                576,
+                192
+              ],
+              "expect": {
+                "kind": "rgb",
+                "value": [
+                  204,
+                  51,
+                  17
+                ]
+              },
+              "tolerance": 3
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "lut3d",
+      "expected": "rendered",
+      "fault_requested": "none",
+      "failed_programs": [],
+      "required_checks": [
+        "actual_backend",
+        "shutdown",
+        "core_ready",
+        "not_ifh",
+        "capture:baseline",
+        "capture:identity-16",
+        "capture:identity-64",
+        "capture:swap-16",
+        "capture:swap-64",
+        "capture:half-16",
+        "capture:half-64",
+        "capture:strength-zero",
+        "capture:cleared",
+        "capture:borrowed-after-clear",
+        "capture:postfx-destroy-last",
+        "capture:postfx-invalid-only",
+        "capture:postfx-clear-after-begin",
+        "capture:postfx-swap-invalid-tail",
+        "lut_borrowed_texture_alive",
+        "postfx_destroy_last_exercised",
+        "postfx_invalid_only_exercised",
+        "postfx_clear_after_begin_exercised",
+        "postfx_swap_invalid_tail_exercised"
+      ],
+      "recipe": {
+        "kind": "lut3d",
+        "packing": "x=b*N+r,y=g",
+        "index_value": "round(index*255/(N-1))",
+        "patches": [
+          {
+            "rect_xywh": [
+              32,
+              48,
+              64,
+              64
+            ],
+            "rgb": [
+              51,
+              102,
+              204
+            ]
+          },
+          {
+            "rect_xywh": [
+              448,
+              224,
+              64,
+              64
+            ],
+            "rgb": [
+              51,
+              102,
+              204
+            ]
+          },
+          {
+            "rect_xywh": [
+              128,
+              48,
+              64,
+              64
+            ],
+            "rgb": [
+              0,
+              0,
+              0
+            ]
+          },
+          {
+            "rect_xywh": [
+              224,
+              48,
+              64,
+              64
+            ],
+            "rgb": [
+              255,
+              255,
+              255
+            ]
+          },
+          {
+            "rect_xywh": [
+              320,
+              48,
+              64,
+              64
+            ],
+            "rgb": [
+              17,
+              170,
+              85
+            ]
+          },
+          {
+            "rect_xywh": [
+              128,
+              160,
+              64,
+              64
+            ],
+            "rgb": [
+              204,
+              51,
+              102
+            ]
+          }
+        ],
+        "borrowed_after_clear": {
+          "canvas": [
+            4096,
+            224
+          ],
+          "background": [
+            18,
+            35,
+            52,
+            255
+          ],
+          "atlases": [
+            {
+              "lut_size": 16,
+              "transform": "identity",
+              "rect_xywh": [
+                0,
+                0,
+                256,
+                16
+              ]
+            },
+            {
+              "lut_size": 16,
+              "transform": "swap_rb",
+              "rect_xywh": [
+                0,
+                32,
+                256,
+                16
+              ]
+            },
+            {
+              "lut_size": 64,
+              "transform": "identity",
+              "rect_xywh": [
+                0,
+                64,
+                4096,
+                64
+              ]
+            },
+            {
+              "lut_size": 64,
+              "transform": "swap_rb",
+              "rect_xywh": [
+                0,
+                144,
+                4096,
+                64
+              ]
+            }
+          ]
+        },
+        "postfx_lifecycle": {
+          "canvas": [
+            640,
+            360
+          ],
+          "valid_lut": {
+            "lut_size": 16,
+            "transform": "swap_rb",
+            "strength": 1
+          },
+          "invalid_acceptance": "handle-zero-rejection-or-identity-pixels",
+          "scenarios": [
+            {
+              "capture_id": "postfx-destroy-last",
+              "check_id": "postfx_destroy_last_exercised",
+              "mode": "destroy-last",
+              "before_begin": "create-valid-then-destroy",
+              "after_begin": "none",
+              "expected_capture": "baseline",
+              "invalid_requests": []
+            },
+            {
+              "capture_id": "postfx-invalid-only",
+              "check_id": "postfx_invalid_only_exercised",
+              "mode": "invalid-only",
+              "before_begin": "create-invalid-requests",
+              "after_begin": "none",
+              "expected_capture": "baseline",
+              "invalid_requests": [
+                {
+                  "label": "size-zero",
+                  "lut_size": 0,
+                  "texture": "swap-16",
+                  "strength": 1
+                },
+                {
+                  "label": "invalid-texture",
+                  "lut_size": 16,
+                  "texture": "invalid",
+                  "strength": 1
+                }
+              ]
+            },
+            {
+              "capture_id": "postfx-clear-after-begin",
+              "check_id": "postfx_clear_after_begin_exercised",
+              "mode": "clear-after-begin",
+              "before_begin": "create-valid",
+              "after_begin": "clear-postfx",
+              "expected_capture": "baseline",
+              "invalid_requests": []
+            },
+            {
+              "capture_id": "postfx-swap-invalid-tail",
+              "check_id": "postfx_swap_invalid_tail_exercised",
+              "mode": "swap-invalid-tail",
+              "before_begin": "create-valid-then-invalid-tail",
+              "after_begin": "none",
+              "expected_capture": "swap-16",
+              "invalid_requests": [
+                {
+                  "label": "size-zero-tail",
+                  "lut_size": 0,
+                  "texture": "swap-16",
+                  "strength": 1
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "captures": [
+        {
+          "id": "baseline",
+          "width": 640,
+          "height": 360,
+          "background": [
+            18,
+            35,
+            52,
+            255
+          ],
+          "parameters": {
+            "lut_size": 0,
+            "transform": "identity",
+            "strength": 0,
+            "clear": false
+          },
+          "regions": [
+            {
+              "rect": [
+                40,
+                56,
+                88,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  51,
+                  102,
+                  204
+                ],
+                "transform": "identity",
+                "strength": 0
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                456,
+                232,
+                504,
+                280
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  51,
+                  102,
+                  204
+                ],
+                "transform": "identity",
+                "strength": 0
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                136,
+                56,
+                184,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  0,
+                  0,
+                  0
+                ],
+                "transform": "identity",
+                "strength": 0
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                232,
+                56,
+                280,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  255,
+                  255,
+                  255
+                ],
+                "transform": "identity",
+                "strength": 0
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                328,
+                56,
+                376,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  17,
+                  170,
+                  85
+                ],
+                "transform": "identity",
+                "strength": 0
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                136,
+                168,
+                184,
+                216
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  204,
+                  51,
+                  102
+                ],
+                "transform": "identity",
+                "strength": 0
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                560,
+                32,
+                608,
+                80
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  18,
+                  35,
+                  52
+                ],
+                "transform": "identity",
+                "strength": 0
+              },
+              "tolerance": 3
+            }
+          ]
+        },
+        {
+          "id": "identity-16",
+          "width": 640,
+          "height": 360,
+          "background": [
+            18,
+            35,
+            52,
+            255
+          ],
+          "parameters": {
+            "lut_size": 16,
+            "transform": "identity",
+            "strength": 1,
+            "clear": false
+          },
+          "regions": [
+            {
+              "rect": [
+                40,
+                56,
+                88,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  51,
+                  102,
+                  204
+                ],
+                "transform": "identity",
+                "strength": 1
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                456,
+                232,
+                504,
+                280
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  51,
+                  102,
+                  204
+                ],
+                "transform": "identity",
+                "strength": 1
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                136,
+                56,
+                184,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  0,
+                  0,
+                  0
+                ],
+                "transform": "identity",
+                "strength": 1
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                232,
+                56,
+                280,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  255,
+                  255,
+                  255
+                ],
+                "transform": "identity",
+                "strength": 1
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                328,
+                56,
+                376,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  17,
+                  170,
+                  85
+                ],
+                "transform": "identity",
+                "strength": 1
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                136,
+                168,
+                184,
+                216
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  204,
+                  51,
+                  102
+                ],
+                "transform": "identity",
+                "strength": 1
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                560,
+                32,
+                608,
+                80
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  18,
+                  35,
+                  52
+                ],
+                "transform": "identity",
+                "strength": 1
+              },
+              "tolerance": 3
+            }
+          ],
+          "compare_to": "baseline"
+        },
+        {
+          "id": "identity-64",
+          "width": 640,
+          "height": 360,
+          "background": [
+            18,
+            35,
+            52,
+            255
+          ],
+          "parameters": {
+            "lut_size": 64,
+            "transform": "identity",
+            "strength": 1,
+            "clear": false
+          },
+          "regions": [
+            {
+              "rect": [
+                40,
+                56,
+                88,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  51,
+                  102,
+                  204
+                ],
+                "transform": "identity",
+                "strength": 1
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                456,
+                232,
+                504,
+                280
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  51,
+                  102,
+                  204
+                ],
+                "transform": "identity",
+                "strength": 1
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                136,
+                56,
+                184,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  0,
+                  0,
+                  0
+                ],
+                "transform": "identity",
+                "strength": 1
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                232,
+                56,
+                280,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  255,
+                  255,
+                  255
+                ],
+                "transform": "identity",
+                "strength": 1
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                328,
+                56,
+                376,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  17,
+                  170,
+                  85
+                ],
+                "transform": "identity",
+                "strength": 1
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                136,
+                168,
+                184,
+                216
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  204,
+                  51,
+                  102
+                ],
+                "transform": "identity",
+                "strength": 1
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                560,
+                32,
+                608,
+                80
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  18,
+                  35,
+                  52
+                ],
+                "transform": "identity",
+                "strength": 1
+              },
+              "tolerance": 3
+            }
+          ],
+          "compare_to": "baseline"
+        },
+        {
+          "id": "swap-16",
+          "width": 640,
+          "height": 360,
+          "background": [
+            18,
+            35,
+            52,
+            255
+          ],
+          "parameters": {
+            "lut_size": 16,
+            "transform": "swap_rb",
+            "strength": 1,
+            "clear": false
+          },
+          "regions": [
+            {
+              "rect": [
+                40,
+                56,
+                88,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  51,
+                  102,
+                  204
+                ],
+                "transform": "swap_rb",
+                "strength": 1
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                456,
+                232,
+                504,
+                280
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  51,
+                  102,
+                  204
+                ],
+                "transform": "swap_rb",
+                "strength": 1
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                136,
+                56,
+                184,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  0,
+                  0,
+                  0
+                ],
+                "transform": "swap_rb",
+                "strength": 1
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                232,
+                56,
+                280,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  255,
+                  255,
+                  255
+                ],
+                "transform": "swap_rb",
+                "strength": 1
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                328,
+                56,
+                376,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  17,
+                  170,
+                  85
+                ],
+                "transform": "swap_rb",
+                "strength": 1
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                136,
+                168,
+                184,
+                216
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  204,
+                  51,
+                  102
+                ],
+                "transform": "swap_rb",
+                "strength": 1
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                560,
+                32,
+                608,
+                80
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  18,
+                  35,
+                  52
+                ],
+                "transform": "swap_rb",
+                "strength": 1
+              },
+              "tolerance": 3
+            }
+          ]
+        },
+        {
+          "id": "swap-64",
+          "width": 640,
+          "height": 360,
+          "background": [
+            18,
+            35,
+            52,
+            255
+          ],
+          "parameters": {
+            "lut_size": 64,
+            "transform": "swap_rb",
+            "strength": 1,
+            "clear": false
+          },
+          "regions": [
+            {
+              "rect": [
+                40,
+                56,
+                88,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  51,
+                  102,
+                  204
+                ],
+                "transform": "swap_rb",
+                "strength": 1
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                456,
+                232,
+                504,
+                280
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  51,
+                  102,
+                  204
+                ],
+                "transform": "swap_rb",
+                "strength": 1
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                136,
+                56,
+                184,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  0,
+                  0,
+                  0
+                ],
+                "transform": "swap_rb",
+                "strength": 1
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                232,
+                56,
+                280,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  255,
+                  255,
+                  255
+                ],
+                "transform": "swap_rb",
+                "strength": 1
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                328,
+                56,
+                376,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  17,
+                  170,
+                  85
+                ],
+                "transform": "swap_rb",
+                "strength": 1
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                136,
+                168,
+                184,
+                216
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  204,
+                  51,
+                  102
+                ],
+                "transform": "swap_rb",
+                "strength": 1
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                560,
+                32,
+                608,
+                80
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  18,
+                  35,
+                  52
+                ],
+                "transform": "swap_rb",
+                "strength": 1
+              },
+              "tolerance": 3
+            }
+          ]
+        },
+        {
+          "id": "half-16",
+          "width": 640,
+          "height": 360,
+          "background": [
+            18,
+            35,
+            52,
+            255
+          ],
+          "parameters": {
+            "lut_size": 16,
+            "transform": "swap_rb",
+            "strength": 0.5,
+            "clear": false
+          },
+          "regions": [
+            {
+              "rect": [
+                40,
+                56,
+                88,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  51,
+                  102,
+                  204
+                ],
+                "transform": "swap_rb",
+                "strength": 0.5
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                456,
+                232,
+                504,
+                280
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  51,
+                  102,
+                  204
+                ],
+                "transform": "swap_rb",
+                "strength": 0.5
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                136,
+                56,
+                184,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  0,
+                  0,
+                  0
+                ],
+                "transform": "swap_rb",
+                "strength": 0.5
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                232,
+                56,
+                280,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  255,
+                  255,
+                  255
+                ],
+                "transform": "swap_rb",
+                "strength": 0.5
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                328,
+                56,
+                376,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  17,
+                  170,
+                  85
+                ],
+                "transform": "swap_rb",
+                "strength": 0.5
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                136,
+                168,
+                184,
+                216
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  204,
+                  51,
+                  102
+                ],
+                "transform": "swap_rb",
+                "strength": 0.5
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                560,
+                32,
+                608,
+                80
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  18,
+                  35,
+                  52
+                ],
+                "transform": "swap_rb",
+                "strength": 0.5
+              },
+              "tolerance": 3
+            }
+          ]
+        },
+        {
+          "id": "half-64",
+          "width": 640,
+          "height": 360,
+          "background": [
+            18,
+            35,
+            52,
+            255
+          ],
+          "parameters": {
+            "lut_size": 64,
+            "transform": "swap_rb",
+            "strength": 0.5,
+            "clear": false
+          },
+          "regions": [
+            {
+              "rect": [
+                40,
+                56,
+                88,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  51,
+                  102,
+                  204
+                ],
+                "transform": "swap_rb",
+                "strength": 0.5
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                456,
+                232,
+                504,
+                280
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  51,
+                  102,
+                  204
+                ],
+                "transform": "swap_rb",
+                "strength": 0.5
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                136,
+                56,
+                184,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  0,
+                  0,
+                  0
+                ],
+                "transform": "swap_rb",
+                "strength": 0.5
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                232,
+                56,
+                280,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  255,
+                  255,
+                  255
+                ],
+                "transform": "swap_rb",
+                "strength": 0.5
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                328,
+                56,
+                376,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  17,
+                  170,
+                  85
+                ],
+                "transform": "swap_rb",
+                "strength": 0.5
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                136,
+                168,
+                184,
+                216
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  204,
+                  51,
+                  102
+                ],
+                "transform": "swap_rb",
+                "strength": 0.5
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                560,
+                32,
+                608,
+                80
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  18,
+                  35,
+                  52
+                ],
+                "transform": "swap_rb",
+                "strength": 0.5
+              },
+              "tolerance": 3
+            }
+          ]
+        },
+        {
+          "id": "strength-zero",
+          "width": 640,
+          "height": 360,
+          "background": [
+            18,
+            35,
+            52,
+            255
+          ],
+          "parameters": {
+            "lut_size": 16,
+            "transform": "swap_rb",
+            "strength": 0,
+            "clear": false
+          },
+          "regions": [
+            {
+              "rect": [
+                40,
+                56,
+                88,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  51,
+                  102,
+                  204
+                ],
+                "transform": "swap_rb",
+                "strength": 0
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                456,
+                232,
+                504,
+                280
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  51,
+                  102,
+                  204
+                ],
+                "transform": "swap_rb",
+                "strength": 0
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                136,
+                56,
+                184,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  0,
+                  0,
+                  0
+                ],
+                "transform": "swap_rb",
+                "strength": 0
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                232,
+                56,
+                280,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  255,
+                  255,
+                  255
+                ],
+                "transform": "swap_rb",
+                "strength": 0
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                328,
+                56,
+                376,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  17,
+                  170,
+                  85
+                ],
+                "transform": "swap_rb",
+                "strength": 0
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                136,
+                168,
+                184,
+                216
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  204,
+                  51,
+                  102
+                ],
+                "transform": "swap_rb",
+                "strength": 0
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                560,
+                32,
+                608,
+                80
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  18,
+                  35,
+                  52
+                ],
+                "transform": "swap_rb",
+                "strength": 0
+              },
+              "tolerance": 3
+            }
+          ],
+          "compare_to": "baseline"
+        },
+        {
+          "id": "cleared",
+          "width": 640,
+          "height": 360,
+          "background": [
+            18,
+            35,
+            52,
+            255
+          ],
+          "parameters": {
+            "lut_size": 0,
+            "transform": "identity",
+            "strength": 0,
+            "clear": true
+          },
+          "regions": [
+            {
+              "rect": [
+                40,
+                56,
+                88,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  51,
+                  102,
+                  204
+                ],
+                "transform": "identity",
+                "strength": 0
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                456,
+                232,
+                504,
+                280
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  51,
+                  102,
+                  204
+                ],
+                "transform": "identity",
+                "strength": 0
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                136,
+                56,
+                184,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  0,
+                  0,
+                  0
+                ],
+                "transform": "identity",
+                "strength": 0
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                232,
+                56,
+                280,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  255,
+                  255,
+                  255
+                ],
+                "transform": "identity",
+                "strength": 0
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                328,
+                56,
+                376,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  17,
+                  170,
+                  85
+                ],
+                "transform": "identity",
+                "strength": 0
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                136,
+                168,
+                184,
+                216
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  204,
+                  51,
+                  102
+                ],
+                "transform": "identity",
+                "strength": 0
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                560,
+                32,
+                608,
+                80
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  18,
+                  35,
+                  52
+                ],
+                "transform": "identity",
+                "strength": 0
+              },
+              "tolerance": 3
+            }
+          ],
+          "compare_to": "baseline"
+        },
+        {
+          "id": "borrowed-after-clear",
+          "width": 4096,
+          "height": 224,
+          "background": [
+            18,
+            35,
+            52,
+            255
+          ],
+          "parameters": {
+            "lut_size": 0,
+            "transform": "identity",
+            "strength": 0,
+            "clear": true
+          },
+          "regions": [
+            {
+              "rect": [
+                0,
+                0,
+                1,
+                1
+              ],
+              "expect": {
+                "kind": "lut_texel",
+                "size": 16,
+                "indices": [
+                  0,
+                  0,
+                  0
+                ],
+                "transform": "identity"
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                255,
+                0,
+                256,
+                1
+              ],
+              "expect": {
+                "kind": "lut_texel",
+                "size": 16,
+                "indices": [
+                  15,
+                  0,
+                  15
+                ],
+                "transform": "identity"
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                0,
+                15,
+                1,
+                16
+              ],
+              "expect": {
+                "kind": "lut_texel",
+                "size": 16,
+                "indices": [
+                  0,
+                  15,
+                  0
+                ],
+                "transform": "identity"
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                255,
+                15,
+                256,
+                16
+              ],
+              "expect": {
+                "kind": "lut_texel",
+                "size": 16,
+                "indices": [
+                  15,
+                  15,
+                  15
+                ],
+                "transform": "identity"
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                179,
+                7,
+                180,
+                8
+              ],
+              "expect": {
+                "kind": "lut_texel",
+                "size": 16,
+                "indices": [
+                  3,
+                  7,
+                  11
+                ],
+                "transform": "identity"
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                93,
+                2,
+                94,
+                3
+              ],
+              "expect": {
+                "kind": "lut_texel",
+                "size": 16,
+                "indices": [
+                  13,
+                  2,
+                  5
+                ],
+                "transform": "identity"
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                0,
+                32,
+                1,
+                33
+              ],
+              "expect": {
+                "kind": "lut_texel",
+                "size": 16,
+                "indices": [
+                  0,
+                  0,
+                  0
+                ],
+                "transform": "swap_rb"
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                255,
+                32,
+                256,
+                33
+              ],
+              "expect": {
+                "kind": "lut_texel",
+                "size": 16,
+                "indices": [
+                  15,
+                  0,
+                  15
+                ],
+                "transform": "swap_rb"
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                0,
+                47,
+                1,
+                48
+              ],
+              "expect": {
+                "kind": "lut_texel",
+                "size": 16,
+                "indices": [
+                  0,
+                  15,
+                  0
+                ],
+                "transform": "swap_rb"
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                255,
+                47,
+                256,
+                48
+              ],
+              "expect": {
+                "kind": "lut_texel",
+                "size": 16,
+                "indices": [
+                  15,
+                  15,
+                  15
+                ],
+                "transform": "swap_rb"
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                179,
+                39,
+                180,
+                40
+              ],
+              "expect": {
+                "kind": "lut_texel",
+                "size": 16,
+                "indices": [
+                  3,
+                  7,
+                  11
+                ],
+                "transform": "swap_rb"
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                93,
+                34,
+                94,
+                35
+              ],
+              "expect": {
+                "kind": "lut_texel",
+                "size": 16,
+                "indices": [
+                  13,
+                  2,
+                  5
+                ],
+                "transform": "swap_rb"
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                0,
+                64,
+                1,
+                65
+              ],
+              "expect": {
+                "kind": "lut_texel",
+                "size": 64,
+                "indices": [
+                  0,
+                  0,
+                  0
+                ],
+                "transform": "identity"
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                4095,
+                64,
+                4096,
+                65
+              ],
+              "expect": {
+                "kind": "lut_texel",
+                "size": 64,
+                "indices": [
+                  63,
+                  0,
+                  63
+                ],
+                "transform": "identity"
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                0,
+                127,
+                1,
+                128
+              ],
+              "expect": {
+                "kind": "lut_texel",
+                "size": 64,
+                "indices": [
+                  0,
+                  63,
+                  0
+                ],
+                "transform": "identity"
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                4095,
+                127,
+                4096,
+                128
+              ],
+              "expect": {
+                "kind": "lut_texel",
+                "size": 64,
+                "indices": [
+                  63,
+                  63,
+                  63
+                ],
+                "transform": "identity"
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                3273,
+                91,
+                3274,
+                92
+              ],
+              "expect": {
+                "kind": "lut_texel",
+                "size": 64,
+                "indices": [
+                  9,
+                  27,
+                  51
+                ],
+                "transform": "identity"
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                1142,
+                69,
+                1143,
+                70
+              ],
+              "expect": {
+                "kind": "lut_texel",
+                "size": 64,
+                "indices": [
+                  54,
+                  5,
+                  17
+                ],
+                "transform": "identity"
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                0,
+                144,
+                1,
+                145
+              ],
+              "expect": {
+                "kind": "lut_texel",
+                "size": 64,
+                "indices": [
+                  0,
+                  0,
+                  0
+                ],
+                "transform": "swap_rb"
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                4095,
+                144,
+                4096,
+                145
+              ],
+              "expect": {
+                "kind": "lut_texel",
+                "size": 64,
+                "indices": [
+                  63,
+                  0,
+                  63
+                ],
+                "transform": "swap_rb"
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                0,
+                207,
+                1,
+                208
+              ],
+              "expect": {
+                "kind": "lut_texel",
+                "size": 64,
+                "indices": [
+                  0,
+                  63,
+                  0
+                ],
+                "transform": "swap_rb"
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                4095,
+                207,
+                4096,
+                208
+              ],
+              "expect": {
+                "kind": "lut_texel",
+                "size": 64,
+                "indices": [
+                  63,
+                  63,
+                  63
+                ],
+                "transform": "swap_rb"
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                3273,
+                171,
+                3274,
+                172
+              ],
+              "expect": {
+                "kind": "lut_texel",
+                "size": 64,
+                "indices": [
+                  9,
+                  27,
+                  51
+                ],
+                "transform": "swap_rb"
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                1142,
+                149,
+                1143,
+                150
+              ],
+              "expect": {
+                "kind": "lut_texel",
+                "size": 64,
+                "indices": [
+                  54,
+                  5,
+                  17
+                ],
+                "transform": "swap_rb"
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                0,
+                16,
+                16,
+                32
+              ],
+              "expect": {
+                "kind": "rgb",
+                "value": [
+                  18,
+                  35,
+                  52
+                ]
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                4000,
+                208,
+                4016,
+                224
+              ],
+              "expect": {
+                "kind": "rgb",
+                "value": [
+                  18,
+                  35,
+                  52
+                ]
+              },
+              "tolerance": 2
+            }
+          ]
+        },
+        {
+          "id": "postfx-destroy-last",
+          "width": 640,
+          "height": 360,
+          "background": [
+            18,
+            35,
+            52,
+            255
+          ],
+          "parameters": {
+            "lut_size": 0,
+            "transform": "identity",
+            "strength": 0,
+            "clear": false
+          },
+          "regions": [
+            {
+              "rect": [
+                40,
+                56,
+                88,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  51,
+                  102,
+                  204
+                ],
+                "transform": "identity",
+                "strength": 0
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                456,
+                232,
+                504,
+                280
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  51,
+                  102,
+                  204
+                ],
+                "transform": "identity",
+                "strength": 0
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                136,
+                56,
+                184,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  0,
+                  0,
+                  0
+                ],
+                "transform": "identity",
+                "strength": 0
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                232,
+                56,
+                280,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  255,
+                  255,
+                  255
+                ],
+                "transform": "identity",
+                "strength": 0
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                328,
+                56,
+                376,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  17,
+                  170,
+                  85
+                ],
+                "transform": "identity",
+                "strength": 0
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                136,
+                168,
+                184,
+                216
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  204,
+                  51,
+                  102
+                ],
+                "transform": "identity",
+                "strength": 0
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                560,
+                32,
+                608,
+                80
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  18,
+                  35,
+                  52
+                ],
+                "transform": "identity",
+                "strength": 0
+              },
+              "tolerance": 3
+            }
+          ],
+          "compare_to": "baseline"
+        },
+        {
+          "id": "postfx-invalid-only",
+          "width": 640,
+          "height": 360,
+          "background": [
+            18,
+            35,
+            52,
+            255
+          ],
+          "parameters": {
+            "lut_size": 0,
+            "transform": "identity",
+            "strength": 0,
+            "clear": false
+          },
+          "regions": [
+            {
+              "rect": [
+                40,
+                56,
+                88,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  51,
+                  102,
+                  204
+                ],
+                "transform": "identity",
+                "strength": 0
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                456,
+                232,
+                504,
+                280
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  51,
+                  102,
+                  204
+                ],
+                "transform": "identity",
+                "strength": 0
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                136,
+                56,
+                184,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  0,
+                  0,
+                  0
+                ],
+                "transform": "identity",
+                "strength": 0
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                232,
+                56,
+                280,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  255,
+                  255,
+                  255
+                ],
+                "transform": "identity",
+                "strength": 0
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                328,
+                56,
+                376,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  17,
+                  170,
+                  85
+                ],
+                "transform": "identity",
+                "strength": 0
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                136,
+                168,
+                184,
+                216
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  204,
+                  51,
+                  102
+                ],
+                "transform": "identity",
+                "strength": 0
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                560,
+                32,
+                608,
+                80
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  18,
+                  35,
+                  52
+                ],
+                "transform": "identity",
+                "strength": 0
+              },
+              "tolerance": 3
+            }
+          ],
+          "compare_to": "baseline"
+        },
+        {
+          "id": "postfx-clear-after-begin",
+          "width": 640,
+          "height": 360,
+          "background": [
+            18,
+            35,
+            52,
+            255
+          ],
+          "parameters": {
+            "lut_size": 0,
+            "transform": "identity",
+            "strength": 0,
+            "clear": false
+          },
+          "regions": [
+            {
+              "rect": [
+                40,
+                56,
+                88,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  51,
+                  102,
+                  204
+                ],
+                "transform": "identity",
+                "strength": 0
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                456,
+                232,
+                504,
+                280
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  51,
+                  102,
+                  204
+                ],
+                "transform": "identity",
+                "strength": 0
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                136,
+                56,
+                184,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  0,
+                  0,
+                  0
+                ],
+                "transform": "identity",
+                "strength": 0
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                232,
+                56,
+                280,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  255,
+                  255,
+                  255
+                ],
+                "transform": "identity",
+                "strength": 0
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                328,
+                56,
+                376,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  17,
+                  170,
+                  85
+                ],
+                "transform": "identity",
+                "strength": 0
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                136,
+                168,
+                184,
+                216
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  204,
+                  51,
+                  102
+                ],
+                "transform": "identity",
+                "strength": 0
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                560,
+                32,
+                608,
+                80
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  18,
+                  35,
+                  52
+                ],
+                "transform": "identity",
+                "strength": 0
+              },
+              "tolerance": 3
+            }
+          ],
+          "compare_to": "baseline"
+        },
+        {
+          "id": "postfx-swap-invalid-tail",
+          "width": 640,
+          "height": 360,
+          "background": [
+            18,
+            35,
+            52,
+            255
+          ],
+          "parameters": {
+            "lut_size": 16,
+            "transform": "swap_rb",
+            "strength": 1,
+            "clear": false
+          },
+          "regions": [
+            {
+              "rect": [
+                40,
+                56,
+                88,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  51,
+                  102,
+                  204
+                ],
+                "transform": "swap_rb",
+                "strength": 1
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                456,
+                232,
+                504,
+                280
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  51,
+                  102,
+                  204
+                ],
+                "transform": "swap_rb",
+                "strength": 1
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                136,
+                56,
+                184,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  0,
+                  0,
+                  0
+                ],
+                "transform": "swap_rb",
+                "strength": 1
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                232,
+                56,
+                280,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  255,
+                  255,
+                  255
+                ],
+                "transform": "swap_rb",
+                "strength": 1
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                328,
+                56,
+                376,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  17,
+                  170,
+                  85
+                ],
+                "transform": "swap_rb",
+                "strength": 1
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                136,
+                168,
+                184,
+                216
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  204,
+                  51,
+                  102
+                ],
+                "transform": "swap_rb",
+                "strength": 1
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                560,
+                32,
+                608,
+                80
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  18,
+                  35,
+                  52
+                ],
+                "transform": "swap_rb",
+                "strength": 1
+              },
+              "tolerance": 3
+            }
+          ],
+          "compare_to": "swap-16"
+        }
+      ]
+    },
+    {
+      "id": "shader-core-fallback",
+      "expected": "core_failure",
+      "fault_requested": "fallback-missing-fragment",
+      "failed_programs": [
+        "Fallback"
+      ],
+      "required_checks": [
+        "actual_backend",
+        "shutdown",
+        "fault_applied_once",
+        "core_failed",
+        "capture_rejected",
+        "no_invalid_submit"
+      ],
+      "recipe": {
+        "kind": "shader-core-fallback"
+      },
+      "captures": []
+    },
+    {
+      "id": "shader-core-blend",
+      "expected": "core_failure",
+      "fault_requested": "blend-missing-fragment",
+      "failed_programs": [
+        "Blend"
+      ],
+      "required_checks": [
+        "actual_backend",
+        "shutdown",
+        "fault_applied_once",
+        "core_failed",
+        "capture_rejected",
+        "no_invalid_submit"
+      ],
+      "recipe": {
+        "kind": "shader-core-blend"
+      },
+      "captures": []
+    },
+    {
+      "id": "shader-optional-softblur",
+      "expected": "optional_degrade",
+      "fault_requested": "softblur-missing-fragment",
+      "failed_programs": [
+        "PostFxSoftBlur"
+      ],
+      "required_checks": [
+        "actual_backend",
+        "shutdown",
+        "core_ready",
+        "not_ifh",
+        "capture:baseline",
+        "capture:degraded",
+        "fault_applied_once",
+        "optional_degraded",
+        "no_invalid_submit"
+      ],
+      "recipe": {
+        "kind": "shader-optional-softblur",
+        "textures": {
+          "A": [
+            220,
+            40,
+            60,
+            255
+          ],
+          "B": [
+            30,
+            200,
+            90,
+            255
+          ],
+          "C": [
+            50,
+            80,
+            230,
+            255
+          ]
+        },
+        "draws": [
+          {
+            "texture": "A",
+            "rect_xywh": [
+              32,
+              48,
+              128,
+              96
+            ]
+          },
+          {
+            "texture": "B",
+            "rect_xywh": [
+              96,
+              80,
+              128,
+              96
+            ]
+          },
+          {
+            "texture": "A",
+            "rect_xywh": [
+              256,
+              48,
+              96,
+              96
+            ]
+          },
+          {
+            "texture": "C",
+            "rect_xywh": [
+              144,
+              112,
+              128,
+              96
+            ]
+          }
+        ]
+      },
+      "captures": [
+        {
+          "id": "baseline",
+          "width": 640,
+          "height": 360,
+          "background": [
+            18,
+            35,
+            52,
+            255
+          ],
+          "parameters": {},
+          "regions": [
+            {
+              "rect": [
+                40,
+                56,
+                80,
+                72
+              ],
+              "expect": {
+                "kind": "rgb",
+                "value": [
+                  220,
+                  40,
+                  60
+                ]
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                112,
+                88,
+                136,
+                104
+              ],
+              "expect": {
+                "kind": "rgb",
+                "value": [
+                  30,
+                  200,
+                  90
+                ]
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                160,
+                128,
+                208,
+                160
+              ],
+              "expect": {
+                "kind": "rgb",
+                "value": [
+                  50,
+                  80,
+                  230
+                ]
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                288,
+                72,
+                320,
+                112
+              ],
+              "expect": {
+                "kind": "rgb",
+                "value": [
+                  220,
+                  40,
+                  60
+                ]
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                400,
+                240,
+                432,
+                272
+              ],
+              "expect": {
+                "kind": "rgb",
+                "value": [
+                  18,
+                  35,
+                  52
+                ]
+              },
+              "tolerance": 2
+            }
+          ]
+        },
+        {
+          "id": "degraded",
+          "width": 640,
+          "height": 360,
+          "background": [
+            18,
+            35,
+            52,
+            255
+          ],
+          "parameters": {},
+          "regions": [
+            {
+              "rect": [
+                40,
+                56,
+                80,
+                72
+              ],
+              "expect": {
+                "kind": "rgb",
+                "value": [
+                  220,
+                  40,
+                  60
+                ]
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                112,
+                88,
+                136,
+                104
+              ],
+              "expect": {
+                "kind": "rgb",
+                "value": [
+                  30,
+                  200,
+                  90
+                ]
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                160,
+                128,
+                208,
+                160
+              ],
+              "expect": {
+                "kind": "rgb",
+                "value": [
+                  50,
+                  80,
+                  230
+                ]
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                288,
+                72,
+                320,
+                112
+              ],
+              "expect": {
+                "kind": "rgb",
+                "value": [
+                  220,
+                  40,
+                  60
+                ]
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                400,
+                240,
+                432,
+                272
+              ],
+              "expect": {
+                "kind": "rgb",
+                "value": [
+                  18,
+                  35,
+                  52
+                ]
+              },
+              "tolerance": 2
+            }
+          ],
+          "compare_to": "baseline"
+        }
+      ]
+    },
+    {
+      "id": "shader-optional-transition",
+      "expected": "optional_degrade",
+      "fault_requested": "transition-missing-fragment",
+      "failed_programs": [
+        "Transition"
+      ],
+      "required_checks": [
+        "actual_backend",
+        "shutdown",
+        "core_ready",
+        "not_ifh",
+        "capture:baseline",
+        "capture:degraded",
+        "fault_applied_once",
+        "optional_degraded",
+        "no_invalid_submit"
+      ],
+      "recipe": {
+        "kind": "shader-optional-transition",
+        "textures": {
+          "A": [
+            220,
+            40,
+            60,
+            255
+          ],
+          "B": [
+            30,
+            200,
+            90,
+            255
+          ],
+          "C": [
+            50,
+            80,
+            230,
+            255
+          ]
+        },
+        "draws": [
+          {
+            "texture": "A",
+            "rect_xywh": [
+              32,
+              48,
+              128,
+              96
+            ]
+          },
+          {
+            "texture": "B",
+            "rect_xywh": [
+              96,
+              80,
+              128,
+              96
+            ]
+          },
+          {
+            "texture": "A",
+            "rect_xywh": [
+              256,
+              48,
+              96,
+              96
+            ]
+          },
+          {
+            "texture": "C",
+            "rect_xywh": [
+              144,
+              112,
+              128,
+              96
+            ]
+          }
+        ]
+      },
+      "captures": [
+        {
+          "id": "baseline",
+          "width": 640,
+          "height": 360,
+          "background": [
+            18,
+            35,
+            52,
+            255
+          ],
+          "parameters": {},
+          "regions": [
+            {
+              "rect": [
+                40,
+                56,
+                80,
+                72
+              ],
+              "expect": {
+                "kind": "rgb",
+                "value": [
+                  220,
+                  40,
+                  60
+                ]
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                112,
+                88,
+                136,
+                104
+              ],
+              "expect": {
+                "kind": "rgb",
+                "value": [
+                  30,
+                  200,
+                  90
+                ]
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                160,
+                128,
+                208,
+                160
+              ],
+              "expect": {
+                "kind": "rgb",
+                "value": [
+                  50,
+                  80,
+                  230
+                ]
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                288,
+                72,
+                320,
+                112
+              ],
+              "expect": {
+                "kind": "rgb",
+                "value": [
+                  220,
+                  40,
+                  60
+                ]
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                400,
+                240,
+                432,
+                272
+              ],
+              "expect": {
+                "kind": "rgb",
+                "value": [
+                  18,
+                  35,
+                  52
+                ]
+              },
+              "tolerance": 2
+            }
+          ]
+        },
+        {
+          "id": "degraded",
+          "width": 640,
+          "height": 360,
+          "background": [
+            18,
+            35,
+            52,
+            255
+          ],
+          "parameters": {},
+          "regions": [
+            {
+              "rect": [
+                40,
+                56,
+                80,
+                72
+              ],
+              "expect": {
+                "kind": "rgb",
+                "value": [
+                  220,
+                  40,
+                  60
+                ]
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                112,
+                88,
+                136,
+                104
+              ],
+              "expect": {
+                "kind": "rgb",
+                "value": [
+                  30,
+                  200,
+                  90
+                ]
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                160,
+                128,
+                208,
+                160
+              ],
+              "expect": {
+                "kind": "rgb",
+                "value": [
+                  50,
+                  80,
+                  230
+                ]
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                288,
+                72,
+                320,
+                112
+              ],
+              "expect": {
+                "kind": "rgb",
+                "value": [
+                  220,
+                  40,
+                  60
+                ]
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                400,
+                240,
+                432,
+                272
+              ],
+              "expect": {
+                "kind": "rgb",
+                "value": [
+                  18,
+                  35,
+                  52
+                ]
+              },
+              "tolerance": 2
+            }
+          ],
+          "compare_to": "baseline"
+        }
+      ]
+    }
+  ]
+}

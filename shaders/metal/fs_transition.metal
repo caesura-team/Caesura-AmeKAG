@@ -12,7 +12,7 @@ struct PSInput {
 
 struct TransParams {
     float  u_progress;
-    int    u_method;
+    float  u_method;
     float2 u_pad;
 };
 
@@ -28,7 +28,7 @@ fragment float4 fs_transition(PSInput in [[stage_in]],
     float4 tc = s_toTex.sample(s_toSamp, in.texcoord);
     float t = clamp(params.u_progress, 0.0f, 1.0f);
 
-    switch (params.u_method) {
+    switch (int(params.u_method)) {
         case 1: t = step(s_ruleTex.sample(s_ruleSamp, in.texcoord).r, t); break;
         case 2: t = step(in.texcoord.x, t); break;
         case 3: t = step(1.0f - in.texcoord.x, t); break;

@@ -4,7 +4,9 @@
 
 进度显示：[当前待办清单](2026-09-05-003-runtime-foundation-todo.md)。详细证据见 [执行记录](2026-09-05-002-runtime-foundation-execution.md)。
 
-2026-09-09：U12、[U13语言等价语料](2026-09-08-002-u13-language-parity-execution.md)和[U14缓存兼容](2026-09-08-004-u14-cache-compatibility-execution.md)已交付。[Expo Apple 三 lane](2026-09-08-003-u2-expo-apple-validation.md)在记录的源码上通过，第七次因配额未执行；用户要求继续其余开发。[U15截图/帧生命周期与接续文字回归](2026-09-08-005-u15-screenshot-lifecycle-execution.md)已有原生完整profile和真实D3D11证据，随后[U27共同Web成本修复](2026-09-09-006-u27-web-cost-execution.md)取得冻结完整Web511/511。最新原生整合与候选CI仍须完成；U16其他图形能力和U17–U29继续保留，U27多进程Release基线/长跑尚未执行。
+2026-09-09：U12、[U13语言等价语料](2026-09-08-002-u13-language-parity-execution.md)、[U14缓存兼容](2026-09-08-004-u14-cache-compatibility-execution.md)和[U15截图/帧生命周期](2026-09-08-005-u15-screenshot-lifecycle-execution.md)已交付；PR18合并后的masterCI10/10成功。[U16原生图像回归](2026-09-09-007-native-render-effects-execution.md)首个完整D3D11/OpenGL矩阵为3/18、整体FAIL，正在按固定像素合同修复。[Expo Apple三lane](2026-09-08-003-u2-expo-apple-validation.md)在记录源码上通过，第七次因配额未执行；用户要求继续其余开发。[U27共同Web成本修复](2026-09-09-006-u27-web-cost-execution.md)已有完整Web511/511；其多进程Release基线/长跑以及U17–U29仍须继续完成。
+
+2026-09-12：[U16实际图像回归](2026-09-09-007-native-render-effects-execution.md)已通过D3D11/OpenGL固定18场景、82张图，以及完整本机Debug/C++1333/Lua/CTest和严格证据核验。PR #19待最终候选CI与合并，早期失败和当前未测图形范围保留；U17–U29及其他未验收项继续推进。
 
 2026-09-05 用户要求重新制定后续计划，抛弃原有排期，仅保留两项方向约束：**底层优先、Studio 暂停**。
 

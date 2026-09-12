@@ -92,6 +92,7 @@ class NullRenderDevice final : public IRenderDevice {public:
     float textLineHeight() const override;
     RenderUniformHandle getDefaultSampler() const override;
     RenderProgramHandle getFallbackProgram() const override;
+    RenderProgramHandle getModulatedTextureProgram() const override;
     const char* getBackendName() const override;
     RenderRuntimeInfo getRuntimeInfo() const override;
     bool setPreferredBackend(const char* backendName) override;

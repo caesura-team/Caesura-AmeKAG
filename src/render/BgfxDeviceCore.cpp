@@ -87,7 +87,7 @@ void BgfxDeviceCore::setOverrideGLContext(void* ctx) { s_overrideGLContext = ctx
 
 bool BgfxDeviceCore::init(void* nativeWindowHandle, int width, int height) {
     if (m_bgfxInitialized) return false;
-    if (width <= 0 || height <= 0) return false;
+    if (width <= 0 || height <= 0 || width > UINT16_MAX || height > UINT16_MAX) return false;
     m_callback.reset();
     // [10.2.22] main-thread-only guarantee: bgfx must be driven from
     // the thread that created the context. SDL_IsMainThread is not
@@ -95,6 +95,9 @@ bool BgfxDeviceCore::init(void* nativeWindowHandle, int width, int height) {
     // existing owner-thread discipline instead.
     m_width  = width;
     m_height = height;
+    m_backbufferW = static_cast<uint16_t>(width);
+    m_backbufferH = static_cast<uint16_t>(height);
+    m_presentSizeExplicit = false;
     m_bgfxInitialized = false;
     m_shutdownComplete = false;
 
@@ -178,12 +181,31 @@ bool BgfxDeviceCore::init(void* nativeWindowHandle, int width, int height) {
     return true;
 }
 
+void BgfxDeviceCore::setPresentSize(uint16_t width, uint16_t height) {
+    if (!m_bgfxInitialized || m_callback.deviceLost() || width == 0 || height == 0) return;
+    CAESURA_ASSERT_MAIN_THREAD();
+    m_presentSizeExplicit = true;
+    if (m_backbufferW == width && m_backbufferH == height) return;
+    m_backbufferW = width;
+    m_backbufferH = height;
+    // Preserve the logical coordinate system while resizing the actual GPU
+    // backbuffer. This queues a reset and does not present an extra frame.
+    bgfx::reset(width, height, BGFX_RESET_VSYNC);
+    setupDefaultViews();
+}
+
 void BgfxDeviceCore::resize(int width, int height) {
     if (!m_bgfxInitialized || m_callback.deviceLost()) return;
-    if (width <= 0 || height <= 0) return;
+    if (width <= 0 || height <= 0 || width > UINT16_MAX || height > UINT16_MAX) return;
+    CAESURA_ASSERT_MAIN_THREAD();
     if (width == m_width && height == m_height) return;
     m_width  = width;
     m_height = height;
+    if (!m_presentSizeExplicit) {
+        m_backbufferW = static_cast<uint16_t>(width);
+        m_backbufferH = static_cast<uint16_t>(height);
+        bgfx::reset(static_cast<uint32_t>(width), static_cast<uint32_t>(height), BGFX_RESET_VSYNC);
+    }
     setupDefaultViews();
     DEBUG_INFO(SubSys::Render, ErrCode::Ok,
                "[BgfxRenderDevice] Resized to %dx%d", width, height);
@@ -420,7 +442,7 @@ bgfx::TextureHandle BgfxDeviceCore::getSolidPixel(uint8_t r, uint8_t g,
     }
     if (bgfx::isValid(m_solidPixel)) bgfx::destroy(m_solidPixel);
     const uint8_t pixel[4] = { r, g, b, a };
-    const bgfx::Memory* mem = bgfx::makeRef(pixel, sizeof(pixel), nullptr, nullptr);
+    const bgfx::Memory* mem = bgfx::copy(pixel, sizeof(pixel));
     m_solidPixel = bgfx::createTexture2D(1, 1, false, 1,
         bgfx::TextureFormat::RGBA8, BGFX_SAMPLER_POINT, mem);
     m_solidPixelKey = key;

@@ -38,10 +38,17 @@ static int utf8_char_len(uint8_t lead) {
 }
 
 static uint32_t utf8_codepoint(const uint8_t* data, int len) {
-    if (len == 1) return data[0];
-    if (len == 2) return ((data[0] & 0x1F) << 6) | (data[1] & 0x3F);
-    if (len == 3) return ((data[0] & 0x0F) << 12) | ((data[1] & 0x3F) << 6) | (data[2] & 0x3F);
-    return ((data[0] & 0x07) << 18) | ((data[1] & 0x3F) << 12) | ((data[2] & 0x3F) << 6) | (data[3] & 0x3F);
+    if (len <= 0 || len > 4) return 0xfffd;
+    if (len == 1) return data[0] < 0x80 ? data[0] : 0xfffd;
+    if (utf8_char_len(data[0]) != len || data[0] < 0xc2 || data[0] > 0xf4) return 0xfffd;
+    for (int i = 1; i < len; ++i) if ((data[i] & 0xc0) != 0x80) return 0xfffd;
+    uint32_t cp = 0;
+    if (len == 2) cp = ((data[0] & 0x1F) << 6) | (data[1] & 0x3F);
+    else if (len == 3) cp = ((data[0] & 0x0F) << 12) | ((data[1] & 0x3F) << 6) | (data[2] & 0x3F);
+    else cp = ((data[0] & 0x07) << 18) | ((data[1] & 0x3F) << 12) | ((data[2] & 0x3F) << 6) | (data[3] & 0x3F);
+    if ((len == 2 && cp < 0x80) || (len == 3 && cp < 0x800) || (len == 4 && cp < 0x10000)
+        || cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff)) return 0xfffd;
+    return cp;
 }
 
 
@@ -252,7 +259,7 @@ TextRenderer::~TextRenderer() {
     shutdown();
 }
 
-TextRenderer::TTFState::~TTFState() {
+TextRenderer::GlyphAtlas::~GlyphAtlas() {
     if (ftFace) {
         FT_Done_Face(ftFace);
         ftFace = nullptr;
@@ -272,10 +279,15 @@ bool TextRenderer::init(IRenderDevice* device, bool activateDefault) {
     }
 
     // Borrow shared resources from IRenderDevice
-    m_fallbackProgram = toBgfx(device->getFallbackProgram());
-    if (!bgfx::isValid(m_fallbackProgram)) {
+    m_textProgram = toBgfx(device->getModulatedTextureProgram());
+    if (!bgfx::isValid(m_textProgram)) {
+        m_textProgram = toBgfx(device->getFallbackProgram());
+        DEBUG_INFO(SubSys::Render, ErrCode::Ok,
+            "[TextRenderer] Modulated texture program unavailable; preserving unmodulated fallback text (color/alpha unsupported on this backend).");
+    }
+    if (!bgfx::isValid(m_textProgram)) {
         DEBUG_ERR(SubSys::Render, ErrCode::Ok,
-                  "[TextRenderer] Fallback program not ready. "
+                  "[TextRenderer] Texture program not ready. "
                   "Ensure device::init() runs first.");
         return false;
     }
@@ -318,6 +330,85 @@ bool TextRenderer::init(IRenderDevice* device, bool activateDefault) {
     return true;
 }
 
+void TextRenderer::setScreenSize(int width, int height) {
+    if (width <= 0 || height <= 0 || (width == m_screenWidth && height == m_screenHeight)) return;
+    m_screenWidth = width;
+    m_screenHeight = height;
+    // Resident vertices contain NDC, so the same string/position is not a hit
+    // after a surface change. Keep buffers, invalidate every LRU geometry key.
+    invalidateCache();
+}
+
+bool TextRenderer::uploadPendingGlyphs() {
+    if (!m_ttf || m_ttf->pendingUpload().w == 0) return true;
+    if (!bgfx::isValid(m_fontTexture)) return false;
+    const auto dirty = m_ttf->pendingUpload();
+    try {
+        // Tight, owned rows: passing an atlas-offset pointer with a shorter
+        // copy would omit the source row pitch. This patch includes the
+        // white/transparent guard texels and only stable or newly added cells.
+        const size_t rowBytes = size_t(dirty.w) * 4;
+        std::vector<uint8_t> patch(rowBytes * dirty.h);
+        for (int row = 0; row < dirty.h; ++row) {
+            const auto offset = (size_t(dirty.y + row) * m_ttf->width() + dirty.x) * 4;
+            std::memcpy(patch.data() + size_t(row) * rowBytes,
+                        m_ttf->pixels().data() + offset, rowBytes);
+        }
+        const auto* owned = bgfx::copy(patch.data(), static_cast<uint32_t>(patch.size()));
+        if (!owned) return false;
+        bgfx::updateTexture2D(m_fontTexture, 0, 0,
+            static_cast<uint16_t>(dirty.x), static_cast<uint16_t>(dirty.y),
+            static_cast<uint16_t>(dirty.w), static_cast<uint16_t>(dirty.h), owned,
+            static_cast<uint16_t>(rowBytes));
+        m_ttf->acknowledgeUpload();
+        return true;
+    } catch (...) { return false; }
+}
+
+bool TextRenderer::prepareTextGlyphs(const std::string& text, size_t byteBegin) {
+    if (!m_ttf) return true;
+    const auto* data = reinterpret_cast<const uint8_t*>(text.data());
+    for (size_t i = std::min(byteBegin, text.size()); i < text.size();) {
+        const int length = static_cast<int>(std::min(size_t(utf8_char_len(data[i])), text.size() - i));
+        const uint32_t cp = utf8_codepoint(data + i, length);
+        i += static_cast<size_t>(length);
+        if (cp == '\n' || cp == '\r') continue;
+        const auto status = m_ttf->prepareGlyph(cp);
+        if (status == GlyphAtlas::PrepareStatus::Missing && !m_reportedMissingGlyph) {
+            DEBUG_ERR(SubSys::Render, ErrCode::Render_FontAtlasFailed,
+                "[TextRenderer] Font lacks U+%04X; using this font atlas's replacement glyph.", cp);
+            m_reportedMissingGlyph = true;
+        } else if (status == GlyphAtlas::PrepareStatus::Full && !m_reportedAtlasFull) {
+            DEBUG_ERR(SubSys::Render, ErrCode::Render_FontAtlasFailed,
+                "[TextRenderer] Bounded glyph atlas exhausted at U+%04X; earlier glyphs remain stable, using replacement.", cp);
+            m_reportedAtlasFull = true;
+        } else if (status == GlyphAtlas::PrepareStatus::Error) {
+            if (!m_reportedAtlasUploadFailure) DEBUG_ERR(SubSys::Render, ErrCode::Render_FontAtlasFailed,
+                "[TextRenderer] Glyph preparation failed; text submission skipped.");
+            m_reportedAtlasUploadFailure = true;
+            return false;
+        }
+    }
+    if (uploadPendingGlyphs()) return true;
+    if (!m_reportedAtlasUploadFailure) DEBUG_ERR(SubSys::Render, ErrCode::Render_FontAtlasFailed,
+        "[TextRenderer] Glyph atlas upload failed; dirty pixels retained, text submission skipped.");
+    m_reportedAtlasUploadFailure = true;
+    return false;
+}
+
+float TextRenderer::measureAdvance(const std::string& text, AdvanceFn advance, void* userData) {
+    if (!advance) return 0;
+    const auto* data = reinterpret_cast<const uint8_t*>(text.data());
+    float width = 0;
+    for (size_t i = 0; i < text.size();) {
+        const int length = static_cast<int>(std::min(size_t(utf8_char_len(data[i])), text.size() - i));
+        const uint32_t cp = utf8_codepoint(data + i, length);
+        i += static_cast<size_t>(length);
+        if (cp != '\n' && cp != '\r') width += advance(cp, userData);
+    }
+    return width;
+}
+
 void TextRenderer::shutdown() {
     BackendRegistry::instance().unregisterDeviceLostListener(this);
     clearFontState();
@@ -342,7 +433,8 @@ void TextRenderer::shutdown() {
     if (bgfx::isValid(m_cjkAtlas))   { bgfx::destroy(m_cjkAtlas);  m_cjkAtlas  = BGFX_INVALID_HANDLE; }
     m_cjkGlyphs.clear();
 
-    // m_fallbackProgram and m_posTexLayout are borrowed — do NOT destroy
+    // m_textProgram and m_posTexLayout are borrowed — do NOT destroy
+    m_textProgram = BGFX_INVALID_HANDLE;
     m_initialized = false;
 }
 
@@ -377,6 +469,7 @@ void TextRenderer::onDeviceLost() {
     if (bgfx::isValid(m_u_color))    { bgfx::destroy(m_u_color);   m_u_color   = BGFX_INVALID_HANDLE; }
     if (bgfx::isValid(m_cjkAtlas))   { bgfx::destroy(m_cjkAtlas);  m_cjkAtlas  = BGFX_INVALID_HANDLE; }
     m_cjkGlyphs.clear();
+    m_textProgram = BGFX_INVALID_HANDLE;
     m_initialized = false;
 }
 
@@ -403,7 +496,8 @@ std::unique_ptr<IPreparedFontState> TextRenderer::prepareBitmapFont(const FontRe
     const int scale = id == FontId::Small ? 1 : 2;
     const int atlasW = glyphW * 32;
     const int atlasH = glyphH * 3;
-    std::vector<uint8_t> pixels(size_t(atlasW) * atlasH * 4, 0);
+    std::vector<uint8_t> pixels(size_t(atlasW) * atlasH * 4, 255);
+    for (size_t i = 3; i < pixels.size(); i += 4) pixels[i] = 0;
     for (int glyph = 0; glyph < 95; ++glyph) {
         const int column = glyph % 32, row = glyph / 32;
         for (int y = 0; y < glyphH; ++y) {
@@ -459,40 +553,37 @@ TextRenderer::GlyphQuad TextRenderer::buildGlyph(
 TextRenderer::GlyphQuad TextRenderer::buildGlyph(
     uint32_t cp, float penX, float penY, float scaleW, float scaleH)
 {
-    // TTF path (single unordered_map lookup: find() covers the existence
-    // check that the old count()+at() pair did with two probes)
+    // Every TTF glyph, including a missing/full-atlas replacement, uses this
+    // atlas's metrics and UV space. Never fall through to bitmap coordinates.
     if (m_ttf) {
-        auto it = m_ttf->glyphs.find(cp);
-        if (it != m_ttf->glyphs.end()) {
-            const auto& gm = it->second;
-            float gw = (float)gm.w * scaleW;
-            float gh = (float)gm.h * scaleH;
-            float atlasW = (float)m_ttf->atlasW;
-            float atlasH = (float)m_ttf->atlasH;
-            GlyphQuad q;
-            q.x = penX + gm.offsetX * scaleW;
-            q.y = penY - gm.offsetY * scaleH + m_ttf->ascent * scaleH;
-            q.w = gw;
-            q.h = gh;
-            q.u0 = (float)gm.x / atlasW;
-            q.v0 = (float)gm.y / atlasH;
-            q.u1 = (float)(gm.x + gm.w) / atlasW;
-            q.v1 = (float)(gm.y + gm.h) / atlasH;
-            q.advance = (float)gm.advance * scaleW;
-            return q;
+        const auto& gm = m_ttf->resolve(cp);
+        float gw = (float)gm.w * scaleW;
+        float gh = (float)gm.h * scaleH;
+        float atlasW = (float)m_ttf->atlasW;
+        float atlasH = (float)m_ttf->atlasH;
+        GlyphQuad q;
+        q.x = penX + gm.offsetX * scaleW;
+        q.y = penY - gm.offsetY * scaleH + m_ttf->ascent * scaleH;
+        q.w = gw;
+        q.h = gh;
+        q.u0 = (float)gm.x / atlasW;
+        q.v0 = (float)gm.y / atlasH;
+        q.u1 = (float)(gm.x + gm.w) / atlasW;
+        q.v1 = (float)(gm.y + gm.h) / atlasH;
+        q.advance = (float)gm.advance * scaleW;
+        if (gm.w > 0 && gm.h > 0) {
+            q.paddingX = 0.5f * scaleW;
+            q.paddingY = 0.5f * scaleH;
         }
+        return q;
     }
 
     // Bitmap fallback
     int idx;
     if (cp >= 32 && cp <= 126)
         idx = (int)cp - 32;
-    else if (cp >= 0x4E00 && cp <= 0x9FFF)
-        idx = 95;
-    else if (cp >= 0x3040 && cp <= 0x30FF)
-        idx = 95;
     else
-        idx = 31;
+        idx = 31; // '?' from the actually bound bitmap atlas.
 
     int col = idx % m_atlasCols;
     int row = idx / m_atlasCols;
@@ -522,8 +613,16 @@ TextRenderer::GlyphQuad TextRenderer::buildGlyph(
 
 TextRenderer::NDCQuad TextRenderer::glyphQuadToNDC(
     float x, float y, float w, float h, float shear,
-    float screenW, float screenH)
+    float screenW, float screenH, float paddingX, float paddingY)
 {
+    // Extend the same affine shear through the transparent border. This keeps
+    // every original ink point fixed, including synthetic italic/strike bounds.
+    const float shearExtension = h > 0 ? shear * paddingY / h : 0.0f;
+    x -= paddingX + shearExtension;
+    y -= paddingY;
+    w += 2 * paddingX;
+    h += 2 * paddingY;
+    shear += 2 * shearExtension;
     // Pixel coords -> NDC (passthrough shader bypasses u_viewProj).
     // Italic shear: the top edge moves right by `shear` px; the bottom
     // edge stays fixed (a true slant, not a translation).
@@ -543,7 +642,7 @@ void TextRenderer::submitGlyphQuads(uint16_t viewId, const GlyphQuad* quads,
                                      int count, TextColor color,
                                      float scaleW, float scaleH)
 {
-    if (count <= 0 || !bgfx::isValid(m_fallbackProgram)) return;
+    if (count <= 0 || !bgfx::isValid(m_textProgram)) return;
 
     // Ortho projection
     float ortho[16];
@@ -574,12 +673,14 @@ void TextRenderer::submitGlyphQuads(uint16_t viewId, const GlyphQuad* quads,
     float sh = (float)m_screenHeight;
     for (int i = 0; i < quadCount; ++i) {
         const GlyphQuad& q = quads[i];
-        const NDCQuad v = glyphQuadToNDC(q.x, q.y, q.w, q.h, q.shear, sw, sh);
+        const NDCQuad v = glyphQuadToNDC(q.x, q.y, q.w, q.h, q.shear, sw, sh, q.paddingX, q.paddingY);
+        const float du = q.w > 0 ? (q.u1 - q.u0) * q.paddingX / q.w : 0;
+        const float dv = q.h > 0 ? (q.v1 - q.v0) * q.paddingY / q.h : 0;
         int vi = i * 4;
-        vtx[vi+0] = { v.x0, v.y0, q.u0, q.v0 };
-        vtx[vi+1] = { v.x1, v.y1, q.u1, q.v0 };
-        vtx[vi+2] = { v.x2, v.y2, q.u1, q.v1 };
-        vtx[vi+3] = { v.x3, v.y3, q.u0, q.v1 };
+        vtx[vi+0] = { v.x0, v.y0, q.u0-du, q.v0-dv };
+        vtx[vi+1] = { v.x1, v.y1, q.u1+du, q.v0-dv };
+        vtx[vi+2] = { v.x2, v.y2, q.u1+du, q.v1+dv };
+        vtx[vi+3] = { v.x3, v.y3, q.u0-du, q.v1+dv };
 
         int ii = i * 6;
         uint16_t base = (uint16_t)vi;
@@ -594,8 +695,10 @@ void TextRenderer::submitGlyphQuads(uint16_t viewId, const GlyphQuad* quads,
     bgfx::setVertexBuffer(0, &tvb);
     bgfx::setIndexBuffer(&tib);
     bgfx::setTexture(0, m_texSampler, m_fontTexture);
+    const float modulation[4] = {color.r/255.0f,color.g/255.0f,color.b/255.0f,color.a/255.0f};
+    bgfx::setUniform(m_u_color, modulation);
     bgfx::setState(state);
-    bgfx::submit(viewId, m_fallbackProgram);
+    bgfx::submit(viewId, m_textProgram);
 }
 
 void TextRenderer::ensureStrikeTexture()
@@ -610,7 +713,7 @@ void TextRenderer::ensureStrikeTexture()
 void TextRenderer::submitStrikeBars(uint16_t viewId, const GlyphQuad* bars,
                                      int count, TextColor color)
 {
-    if (count <= 0 || !bgfx::isValid(m_fallbackProgram)) return;
+    if (count <= 0 || !bgfx::isValid(m_textProgram)) return;
     ensureStrikeTexture();
     if (!bgfx::isValid(m_strikeTexture)) return;
 
@@ -662,8 +765,10 @@ void TextRenderer::submitStrikeBars(uint16_t viewId, const GlyphQuad* bars,
     bgfx::setVertexBuffer(0, &tvb);
     bgfx::setIndexBuffer(&tib);
     bgfx::setTexture(0, m_texSampler, m_strikeTexture);
+    const float modulation[4] = {color.r/255.0f,color.g/255.0f,color.b/255.0f,color.a/255.0f};
+    bgfx::setUniform(m_u_color, modulation);
     bgfx::setState(state);
-    bgfx::submit(viewId, m_fallbackProgram);
+    bgfx::submit(viewId, m_textProgram);
 }
 
 // ===========================================================================
@@ -676,6 +781,7 @@ void TextRenderer::renderText(uint16_t viewId, const std::string& text,
                                bool strike)
 {
     if (text.empty() || !m_initialized || !m_fontDescription.active) return;
+    if (!prepareTextGlyphs(text)) return;
 
     // Build glyph quads (scale != 1 => {size=N} markup; bold => synthetic
     // bold via a second quad pass offset by ~8% of the glyph width;
@@ -737,6 +843,7 @@ void TextRenderer::renderRuby(uint16_t viewId, const std::string& text,
                                float x, float y, TextColor color)
 {
     if (text.empty() || !m_initialized || !m_fontDescription.active) return;
+    if (!prepareTextGlyphs(text) || !prepareTextGlyphs(ruby)) return;
 
     std::vector<GlyphQuad> quads;
     quads.reserve(text.size() + ruby.size());
@@ -745,8 +852,11 @@ void TextRenderer::renderRuby(uint16_t viewId, const std::string& text,
 
     // Ruby text (0.5x scale, anchored above)
     float rubyScale = 0.5f;
-    float rubyPenX = x + ((float)text.size() * (float)m_fontGlyphW -
-                          (float)ruby.size() * (float)m_fontGlyphW * rubyScale) / 2.0f;
+    const auto advance = [](uint32_t cp, void* owner) {
+        return static_cast<TextRenderer*>(owner)->buildGlyph(cp,0,0,1,1).advance;
+    };
+    float rubyPenX = x + (measureAdvance(text,advance,this)
+                          - measureAdvance(ruby,advance,this)*rubyScale) / 2.0f;
     {
         const auto* rdata = (const uint8_t*)ruby.data();
         int rlen = (int)ruby.size();
@@ -809,8 +919,9 @@ static GlyphMetrics s_emptyGlyph2{0,0,0,0,8,0,0};
 GlyphMetrics TextRenderer::getTTFGlyph(uint32_t codepoint) {
     // 1. TTF atlas
     if (m_ttf) {
-        auto it = m_ttf->glyphs.find(codepoint);
-        if (it != m_ttf->glyphs.end()) return it->second;
+        // Demand preparation/upload occurs before layout. Missing/full glyphs
+        // resolve to a marker in THIS atlas, never foreign bitmap/CJK UVs.
+        return m_ttf->resolve(codepoint);
     }
 
     // 2. CJK static atlas
@@ -1066,9 +1177,6 @@ TextRenderer::GlyphLookupResult TextRenderer::glyphLookupForCache(uint32_t codep
     bool fromCjk = false;
     if (hasCjk && !self->m_ttf) {
         fromCjk = true;
-    } else if (hasCjk && self->m_ttf) {
-        // glyph sourced from CJK when the TTF atlas lacks it
-        fromCjk = (self->m_ttf->glyphs.find(codepoint) == self->m_ttf->glyphs.end());
     }
     out.fromCjk = fromCjk;
     return out;
@@ -1122,6 +1230,7 @@ TextRenderer::GlyphLayoutResult TextRenderer::layoutGlyphs(
             d.u0 = gm.x * iw;  d.v0 = gm.y * ih;
             d.u1 = (gm.x + gm.w) * iw;  d.v1 = (gm.y + gm.h) * ih;
             d.fromCjk = fromCjk;
+            d.padding = useTtf && !fromCjk ? 0.5f : 0.0f;
         }
         // no-glyph case keeps the default zeroed LaidGlyph (empty slot)
 
@@ -1151,25 +1260,29 @@ void TextRenderer::buildQuadVertices(const std::vector<LaidGlyph>& glyphs,
 
     for (size_t gi = 0; gi < glyphs.size(); ++gi) {
         const LaidGlyph& d = glyphs[gi];
+        const float p = d.padding;
+        const float du = d.w > 0 ? (d.u1 - d.u0) * p / d.w : 0;
+        const float dv = d.h > 0 ? (d.v1 - d.v0) * p / d.h : 0;
+        const float u0 = d.u0-du, v0 = d.v0-dv, u1 = d.u1+du, v1 = d.v1+dv;
         // Absolute vertex slot: a tail written at glyph slot `glyphIndexBase`
         // must reference vertices (base+gi)*6, not (gi)*6.
         const uint32_t vbase = static_cast<uint32_t>((glyphIndexBase + gi) * 6);
         float nx0, ny0, nx1, ny1;
         if (ndcOk) {
-            nx0 = (d.gx / screenW) * 2.0f - 1.0f;
-            ny0 = 1.0f - (d.gy / screenH) * 2.0f;
-            nx1 = ((d.gx + d.w) / screenW) * 2.0f - 1.0f;
-            ny1 = 1.0f - ((d.gy + d.h) / screenH) * 2.0f;
+            nx0 = ((d.gx-p) / screenW) * 2.0f - 1.0f;
+            ny0 = 1.0f - ((d.gy-p) / screenH) * 2.0f;
+            nx1 = ((d.gx+d.w+p) / screenW) * 2.0f - 1.0f;
+            ny1 = 1.0f - ((d.gy+d.h+p) / screenH) * 2.0f;
         } else {
-            nx0 = d.gx; ny0 = d.gy; nx1 = d.gx + d.w; ny1 = d.gy + d.h;
+            nx0 = d.gx-p; ny0 = d.gy-p; nx1 = d.gx+d.w+p; ny1 = d.gy+d.h+p;
         }
         const float v[24] = {
-            nx0, ny0, d.u0, d.v0,
-            nx1, ny0, d.u1, d.v0,
-            nx1, ny1, d.u1, d.v1,
-            nx0, ny0, d.u0, d.v0,
-            nx1, ny1, d.u1, d.v1,
-            nx0, ny1, d.u0, d.v1
+            nx0, ny0, u0, v0,
+            nx1, ny0, u1, v0,
+            nx1, ny1, u1, v1,
+            nx0, ny0, u0, v0,
+            nx1, ny1, u1, v1,
+            nx0, ny1, u0, v1
         };
         verts.insert(verts.end(), v, v + 24);
         indices.push_back(vbase);     indices.push_back(vbase + 1); indices.push_back(vbase + 2);
@@ -1420,8 +1533,7 @@ float TextRenderer::renderTextCached(uint16_t viewId, const std::string& text,
                                       float x, float y, TextColor color,
                                       bgfx::ProgramHandle program) {
     if (!m_initialized || !m_fontDescription.active || text.empty()) return x;
-
-    bgfx::ProgramHandle prog = bgfx::isValid(program) ? program : m_fallbackProgram;
+    bgfx::ProgramHandle prog = bgfx::isValid(program) ? program : m_textProgram;
     if (!bgfx::isValid(prog)) return x;
 
     // Slot selection (LRU): an exact key hit needs no work; an append-
@@ -1435,6 +1547,9 @@ float TextRenderer::renderTextCached(uint16_t viewId, const std::string& text,
     const CachePlan plan = planCacheUpdate(slot, viewId, text, x, y);
 
     if (plan.action == CacheAction::Hit) {
+        // A valid slot was built only after its glyphs were uploaded. The
+        // append-only atlas keeps those cells/UVs stable even if another text
+        // has an outstanding dirty patch, so no repeated glyph walk is needed.
         ++m_cacheStats.cacheHits;
         if (!ensureCacheBuffers(slot)) return x;
         submitCachedSlot(slot, viewId, color, prog);
@@ -1442,6 +1557,11 @@ float TextRenderer::renderTextCached(uint16_t viewId, const std::string& text,
         // O(n) glyph-advance walk.
         return x + slot.cachedPenAdvance;
     }
+
+    // Before changing a slot's key/geometry, prepare only the required text
+    // (the appended tail for typewriter growth). Failed uploads leave old
+    // valid geometry intact and cannot turn the new text into a cache hit.
+    if (!prepareTextGlyphs(text, plan.action == CacheAction::Append ? plan.byteBegin : 0)) return x;
 
     if (plan.action == CacheAction::Append) {
         // Typewriter growth: lay out and upload ONLY the new tail.

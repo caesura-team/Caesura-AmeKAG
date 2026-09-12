@@ -42,10 +42,16 @@ TEST_CASE("metal: 10 2D Render Metal Embedded Shaders symbol contracts") {
 
     // 2. vs_fullscreen
     CHECK(kEmbeddedMetal_vs_fullscreen != nullptr);
-    CHECK(kEmbeddedMetal_vs_fullscreen_size == 659);
+    // Regenerated passthrough vertex shader (shaderc receipt, U16). Retain
+    // exact container identity and also check its fragment-link interface.
+    CHECK(kEmbeddedMetal_vs_fullscreen_size == 608);
     CHECK(kEmbeddedMetal_vs_fullscreen[0] == 'V');
     CHECK(kEmbeddedMetal_vs_fullscreen[1] == 'S');
     CHECK(kEmbeddedMetal_vs_fullscreen[2] == 'H');
+    REQUIRE(kEmbeddedMetal_vs_fullscreen_size >= 14);
+    REQUIRE(kEmbeddedMetal_fs_texture_size >= 14);
+    CHECK(kEmbeddedMetal_vs_fullscreen[3] == 11);
+    CHECK(std::memcmp(kEmbeddedMetal_vs_fullscreen + 8, kEmbeddedMetal_fs_texture + 4, 4) == 0);
 
     // 3. stretch_blt_vs
     CHECK(kEmbeddedMetal_stretch_blt_vs != nullptr);
@@ -301,6 +307,26 @@ TEST_CASE("gl: all 10 GL embedded shaders direct-feedable (t79)") {
     CHECK(BM::usesDirectFeed(false, true,  false));
     CHECK_FALSE(BM::usesDirectFeed(false, true,  true));
 }
+
+TEST_CASE("GLES source preparation accepts actual generated GLSL and preserves explicit fragment output") {
+    const auto vertex = BgfxShaderManager::toEssl300(
+        kEmbeddedGL_vs_sprite, uint32_t(kEmbeddedGL_vs_sprite_size), false);
+    const auto fragment = BgfxShaderManager::toEssl300(
+        kEmbeddedGL_fs_modulated_texture, uint32_t(kEmbeddedGL_fs_modulated_texture_size), true);
+    for (const auto& source : {vertex, fragment}) {
+        REQUIRE(source.starts_with("#version 300 es\n"));
+        CHECK(source.find("#version 430") == std::string::npos);
+        CHECK(source.find("precision highp float;") != std::string::npos);
+        CHECK(source.find("precision highp int;") != std::string::npos);
+    }
+    CHECK(fragment.find("out vec4 bgfx_FragColor;") != std::string::npos);
+    CHECK(fragment.find("out vec4 oFragColor;") == std::string::npos);
+    CHECK(fragment.find("u_color") != std::string::npos);
+    CHECK(BgfxShaderManager::toEssl300(nullptr, 0, true).empty());
+    CHECK(BgfxShaderManager::toEssl300(kEmbeddedGL_vs_sprite, 13, false).empty());
+    // This tests the production source conversion only. GLES compilation and
+    // actual device pixels remain separate, explicitly unmeasured evidence.
+}
 // =============================================================================
 // 7. t85: embedded shader hashIn/hashOut pairing (bgfx_p.h:5140 cross-binary)
 // =============================================================================
@@ -334,6 +360,7 @@ TEST_CASE("gl: embedded shader hash pairing fs.hashIn == paired vs.hashOut (t85)
     CHECK(shaderHashIn(kEmbeddedGL_fs_blend)      == shaderHashOut(kEmbeddedGL_vs_fullscreen));
     CHECK(shaderHashIn(kEmbeddedGL_fs_transition) == shaderHashOut(kEmbeddedGL_vs_fullscreen));
     CHECK(shaderHashIn(kEmbeddedGL_fs_vfx)        == shaderHashOut(kEmbeddedGL_vs_fullscreen));
+    CHECK(shaderHashIn(kEmbeddedGL_fs_postfx_lut3d) == shaderHashOut(kEmbeddedGL_vs_fullscreen));
     // Dedicated blit pairs.
     CHECK(shaderHashIn(kEmbeddedGL_stretch_blt_fs) == shaderHashOut(kEmbeddedGL_stretch_blt_vs));
     CHECK(shaderHashIn(kEmbeddedGL_affine_blt_fs)  == shaderHashOut(kEmbeddedGL_affine_blt_vs));
@@ -358,6 +385,7 @@ TEST_CASE("metal: embedded shader hash pairing fs.hashIn == paired vs.hashOut (t
     CHECK(shaderHashIn(kEmbeddedMetal_fs_blend)      == shaderHashOut(kEmbeddedMetal_vs_fullscreen));
     CHECK(shaderHashIn(kEmbeddedMetal_fs_transition) == shaderHashOut(kEmbeddedMetal_vs_fullscreen));
     CHECK(shaderHashIn(kEmbeddedMetal_fs_vfx)        == shaderHashOut(kEmbeddedMetal_vs_fullscreen));
+    CHECK(shaderHashIn(kEmbeddedMetal_fs_postfx_lut3d) == shaderHashOut(kEmbeddedMetal_vs_fullscreen));
     CHECK(shaderHashIn(kEmbeddedMetal_stretch_blt_fs) == shaderHashOut(kEmbeddedMetal_stretch_blt_vs));
     CHECK(shaderHashIn(kEmbeddedMetal_affine_blt_fs)  == shaderHashOut(kEmbeddedMetal_affine_blt_vs));
 

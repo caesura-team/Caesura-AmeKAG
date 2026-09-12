@@ -53,8 +53,9 @@ public:
     bool deviceLost() const { return m_callback.deviceLost(); }
     uint32_t presentWidth() const { return m_backbufferW ? m_backbufferW : static_cast<uint32_t>(m_width); }
     uint32_t presentHeight() const { return m_backbufferH ? m_backbufferH : static_cast<uint32_t>(m_height); }
+    bool hasExplicitPresentSize() const { return m_presentSizeExplicit; }
     // Present surface size (see IRenderDevice::setPresentSize).
-    void setPresentSize(uint16_t w, uint16_t h) { m_backbufferW = w; m_backbufferH = h; }
+    void setPresentSize(uint16_t w, uint16_t h);
     void setViewRect(uint16_t v, uint16_t x, uint16_t y, uint16_t w, uint16_t h);
     void setViewClear(uint16_t v, uint16_t f, uint32_t c, float d, uint8_t s);
     void touch(uint16_t v);
@@ -105,6 +106,7 @@ private:
     // coordinates -- the game content stretches to fill the display.
     uint16_t m_backbufferW = 0;
     uint16_t m_backbufferH = 0;
+    bool m_presentSizeExplicit = false;
     bool m_bgfxInitialized = false;
     std::string m_backendName = "bgfx";
     bool m_shutdownComplete = false;

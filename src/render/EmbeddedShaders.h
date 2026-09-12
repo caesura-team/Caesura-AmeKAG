@@ -32,6 +32,8 @@ extern const uint8_t  kEmbeddedDXBC_VS_Sprite[];
 extern const size_t   kEmbeddedDXBC_VS_Sprite_size;
 extern const uint8_t  kEmbeddedDXBC_FS_Texture[];
 extern const size_t   kEmbeddedDXBC_FS_Texture_size;
+extern const uint8_t  kEmbeddedDXBC_fs_modulated_texture[];
+extern const size_t   kEmbeddedDXBC_fs_modulated_texture_size;
 
 // ---------------------------------------------------------------------------
 // Precompiled DX11 DXBC bytecodes -- blend / transition / VFX / fullscreen
@@ -83,6 +85,8 @@ extern const uint8_t  kEmbeddedGL_affine_blt_vs[];
 extern const size_t   kEmbeddedGL_affine_blt_vs_size;
 extern const uint8_t  kEmbeddedGL_fs_texture[];
 extern const size_t   kEmbeddedGL_fs_texture_size;
+extern const uint8_t  kEmbeddedGL_fs_modulated_texture[];
+extern const size_t   kEmbeddedGL_fs_modulated_texture_size;
 extern const uint8_t  kEmbeddedGL_fs_blend[];
 extern const size_t   kEmbeddedGL_fs_blend_size;
 extern const uint8_t  kEmbeddedGL_fs_transition[];
@@ -118,6 +122,8 @@ extern const uint8_t  kEmbeddedMetal_affine_blt_vs[];
 extern const size_t   kEmbeddedMetal_affine_blt_vs_size;
 extern const uint8_t  kEmbeddedMetal_fs_texture[];
 extern const size_t   kEmbeddedMetal_fs_texture_size;
+extern const uint8_t  kEmbeddedMetal_fs_modulated_texture[];
+extern const size_t   kEmbeddedMetal_fs_modulated_texture_size;
 extern const uint8_t  kEmbeddedMetal_fs_blend[];
 extern const size_t   kEmbeddedMetal_fs_blend_size;
 extern const uint8_t  kEmbeddedMetal_fs_transition[];

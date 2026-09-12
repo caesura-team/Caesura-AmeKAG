@@ -47,6 +47,7 @@ def snapshot(executable: Path, resources: Path) -> dict[str, str | None]:
         "screenshot_queue_header": resources / "src/render/ScreenshotQueue.h",
         "device_core_source": resources / "src/render/BgfxDeviceCore.cpp",
         "device_core_header": resources / "src/render/BgfxDeviceCore.h",
+        "draw_effects_source": resources / "src/render/BgfxDraw_Effects.cpp",
         "callback_source": resources / "src/render/BgfxDebugCallback.cpp",
         "callback_header": resources / "src/render/BgfxDebugCallback.h",
         "text_renderer_source": resources / "src/render/TextRenderer.cpp",
@@ -105,6 +106,18 @@ def run_scenario(executable: Path, resources: Path, output: Path, scenario: str,
               and observation.get("shutdown_completed") is True
               and len(observation.get("checks", [])) >= 10
               and not record.get("failed_checks"))
+    if scenario == "fill":
+        # Preserve raw logs and make explicit resource diagnostics fail this
+        # ownership observation, even if the driver happened to retain pixels.
+        # Other scenarios keep their original result policy.
+        diagnostics = []
+        markers = ("invalid handle.", "already destroyed", "invalid texture handle")
+        for name in ("stdout.log", "stderr.log"):
+            for line in (scenario_output / name).read_text(encoding="utf-8", errors="replace").splitlines():
+                if any(marker in line.lower() for marker in markers):
+                    diagnostics.append({"log": name, "line": line})
+        record["resource_diagnostics"] = diagnostics
+        passed = passed and not diagnostics
     if record.get("timed_out"):
         record["status"] = "TIMEOUT"
     elif passed:
@@ -129,6 +142,8 @@ def main() -> int:
                         help="A new directory; an existing directory is rejected to preserve earlier evidence")
     parser.add_argument("--timeout", type=float, default=60.0,
                         help="Per-scenario wall-clock limit in seconds (default 60, maximum 120)")
+    parser.add_argument("--scenario", choices=("renderer", "rpc", "fill", "present-recovery"),
+                        help="Run only this scenario; default remains renderer then rpc (one child each)")
     args = parser.parse_args()
     if os.name != "nt":
         parser.error("This actual D3D11 probe requires Windows")
@@ -142,14 +157,19 @@ def main() -> int:
     if not (resources / "assets/fonts/NotoSansCJKsc-Regular.otf").is_file():
         parser.error("The required real font fixture is missing")
     output.mkdir(parents=True, exist_ok=False)
+    scenarios = (args.scenario,) if args.scenario else ("renderer", "rpc")
     report = {"schema": 1, "status": "RUNNING", "started_utc": utc_now(),
               "executable": str(executable), "resource_root": str(resources),
               "identity_before": snapshot(executable, resources), "scenarios": [],
-              "boundary": "D3D11 screenshot/recovery and actual Engine captureFrameForRpc; not OS removal or post-core restoration failure",
+              "boundary": ("U16 explicit physical-size recovery, real 800x450 drawable and 640x360 logical canvas; not OS removal or a real DPI transition"
+                           if args.scenario == "present-recovery" else
+                           "U16 production fillViewport/cache ownership, one RTT, S/A/two normal frames/same A/B/shutdown"
+                           if args.scenario == "fill" else
+                           "D3D11 screenshot/recovery and actual Engine captureFrameForRpc; not OS removal or post-core restoration failure"),
               "identity_boundary": "Only enumerated files are observed; whole-worktree/build identity is the integration gate's responsibility"}
     write_json(output / "run.json", report)
     try:
-        for scenario in ("renderer", "rpc"):
+        for scenario in scenarios:
             report["scenarios"].append(run_scenario(executable, resources, output, scenario, args.timeout))
             write_json(output / "run.json", report)
         report["identity_after"] = snapshot(executable, resources)

@@ -43,12 +43,7 @@ public:
                        _filePath, (int)_line, _str);
         }
     }
-    void traceVargs(const char* _filePath, uint16_t _line, const char* _format, va_list _argList) override {
-        char buf[2048];
-        vsnprintf(buf, sizeof(buf), _format, _argList);
-        DEBUG_DBG(Caesura::SubSys::Render, Caesura::ErrCode::Ok, "[bgfx] %s(%d): %s",
-                  _filePath, (int)_line, buf);
-    }
+    void traceVargs(const char* path, uint16_t line, const char* format, va_list arguments) override;
     void profilerBegin(const char*, uint32_t, const char*, uint16_t) override {}
     void profilerBeginLiteral(const char*, uint32_t, const char*, uint16_t) override {}
     void profilerEnd() override {}

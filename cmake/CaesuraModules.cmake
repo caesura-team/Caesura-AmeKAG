@@ -390,6 +390,10 @@ target_link_libraries(CaesuraRender PRIVATE
     CaesuraDi CaesuraDebug CaesuraJobApi
     bgfx bimg bx freetype CaesuraSystemDependencies
 )
+if(CAESURA_RENDER_TEST_FAULTS)
+    # Only implementation code depends on this flag; public layouts stay identical.
+    target_compile_definitions(CaesuraRender PRIVATE CAESURA_RENDER_TEST_FAULTS=1)
+endif()
 target_link_libraries(CaesuraResource PRIVATE
     CaesuraDi CaesuraJobApi SDL3::SDL3 bimg bx
 )

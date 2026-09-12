@@ -78,6 +78,7 @@ void NullRenderDevice::flushBatch() {}
 float NullRenderDevice::textLineHeight() const { return 0.0f; }
 RenderUniformHandle NullRenderDevice::getDefaultSampler() const { return {}; }
 RenderProgramHandle NullRenderDevice::getFallbackProgram() const { return {}; }
+RenderProgramHandle NullRenderDevice::getModulatedTextureProgram() const { return {}; }
 const char* NullRenderDevice::getBackendName() const { return "NullRender"; }
 
 RenderRuntimeInfo NullRenderDevice::getRuntimeInfo() const {

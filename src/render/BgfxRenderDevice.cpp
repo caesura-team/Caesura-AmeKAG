@@ -46,6 +46,15 @@ BgfxRenderDevice::~BgfxRenderDevice() {
     shutdown();
 }
 
+bool BgfxRenderDevice::setShaderTestFault(ShaderTestFault fault) {
+    if (m_bgfxInitialized || m_deviceCore || !BgfxShaderManager::supportsTestFault(fault)) return false;
+    m_shaderTestFault = fault;
+    return true;
+}
+
+ShaderBuildReport BgfxRenderDevice::shaderBuildReport() const {
+    return m_shaders ? m_shaders->buildReport() : ShaderBuildReport{};
+}
 
 
 void BgfxRenderDevice::flushAllRTT() {
@@ -94,12 +103,14 @@ bool BgfxRenderDevice::init(void* nativeWindowHandle, int width, int height) {
     m_recovering = false;
     m_recoveryFailed = false;
     m_frameFinalized = false;
+    m_shaderRenderingDisabled = false;
 #if defined(__ANDROID__)
     BgfxDeviceCore::setOverrideGLContext(caesuraAndroidGLContext());
 #endif
     m_bgfxInitialized = false;
     m_shutdownComplete = false;
     m_shaders = std::make_unique<BgfxShaderManager>();
+    if (!m_shaders->setTestFault(m_shaderTestFault)) return false;
     m_deviceCore = std::make_unique<BgfxDeviceCore>(m_screenshots);
     if (!m_deviceCore->init(nativeWindowHandle, width, height)) {
         m_deviceCore.reset();
@@ -121,6 +132,7 @@ bool BgfxRenderDevice::init(void* nativeWindowHandle, int width, int height) {
         printf("[RENDER][ERROR] [BgfxRenderDevice] CORE shader programs broken; "
                "rendering disabled (BGFX_DEBUG_IFH) - frame loop continues.\n");
         bgfx::setDebug(BGFX_DEBUG_IFH);
+        m_shaderRenderingDisabled = true;
     }
     m_drawState.shaders = m_shaders.get();
     m_drawState.device  = m_deviceCore.get();
@@ -140,12 +152,14 @@ void BgfxRenderDevice::beginShutdown() {
 }
 
 void BgfxRenderDevice::setPresentSize(uint32_t width, uint32_t height) {
-    if (m_deviceCore) m_deviceCore->setPresentSize(uint16_t(width), uint16_t(height));
+    if (canRender() && width > 0 && height > 0 && width <= UINT16_MAX && height <= UINT16_MAX)
+        m_deviceCore->setPresentSize(uint16_t(width), uint16_t(height));
 }
 
 void BgfxRenderDevice::resize(int width, int height) {
     if (!canRender()) return;
     m_deviceCore->resize(width, height);
+    if (m_textRenderer) m_textRenderer->setScreenSize(m_deviceCore->getWidth(), m_deviceCore->getHeight());
     // Scene RTT + chain scratch targets are size-matched to the backbuffer;
     // rebuild them lazily on the next chain frame (beginFrame/runPostFxChain
     // detect the size change and recreate). Garbage-collect the old ones now.
@@ -216,6 +230,10 @@ void BgfxRenderDevice::beginFrame() {
     if (canRender()) {
         m_frameFinalized = false;
         m_deviceCore->beginFrame();
+        // View state applies to the entire submitted frame in bgfx. Select its
+        // destination here and leave it intact until the owner advances it.
+        bgfx::setViewFrameBuffer(BgfxDeviceCore::VIEW_MAIN, BGFX_INVALID_HANDLE);
+        m_chainRetargeted = false;
         // Round-102 post-process chain: while active the whole frame's
         // VIEW_MAIN draws are redirected to the internal scene RTT. This must
         // be set before any VIEW_MAIN submit this frame, so it lives here at
@@ -239,6 +257,8 @@ void BgfxRenderDevice::beginFrame() {
             }
             if (bgfx::isValid(m_sceneRtt)) {
                 bgfx::setViewFrameBuffer(BgfxDeviceCore::VIEW_MAIN, m_sceneRtt);
+                bgfx::setViewRect(BgfxDeviceCore::VIEW_MAIN, 0, 0,
+                    static_cast<uint16_t>(W), static_cast<uint16_t>(H));
                 m_chainRetargeted = true;
             }
         }
@@ -254,10 +274,9 @@ void BgfxRenderDevice::endFrame() {
 
 void BgfxRenderDevice::commit_frame() {
     if (!canRender() || m_frameFinalized) return;
-    if (isPostFxActive()) runPostFxChain(); // sceneRtt -> stages -> backbuffer
-    // Always restore VIEW_MAIN to the default backbuffer for next frame
-    // (idempotent: no-op when no chain was active and no retarget was set).
-    bgfx::setViewFrameBuffer(BgfxDeviceCore::VIEW_MAIN, BGFX_INVALID_HANDLE);
+    // The stage list can be cleared after beginFrame selected the scene RTT.
+    // Such a frame still needs an identity composite to the backbuffer.
+    if (m_chainRetargeted) runPostFxChain();
     m_frameFinalized = true;
 }
 
@@ -311,13 +330,18 @@ void BgfxRenderDevice::destroyRenderTarget(ViewportHandle h) { if (m_bgfxInitial
 
 void BgfxRenderDevice::blitViewport(ViewportHandle handle, uint16_t targetView,
                                      float x, float y, float w, float h) {
-    if (!canRender()) return;
-    blitTexture(targetView, m_deviceCore->getViewportTexture(handle), x, y, w, h, 255);
+    if (!canRender() || !m_draw) return;
+    const auto* caps = bgfx::getCaps();
+    // RTT storage follows the backend origin; uploaded image textures retain
+    // their original top-to-bottom UV convention in the ordinary blit path.
+    m_draw->blitTexture(targetView, m_deviceCore->getViewportTexture(handle),
+        x, y, w, h, 255, caps && caps->originBottomLeft);
 }
 
 RenderTextureHandle BgfxRenderDevice::getViewportTexture(ViewportHandle h) { return canRender() ? toRenderHandle(m_deviceCore->getViewportTexture(h)) : RenderTextureHandle{}; }
 
 RenderProgramHandle BgfxRenderDevice::getFallbackProgram() const { return m_shaders ? toRenderHandle(m_shaders->getFallbackProgram()) : RenderProgramHandle{}; }
+RenderProgramHandle BgfxRenderDevice::getModulatedTextureProgram() const { return m_shaders ? toRenderHandle(m_shaders->getModulatedTextureProgram()) : RenderProgramHandle{}; }
 
 RenderUniformHandle BgfxRenderDevice::getDefaultSampler() const { return m_shaders ? toRenderHandle(m_shaders->getDefaultSampler()) : RenderUniformHandle{}; }
 
@@ -413,6 +437,9 @@ bool BgfxRenderDevice::cancelScreenshot(const ScreenshotTicket& ticket) {
 
 bool BgfxRenderDevice::recoverDevice(void* nativeWindowHandle, int width, int height) {
     if (!m_bgfxInitialized || !m_deviceCore || m_stopping || m_recovering) return false;
+    const bool hadPresentSize = m_deviceCore->hasExplicitPresentSize();
+    const auto presentWidth = m_deviceCore->presentWidth();
+    const auto presentHeight = m_deviceCore->presentHeight();
     m_recovering = true;
     m_recoveryFailed = true;
     m_frameFinalized = false;
@@ -438,7 +465,15 @@ bool BgfxRenderDevice::recoverDevice(void* nativeWindowHandle, int width, int he
     }
     m_bgfxInitialized = true;
 
+    if (hadPresentSize)
+        m_deviceCore->setPresentSize(static_cast<uint16_t>(presentWidth), static_cast<uint16_t>(presentHeight));
+
     m_shaders = std::make_unique<BgfxShaderManager>();
+    if (!m_shaders->setTestFault(m_shaderTestFault)) {
+        m_recovering = false;
+        return false;
+    }
+    m_shaderRenderingDisabled = false;
     m_shaders->initEmbeddedShaders();
     // t73 (b): same degrade gate as the primary init path.
     if (m_shaders->coreProgramsBroken()) {
@@ -449,6 +484,7 @@ bool BgfxRenderDevice::recoverDevice(void* nativeWindowHandle, int width, int he
         printf("[RENDER][ERROR] [BgfxRenderDevice] CORE shader programs broken; "
                "rendering disabled (BGFX_DEBUG_IFH) - frame loop continues.\n");
         bgfx::setDebug(BGFX_DEBUG_IFH);
+        m_shaderRenderingDisabled = true;
     }
     m_drawState.shaders = m_shaders.get();
     m_drawState.device  = m_deviceCore.get();
@@ -485,7 +521,8 @@ RenderRuntimeInfo BgfxRenderDevice::getRuntimeInfo() const {
     info.width = getBackbufferWidth();
     info.height = getBackbufferHeight();
     info.viewCount = 3;
-    info.shaderReady = m_shaders && bgfx::isValid(m_shaders->getFallbackProgram());
+    info.shaderReady = canRender() && m_shaders && !m_shaders->coreProgramsBroken()
+        && !m_shaderRenderingDisabled && bgfx::getCaps()->rendererType != bgfx::RendererType::Noop;
     return info;
 }
 
@@ -561,13 +598,24 @@ void BgfxRenderDevice::affineBlt(uint16_t v, uint32_t d, float dx, float dy, flo
 // ===========================================================================
 
 bool BgfxRenderDevice::isPostFxSupported(PostFxKind kind) const {
-    // All four kinds ride the same full-screen quad pipeline; support is
-    // backend-agnostic as long as the device is initialized with shaders.
-    return canRender() && m_shaders != nullptr;
+    if (!canRender() || !m_shaders || m_shaderRenderingDisabled
+        || !bgfx::isValid(m_shaders->getPostFxProgram(static_cast<int>(kind)))) return false;
+    // Bloom's multi-pass pipeline also depends on the blur shader.
+    return kind != PostFxKind::Bloom
+        || bgfx::isValid(m_shaders->getPostFxProgram(static_cast<int>(PostFxKind::SoftBlur)));
+}
+
+bool BgfxRenderDevice::isPostFxActive() const {
+    if (!canRender()) return false;
+    return std::any_of(m_postFxStages.begin(), m_postFxStages.end(), [this](const PostFxStage& stage) {
+        return stage.enabled && isPostFxSupported(stage.kind)
+            && (stage.kind != PostFxKind::Lut3D || (bgfx::isValid(stage.lutTex) && stage.lutSize >= 2));
+    });
 }
 
 BgfxRenderDevice::PostFxHandle BgfxRenderDevice::createPostFx(PostFxKind kind, const PostFxParams& params) {
     if (!isPostFxSupported(kind)) return 0;
+    if (kind == PostFxKind::Lut3D && (!params.lutTexture.isValid() || params.lutSize < 2)) return 0;
     PostFxStage stage;
     stage.kind = kind;
     stage.params = params;
@@ -640,10 +688,14 @@ void BgfxRenderDevice::submitFullscreenQuad(uint16_t viewId, bgfx::ProgramHandle
     if (bgfx::getAvailTransientVertexBuffer(4, layout) < 4) return;
     bgfx::allocTransientVertexBuffer(&tvb, 4, layout);
     auto* v = reinterpret_cast<FsVertex*>(tvb.data);
-    v[0] = { -1.0f,  1.0f,  0.0f, 0.0f };
-    v[1] = {  1.0f,  1.0f,  1.0f, 0.0f };
-    v[2] = {  1.0f, -1.0f,  1.0f, 1.0f };
-    v[3] = { -1.0f, -1.0f,  0.0f, 1.0f };
+    // This helper samples an engine render target. Its texture origin differs
+    // from CPU-uploaded images on bottom-left backends such as OpenGL.
+    const bool bottomLeft = bgfx::getCaps()->originBottomLeft;
+    const float topV = bottomLeft ? 1.0f : 0.0f, bottomV = 1.0f - topV;
+    v[0] = { -1.0f,  1.0f,  0.0f, topV };
+    v[1] = {  1.0f,  1.0f,  1.0f, topV };
+    v[2] = {  1.0f, -1.0f,  1.0f, bottomV };
+    v[3] = { -1.0f, -1.0f,  0.0f, bottomV };
     uint16_t indices[6] = { 0, 1, 2, 0, 2, 3 };
     bgfx::TransientIndexBuffer tib;
     if (bgfx::getAvailTransientIndexBuffer(6) < 6) return;
@@ -674,10 +726,12 @@ static void submitFullscreenQuadNoTex(uint16_t viewId, bgfx::ProgramHandle progr
     if (bgfx::getAvailTransientVertexBuffer(4, layout) < 4) return;
     bgfx::allocTransientVertexBuffer(&tvb, 4, layout);
     auto* v = reinterpret_cast<FsVertex*>(tvb.data);
-    v[0] = { -1.0f,  1.0f,  0.0f, 0.0f };
-    v[1] = {  1.0f,  1.0f,  1.0f, 0.0f };
-    v[2] = {  1.0f, -1.0f,  1.0f, 1.0f };
-    v[3] = { -1.0f, -1.0f,  0.0f, 1.0f };
+    const bool bottomLeft = bgfx::getCaps()->originBottomLeft;
+    const float topV = bottomLeft ? 1.0f : 0.0f, bottomV = 1.0f - topV;
+    v[0] = { -1.0f,  1.0f,  0.0f, topV };
+    v[1] = {  1.0f,  1.0f,  1.0f, topV };
+    v[2] = {  1.0f, -1.0f,  1.0f, bottomV };
+    v[3] = { -1.0f, -1.0f,  0.0f, bottomV };
     uint16_t indices[6] = { 0, 1, 2, 0, 2, 3 };
     bgfx::TransientIndexBuffer tib;
     if (bgfx::getAvailTransientIndexBuffer(6) < 6) return;
@@ -693,7 +747,7 @@ static void submitFullscreenQuadNoTex(uint16_t viewId, bgfx::ProgramHandle progr
 }
 
 void BgfxRenderDevice::runPostFxChain() {
-    if (!m_bgfxInitialized || !m_deviceCore || m_postFxStages.empty()) return;
+    if (!m_bgfxInitialized || !m_deviceCore || !m_chainRetargeted) return;
     if (!m_shaders || !bgfx::isValid(m_shaders->getPostFxParams())) return;
     {
         static bool s_chainRan = false;
@@ -712,17 +766,9 @@ void BgfxRenderDevice::runPostFxChain() {
     bgfx::setViewRect(kPostFxView, 0, 0, static_cast<uint16_t>(W), static_cast<uint16_t>(H));
     bgfx::setViewClear(kPostFxView, BGFX_CLEAR_NONE, 0x00000000, 1.0f, 0);
 
-    // Ensure the scene target matches the current backbuffer size.
-    if (!bgfx::isValid(m_sceneRtt) || m_sceneRttW != W || m_sceneRttH != H) {
-        if (bgfx::isValid(m_sceneRtt)) { bgfx::destroy(m_sceneRtt); m_sceneRtt = BGFX_INVALID_HANDLE; }
-        bgfx::TextureHandle tex = bgfx::createTexture2D(
-            static_cast<uint16_t>(W), static_cast<uint16_t>(H), false, 1,
-            bgfx::TextureFormat::RGBA8,
-            BGFX_TEXTURE_RT | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP);
-        if (!bgfx::isValid(tex)) return;
-        m_sceneRtt = bgfx::createFrameBuffer(1, &tex, true);
-        m_sceneRttW = W; m_sceneRttH = H;
-    }
+    // Only composite the scene actually selected at beginFrame. Recreating an
+    // empty target here would discard the scene that has already been drawn.
+    if (!bgfx::isValid(m_sceneRtt)) return;
     const bgfx::TextureHandle sceneTex = bgfx::getTexture(m_sceneRtt, 0);
     if (!bgfx::isValid(sceneTex)) return;
 
@@ -736,20 +782,30 @@ void BgfxRenderDevice::runPostFxChain() {
     const size_t stageCount = m_postFxStages.size();
     const bool single = stageCount == 1;
 
-    // Determine the index of the last enabled stage up front: with a
-    // disabled tail (RD-2) the final composite must still target the
-    // backbuffer, which the naive i == size()-1 test would miss.
+    const auto executable = [this](const PostFxStage& stage) {
+        return stage.enabled && isPostFxSupported(stage.kind)
+            && (stage.kind != PostFxKind::Lut3D || (bgfx::isValid(stage.lutTex) && stage.lutSize >= 2));
+    };
+    // A disabled or invalid tail must not divert the preceding valid result.
     size_t lastEnabledIdx = 0;
     bool hasEnabled = false;
     for (size_t i = 0; i < stageCount; ++i) {
-        if (m_postFxStages[i].enabled) { lastEnabledIdx = i; hasEnabled = true; }
+        if (executable(m_postFxStages[i])) { lastEnabledIdx = i; hasEnabled = true; }
     }
-    if (!hasEnabled) return;  // every stage disabled: nothing to composite
+    if (!hasEnabled) {
+        bgfx::setViewFrameBuffer(kPostFxView, BGFX_INVALID_HANDLE);
+        bgfx::setViewRect(kPostFxView, 0, 0, static_cast<uint16_t>(m_deviceCore->presentWidth()),
+            static_cast<uint16_t>(m_deviceCore->presentHeight()));
+        submitFullscreenQuad(kPostFxView, m_shaders->getFallbackProgram(), sceneTex, uS0);
+        return;
+    }
 
     for (size_t i = 0; i < stageCount; ++i) {
         const PostFxStage& st = m_postFxStages[i];
-        if (!st.enabled) continue;
+        if (!executable(st)) continue;
         const bool last = (i == lastEnabledIdx);
+        if (last) bgfx::setViewRect(kPostFxView, 0, 0, static_cast<uint16_t>(m_deviceCore->presentWidth()),
+            static_cast<uint16_t>(m_deviceCore->presentHeight()));
         PostFxKind kind = st.kind;
         bgfx::ProgramHandle prog = m_shaders->getPostFxProgram(static_cast<int>(kind));
         if (!bgfx::isValid(prog)) prog = m_shaders->getFallbackProgram();
@@ -797,7 +853,7 @@ void BgfxRenderDevice::runPostFxChain() {
             };
             bgfx::setUniform(uParams, params, 4);
             bgfx::setTexture(0, uS0, resultTex);
-            bgfx::setTexture(1, uS1, st.lutTex);
+            bgfx::setTexture(1, m_shaders->getLutSampler(), st.lutTex);
             submitFullscreenQuadNoTex(kPostFxView, prog);
             resultTex = (last || single)
                 ? bgfx::TextureHandle{}

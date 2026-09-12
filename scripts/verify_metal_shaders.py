@@ -1,6 +1,6 @@
 import sys
 from pathlib import Path
-import re
+from generate_render_shaders import read_array
 
 ROOT = Path(__file__).resolve().parent.parent
 RENDER_H = ROOT / 'src' / 'render' / 'EmbeddedShaders.h'
@@ -45,12 +45,17 @@ def verify_render_shaders():
             print(f'  FAILED: {arr_name} missing definition in cpp')
             all_ok = False
             continue
-        m = re.search(rf'const\s+size_t\s+{re.escape(size_name)}\s*=\s*(\d+);', cpp_text)
-        if not m or int(m.group(1)) <= 0:
-            print(f'  FAILED: {size_name} invalid size')
+        # Decode the actual unsigned bytes and validate either a matching
+        # numeric size or sizeof(this exact array), as emitted by shaderc's
+        # checked-in wrapper. Presence of a positive integer alone is not proof
+        # that the declaration matches a valid, unique byte array.
+        try:
+            data = read_array(cpp_text, arr_name)
+        except ValueError as exc:
+            print(f'  FAILED: {arr_name}: {exc}')
             all_ok = False
             continue
-        print(f'  OK: {arr_name} ({stype}, {m.group(1)} bytes)')
+        print(f'  OK: {arr_name} ({stype}, {len(data)} bytes)')
     return all_ok
 
 def verify_minigame_shaders():

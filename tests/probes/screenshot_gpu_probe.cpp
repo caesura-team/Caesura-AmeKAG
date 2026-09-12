@@ -126,6 +126,7 @@ public:
         SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER, width);
         SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER, height);
         SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_HIDDEN_BOOLEAN, true);
+        SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_BORDERLESS_BOOLEAN, true);
         window_ = SDL_CreateWindowWithProperties(props);
         SDL_DestroyProperties(props);
         width_ = width; height_ = height;
@@ -153,8 +154,14 @@ public:
     }
     void resizeWindow(int width, int height) override {
         if (window_ && SDL_SetWindowSize(window_, width, height)) {
+            require(SDL_SyncWindow(window_), "Hidden window size synchronization failed");
             width_ = width; height_ = height;
         }
+    }
+    std::array<int,2> drawableSize() const {
+        int width=0,height=0;
+        require(window_ && SDL_GetWindowSizeInPixels(window_,&width,&height), "Cannot read drawable size");
+        return {width,height};
     }
     const char* getBackendName() const override { return "SDL3 hidden real HWND"; }
     bool startTextInput() override { return window_ && SDL_StartTextInput(window_); }
@@ -285,6 +292,101 @@ public:
         persist();
     }
     unsigned failures() const { return failures_; }
+
+    void presentRecovery() {
+        constexpr uint32_t physicalWidth=800,physicalHeight=450;
+        report_["boundaries"] = {
+            "Real D3D11: 640x360 logical canvas, 800x450 hidden drawable/backbuffer.",
+            "Public explicit present size must survive public recoverDevice with logical dimensions.",
+            "Two normal frame advances, no ticket-wait frame pumping, no post-recovery size correction.",
+            "This isolates explicit recovery, not native OS removal or a real monitor DPI transition."
+        };
+        platform_->resizeWindow(physicalWidth,physicalHeight);
+        check("drawable_size",platform_->drawableSize()==std::array<int,2>{physicalWidth,physicalHeight});
+        device().setPresentSize(physicalWidth,physicalHeight);
+        const auto capture = [&](const std::string& name) {
+            device().beginFrame();
+            // Use the production beginFrame view rect. Explicitly setting it
+            // here could hide a lost physical-size cache after recovery.
+            device().setViewClear(VIEW_MAIN,BGFX_CLEAR_COLOR|BGFX_CLEAR_DEPTH,0x122334ff,1,0);
+            device().touch(VIEW_MAIN);
+            device().blitTexture(VIEW_MAIN,textures_->getTextureHandle(textureId_),64,96,128,96,255);
+            device().commit_frame();
+            auto result=admit({},name+"_admit");
+            device().advanceFrame();
+            result=await(result.ticket,name);
+            check(name+"_physical_dimensions",result.width==physicalWidth && result.height==physicalHeight,description(result));
+            if (!result.png.empty()) writeBytes(output_/(name+".png"),result.png.data(),result.png.size());
+            const auto image=result.png.empty()?DecodedImage{}:decoder_->decode(result.png.data(),result.png.size(),size_t(physicalWidth)*physicalHeight*4);
+            const bool dimensions=image.ok && image.width==physicalWidth && image.height==physicalHeight;
+            check(name+"_decoded_physical_dimensions",dimensions,{{"width",image.width},{"height",image.height}});
+            check(name+"_scaled_logical_texture",dimensions && solidRegion(image,88,120,160,160,kTextureColor));
+            check(name+"_background",dimensions && solidRegion(image,560,260,608,304,background_));
+            return image;
+        };
+        const auto before=capture("present_before");
+        releaseFixtureFramebuffer();
+        auto& registry=BackendRegistry::instance();
+        registry.notifyDeviceLost(); device().flagDeviceLost();
+        const bool recovered=device().recoverDevice(platform_->getNativeWindowHandle(),kWidth,kHeight);
+        check("explicit_recovery",recovered);
+        if (!recovered) return;
+        registry.notifyDeviceRestored();
+        bgfx::setDebug(BGFX_DEBUG_NONE);
+        check("actual_backend_restored",bgfx::getRendererType()==bgfx::RendererType::Direct3D11 && device().getRuntimeInfo().shaderReady);
+        createRtt();
+        const auto after=capture("present_after");
+        check("physical_output_retained",before.ok && after.ok && before.width==after.width
+            && before.height==after.height && before.rgba==after.rgba);
+    }
+
+    void fill() {
+        report_["boundaries"] = {
+            "U16 fillViewport ownership observation: one real D3D11 child and one 96x96 RTT.",
+            "Fixed sequence: sentinel S, first A, two normal presentation frames, cleared same A, cleared changed B, shutdown.",
+            "Only the control/clear uses the borrowed fixture framebuffer; colored fills call the production IRenderDevice::fillViewport.",
+            "Every tested fill clears the target to distinct S first, so retained old pixels cannot pass a skipped fill.",
+            "PNG central-region RGB tolerance is 2; no frame pumping while awaiting a screenshot.",
+            "A failure observes this pipeline; it does not alone distinguish stack makeRef lifetime from cache-handle ownership."
+        };
+        report_["fill_contract"] = {{"sentinel", {18, 35, 52, 255}}, {"A", {31, 97, 163, 255}},
+            {"B", {163, 47, 89, 255}}, {"rtt_width", 96}, {"rtt_height", 96},
+            {"backbuffer_clear", {5, 11, 17, 255}},
+            {"sample_rect", {276, 116, 328, 168}}, {"rgb_tolerance", 2},
+            {"normal_frames_between_A_uses", 2}};
+        fillCheckpoint("ready");
+        auto* native = dynamic_cast<BgfxRenderDevice*>(&device());
+        const bool ready = native && device().isInitialized()
+            && bgfx::getRendererType() == bgfx::RendererType::Direct3D11
+            && device().getRuntimeInfo().shaderReady && device().getDefaultSampler().isValid()
+            && bgfx::isValid(native->fallbackProgram()) && bgfx::isValid(native->getBlendProgram());
+        check("fill_actual_D3D11_and_core_programs", ready);
+        if (!ready) return;
+        const std::array<uint8_t, 3> sentinel{18, 35, 52};
+        const std::array<uint8_t, 3> first{31, 97, 163};
+        const std::array<uint8_t, 3> changed{163, 47, 89};
+        if (!fillCapture("fill_control", nullptr, sentinel)) return;
+        // Stop if the independent clear/composite positive control failed.
+        // Such a failure is not evidence that production fill reached its bug.
+        if (failures_ != 0) return;
+        if (!fillCapture("fill_first_a", &first, first)) return;
+        for (unsigned frame = 1; frame <= 2; ++frame) {
+            const std::string name = "fill_present_" + std::to_string(frame);
+            fillCheckpoint(name + "_before");
+            device().beginFrame();
+            configureFillTarget(false);
+            drawFillComposite();
+            device().commit_frame();
+            device().advanceFrame();
+            ++fillAdvances_;
+            fillCheckpoint(name + "_after");
+        }
+        if (!fillCapture("fill_same_a", &first, first)) return;
+        if (!fillCapture("fill_changed_b", &changed, changed)) return;
+        check("fill_fixed_six_presentations", fillAdvances_ == 6,
+            {{"observed_owner_advances", fillAdvances_}, {"expected", 6}});
+        fillCheckpoint("ready_for_shutdown");
+    }
 
     void renderer() {
         const auto beforeFont = device().captureFontState();
@@ -426,13 +528,82 @@ public:
     }
 
     void shutdown() {
+        if (report_["scenario"] == "fill") fillCheckpoint("before_shutdown");
         releaseFixtureFramebuffer();
         engine_->shutdown();
         report_["shutdown_completed"] = true;
+        if (report_["scenario"] == "fill") fillCheckpoint("after_shutdown");
         persist();
     }
 
 private:
+    void fillCheckpoint(const std::string& name) {
+        report_["fill_checkpoint"] = name;
+        report_["fill_checkpoints"].push_back({{"name", name}, {"owner_advances", fillAdvances_}});
+        persist();
+        std::cout << "U16 FILL CHECKPOINT " << name << std::endl;
+    }
+    void configureFillTarget(bool clearSentinel) {
+        bgfx::setViewFrameBuffer(VIEW_RTT, fixtureFramebuffer_);
+        device().setViewRect(VIEW_RTT, 0, 0, 96, 96);
+        device().setViewClear(VIEW_RTT, clearSentinel ? BGFX_CLEAR_COLOR : BGFX_CLEAR_NONE,
+            0x122334ff, 1.0f, 0);
+        device().touch(VIEW_RTT);
+    }
+    void drawFillComposite() {
+        device().setViewRect(VIEW_MAIN, 0, 0, kWidth, kHeight);
+        // Distinct from the RTT sentinel: a missing RTT blit must fail the
+        // control instead of matching the untouched backbuffer by accident.
+        device().setViewClear(VIEW_MAIN, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x050b11ff, 1.0f, 0);
+        device().touch(VIEW_MAIN);
+        // The manager-owned texture is a simultaneous sampler/program positive
+        // control. No new texture is allocated between the two A requests.
+        device().blitTexture(VIEW_MAIN, textures_->getTextureHandle(textureId_), 64, 96, 128, 96, 255);
+        device().blitViewport(rtt_, VIEW_MAIN, 256, 96, 96, 96);
+    }
+    bool fillCapture(const std::string& name, const std::array<uint8_t, 3>* color,
+                     const std::array<uint8_t, 3>& expected) {
+        fillCheckpoint(name + "_before_frame");
+        device().beginFrame();
+        configureFillTarget(true);
+        if (color) {
+            fillCheckpoint(name + "_before_production_fill");
+            device().fillViewport(rtt_, (*color)[0], (*color)[1], (*color)[2], 255);
+            fillCheckpoint(name + "_after_production_fill");
+        }
+        drawFillComposite();
+        device().commit_frame();
+        auto result = admit({}, name + "_admission");
+        if (result.status != ScreenshotStatus::Pending || !result.ticket) return false;
+        fillCheckpoint(name + "_before_advance");
+        device().advanceFrame();
+        ++fillAdvances_;
+        fillCheckpoint(name + "_after_advance");
+        result = await(result.ticket, name);
+        if (result.status != ScreenshotStatus::Completed) return false;
+        check(name + "_submission_distance", result.frameId != 0
+            && (fillPreviousFrame_ == 0 || (result.frameId > fillPreviousFrame_
+                && result.frameId - fillPreviousFrame_ == fillAdvances_ - fillPreviousAdvance_)),
+            {{"frame_id", result.frameId}, {"previous_frame", fillPreviousFrame_},
+             {"owner_advances_since_previous", fillAdvances_ - fillPreviousAdvance_}});
+        fillPreviousFrame_ = result.frameId;
+        fillPreviousAdvance_ = fillAdvances_;
+        if (!result.png.empty()) writeBytes(output_ / (name + ".png"), result.png.data(), result.png.size());
+        const auto image = result.png.empty() ? DecodedImage{}
+            : decoder_->decode(result.png.data(), result.png.size(), kPageBytes);
+        const bool decoded = image.ok && image.width == kWidth && image.height == kHeight
+            && image.rgba.size() == kPageBytes;
+        check(name + "_decoded_dimensions", decoded,
+            {{"width", image.width}, {"height", image.height}, {"png_bytes", result.png.size()}});
+        if (!decoded) return false;
+        check(name + "_manager_sampler_positive", solidRegion(image, 88, 120, 160, 160, kTextureColor));
+        const size_t center = (size_t(144) * kWidth + 304) * 4;
+        check(name + "_central_pixels", solidRegion(image, 276, 116, 328, 168, expected),
+            {{"expected_rgb", expected}, {"center_rgb", {image.rgba[center], image.rgba[center + 1], image.rgba[center + 2]}},
+             {"rgb_tolerance", 2}, {"clear_before_fill", {18, 35, 52}}});
+        fillCheckpoint(name + "_captured");
+        return true;
+    }
     void installCallback(const char* name, lua_CFunction callback, void* value) {
         auto* state = vm_->state();
         lua_rawgeti(state, LUA_REGISTRYINDEX, LUA_RIDX_GLOBALS);
@@ -622,11 +793,13 @@ private:
     bgfx::FrameBufferHandle fixtureFramebuffer_ = BGFX_INVALID_HANDLE;
     std::array<uint8_t, 3> background_{18, 35, 52};
     unsigned renderCallbacks_ = 0, updateCallbacks_ = 0, failures_ = 0;
+    unsigned fillAdvances_ = 0, fillPreviousAdvance_ = 0;
+    uint64_t fillPreviousFrame_ = 0;
 };
 
 struct Arguments { std::wstring scenario; fs::path resources, output; };
 Arguments arguments(int argc, wchar_t** argv) {
-    require(argc == 7, "Usage: --scenario renderer|rpc --resource-root DIR --output-dir DIR");
+    require(argc == 7, "Usage: --scenario renderer|rpc|fill|present-recovery --resource-root DIR --output-dir DIR");
     Arguments result;
     for (int index = 1; index < argc; index += 2) {
         const std::wstring key = argv[index];
@@ -635,7 +808,8 @@ Arguments arguments(int argc, wchar_t** argv) {
         else if (key == L"--output-dir") result.output = argv[index + 1];
         else throw std::runtime_error("Unknown probe argument");
     }
-    require(result.scenario == L"renderer" || result.scenario == L"rpc", "Invalid probe scenario");
+    require(result.scenario == L"renderer" || result.scenario == L"rpc" || result.scenario == L"fill"
+        || result.scenario == L"present-recovery", "Invalid probe scenario");
     require(fs::is_directory(result.resources) && fs::is_directory(result.output), "Missing probe directory");
     result.resources = fs::canonical(result.resources);
     result.output = fs::canonical(result.output);
@@ -652,12 +826,16 @@ int wmain(int argc, wchar_t** argv) {
         const auto args = arguments(argc, argv);
         output = args.output;
         fs::current_path(args.resources);
-        report["scenario"] = args.scenario == L"renderer" ? "renderer" : "rpc";
+        report["scenario"] = args.scenario == L"renderer" ? "renderer" : (args.scenario == L"rpc" ? "rpc"
+            : (args.scenario == L"fill" ? "fill" : "present-recovery"));
         writeReport(output, report);
         SDL_SetMainReady();
         detail::g_mainThreadId = std::this_thread::get_id();
         Probe probe(output, report);
-        if (args.scenario == L"renderer") probe.renderer(); else probe.rpc();
+        if (args.scenario == L"renderer") probe.renderer();
+        else if (args.scenario == L"rpc") probe.rpc();
+        else if (args.scenario == L"present-recovery") probe.presentRecovery();
+        else probe.fill();
         probe.shutdown();
         report["failed_checks"] = probe.failures();
         report["status"] = probe.failures() == 0 ? "PASS" : "FAIL";

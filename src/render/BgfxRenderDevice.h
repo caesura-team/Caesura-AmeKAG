@@ -19,6 +19,10 @@ public:
     BgfxRenderDevice(const BgfxRenderDevice&) = delete;
     BgfxRenderDevice& operator=(const BgfxRenderDevice&) = delete;
 
+    bool setShaderTestFault(ShaderTestFault fault);
+    ShaderBuildReport shaderBuildReport() const;
+    bool renderingDisabledByShaders() const { return m_shaderRenderingDisabled; }
+
     bool setPreferredBackend(const char* name) override { return BgfxDeviceCore::setPreferredBackend(name); }
     const char* getBackendName() const override { return m_deviceCore ? m_deviceCore->getBackendName() : "bgfx"; }
 
@@ -94,6 +98,7 @@ public:
     void flushAllRTT() override;
 
     RenderProgramHandle getFallbackProgram() const override;
+    RenderProgramHandle getModulatedTextureProgram() const override;
     RenderUniformHandle getDefaultSampler() const override;
 
     // Raw engine fallback program (passthrough VS + texture FS) for
@@ -124,7 +129,7 @@ public:
     void setPostFxParams(PostFxHandle handle, const PostFxParams& params) override;
     void destroyPostFx(PostFxHandle handle) override;
     void clearPostFx() override;
-    bool isPostFxActive() const override { return !m_postFxStages.empty(); }
+    bool isPostFxActive() const override;
 
     // -- Batch protocol (spec [0.3])
     void beginBatch() override;
@@ -142,6 +147,8 @@ private:
     bool m_recoveryFailed = false;
     bool m_recovering = false;
     bool m_frameFinalized = false;
+    bool m_shaderRenderingDisabled = false;
+    ShaderTestFault m_shaderTestFault = ShaderTestFault::None;
     uint64_t m_frameId = 0;
     std::shared_ptr<ScreenshotQueue> m_screenshots = std::make_shared<ScreenshotQueue>();
     bool canRender() const {

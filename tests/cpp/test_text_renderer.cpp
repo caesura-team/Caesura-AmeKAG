@@ -19,6 +19,9 @@
 #include <unordered_map>
 #include <array>
 #include <cmath>
+#include <fstream>
+#include <iterator>
+#include <limits>
 
 using namespace Caesura;
 
@@ -101,6 +104,229 @@ void checkQuadCoverage(const std::vector<float>& vertices, const std::vector<uin
 }
 
 } // namespace
+
+namespace {
+const std::vector<uint8_t>& realFontBytes() {
+    static const auto bytes = [] {
+        std::ifstream input("assets/fonts/NotoSansCJKsc-Regular.otf", std::ios::binary);
+        REQUIRE(input.good());
+        return std::vector<uint8_t>(std::istreambuf_iterator<char>(input), {});
+    }();
+    return bytes;
+}
+
+std::vector<uint8_t> atlasRegion(const TextRenderer::GlyphAtlas& atlas, const GlyphMetrics& glyph) {
+    std::vector<uint8_t> result;
+    for (int y = glyph.y; y < glyph.y + glyph.h; ++y) {
+        const size_t begin = (size_t(y) * atlas.width() + glyph.x) * 4;
+        result.insert(result.end(), atlas.pixels().begin() + begin, atlas.pixels().begin() + begin + size_t(glyph.w) * 4);
+    }
+    return result;
+}
+
+struct IndependentFont {
+    FT_Library library = nullptr;
+    FT_Face face = nullptr;
+    explicit IndependentFont(unsigned size) {
+        REQUIRE(FT_Init_FreeType(&library) == 0);
+        const auto& bytes = realFontBytes();
+        REQUIRE(FT_New_Memory_Face(library, bytes.data(), static_cast<FT_Long>(bytes.size()), 0, &face) == 0);
+        REQUIRE(FT_Set_Pixel_Sizes(face, 0, size) == 0);
+    }
+    ~IndependentFont() {
+        if (face) FT_Done_Face(face);
+        if (library) FT_Done_FreeType(library);
+    }
+};
+}
+
+TEST_CASE("U16 font atlas: actual used CJK glyphs match independent FreeType without range preloading") {
+    using Atlas = TextRenderer::GlyphAtlas;
+    const auto& bytes = realFontBytes();
+    auto atlas = Atlas::create(bytes.data(), bytes.size(), 28);
+    REQUIRE(atlas != nullptr);
+    CHECK(atlas->glyphCount() <= 3);
+    CHECK(atlas->width() == 2048);
+    CHECK(atlas->height() == 2048);
+    IndependentFont reference(28);
+    // Representatives of all six previously preloaded Unicode groups. Actual
+    // demand preparation must retain glyph metrics and coverage for each.
+    const std::array<uint32_t, 7> codepoints{'G', 0x2014, 0x3002, 0x304b, 0xff21, 0x6c49, 0x6f22};
+    for (uint32_t cp : codepoints) {
+        CAPTURE(cp);
+        CHECK(atlas->prepareGlyph(cp) == Atlas::PrepareStatus::Added);
+        const auto* glyph = atlas->find(cp);
+        REQUIRE(glyph != nullptr);
+        REQUIRE(FT_Load_Char(reference.face, cp, FT_LOAD_RENDER) == 0);
+        const auto& ft = *reference.face->glyph;
+        CHECK(glyph->advance == (ft.advance.x >> 6));
+        CHECK(glyph->offsetX == ft.bitmap_left);
+        CHECK(glyph->offsetY == ft.bitmap_top);
+        CHECK(glyph->w == static_cast<int>(ft.bitmap.width));
+        CHECK(glyph->h == static_cast<int>(ft.bitmap.rows));
+        bool equal = true;
+        for (int y = 0; y < glyph->h; ++y) for (int x = 0; x < glyph->w; ++x) {
+            const size_t pixel = (size_t(glyph->y + y) * atlas->width() + glyph->x + x) * 4;
+            equal = equal && atlas->pixels()[pixel] == 255 && atlas->pixels()[pixel + 1] == 255
+                && atlas->pixels()[pixel + 2] == 255 && atlas->pixels()[pixel + 3] == ft.bitmap.buffer[y * ft.bitmap.pitch + x];
+        }
+        CHECK(equal);
+    }
+    CHECK(atlas->glyphCount() <= 3 + codepoints.size());
+    CHECK(atlas->prepareGlyph(0x6f22) == Atlas::PrepareStatus::Existing);
+}
+
+TEST_CASE("U16 font atlas: appends keep earlier glyphs and straight-alpha padding immutable") {
+    using Atlas = TextRenderer::GlyphAtlas;
+    const auto& bytes = realFontBytes();
+    auto atlas = Atlas::create(bytes.data(), bytes.size(), 28);
+    REQUIRE(atlas != nullptr);
+    REQUIRE(atlas->prepareGlyph('A') == Atlas::PrepareStatus::Added);
+    const GlyphMetrics before = *atlas->find('A');
+    const auto pixels = atlasRegion(*atlas, before);
+    atlas->acknowledgeUpload();
+    CHECK(atlas->pendingUpload().w == 0);
+    REQUIRE(atlas->prepareGlyph(0x6f22) == Atlas::PrepareStatus::Added);
+    const auto dirty = atlas->pendingUpload();
+    CHECK(dirty.w > 0);
+    CHECK(dirty.h > 0);
+    CHECK(dirty.x + dirty.w <= atlas->width());
+    CHECK(dirty.y + dirty.h <= atlas->height());
+    CHECK(atlas->find('A')->x == before.x);
+    CHECK(atlas->find('A')->y == before.y);
+    CHECK(atlasRegion(*atlas, *atlas->find('A')) == pixels);
+    bool straightRgb = true;
+    for (size_t i = 0; i < atlas->pixels().size(); i += 4)
+        straightRgb = straightRgb && atlas->pixels()[i] == 255 && atlas->pixels()[i + 1] == 255 && atlas->pixels()[i + 2] == 255;
+    CHECK(straightRgb);
+    CHECK(atlas->pixels()[3] == 0);
+}
+
+TEST_CASE("U16 font atlas: capacity and missing glyphs never overwrite existing atlas coordinates") {
+    using Atlas = TextRenderer::GlyphAtlas;
+    const auto& bytes = realFontBytes();
+    auto atlas = Atlas::create(bytes.data(), bytes.size(), 256);
+    REQUIRE(atlas != nullptr);
+    REQUIRE(atlas->prepareGlyph('W') == Atlas::PrepareStatus::Added);
+    const GlyphMetrics before = *atlas->find('W');
+    const auto pixels = atlasRegion(*atlas, before);
+    bool full = false;
+    for (uint32_t cp = 0x4e00; cp < 0x5000; ++cp) {
+        const auto count = atlas->glyphCount();
+        const auto status = atlas->prepareGlyph(cp);
+        if (status == Atlas::PrepareStatus::Full) {
+            CHECK(atlas->glyphCount() == count);
+            CHECK(atlas->find(cp) == nullptr);
+            full = true;
+            break;
+        }
+        REQUIRE(status != Atlas::PrepareStatus::Error);
+    }
+    CHECK(full);
+    CHECK(atlas->glyphCount() <= Atlas::MaxGlyphs);
+    CHECK(atlas->prepareGlyph('W') == Atlas::PrepareStatus::Existing);
+    CHECK(atlas->find('W')->x == before.x);
+    CHECK(atlas->find('W')->y == before.y);
+    CHECK(atlasRegion(*atlas, *atlas->find('W')) == pixels);
+    const auto count = atlas->glyphCount();
+    CHECK(atlas->prepareGlyph(0x110000) == Atlas::PrepareStatus::Missing);
+    CHECK(atlas->glyphCount() == count);
+    CHECK(atlas->resolve(0x110000).x == atlas->replacement().x);
+    CHECK(atlas->resolve(0x110000).y == atlas->replacement().y);
+    CHECK(atlas->replacement().w > 0);
+}
+
+TEST_CASE("U16 font advance: UTF-8 and proportional ruby measure actual selected glyph advances") {
+    using Atlas = TextRenderer::GlyphAtlas;
+    const auto& bytes = realFontBytes();
+    auto atlas = Atlas::create(bytes.data(), bytes.size(), 28);
+    REQUIRE(atlas != nullptr);
+    for (uint32_t cp : {uint32_t('A'), uint32_t('B'), uint32_t('i'), uint32_t(0x6f22), uint32_t(0x5b57), uint32_t(0x304b), uint32_t(0x3093), uint32_t(0x3058)}) {
+        REQUIRE(atlas->prepareGlyph(cp) != Atlas::PrepareStatus::Error);
+        REQUIRE(atlas->find(cp) != nullptr);
+    }
+    const auto advance = [](uint32_t cp, void* data) {
+        return static_cast<float>(static_cast<Atlas*>(data)->resolve(cp).advance);
+    };
+    IndependentFont reference(28);
+    float expected = 0;
+    for (uint32_t cp : {uint32_t(0x6f22), uint32_t(0x5b57)}) {
+        REQUIRE(FT_Load_Char(reference.face, cp, FT_LOAD_RENDER) == 0);
+        expected += static_cast<float>(reference.face->glyph->advance.x >> 6);
+    }
+    CHECK(TextRenderer::measureAdvance("\xE6\xBC\xA2\xE5\xAD\x97", advance, atlas.get()) == expected);
+    const float base = TextRenderer::measureAdvance("AB", advance, atlas.get());
+    const float ruby = TextRenderer::measureAdvance("iii", advance, atlas.get()) * .5f;
+    CHECK(base == atlas->find('A')->advance + atlas->find('B')->advance);
+    CHECK(ruby == atlas->find('i')->advance * 1.5f);
+    CHECK(base != 2 * 28); // Byte/nominal-cell width is not a proportional advance.
+}
+
+TEST_CASE("U16 font filtering: cached glyph bounds reach transparent guard centers without changing ink metrics") {
+    using Atlas = TextRenderer::GlyphAtlas;
+    const auto& bytes = realFontBytes();
+    auto atlas = Atlas::create(bytes.data(), bytes.size(), 28);
+    REQUIRE(atlas != nullptr);
+    // Populate adjacent cells before testing the guard: the border must remain
+    // transparent even after another glyph occupies the next atlas cell.
+    for (uint32_t cp : {uint32_t('A'),uint32_t('B'),uint32_t('g'),uint32_t(0x6f22)})
+        REQUIRE(atlas->prepareGlyph(cp) == Atlas::PrepareStatus::Added);
+    const auto lookup = [](uint32_t cp, void* owner) {
+        return TextRenderer::GlyphLookupResult{static_cast<Atlas*>(owner)->resolve(cp),false};
+    };
+    const auto laid = TextRenderer::layoutGlyphs("ABg", 64, 90, lookup, atlas.get(),
+        false, 1.0f/atlas->width(), 1.0f/atlas->height(), 0, 0, true, 33, 8);
+    REQUIRE(laid.glyphs.size() == 3);
+    std::vector<float> vertices;
+    std::vector<uint32_t> indices;
+    TextRenderer::buildQuadVertices(laid.glyphs, 0, 0, vertices, indices);
+    float pen = 64;
+    for (size_t i=0; i<3; ++i) {
+        const auto& gm = atlas->resolve(static_cast<uint32_t>("ABg"[i]));
+        const auto& ink = laid.glyphs[i];
+        CHECK(ink.gx == pen + gm.offsetX);
+        CHECK(ink.gy == 123 - gm.offsetY);
+        CHECK(ink.w == gm.w); CHECK(ink.h == gm.h);
+        CHECK(vertices[i*24] == doctest::Approx(ink.gx-.5f));
+        CHECK(vertices[i*24+1] == doctest::Approx(ink.gy-.5f));
+        CHECK(vertices[i*24+2]*atlas->width() == doctest::Approx(gm.x-.5f));
+        CHECK(vertices[i*24+3]*atlas->height() == doctest::Approx(gm.y-.5f));
+        CHECK(vertices[i*24+10]*atlas->width() == doctest::Approx(gm.x+gm.w+.5f));
+        CHECK(vertices[i*24+11]*atlas->height() == doctest::Approx(gm.y+gm.h+.5f));
+        bool transparent = true;
+        for (int y=gm.y-1; y<=gm.y+gm.h; ++y)
+            for (int x=gm.x-1; x<=gm.x+gm.w; ++x)
+                if (x==gm.x-1 || x==gm.x+gm.w || y==gm.y-1 || y==gm.y+gm.h)
+                    transparent &= atlas->pixels()[(size_t(y)*atlas->width()+x)*4+3] == 0;
+        CHECK(transparent);
+        pen += gm.advance;
+    }
+    CHECK(laid.penAdvance == pen);
+}
+
+TEST_CASE("U16 font filtering: transparent padding preserves original italic ink transform") {
+    const auto q = TextRenderer::glyphQuadToNDC(100,200,16,16,3,640,360,.25f,.25f);
+    const float leftTop=(q.x0+1)*320, leftBottom=(q.x3+1)*320;
+    CHECK((1-q.y0)*180 == doctest::Approx(199.75f));
+    CHECK((1-q.y3)*180 == doctest::Approx(216.25f));
+    // Interpolate along the enlarged edge to each ORIGINAL ink boundary.
+    // The ink's horizontal .25-pixel inset restores the original shear.
+    CHECK(leftTop+(leftBottom-leftTop)*(.25f/16.5f)+.25f == doctest::Approx(103));
+    CHECK(leftTop+(leftBottom-leftTop)*(16.25f/16.5f)+.25f == doctest::Approx(100));
+}
+
+TEST_CASE("U16 text resize: changed screen dimensions invalidate every geometry cache slot") {
+    TextRenderer text;
+    text.setScreenSize(1280, 720);
+    for (size_t i = 0; i < text.cacheSlotCount(); ++i) CHECK_FALSE(text.cacheSlot(i).isDirty());
+    text.setScreenSize(0, 360); // Invalid surface must not poison NDC/cache state.
+    for (size_t i = 0; i < text.cacheSlotCount(); ++i) CHECK_FALSE(text.cacheSlot(i).isDirty());
+    text.setScreenSize(640, 360);
+    for (size_t i = 0; i < text.cacheSlotCount(); ++i) {
+        CHECK(text.cacheSlot(i).isDirty());
+        CHECK_FALSE(text.cacheSlot(i).geometryValid);
+    }
+}
 
 TEST_CASE("Text layout: UTF-8 multi-byte decode emits one glyph per codepoint") {
     std::unordered_map<uint32_t, TableGlyph> table;
