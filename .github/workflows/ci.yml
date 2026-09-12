@@ -237,6 +237,17 @@ jobs:
       - name: Test
         run: ctest --test-dir build --output-on-failure
 
+      - name: Preserve macOS RPC failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-rpc-failure-evidence
+          path: |
+            build/Testing/Temporary/LastTest.log
+            build/artifacts/validation/rpc-timeouts-*/
+            build/artifacts/validation/stdio-output-*/
+          if-no-files-found: ignore
+
   # ============================================================
   # Linux GCC
   # ============================================================

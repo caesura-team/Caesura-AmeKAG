@@ -436,6 +436,20 @@ TEST_CASE("RpcServer::EOF ends transport after queued requests") {
         dispatcher->requestAt(0).payload));
 }
 
+TEST_CASE("RpcServer::unusable output prevents reading or dispatching mutations") {
+    auto source = std::make_shared<ControlledLineSource>();
+    source->enqueue(R"({"id":24,"method":"eval","code":"return 42"})");
+    source->finish();
+    auto dispatcher = std::make_shared<RecordingRpcDispatcher>(successReply);
+    RpcServer rpc(lineSourceFor(source), -1);
+    rpc.setDispatcher(dispatcher);
+    CHECK_FALSE(rpc.outputReady());
+    rpc.run();
+    CHECK_FALSE(rpc.isRunning());
+    CHECK(source->readCalls() == 0);
+    CHECK(dispatcher->requestCount() == 0);
+}
+
 TEST_CASE("RpcServer::RPC stop replies and does not read another request") {
     auto source = std::make_shared<ControlledLineSource>();
     source->enqueue(R"({"id":22,"method":"stop"})");

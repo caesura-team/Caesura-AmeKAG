@@ -581,6 +581,59 @@ TEST_CASE("Entry: non-string voice callback errors are contained") {
     checkEngineRegistryCleared();
 }
 
+TEST_CASE("Entry: real Lua allocator exhaustion stops frame execution safely") {
+    EngineConfig cfg;
+    cfg.headless = true;
+    cfg.frameLimit = 3;
+    Engine engine(std::move(cfg));
+    REQUIRE(engine.init());
+    lua_State* L = engine.lua().state();
+    REQUIRE(L != nullptr);
+    struct AllocationFailure {
+        lua_State* state;
+        lua_Alloc previous;
+        void* userdata;
+        bool armed = false;
+        int attempts = 0;
+        int rejected = 0;
+        ~AllocationFailure() { lua_setallocf(state, previous, userdata); }
+    } failure{L, nullptr, nullptr};
+    failure.previous = lua_getallocf(L, &failure.userdata);
+    lua_setallocf(L, [](void* data, void* ptr, size_t oldSize, size_t newSize) -> void* {
+        auto& f = *static_cast<AllocationFailure*>(data);
+        if (f.armed && newSize > 0 && (!ptr || newSize > oldSize)) {
+            ++f.rejected;
+            return nullptr;
+        }
+        return f.previous(f.userdata, ptr, oldSize, newSize);
+    }, &failure);
+    lua_pushlightuserdata(L, &failure);
+    lua_pushcclosure(L, [](lua_State* state) -> int {
+        auto& f = *static_cast<AllocationFailure*>(lua_touserdata(state, lua_upvalueindex(1)));
+        ++f.attempts;
+        f.armed = f.attempts == 1;
+        lua_newtable(state); // Actual Lua allocation and LUA_ERRMEM, not error("OOM").
+        return 0;
+    }, 1);
+    lua_setglobal(L, "engine_update");
+    const int stackTop = lua_gettop(L);
+    int ownerTicks = 0;
+    engine.run([&] {
+        ++ownerTicks;
+        // Let an unfixed engine finish naturally: continued owner pumping is
+        // observable failure, and cleanup never requires an exhausted VM.
+        if (ownerTicks > 1) failure.armed = false;
+    });
+    failure.armed = false;
+    CHECK(failure.rejected >= 1);
+    CHECK(failure.attempts == 1);
+    CHECK(ownerTicks == 1);
+    CHECK(lua_gettop(L) == stackTop);
+    // Restore before Engine shuts down and destroys this Lua state.
+    lua_setallocf(L, failure.previous, failure.userdata);
+    // Engine's destructor runs after the allocator guard's destructor.
+}
+
 TEST_CASE("Entry: consecutive engines own independent HotReload state") {
     {
         EngineConfig cfg;

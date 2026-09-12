@@ -23,27 +23,6 @@ proc = subprocess.Popen(
     errors="replace",
 )
 
-# The engine boot window (Lua runtime init, script scan) is NOT covered by
-# the per-request timeout below -- on a loaded CI runner the first ping can
-# arrive >20s after spawn and flake. Wait for the headless-ready banner with
-# a generous startup deadline before issuing any request.
-startup_deadline = time.monotonic() + 45.0
-boot_line = None
-while time.monotonic() < startup_deadline:
-    line = proc.stdout.readline()
-    if not line:
-        break
-    boot_line = line.strip()
-    if "Backends ready" in line:
-        break
-if not boot_line or "Backends ready" not in boot_line:
-    try:
-        proc.kill()
-    except Exception:
-        pass  # child may already have exited
-    raise RuntimeError("engine did not reach 'Backends ready' within 45s "
-                       "(last line: %r)" % (boot_line or "<none>"))
-
 results = []
 
 
@@ -61,7 +40,28 @@ def _reader_loop():
             break
         _line_queue.put(line)
 
-threading.Thread(target=_reader_loop, daemon=True).start()
+reader = threading.Thread(target=_reader_loop, daemon=True)
+reader.start()
+
+# The same reader owns stdout from startup through exit. A synchronous
+# readline in this loop would not actually obey the startup deadline.
+startup_deadline = time.monotonic() + 45.0
+boot_line = None
+while time.monotonic() < startup_deadline:
+    try:
+        line = _line_queue.get(timeout=max(.001, startup_deadline - time.monotonic()))
+    except queue.Empty:
+        break
+    if line is None: break
+    boot_line = line.strip()
+    if "Backends ready" in line: break
+if not boot_line or "Backends ready" not in boot_line:
+    if proc.poll() is None: proc.kill()
+    proc.wait(timeout=10)
+    reader.join(timeout=3)
+    proc.stdin.close(); proc.stdout.close()
+    raise RuntimeError("engine did not reach 'Backends ready' within 45s "
+                       "(last line: %r)" % (boot_line or "<none>"))
 
 def request(req, timeout=20):
     proc.stdin.write(json.dumps(req) + "\n")
@@ -83,7 +83,8 @@ def request(req, timeout=20):
             continue  # engine banner / plain log lines that are not JSON
         if isinstance(parsed, dict) and "event" in parsed:
             continue  # {"event":"log",...} push lines are not responses
-        return parsed
+        if isinstance(parsed, dict) and parsed.get('id') == req['id']:
+            return parsed
     raise RuntimeError("timeout waiting for response to " + json.dumps(req))
 
 
@@ -393,11 +394,13 @@ finally:
         pass
     try:
         proc.wait(timeout=15)
-    except Exception:
-        try:
-            proc.kill()
-        except Exception:
-            pass
+    except subprocess.TimeoutExpired:
+        check("natural-eof-exit-without-kill", False)
+        proc.kill()
+        proc.wait(timeout=10)
+    reader.join(timeout=3)
+    check("natural-eof-exit", proc.returncode == 0 and not reader.is_alive())
+    proc.stdout.close()
 
 failed = [name for name, ok in results if not ok]
 if failed:

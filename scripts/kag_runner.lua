@@ -49,6 +49,7 @@ function kag_runner.stage_label_jump(ctx, path)
         return false
     end
     ctx.token_index = idx
+    ctx._resumePageWait = nil
     ctx.stop_flag = false
     return true
 end
@@ -180,6 +181,7 @@ local function clear_pending_transitions(owner)
     owner._pendingRestore, owner._pendingRollback = nil, nil
     owner._pendingSceneReload, owner._scene_changed, owner._pendingJump = nil, false, nil
     owner._pendingLoadScene, owner._pendingLoadToken = nil, nil
+    owner._resumePageWait = nil
     local errors = {}
     local function discard(fn, value)
         local called, ok, reason = pcall(fn, value)
@@ -241,7 +243,7 @@ end
 -- KAG scene debugger resume entry points (called from the RPC eval
 -- channel / editor): clear the runner's pause flag and let the scheduler
 -- continue. continue_run() just resumes; step() arms a one-token pause.
-function kag_runner.debug_resume()
+function kag_runner.continue_scene_debugger()
     if ctx then ctx._kag_debug_paused = false end
     require("kag_debug").continue_run()
     return true
@@ -359,6 +361,9 @@ function kag_runner.reload_scene(path)
     -- Stage the swap; update() starts the replacement before processing old
     -- input waits. Failed/cache-only reloads never reach this boundary.
     ctx.tokens = new_tokens
+    ctx._resumePageWait = nil
+    ctx._command_error, ctx.error_handler_error = nil, nil
+    ctx.error_command, ctx.error_token_line = nil, nil
     ctx.labelMap = scene.labels
     ctx.label_index = nil      -- raw tokens: next jump re-scans
     ctx.token_index = new_index
@@ -371,7 +376,11 @@ function kag_runner.reload_scene(path)
     return true, "reloaded"
 end
 
-local function resume_scheduler(origin, value)
+local function resume_scheduler(origin, value, expected_owner, expected_co)
+    if ctx and ctx._command_error then
+        finish_session(true)
+        return false, "command-error"
+    end
     if not kag_co then return false, "not-running" end
     if coroutine.status(kag_co) == "dead" then
         if not has_continuation(ctx) then finish_session(true) end
@@ -380,6 +389,9 @@ local function resume_scheduler(origin, value)
 
     local allowed, reason = can_resume()
     if not allowed then return false, reason end
+    if expected_owner and (ctx ~= expected_owner or kag_co ~= expected_co) then
+        return false, "restore-owner-expired"
+    end
 
     -- DebugProtocol resumes its anchored coroutine directly on the Lua owner
     -- thread. This notification must never advance it a second time.
@@ -389,6 +401,9 @@ local function resume_scheduler(origin, value)
 
     local called, resumed, result = pcall(
         resume_adapter.resume, origin, kag_co, value)
+    if expected_owner and (ctx ~= expected_owner or kag_co ~= expected_co) then
+        return false, "restore-owner-expired"
+    end
     if not called then
         result = resumed
         resumed = false
@@ -397,6 +412,10 @@ local function resume_scheduler(origin, value)
         print("[KAG Runner] " .. origin .. " resume failed: " .. tostring(result))
         finish_session(false)
         return false, result
+    end
+    if ctx and ctx._command_error then
+        finish_session(true)
+        return false, "command-error"
     end
     -- KAG scene debugger pause: the scheduler yielded "__kag_pause"
     -- (breakpoint/step hit). Stop advancing until the editor resumes
@@ -414,6 +433,20 @@ local function resume_scheduler(origin, value)
         if not finished then return false, finish_error end
     end
     return true, result
+end
+
+local function prime_restored_page_wait()
+    local owner, co = ctx, kag_co
+    if not owner or not owner._resumePageWait then return true end
+    if owner._kag_debug_paused then return false, "kag-paused" end
+    local resumed, reason = resume_scheduler("restore", 0, owner, co)
+    if not resumed then return false, reason end
+    if owner._resumePageWait then
+        -- The adapter/debugger yielded before TextCommands.p reached its
+        -- wait. Keep the identity for a later owner frame or accepted click.
+        return false, reason or "restore-page-pending"
+    end
+    return true
 end
 
 -- Production uses the default adapter: Engine installs a live pause probe and
@@ -672,6 +705,8 @@ local function commit_rollback(owner, request)
         owner._rollback_capture_reason = nil
         table.remove(owner._undoStack)
         owner.stop_flag = false
+        owner._command_error, owner.error_handler_error = nil, nil
+        owner.error_command, owner.error_token_line = nil, nil
         owner._rollback_waiting, owner.waiting_input = true, true
         auto_advance_ms = 0
         spawn_scheduler(owner._resume_index)
@@ -697,7 +732,9 @@ local function commit_restore(owner, prepared)
     if owner ~= ctx then return false, "restore-owner-expired" end
     local candidate = make_context()
     require("kag.save_state").apply_values(candidate, prepared)
-    if owner and owner.handle_error then candidate.handle_error = owner.handle_error end
+    if owner and owner.handle_error ~= owner._default_error_handler then
+        candidate.handle_error = owner.handle_error
+    end
     -- Everything above is preparation. Closing the old scopes starts commit;
     -- after this point an application error leaves the new session stopped.
     if owner then owner._pendingRestore = nil end -- candidate transfers into commit below
@@ -774,6 +811,8 @@ function kag_runner.update(dt)
         spawn_scheduler(ctx.token_index)
         return resume_scheduler("update", math.max(0, (tonumber(dt) or 0) * 1000))
     end
+    local primed, prime_error = prime_restored_page_wait()
+    if not primed then return false, prime_error end
     -- Replay system: record mode advances the capture clock every frame;
     -- playback mode fires due clicks before normal input processing -- the
     -- recorded event drives the same on_click path the player used
@@ -1142,11 +1181,15 @@ function kag_runner.on_click()
         end
     end
 
+    local click_owner, click_co = ctx, kag_co
     local allowed, reason = can_resume()
+    if ctx ~= click_owner or kag_co ~= click_co then return false, "click-owner-expired" end
     if not allowed then return false, reason end
 
     -- Mark the current line as seen for read-skip: only text the player
     -- actually clicked through counts as read.
+    local primed, prime_error = prime_restored_page_wait()
+    if not primed then return false, prime_error end
     local scene = ctx.current_scene or ctx.currentScene or ""
     if scene ~= "" and type(ctx.token_index) == "number" then
         ctx.seen_scenes = ctx.seen_scenes or {}
@@ -1235,9 +1278,13 @@ function kag_runner.install_error_handler(c)
     if c == nil then return nil end
     if c.handle_error == nil then
         c.handle_error = function(cmd, err, scene, line)
+            -- Stop before invoking native reporting: ErrorUI may request exit
+            -- or retry, and neither permits another command in this batch.
+            c.stop_flag, c._command_error = true, true
             -- G4: attach Lua stack traceback (level 2 = caller of the handler).
-            local msg = debug.traceback(tostring(err), 2)
-            if msg == "" then msg = tostring(err) end
+            local error_message = scheduler.error_text(err)
+            local msg = debug.traceback(error_message, 2)
+            if msg == "" then msg = error_message end
             local label = string.format("[ErrorUI] %s @ %s:%s: %s",
                 tostring(cmd), tostring(scene or "?"), tostring(line or 0), msg)
             -- File + console visibility first: Debug.log writes the engine's
@@ -1253,10 +1300,12 @@ function kag_runner.install_error_handler(c)
             -- ErrorReporter -> ErrorUI (no-op when no reporter is installed).
             local eng = rawget(_G, "Engine")
             if eng and type(eng.report_command_error) == "function" then
-                pcall(eng.report_command_error, cmd, msg,
+                local reported, report_error = pcall(eng.report_command_error, cmd, msg,
                       tostring(scene or ""), tonumber(line) or 0)
+                if not reported then c.error_handler_error = scheduler.error_text(report_error) end
             end
         end
+        c._default_error_handler = c.handle_error
     end
     return c.handle_error
 end

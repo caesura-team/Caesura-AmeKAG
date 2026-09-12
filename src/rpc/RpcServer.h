@@ -14,6 +14,8 @@
 
 namespace Caesura {
 
+class StdioRpcOutput;
+
 enum class RpcLineReadResult {
     Line,
     EndOfInput,
@@ -29,6 +31,7 @@ class RpcServer : public IRpcServer {
 public:
     RpcServer();
     explicit RpcServer(RpcLineSource lineSource);
+    RpcServer(RpcLineSource lineSource, int outputDescriptor);
     ~RpcServer() override;
 
     RpcServer(const RpcServer&) = delete;
@@ -40,6 +43,7 @@ public:
     // Signal stop from outside
     void stop() override;
     bool isRunning() const override { return m_running.load(); }
+    bool outputReady() const noexcept;
 
     void setDispatcher(std::shared_ptr<IRpcDispatcher> dispatcher) override;
 
@@ -77,7 +81,7 @@ private:
     RpcReply dispatchRequest(RpcRequest request) const;
     std::string replyError(int id, const RpcReply& reply) const;
 
-    // Write a JSON line to stdout (thread-safe via mutex)
+    // Enqueue a JSON line; a stalled protocol consumer never blocks producers.
     void writeLine(const std::string& json);
 
     // Escape string for JSON
@@ -85,7 +89,7 @@ private:
 
     std::atomic<bool> m_running{false};
     std::atomic<bool> m_stopRequested{false};
-    std::mutex   m_writeMutex;
+    std::unique_ptr<StdioRpcOutput> m_output;
     mutable std::mutex m_dispatcherMutex;
     std::shared_ptr<IRpcDispatcher> m_dispatcher;
     RpcLineSource m_lineSource;

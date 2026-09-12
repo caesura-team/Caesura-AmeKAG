@@ -170,12 +170,46 @@ do
 end
 do
     local ctx, before = begin(true)
+    -- An author may explicitly recover from a command error. Keep the U17
+    -- continuation/cleanup contract on that policy; the default now stops.
+    local handled = 0
+    ctx.handle_error = function(cmd, message, source, index)
+        handled = handled + 1
+        check("audio recovery handler receives location", cmd == "voice_wait"
+            and message:find("S8 injected audio query error", 1, true)
+            and source == ctx.current_scene and index == 2)
+    end
     state.query_error = true
     runner.update(.016)
     check("audio query failure reaches scheduler error contract",ctx.error_command == "voice_wait")
     state.query_error = false; frames(4)
     at_page("audio query failure cleanup",ctx,before,0)
     check("audio query failure clears poll owner",ctx._voice_wait_poll == nil)
+    check("explicit audio recovery is called once", handled == 1)
+end
+do
+    local ctx, before = begin(true)
+    local co = ctx.co
+    state.query_error = true
+    local ok, reason = runner.update(.016)
+    check("default audio failure returns command-error", ok == false and reason == "command-error")
+    check("default audio failure retains location", ctx.error_command == "voice_wait"
+        and ctx.error_token_line == 2 and ctx._command_error == true)
+    check("default audio failure closes execution", ctx._session_active == false
+        and coroutine.status(co) == "dead")
+    check("default audio failure clears wait ownership", not ctx.waiting_input and not ctx._voice_wait_poll)
+    state.query_error = false; frames(4)
+    check("default audio failure never executes following commands", ctx.f.done == nil and ctx.f.beyond_page == nil)
+    check("click cannot resume failed audio owner", runner.on_click() == false and ctx.f.done == nil)
+    check("failed audio presentation remains owned before explicit stop", runner.get_ctx() == ctx
+        and state.playing and state.stops == before)
+    assert(runner.stop())
+    check("explicit stop retires failed presentation audio once", state.stops - before == 1 and not state.playing)
+    check("explicit stop clears the retained audio owner", runner.get_ctx() == nil)
+    local successor, after_stop = begin(true)
+    state.playing = false; frames(4)
+    at_page("fresh session after default audio failure", successor, after_stop, 0)
+    check("retired audio failure remains unchanged", ctx.f.done == nil and ctx._voice_wait_poll == nil)
 end
 state.query_error, state.stop_error = false, false
 assert(runner.stop())

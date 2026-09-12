@@ -116,6 +116,7 @@ private:
     void quickload();
 
     void handleFatalError(const char* context, const char* luaError);
+    bool updateLuaFrame(float dt);
     void recoverFromDeviceLoss();
     bool pumpDebugger();
     bool isLuaExecutionPaused() const;
@@ -184,6 +185,8 @@ private:
     // denotes engine-owned audio outside a runner, not a raw table address.
     int m_audioCompletionOwnerRef = 0;
     int  m_gcFrameCounter = 0;
+    uint64_t m_updateErrorCount = 0;
+    bool m_luaMemoryFailed = false;
     // Rendered-frame counter; when m_config.frameLimit > 0 the main loop
     // stops deterministically after that many frames (--frames N).
     uint32_t m_frameCount = 0;

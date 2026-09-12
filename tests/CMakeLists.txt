@@ -72,6 +72,8 @@ set(TEST_SOURCES
     cpp/test_render_integration.cpp
     cpp/test_render_postfx.cpp
     cpp/test_rpc.cpp
+    cpp/test_stdio_rpc_output.cpp
+    cpp/test_owner_rpc_queue.cpp
     cpp/test_cloud_save.cpp
     cpp/test_mini_collision.cpp
     cpp/test_ai.cpp
@@ -323,6 +325,67 @@ if(Python3_EXECUTABLE)
         FIXTURES_REQUIRED caesura-test-assets
         PASS_REGULAR_EXPRESSION "ALL HEADLESS RPC TESTS PASSED"
         TIMEOUT 120
+        WORKING_DIRECTORY "$<TARGET_FILE_DIR:CaesuraAmeKAG>"
+    )
+    add_test(
+        NAME CaesuraHeadlessErrorSmoke
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/headless_error_smoke.py
+                $<TARGET_FILE:CaesuraAmeKAG>
+    )
+    set_tests_properties(CaesuraHeadlessErrorSmoke PROPERTIES
+        LABELS "entry;script;headless;rpc"
+        RUN_SERIAL TRUE
+        RESOURCE_LOCK "global-singletons"
+        FIXTURES_REQUIRED caesura-test-assets
+        PASS_REGULAR_EXPRESSION "ALL HEADLESS ERROR TESTS PASSED"
+        TIMEOUT 180
+        WORKING_DIRECTORY "$<TARGET_FILE_DIR:CaesuraAmeKAG>"
+    )
+    add_test(
+        NAME CaesuraStdioBackpressure
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/stdio_backpressure_smoke.py
+                $<TARGET_FILE:CaesuraAmeKAG>
+    )
+    set_tests_properties(CaesuraStdioBackpressure PROPERTIES
+        LABELS "entry;headless;rpc"
+        RUN_SERIAL TRUE
+        RESOURCE_LOCK "global-singletons"
+        FIXTURES_REQUIRED caesura-test-assets
+        PASS_REGULAR_EXPRESSION "ALL STDIO BACKPRESSURE TESTS PASSED"
+        TIMEOUT 120
+        WORKING_DIRECTORY "$<TARGET_FILE_DIR:CaesuraAmeKAG>"
+    )
+    add_test(
+        NAME CaesuraRpcTimeoutSmoke
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/headless_rpc_timeout_smoke.py
+                $<TARGET_FILE:CaesuraAmeKAG>
+    )
+    set_tests_properties(CaesuraRpcTimeoutSmoke PROPERTIES
+        LABELS "entry;headless;rpc;http"
+        RUN_SERIAL TRUE
+        RESOURCE_LOCK "global-singletons"
+        FIXTURES_REQUIRED caesura-test-assets
+        PASS_REGULAR_EXPRESSION "ALL RPC TIMEOUT TESTS PASSED"
+        TIMEOUT 180
+        WORKING_DIRECTORY "$<TARGET_FILE_DIR:CaesuraAmeKAG>"
+    )
+    add_test(
+        NAME CaesuraManagedRpcSmoke
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/headless_managed_rpc_smoke.py
+                $<TARGET_FILE:CaesuraAmeKAG>
+                --include-http
+    )
+    set_tests_properties(CaesuraManagedRpcSmoke PROPERTIES
+        LABELS "entry;script;headless;rpc;http"
+        RUN_SERIAL TRUE
+        RESOURCE_LOCK "global-singletons"
+        FIXTURES_REQUIRED caesura-test-assets
+        PASS_REGULAR_EXPRESSION "ALL MANAGED RPC TESTS PASSED"
+        TIMEOUT 180
         WORKING_DIRECTORY "$<TARGET_FILE_DIR:CaesuraAmeKAG>"
     )
     add_test(

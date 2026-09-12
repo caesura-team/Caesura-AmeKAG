@@ -84,3 +84,9 @@ Lua两文件暂存基线与当前checkout仅换行字节不同，整合前逐字
 独立性能分析 `u17-web-perf-diagnosis/results.md` 将共同开销定位为待进一步测量项：两版Lua指令样本中pack_seen_flags均12496/44978（27.78%），此比例不是CPU时间；Node估计约68% Wasm、20–22% Wasmoon JS glue。下一U27测量需进一步区分实际发布值的递归转换与跨运行保留，当前没有泄漏或环境成因的确定结论，也未据此修改生产实现。
 
 第二次 [CI 34694749853](https://github.com/caesura-team/Caesura-AmeKAG/actions/runs/34694749853) 固定 `7bef2b7f9438cdfada96f54eeeb6ce49c8c10f47`，Linux再次通过完整Web511/511（synthetic1000中位1807.1ms）与CTest，并通过能力矩阵检查；随后Android静态审计的两个旧表达式匹配失败（86/88）。当前触摸已提取到dispatchTouchEvent，通过touch别名乘实际窗口getter，旧审计仍查event.tfinger.x/y与winW/winH。更新审计的函数范围、SDL事件别名及宽高乘法匹配后 `u17-android-regression-green-01.log` 88/88通过；`u17-android-regression-controls-01.log` 的1个正控制和5个负控制均符合预期，错误宽高、缺少乘法、注释伪造和非SDL别名仍被拒绝。生产运行时与1361项C++回归未改；这是源码接线审计修正，不是Android设备运行证明。第二次job原始日志保留在主工作区 `artifacts/validation/u17-ci34694749853-linux-job.log`，最终候选CI仍须完成。
+
+## 最终CI与合并（2026-09-12 21:32）
+
+最终[CI 34695535359](https://github.com/caesura-team/Caesura-AmeKAG/actions/runs/34695535359)全部7个实际作业成功：Windows Debug/Release、Linux、macOS、Android静态/构建打包和iOS构建；3个发布打包作业按PR规则跳过。Linux完整Web38文件、511/511用例，synthetic1000三样本1879.2/1880.6/1864.5ms、中位1879.2ms，原2000ms预算通过；CTest27通过与1个预声明AI服务跳过，原生证据collector和严格verifier均PASS。实际PR合成提交27aa33b9c0c8d686348a4fa14b0d4199c03d3bc8与候选4a7487e0306dcf9c1450929dc543f4174ed9d5c9的完整tree同为37b3947bbac7891d364f8cb546d06f418af48f2c，已通过Git比较确认无差异。
+
+PR #20按已有合并授权于13:32:19 UTC合并到master，提交0c7e2e86cb5647e461d8a4308dbde4b431443f1f，tree与通过CI的候选一致。主工作区已快进同步；U18在独立工作区继续。最终PR说明已保留本地Web性能失败、未测真设备/OS IME候选窗及覆盖率未测量边界，不能用CI通过覆盖这些结果。源码/夹具匹配的本机原生严格证据包仍保留；最终CI Linux原始job日志在主工作区artifacts/validation/u17-ci34695535359-linux-job.log。额外下载Linux二进制证据包的gh进程长时间没有落盘完成，已仅终止该复制进程；没有把未下载内容当作本地复核通过。

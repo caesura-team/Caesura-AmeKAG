@@ -314,6 +314,8 @@ caesura_add_module(Resource
 
 caesura_add_module(Rpc
     src/rpc/RpcServer.cpp
+    src/rpc/OwnerRpcQueue.cpp
+    src/rpc/StdioRpcOutput.cpp
     src/rpc/EditorServer.cpp
     src/rpc/services/ProjectService.cpp
     src/rpc/services/PackagingService.cpp

@@ -5,6 +5,7 @@
 // ===========================================================================
 
 #include "RpcServer.h"
+#include "StdioRpcOutput.h"
 
 #include <chrono>
 #include <climits>
@@ -21,6 +22,7 @@
 
 #if defined(_WIN32)
 #include <Windows.h>
+#include <io.h>
 #else
 #include <cerrno>
 #include <fcntl.h>
@@ -259,14 +261,32 @@ RpcServer::RpcServer()
     : RpcServer(makeStdioLineSource()) {}
 
 RpcServer::RpcServer(RpcLineSource lineSource)
-    : m_lineSource(std::move(lineSource)) {}
+    : RpcServer(std::move(lineSource),
+#if defined(_WIN32)
+          ::_fileno(stdout)
+#else
+          STDOUT_FILENO
+#endif
+      ) {}
+
+RpcServer::RpcServer(RpcLineSource lineSource, int outputDescriptor)
+    : m_output(std::make_unique<StdioRpcOutput>(outputDescriptor, [this] { stop(); })),
+      m_lineSource(std::move(lineSource)) {}
+
+bool RpcServer::outputReady() const noexcept { return m_output->ready(); }
 
 RpcServer::~RpcServer() {
     stop();
+    m_output->finish();
 }
 
 void RpcServer::run() {
     if (m_stopRequested.load(std::memory_order_acquire)) return;
+    if (!outputReady()) {
+        fprintf(stderr, "[RpcServer] No usable protocol output descriptor.\n");
+        stop();
+        return;
+    }
     if (!m_lineSource.readLine) {
         fprintf(stderr, "[RpcServer] No input line source.\n");
         return;
@@ -295,6 +315,9 @@ void RpcServer::run() {
         }
     }
 
+    // The final response is submitted before closing the writer, including
+    // when handleStop() or the Engine owner has already cancelled input.
+    m_output->finish();
     m_running.store(false, std::memory_order_release);
     fprintf(stderr, "[RpcServer] Shutdown.\n");
 }
@@ -322,9 +345,7 @@ void RpcServer::pushLog(const std::string& level, const std::string& message) {
 }
 
 void RpcServer::writeLine(const std::string& json) {
-    std::lock_guard<std::mutex> lock(m_writeMutex);
-    std::cout << json << std::endl;
-    std::cout.flush();
+    if (!m_output->writeLine(json)) stop();
 }
 
 // =========================================================================

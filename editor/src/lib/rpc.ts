@@ -222,6 +222,23 @@ export class RpcError extends Error {
   }
 }
 
+async function responseError(res: Response, path: string): Promise<RpcError> {
+  // Consume once: json() also consumes malformed text, losing a later text fallback.
+  let body: unknown = null
+  try {
+    const text = await res.text()
+    try { body = JSON.parse(text) } catch { body = text }
+  } catch { /* Retain the HTTP status when reading the response body fails. */ }
+  const fields = body && typeof body === 'object'
+    ? body as Record<string, unknown> : {}
+  const code = typeof fields.code === 'string' ? fields.code : ''
+  const detail = typeof fields.message === 'string' ? fields.message
+    : typeof fields.error === 'string' ? fields.error
+    : typeof body === 'string' ? body : ''
+  const diagnostic = [code, detail].filter(Boolean).join(': ')
+  return new RpcError('HTTP ' + res.status + ' on ' + path + (diagnostic ? ': ' + diagnostic : ''), res.status, body)
+}
+
 export class EngineClient {
   private token = ''
 
@@ -248,13 +265,7 @@ export class EngineClient {
 
     const res = await this.fetchImpl(this.base + path, { ...init, headers })
     if (!res.ok) {
-      let body: unknown = null
-      try {
-        body = await res.json()
-      } catch {
-        body = await res.text().catch(() => null)
-      }
-      throw new RpcError(`HTTP ${res.status} on ${path}`, res.status, body)
+      throw await responseError(res, path)
     }
     return (await res.json()) as T
   }
@@ -323,7 +334,7 @@ export class EngineClient {
       body: code,
     })
     if (!res.ok) {
-      throw new RpcError(`HTTP ${res.status} on /eval`, res.status, null)
+      throw await responseError(res, '/eval')
     }
     const body = (await res.json()) as { result?: string; error?: string }
     if (body.error) throw new RpcError(body.error, res.status, body)
