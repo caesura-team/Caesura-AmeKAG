@@ -74,3 +74,11 @@ Lua两文件暂存基线与当前checkout仅换行字节不同，整合前逐字
 | 3 | 基线→候选 | 2182.2225 | 2526.5514 | 1.157788 |
 
 两者均未达到2000ms固定预算，配对比中位0.975085但方向不一致，不能据此宣称U17优化或确定退化。该standalone jsdom配对诊断不是完整Vitest通过证据。另一次 `profile-01/run.json` 对两者实际调用计数相同：3000次snapshot.capture、4000次runner.on_click、2000次ch、1000次p、2次operation.cancel_all；没有进入新增voice_wait/input/runner.update等待分支。带观察器时间不参与预算评价，Node CPU profile及Lua指令样本用于后续定位共同成本，绝不减少快照工作或事后放宽门槛。
+
+## 完整原生候选与首次跨平台CI
+
+第二批 `u17-native-candidate-02` 固定 `aa5012d4af4421e036e96557da360cf42952f5ce`，2026-09-12 20:36–20:43执行完成：完整Debug构建、C++1361/1361（401723断言、0失败0跳过）、Lua147/147与48/48、CTest27通过/0失败/1预先允许的AI服务跳过，验证器17/7/53/57项、耦合与注册门禁均通过。运行前后源码与夹具hash一致。严格collector/verifier均PASS；完整日志、执行二进制和manifest位于 `artifacts/validation/u17/evidence/aa5012d4af4421e036e96557da360cf42952f5ce/ca0cc51b-d08b-4f31-ae99-c47464cf13ec/windows-debug/`。该证据限此配置，不授予发布或设备运行结论。首次为该批次选择了不合规范的扁平collector输出目录而被拒绝（collect-02），改为既有SHA/run/profile结构后collect-03通过，未改验证规则或重跑测试。
+
+[PR #20](https://github.com/caesura-team/Caesura-AmeKAG/pull/20) 首次 [CI 34694212672](https://github.com/caesura-team/Caesura-AmeKAG/actions/runs/34694212672) 的Linux job103554773223已通过完整Web38文件、511/511用例：synthetic1000样本1824.7/1842.2/1826.7ms，中位1826.7ms；配对规模比中位2.369038，原预算均通过。此为该CI配置的完整Web证据，不覆盖本地性能失败。该job的CTest也通过，随后因自动生成能力矩阵未同步而失败，原始job日志保存于主工作区 `artifacts/validation/u17-ci34694212672-linux-job.log`。当前仅通过原生成器更新源码指纹、位置和测试引用，未手改能力结论；最终CI与合并仍待完成。
+
+独立性能分析 `u17-web-perf-diagnosis/results.md` 将共同开销定位为待进一步测量项：两版Lua指令样本中pack_seen_flags均12496/44978（27.78%），此比例不是CPU时间；Node估计约68% Wasm、20–22% Wasmoon JS glue。下一U27测量需进一步区分实际发布值的递归转换与跨运行保留，当前没有泄漏或环境成因的确定结论，也未据此修改生产实现。
