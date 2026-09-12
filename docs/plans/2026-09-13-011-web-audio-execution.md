@@ -81,3 +81,16 @@ u20-unlock-lifecycle使用实际`audio-engine.test.js`：RED41通过/3失败，G
 代码5fd87b70及仅同步平台来源锚点的ebd0c7e5已进入草稿PR #23。干净ebd0c7e5的`u20-web-full-02`共42文件598项：597通过、1失败、0跳过，源码指纹57fcd7ded898d5352b151b004696132cadea226381131fe160ca3df4beac5b6f稳定。失败为旧Audio UI助手仅接受advance:WAIT/DONE，无法接受音频自然完成后RAF发布的parked:WAIT。助手现在要求本次click的成功回执，以及advance/parked两种来源的已完成页面；不接受WAIT_AUDIO作为完成，也不接受ERR回执。原有音源及设置断言保留，六项完整UI随后通过。
 
 本次原性能预算全部通过，synthetic1000样本2240.7/1994.2/1719.6ms，中位1994.2ms；规模比中位2.1585。此前性能FAIL仍保留，不据此宣称所有主机稳定。CI34721310444的Linux在相同旧UI助手失败：597通过/1失败；新增真实Audio步骤46项通过，Chrome152.0.7977.82，源码稳定、调试端点实际关闭。该旧候选CI不能算全绿，更新后的候选需重新验证。
+
+## 最终候选验收
+
+最终生产与测试代码为f3e5f1aa，595ba447及f19a5262只更新平台来源锚点与自动生成能力矩阵。
+
+- `u20-web-full-03`在干净595ba447完成bake24场景/6资产、Vite及42文件598/598，0失败/0跳过。指纹49cfd3f82e8bd73b0834a8edf36762d7c8e6be89429e65f602fc79c35d07e312前后相同，Node22.23.2与实际Lua字节未变化。原十二项性能预算通过，故事中位884.4ms，synthetic1000三样本1621.8/1709.7/2182.3ms、中位1709.7ms；配对规模比2.2959/2.3333/2.9292按原中位规则为2.3333。保留慢样本与先前FAIL，不宣称跨主机稳定或U27 Release/长跑完成。
+- 最终`u20-real-audio-04`真实Chrome153.0.8010.36的46项PCM/生命周期全部通过，errors=[]、源码稳定、实际调试端点关闭。与前次相比只增加readonly音频时钟访问和已审查的harness清理/CI参数，PCM oracle未改。
+- 实际交付播放器`dist/u20-player-audio-03`在Chrome的`/games/u20/`子路径通过9项：已解码真实WAV且默认autoplay等待；可信点击解锁；实际暂停保持声音与游标；恢复后自然结束只推进到下一页；手动下一页继续；没有页面错误或未处理Promise。运行前后包目录digest均为3bbd3becf980830ee615a55e62606dbf3227eff8d879a7b22938a166e69301f5。报告与已目视截图在`u20-player-audio-04/`。使用新profile的零音量偏好，没有物理扬声器证明；本次所有Chrome实例已确认退出。之前三次probe未到音频等待：作者前置ch/text都触发了既有点击等待，第三次日志明确为WAIT:2、audio none、errors=[]；这些失败作为夹具前提错误保留，没有改生产文字语义。
+- 首次原生候选receipt ae53bc98-929c-4066-9b90-50997c1fc0d0中，C++1397/402490、Lua147/54与其余检查通过，但CTest两项失败：新CMake缓存选中了System32/bash.exe的WSL启动器。查询能力生成器的`--help`又实际触发了文档生成，因此该次source_changed_during_run=true；不会把它当成稳定候选。修正本工作区CAESURA_BASH_PROGRAM为已验证Git Bash后，两项定向CTest通过，原失败完整保留。
+- **干净f19a5262的最终原生receipt cc493c95-8934-473d-99c5-43fa556a8dfd**：11/11命令exit0，完整Debug、C++1397/1397与402490/402490断言、Lua147/147与54/54，CTest32通过及1项预先声明的可选AI服务跳过。源码指纹56f634c2cc4ec8f9aeb2aa64c16356279a3750c551947f6392ec035a81bb62ba及夹具前后稳定。collector与严格verify_release_candidate均PASS；只覆盖windows-debug profile，不授予发布权限。
+- CI34721769101的595ba447在完整Web598/598及真实音频46项通过后，仅因生成矩阵过期而失败。同步生成结果后的**CI34722656508（f19a5262）七个执行job全部成功**，三个PR包job按条件跳过。早期失败未被重试记录覆盖。
+
+本轮独立审查提出的gain、回执、等待时钟与harness问题均已闭环。最终计划文档提交的CI与PR #23合并仍待外部状态确认。其他浏览器/物理输出、仓外两模板作者旅程、发布包隔离、U27独立进程Release/一小时长跑及U21–U29继续按原计划执行，未被本次音频验收替代。
