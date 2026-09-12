@@ -340,3 +340,31 @@ invalid preflight or a successful but incomplete diagnostic subset, and 130 for
 interruption after owned-process cleanup. Run the driver-only synthetic suite
 with `python -B tests/scripts/test_render_contracts_driver.py`; it mocks the
 owned process boundary and never launches the GPU executable.
+
+## Shader generation and physical-size recovery
+
+Generate into a fresh directory with explicitly selected installed tools:
+
+```text
+python scripts/generate_render_shaders.py --root . --fxc PATH_TO_FXC --shaderc PATH_TO_BGFX_SHADERC --output NEW_DIRECTORY --publish
+```
+
+All compiler commands, tool versions/digests, input/output digests, DXBC
+reflection and bgfx interface checks must pass before `--publish` changes the
+declared arrays/four DXBC files. Without `--publish`, outputs and the receipt
+remain in the new directory. Metal compilation here translates source into a
+bgfx container; it does not execute a Metal device. Compiler paths are arguments,
+not personal paths saved in the repository.
+
+The supplementary real D3D11 screenshot probe has an explicit recovery scenario:
+
+```text
+python tests/probes/run_screenshot_gpu_probe.py --exe PATH_TO_CaesuraScreenshotGpuProbe.exe --resource-root . --output-dir NEW_DIRECTORY --scenario present-recovery
+```
+
+It keeps a 640x360 logical canvas in an 800x450 hidden drawable, recovers the
+actual device with logical dimensions, and checks native-size output before
+and after without another `setPresentSize` after recovery. The same wrapper's
+default remains the original renderer/RPC pair; `--scenario fill` remains its
+separate ownership observation. This supplementary probe is distinct from the
+fixed 18-process, 82-image matrix and from actual OS removal/monitor DPI tests.

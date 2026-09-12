@@ -142,7 +142,7 @@ def main() -> int:
                         help="A new directory; an existing directory is rejected to preserve earlier evidence")
     parser.add_argument("--timeout", type=float, default=60.0,
                         help="Per-scenario wall-clock limit in seconds (default 60, maximum 120)")
-    parser.add_argument("--scenario", choices=("renderer", "rpc", "fill"),
+    parser.add_argument("--scenario", choices=("renderer", "rpc", "fill", "present-recovery"),
                         help="Run only this scenario; default remains renderer then rpc (one child each)")
     args = parser.parse_args()
     if os.name != "nt":
@@ -161,7 +161,9 @@ def main() -> int:
     report = {"schema": 1, "status": "RUNNING", "started_utc": utc_now(),
               "executable": str(executable), "resource_root": str(resources),
               "identity_before": snapshot(executable, resources), "scenarios": [],
-              "boundary": ("U16 production fillViewport/cache ownership, one RTT, S/A/two normal frames/same A/B/shutdown"
+              "boundary": ("U16 explicit physical-size recovery, real 800x450 drawable and 640x360 logical canvas; not OS removal or a real DPI transition"
+                           if args.scenario == "present-recovery" else
+                           "U16 production fillViewport/cache ownership, one RTT, S/A/two normal frames/same A/B/shutdown"
                            if args.scenario == "fill" else
                            "D3D11 screenshot/recovery and actual Engine captureFrameForRpc; not OS removal or post-core restoration failure"),
               "identity_boundary": "Only enumerated files are observed; whole-worktree/build identity is the integration gate's responsibility"}

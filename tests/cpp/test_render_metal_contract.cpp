@@ -42,10 +42,16 @@ TEST_CASE("metal: 10 2D Render Metal Embedded Shaders symbol contracts") {
 
     // 2. vs_fullscreen
     CHECK(kEmbeddedMetal_vs_fullscreen != nullptr);
-    CHECK(kEmbeddedMetal_vs_fullscreen_size == 659);
+    // Regenerated passthrough vertex shader (shaderc receipt, U16). Retain
+    // exact container identity and also check its fragment-link interface.
+    CHECK(kEmbeddedMetal_vs_fullscreen_size == 608);
     CHECK(kEmbeddedMetal_vs_fullscreen[0] == 'V');
     CHECK(kEmbeddedMetal_vs_fullscreen[1] == 'S');
     CHECK(kEmbeddedMetal_vs_fullscreen[2] == 'H');
+    REQUIRE(kEmbeddedMetal_vs_fullscreen_size >= 14);
+    REQUIRE(kEmbeddedMetal_fs_texture_size >= 14);
+    CHECK(kEmbeddedMetal_vs_fullscreen[3] == 11);
+    CHECK(std::memcmp(kEmbeddedMetal_vs_fullscreen + 8, kEmbeddedMetal_fs_texture + 4, 4) == 0);
 
     // 3. stretch_blt_vs
     CHECK(kEmbeddedMetal_stretch_blt_vs != nullptr);
@@ -354,6 +360,7 @@ TEST_CASE("gl: embedded shader hash pairing fs.hashIn == paired vs.hashOut (t85)
     CHECK(shaderHashIn(kEmbeddedGL_fs_blend)      == shaderHashOut(kEmbeddedGL_vs_fullscreen));
     CHECK(shaderHashIn(kEmbeddedGL_fs_transition) == shaderHashOut(kEmbeddedGL_vs_fullscreen));
     CHECK(shaderHashIn(kEmbeddedGL_fs_vfx)        == shaderHashOut(kEmbeddedGL_vs_fullscreen));
+    CHECK(shaderHashIn(kEmbeddedGL_fs_postfx_lut3d) == shaderHashOut(kEmbeddedGL_vs_fullscreen));
     // Dedicated blit pairs.
     CHECK(shaderHashIn(kEmbeddedGL_stretch_blt_fs) == shaderHashOut(kEmbeddedGL_stretch_blt_vs));
     CHECK(shaderHashIn(kEmbeddedGL_affine_blt_fs)  == shaderHashOut(kEmbeddedGL_affine_blt_vs));
@@ -378,6 +385,7 @@ TEST_CASE("metal: embedded shader hash pairing fs.hashIn == paired vs.hashOut (t
     CHECK(shaderHashIn(kEmbeddedMetal_fs_blend)      == shaderHashOut(kEmbeddedMetal_vs_fullscreen));
     CHECK(shaderHashIn(kEmbeddedMetal_fs_transition) == shaderHashOut(kEmbeddedMetal_vs_fullscreen));
     CHECK(shaderHashIn(kEmbeddedMetal_fs_vfx)        == shaderHashOut(kEmbeddedMetal_vs_fullscreen));
+    CHECK(shaderHashIn(kEmbeddedMetal_fs_postfx_lut3d) == shaderHashOut(kEmbeddedMetal_vs_fullscreen));
     CHECK(shaderHashIn(kEmbeddedMetal_stretch_blt_fs) == shaderHashOut(kEmbeddedMetal_stretch_blt_vs));
     CHECK(shaderHashIn(kEmbeddedMetal_affine_blt_fs)  == shaderHashOut(kEmbeddedMetal_affine_blt_vs));
 
