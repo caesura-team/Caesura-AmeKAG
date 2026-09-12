@@ -116,3 +116,5 @@ coupling发现entry因OwnerRpcQueue增加rpc依赖而达到15/14。最终将同�
 同一源码的`u18-web-full-01`先用当前Lua编译24个demo场景/6资产，再用Node22.23.2构建Vite和完整Web套件。38文件中37通过、1失败；511项中510通过、1失败、0跳过。唯一失败为perf-baseline中带history的1000行场景，median约2776.4ms，frames/ms约1.4407低于既定2门槛；没有放宽断言或原样重跑取绿。源码、Node和Lua的hash在运行前后保持一致。其他Web功能检查通过，但本地完整Web结果仍是FAIL，须与后续CI性能结果分别记录；U27长跑/性能总目标仍未验收。
 
 错误及RPC/输出/恢复增量的独立审查已经收束，未发现需要生产修复的剩余问题。最后补充语音错误presentation保留/显式stop销毁两个时点断言；这仅加强测试，不改变2552e225的生产源码。该测试增量的Lua证据与后续最终候选CI另行记录，不把旧完整receipt重新标成新SHA。
+
+该测试增量提交为10a6d9fcd08ebb512f0ddda6ff628c06f6cbddf2，`u18-voice-error-contract-02`为69/69；`u18-final-orphan-increment-01`为完整隔离套件48/48。平台状态YAML只更新源码新鲜度锚点，不修改任何历史平台状态、设备证据或时间。跨平台CI尚待执行，U18仍未合并。
