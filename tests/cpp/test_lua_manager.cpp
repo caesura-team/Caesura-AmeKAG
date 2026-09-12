@@ -392,6 +392,13 @@ TEST_CASE("Lua backend audio helpers prefer unified backend proxy") {
     const char* script =
         "package.path = 'scripts/?.lua;scripts/?/init.lua;' .. package.path\n"
         "package.loaded['backend'] = nil\n"
+        // This VM observes Lua proxy routing and string payloads, not playback.
+        // Select its no-host boundary before the runtime captures a provider.
+        "assert(package.loaded['capability_runtime'] == nil)\n"
+        "rawset(Engine, 'get_capability_profile', nil)\n"
+        "local runtime = require('capability_runtime')\n"
+        "assert(not runtime.has_host())\n"
+        "assert(runtime.query('audio.play').proven == false)\n"
         "local calls = {}\n"
         "_CAESURA_BACKEND = {\n"
         "  audio = function(cmd, ...)\n"

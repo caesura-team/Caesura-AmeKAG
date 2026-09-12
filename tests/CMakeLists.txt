@@ -72,6 +72,9 @@ set(TEST_SOURCES
     cpp/test_render_integration.cpp
     cpp/test_render_postfx.cpp
     cpp/test_rpc.cpp
+    cpp/test_project_capability_metadata.cpp
+    cpp/test_runtime_backend_availability.cpp
+    cpp/test_vfx_binding_capabilities.cpp
     cpp/test_stdio_rpc_output.cpp
     cpp/test_owner_rpc_queue.cpp
     cpp/test_cloud_save.cpp
@@ -119,6 +122,9 @@ target_link_libraries(CaesuraTests PRIVATE
     Caesura::Rpc
     lua
 )
+if(CAESURA_CAPABILITY_LIVE2D)
+    target_compile_definitions(CaesuraTests PRIVATE CAESURA_LIVE2D)
+endif()
 
 enable_testing()
 
@@ -496,6 +502,22 @@ if(Python3_EXECUTABLE)
     set_tests_properties(CaesuraBuildCli PROPERTIES
         LABELS "qa;cli;build;package"
         TIMEOUT 1200
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    )
+    add_test(
+        NAME CaesuraTargetCapabilities
+        COMMAND ${CMAKE_COMMAND} -E env
+                "CAESURA_ENGINE=$<TARGET_FILE:CaesuraAmeKAG>"
+                "CAESURA_LUA=$<TARGET_FILE:lua_cli>"
+                "CAESURA_EXPECT_FFMPEG=${CAESURA_CAPABILITY_FFMPEG}"
+                "CAESURA_EXPECT_LIVE2D=${CAESURA_CAPABILITY_LIVE2D}"
+                "CAESURA_EXPECT_STEAM=${CAESURA_CAPABILITY_STEAM}"
+                ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_target_capabilities.py
+    )
+    set_tests_properties(CaesuraTargetCapabilities PROPERTIES
+        LABELS "qa;cli;capabilities"
+        TIMEOUT 240
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
     )
     # Web package gate (t144 design A): contract tests for

@@ -22,6 +22,8 @@ end
 -- Hot path: hoisted schema reference (isMigrated/coerce run per token);
 -- require() itself is cached but the per-token lookup still costs.
 local schemaModule = require("kag.schema")
+local capabilityRuntime = require("capability_runtime")
+local invoke_capable = capabilityRuntime.invoke_command
 -- Compile-time front-end (Phase A): hoisted module reference -- the
 -- scheduler compiles every token stream once (idempotent per stream).
 local compiler = require("kag.compiler")
@@ -1473,7 +1475,7 @@ function scheduler.run(ctx, tokens, start_index)
                     end
                 end
                 if handler then
-                    local status, err = pcall(handler, ctx, params)
+                    local status, err = pcall(invoke_capable, handler, ctx, params, actual_cmd)
                     if not status then
                         local error_message = scheduler.error_text(err)
                         -- Lua-side error reporting (with scene:line)

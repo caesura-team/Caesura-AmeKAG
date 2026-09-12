@@ -67,6 +67,10 @@ beforeAll(async () => {
     fetchImpl: fileFetch,
     langBase: 'http://local/assets/lang/',
     wasmFile: join(here, 'node_modules', 'wasmoon', 'dist', 'glue.wasm'),
+    // These DOM/text flows have no AudioContext. Their explicit test-project
+    // declaration allows silent continuation and accepts the existing CSS tint.
+    // Audio playback and required-feature rejection have separate real routes.
+    capabilities: JSON.parse(readFileSync(join(rootDir, 'demo/caesura.project.json'), 'utf8')).capabilities,
   })
   stage = document.createElement('div')
   document.body.appendChild(stage)
@@ -263,7 +267,7 @@ describe('browser flow (jsdom + wasmoon + DOM)', () => {
     ['tutorial_01_hello.ks', 'tutorial', /你好，世界/, [], {}],
     ['tutorial_02_text.ks', 'tutorial', /文本命令学完了/, [], {}],
     ['tutorial_03_layers.ks', 'tutorial', /图层教程完成/, [], {}],
-    ['tutorial_04_audio.ks', 'tutorial', /音频教程完成/, [], {}],
+    ['tutorial_04_audio.ks', 'tutorial', /音频教程完成/, [], { skipped: ['audio.play', 'audio.fade', 'audio.crossfade'] }],
     // branching converges at *ending regardless of the random coin; exactly
     // one of 路线 A / 路线 B may render (f.luck = math.random(2)).
     ['tutorial_05_branching.ks', 'tutorial', /分支教学完成/, [], { pathA: /路线 A/, pathB: /路线 B/ }],
@@ -285,7 +289,8 @@ describe('browser flow (jsdom + wasmoon + DOM)', () => {
     ['tutorial_15_expr_deep.ks', 'tutorial', /高级表达式教程完成/, [], {}],
     ['showcase.ks', '', null, 'Thanks for watching the showcase.', {}],
     // auto-click resolves both [sel] blocks to option 1 -> good ending
-    ['story.ks', 'example_game', null, 'Thank you for playing. / 感谢游玩。', {}],
+    ['story.ks', 'example_game', null, 'Thank you for playing. / 感谢游玩。',
+      { skipped: ['audio.play', 'render.postfx.vignette', 'render.postfx.bloom', 'render.particles'] }],
   ]
   it.each(tutorialSweep)('%s completes with zero unexpected error events', async (file, dir, teaching, terminal, flags) => {
     const sub = dir ? dir + '/' : ''
@@ -298,6 +303,13 @@ describe('browser flow (jsdom + wasmoon + DOM)', () => {
     // zero unexpected error events surfaced through the runner
     const errs = player.core.events.filter((e) => String(e.kind).includes('error'))
     expect(errs, file + ' should have no error events').toEqual([])
+    if (flags.skipped) {
+      const diagnostics = await player.lua.doString("return require('kag_runner').get_ctx().capability_diagnostics")
+      for (const feature of flags.skipped) {
+        expect(Object.values(diagnostics).some(result => result.feature === feature && result.status === 'unsupported')).toBe(true)
+      }
+      expect(player.audio.isPlaying('bgm')).toBe(false)
+    }
     // teaching lines (tutorials) flow through the text.update / backlog draws
     if (teaching) {
       const texts = player.core.events
@@ -1064,7 +1076,7 @@ describe('browser flow (jsdom + wasmoon + DOM)', () => {
     expect(bl[0].src).toBe('b={settings}')
   }, 120000)
 
-  it('[palette] day/night/toggle run through a REAL web LUT, no degrade (round 77)', async () => {
+  it('[palette] day/night/toggle apply the explicitly accepted CSS approximation', async () => {
     player.core.layers.clear()
     player.core.palette = { handle: null, intensity: 0, size: 0 }
     player.core.events.length = 0
@@ -1104,7 +1116,7 @@ describe('browser flow (jsdom + wasmoon + DOM)', () => {
     expect(player.core.palette.handle).toBeNull()
   }, 120000)
 
-  it('[palette] web LUT tints the DOM render output (night) and clears on day (round 77)', async () => {
+  it('[palette] CSS approximation tints the DOM render output and clears on day', async () => {
     player.core.layers.clear()
     player.core.palette = { handle: null, intensity: 0, size: 0 }
     const NL = String.fromCharCode(10)

@@ -25,8 +25,17 @@
 #include "render/api/IRenderDevice.h"
 #include "render/BgfxRenderDevice.h"
 #include "render/NullRenderDevice.h"
+#include "script/bindings/RenderBinding.h"
+#include "EntryLifecycleBackends.h"
+
+extern "C" {
+#include <lua.h>
+#include <lauxlib.h>
+}
 
 #include <cstdint>
+#include <map>
+#include <string>
 #include <type_traits>
 
 using namespace Caesura;
@@ -149,3 +158,171 @@ TEST_CASE("Bgfx postfx: unsupported without GPU init (graceful 0)") {
 //   destroyPostFx(handle>size|0) is a no-op; valid destroys renumber
 //   clearPostFx() empties the chain; isPostFxActive() reflects non-empty
 // This behavior depends on a live initialized BgfxRenderDevice.
+
+namespace {
+
+// Reuse the existing headless interface fixture; only the device boundary is
+// recorded. Name parsing and the per-kind cache remain the actual Lua binding.
+class ReadyPostFxDevice final : public Test::RenderDevice {
+public:
+    explicit ReadyPostFxDevice(Test::LifecycleProbe& probe) : Test::RenderDevice(probe) {}
+
+    bool isPostFxSupported(PostFxKind) const override {
+        ++supportQueries;
+        return true;
+    }
+    PostFxHandle createPostFx(PostFxKind kind, const PostFxParams&) override {
+        ++creates;
+        const auto handle = ++nextHandle;
+        live.emplace(handle, kind);
+        return handle;
+    }
+    void setPostFxParams(PostFxHandle handle, const PostFxParams&) override {
+        ++updates;
+        updatedHandle = handle;
+    }
+    void destroyPostFx(PostFxHandle handle) override {
+        ++destroys;
+        live.erase(handle);
+    }
+    void clearPostFx() override { live.clear(); }
+    bool isPostFxActive() const override { return !live.empty(); }
+
+    mutable unsigned supportQueries = 0;
+    unsigned creates = 0, updates = 0, destroys = 0;
+    PostFxHandle updatedHandle = 0;
+    std::map<PostFxHandle, PostFxKind> live;
+
+private:
+    PostFxHandle nextHandle = 40;
+};
+
+struct PostFxLuaReply {
+    int status = LUA_OK;
+    int type = LUA_TNONE;
+    lua_Integer integer = 0;
+    bool boolean = false;
+    std::string error;
+};
+
+struct PostFxLuaFixture {
+    Test::LifecycleProbe probe;
+    ReadyPostFxDevice device{probe};
+    lua_State* state = luaL_newstate();
+
+    PostFxLuaFixture() {
+        if (!state) return;
+        lua_pushlightuserdata(state, static_cast<IRenderDevice*>(&device));
+        lua_setfield(state, LUA_REGISTRYINDEX, "Caesura.RenderDevice");
+        registerRenderBinding(state);
+    }
+    ~PostFxLuaFixture() {
+        if (!state) return;
+        // Reset the binding's process-local pointer caches while this fixture
+        // is still alive; no later Lua state can retain the recording device.
+        registerRenderBinding(state);
+        lua_close(state);
+    }
+
+    PostFxLuaReply call(const char* function, const char* kind, bool params = false) {
+        lua_getglobal(state, "Render");
+        lua_getfield(state, -1, function);
+        lua_remove(state, -2);
+        lua_pushstring(state, kind); // nullptr intentionally supplies Lua nil.
+        if (params) lua_newtable(state);
+        PostFxLuaReply reply;
+        reply.status = lua_pcall(state, params ? 2 : 1, 1, 0);
+        reply.type = lua_type(state, -1);
+        if (reply.type == LUA_TNUMBER) reply.integer = lua_tointeger(state, -1);
+        if (reply.type == LUA_TBOOLEAN) reply.boolean = lua_toboolean(state, -1) != 0;
+        if (reply.status != LUA_OK && lua_tostring(state, -1)) reply.error = lua_tostring(state, -1);
+        lua_pop(state, 1);
+        return reply;
+    }
+};
+
+} // namespace
+
+TEST_CASE("U19 Render postfx: registered Bloom binding keeps its real handle lifecycle") {
+    PostFxLuaFixture fixture;
+    REQUIRE(fixture.state != nullptr);
+
+    const auto supported = fixture.call("is_postfx_supported", "bloom");
+    REQUIRE(supported.status == LUA_OK);
+    CHECK(supported.type == LUA_TBOOLEAN);
+    CHECK(supported.boolean);
+    const auto created = fixture.call("set_postfx", "bloom", true);
+    REQUIRE(created.status == LUA_OK);
+    REQUIRE(created.type == LUA_TNUMBER);
+    REQUIRE(created.integer > 0);
+    const auto handle = static_cast<IRenderDevice::PostFxHandle>(created.integer);
+    REQUIRE(fixture.device.live.count(handle) == 1);
+    CHECK(fixture.device.live.at(handle) == IRenderDevice::PostFxKind::Bloom);
+    CHECK(fixture.device.creates == 1);
+
+    const auto updated = fixture.call("set_postfx", "bloom", true);
+    CHECK(updated.status == LUA_OK);
+    CHECK(updated.integer == created.integer);
+    CHECK(fixture.device.creates == 1);
+    CHECK(fixture.device.updates == 1);
+    CHECK(fixture.device.updatedHandle == handle);
+    const auto destroyed = fixture.call("destroy_postfx", "bloom");
+    CHECK(destroyed.status == LUA_OK);
+    CHECK(destroyed.type == LUA_TBOOLEAN);
+    CHECK(destroyed.boolean);
+    CHECK(fixture.device.destroys == 1);
+    CHECK(fixture.device.live.empty());
+    CHECK(lua_gettop(fixture.state) == 0);
+}
+
+TEST_CASE("U19 Render postfx: unknown and empty names cannot claim or mutate Bloom") {
+    for (const char* kind : { "typo", "" }) {
+        CAPTURE(kind);
+        PostFxLuaFixture fixture;
+        REQUIRE(fixture.state != nullptr);
+        const auto bloom = fixture.call("set_postfx", "bloom", true);
+        REQUIRE(bloom.status == LUA_OK);
+        REQUIRE(bloom.integer > 0);
+        const auto handle = static_cast<IRenderDevice::PostFxHandle>(bloom.integer);
+        const auto queries = fixture.device.supportQueries;
+
+        const auto supported = fixture.call("is_postfx_supported", kind);
+        CHECK(supported.status == LUA_OK);
+        CHECK(supported.type == LUA_TBOOLEAN);
+        CHECK_FALSE(supported.boolean);
+        CHECK(fixture.device.supportQueries == queries);
+
+        const auto rejected = fixture.call("set_postfx", kind, true);
+        CHECK(rejected.status == LUA_OK);
+        CHECK(rejected.type == LUA_TNUMBER);
+        CHECK(rejected.integer == 0);
+        CHECK(fixture.device.creates == 1);
+        CHECK(fixture.device.updates == 0);
+        CHECK(fixture.device.live.size() == 1);
+
+        const auto destroyed = fixture.call("destroy_postfx", kind);
+        CHECK(destroyed.status == LUA_OK);
+        CHECK(destroyed.type == LUA_TBOOLEAN);
+        CHECK_FALSE(destroyed.boolean);
+        CHECK(fixture.device.destroys == 0);
+        CHECK(fixture.device.live.size() == 1);
+        CHECK(fixture.device.live.count(handle) == 1);
+        CHECK(lua_gettop(fixture.state) == 0);
+    }
+}
+
+TEST_CASE("U19 Render postfx: nil names retain Lua argument errors") {
+    PostFxLuaFixture fixture;
+    REQUIRE(fixture.state != nullptr);
+    for (const char* function : { "is_postfx_supported", "set_postfx", "destroy_postfx" }) {
+        CAPTURE(function);
+        const auto reply = fixture.call(function, nullptr, std::string(function) == "set_postfx");
+        CHECK(reply.status == LUA_ERRRUN);
+        CHECK(reply.error.find("string expected") != std::string::npos);
+    }
+    CHECK(fixture.device.supportQueries == 0);
+    CHECK(fixture.device.creates == 0);
+    CHECK(fixture.device.destroys == 0);
+    CHECK(fixture.device.live.empty());
+    CHECK(lua_gettop(fixture.state) == 0);
+}

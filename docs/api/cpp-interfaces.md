@@ -195,6 +195,7 @@ public:
 | 方法 | 参数 | 返回值 | 说明 |
 |------|------|--------|------|
 | `init` | — | `bool` | 初始化音频引擎 |
+| `isPlaybackAvailable` | — | `bool` | owner 线程查询实际实施会话；Null 始终为 false，ManualMix 可用不等于物理输出 |
 | `shutdown` | — | — | 关闭并释放所有资源 |
 | `update` | `deltaTime` | — | 每帧更新音频系统 |
 | `suspend` | — | — | 暂停全部播放（混音器暂停，保留已加载资源） |
@@ -469,6 +470,7 @@ struct PointerEvent {
 | 方法 | 说明 |
 |------|------|
 | `init` | 初始化动画系统 |
+| `isCubismAvailable() const` | owner 线程查询实际 Cubism 会话；Null/PNG 回退为 false |
 | `shutdown` | 释放所有资源 |
 | `loadModel(path, name)` | 加载模型，返回 handle（0=失败） |
 | `unloadModel(handle)` | 卸载模型 |
@@ -969,6 +971,7 @@ load_animation、breakpoints、debug_resume、inspect、kag_debug 等）均定�
 | 分类 | 方法 | 说明 |
 |------|------|------|
 | **生命周期** | `init` | 初始化 Steam API |
+| | `isAvailable() const` | owner 线程查询实际 Steam 会话；Null 为 false，不代表远端操作成功 |
 | | `shutdown` | 关闭 |
 | | `runCallbacks` | 每帧调用 `SteamAPI_RunCallbacks` |
 | | `isOverlayActive` | Steam 覆盖层是否激活（暂停输入） |

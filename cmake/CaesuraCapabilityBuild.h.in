@@ -1,0 +1,11 @@
+#pragma once
+
+// Effective build facts only. Runtime/device/asset availability is queried separately.
+namespace Caesura::capability_build {
+inline constexpr const char* CatalogSha256 = "@CAESURA_CAPABILITY_CATALOG_SHA256@";
+inline constexpr const char* Platform = "@CAESURA_CAPABILITY_PLATFORM@";
+inline constexpr bool FFmpeg = @CAESURA_CAPABILITY_FFMPEG@;
+inline constexpr bool Live2D = @CAESURA_CAPABILITY_LIVE2D@;
+inline constexpr bool Steam = @CAESURA_CAPABILITY_STEAM@;
+inline constexpr const char* Json = R"capability({"schema":1,"target":"native","platform":"@CAESURA_CAPABILITY_PLATFORM@","scope":"build","catalog_sha256":"@CAESURA_CAPABILITY_CATALOG_SHA256@","compiled":{"ffmpeg":@CAESURA_CAPABILITY_FFMPEG_JSON@,"live2d":@CAESURA_CAPABILITY_LIVE2D_JSON@,"steam":@CAESURA_CAPABILITY_STEAM_JSON@}})capability";
+} // namespace Caesura::capability_build

@@ -563,4 +563,4 @@ function Backend.is_text_input_active()
     return devcore_or_guard("is_text_input_active")
 end
 
-return Backend
+return require("capability_backend").install(Backend)

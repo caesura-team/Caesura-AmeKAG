@@ -10,13 +10,13 @@
 |--------|-------|
 | Module libraries (src/) | 15 |
 | API interface headers (src/*/api/I*.h) | 38 |
-| Pure-virtual interface methods | 441 |
-| Lua binding functions (luaL_Reg entries) | 181 |
+| Pure-virtual interface methods | 444 |
+| Lua binding functions (luaL_Reg entries) | 182 |
 | KAG command handler files | 13 |
 | KAG contract commands (command-contracts.md) | 134 |
 | RPC HTTP endpoints (EditorServer) | 36 |
 | RPC stdin JSON-RPC methods | 29 |
-| Lua runtime scripts (scripts/, excl. demo/check) | 86 |
+| Lua runtime scripts (scripts/, excl. demo/check) | 91 |
 
 ## 2. C++ interfaces by module
 
@@ -25,7 +25,7 @@
 | archive | IArchiveReader.h | 7 |
 | archive | IArchiveWriter.h | 3 |
 | archive | ICryptoEngine.h | 12 |
-| audio | IAudioBackend.h | 31 |
+| audio | IAudioBackend.h | 32 |
 | audio | IAudioFocusService.h | 5 |
 | audio | IAudioRestore.h | 5 |
 | debug | IDebugManager.h | 26 |
@@ -34,7 +34,7 @@
 | di | ITextureBudget.h | 7 |
 | input | IInputRouter.h | 14 |
 | job | IJobSystem.h | 8 |
-| live2d | IAnimationBackend.h | 15 |
+| live2d | IAnimationBackend.h | 16 |
 | minigame | IMiniGameBackend.h | 13 |
 | platform | IDisplayService.h | 1 |
 | platform | ILifecycleService.h | 4 |
@@ -56,7 +56,7 @@
 | rpc | IRpcDispatcher.h | 1 |
 | rpc | IRpcServer.h | 5 |
 | script | ILuaManager.h | 12 |
-| steam | ISteamBackend.h | 23 |
+| steam | ISteamBackend.h | 24 |
 | storage | ICloudSaveTransport.h | 4 |
 | storage | ISaveManager.h | 19 |
 | storage | ISaveProvider.h | 7 |
@@ -69,7 +69,7 @@
 | AudioRestoreBinding.cpp | 5 | — |
 | DebugBinding.cpp | 10 | Debug |
 | DevCoreBinding.cpp | 13 | _CAESURA_QUIT, DevCore |
-| EngineBinding.cpp | 6 | Engine |
+| EngineBinding.cpp | 7 | Engine |
 | FontRestoreBinding.cpp | 6 | — |
 | KAGBinding.cpp | 36 | KAG |
 | MiniGameBinding.cpp | 5 | mini_game |

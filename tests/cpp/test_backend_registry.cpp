@@ -4,8 +4,16 @@
 #include "script/bindings/EngineBinding.h"
 #include "render/BgfxRenderDevice.h"
 #include "render/NullRenderDevice.h"
+#include "render/ParticleSystem.h"
 #include "platform/NullPlatformBackend.h"
 #include "resource/ResourceHandle.h"
+#include "audio/NullAudioBackend.h"
+#include "audio/SoLoudAudioEngine.h"
+#include "live2d/NullAnimationBackend.h"
+#include "steam/NullSteamBackend.h"
+#include "EntryLifecycleBackends.h"
+#include <memory>
+#include <stdexcept>
 
 extern "C" {
 #include <lua.h>
@@ -119,4 +127,79 @@ TEST_CASE("EngineBinding::registerEngineBindings works (P1-5 move)") {
     CHECK(lua_istable(L, -1));
     lua_pop(L, 1);
     lua_close(L);
+}
+
+TEST_CASE("Engine capability query reads current providers and returns isolated values") {
+    auto& reg = BackendRegistry::instance();
+    struct RestoreRegistry {
+        BackendRegistry& registry;
+        IRenderDevice* render;
+        IAudioBackend* audio;
+        IAnimationBackend* animation;
+        ISteamBackend* steam;
+        IParticleSystem* particles;
+        ~RestoreRegistry() {
+            registry.setRenderDevice(render);
+            registry.setAudioBackend(audio);
+            registry.setAnimationBackend(animation);
+            registry.setSteamBackend(steam);
+            registry.setParticleSystem(particles);
+        }
+    };
+    NullRenderDevice render;
+    Test::LifecycleProbe renderProbe;
+    renderProbe.initResult = true;
+    Test::RenderDevice readyRender(renderProbe);
+    ParticleSystem particles;
+    NullAudioBackend silent;
+    NullAnimationBackend animation;
+    NullSteamBackend steam;
+    SoLoudAudioEngine mixer{SoLoudAudioEngine::OutputMode::ManualMix};
+    class ThrowingAudio final : public NullAudioBackend {
+        bool isPlaybackAvailable() const override { throw std::runtime_error("private-provider-detail"); }
+    } throwing;
+    RestoreRegistry restore{reg, reg.getRenderDevice(), reg.getAudioBackend(),
+                            reg.getAnimationBackend(), reg.getSteamBackend(), reg.getParticleSystem()};
+    reg.setRenderDevice(&render);
+    reg.setAudioBackend(&silent);
+    reg.setAnimationBackend(&animation);
+    reg.setSteamBackend(&steam);
+    std::unique_ptr<lua_State, decltype(&lua_close)> state(luaL_newstate(), lua_close);
+    REQUIRE(state != nullptr);
+    lua_State* L = state.get();
+    luaL_openlibs(L);
+    engine_binding::registerEngineBindings(L);
+    const auto run = [&](const char* code) {
+        const int result = luaL_dostring(L, code);
+        const std::string diagnostic = result == LUA_OK ? "capability query succeeded" : lua_tostring(L, -1);
+        INFO(diagnostic);
+        CHECK(result == LUA_OK);
+        lua_settop(L, 0);
+    };
+    run("local p=Engine.get_capability_profile(); assert(p.target=='native' and p.scope=='runtime'); "
+        "assert(not p.available.audio and not p.available.cubism and not p.available.steam); "
+        "assert(not p.available.video and not p.available.particles and not p.available['postfx.bloom']); "
+        "p.available.audio=true; p.compiled.ffmpeg='tampered'; "
+        "local fresh=Engine.get_capability_profile(); assert(not fresh.available.audio); "
+        "assert(type(fresh.compiled.ffmpeg)=='boolean')");
+    REQUIRE(mixer.init());
+    reg.setAudioBackend(&mixer);
+    run("assert(Engine.get_capability_profile().available.audio)");
+    mixer.shutdown();
+    run("assert(not Engine.get_capability_profile().available.audio)");
+    reg.setAudioBackend(&silent);
+    run("assert(not Engine.get_capability_profile().available.audio)");
+
+    reg.setRenderDevice(&readyRender);
+    reg.setParticleSystem(&particles);
+    run("assert(not Engine.get_capability_profile().available.particles)");
+    // The boundary render reports ready but supplies no real GPU handles.
+    // Failed particle initialization must not become availability by registration.
+    REQUIRE_FALSE(particles.init());
+    run("assert(not Engine.get_capability_profile().available.particles)");
+    particles.shutdown();
+    run("assert(not Engine.get_capability_profile().available.particles)");
+
+    reg.setAudioBackend(&throwing);
+    run("local p,err=Engine.get_capability_profile(); assert(p==nil and err=='capability_query_failed')");
 }

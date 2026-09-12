@@ -21,7 +21,8 @@ beforeEach(async () => {
 afterEach(() => lua?.global.close())
 
 async function loadLayerState() {
-  for (const name of ['kag.wait_state', 'kag.save_state', 'backend', 'rtt', 'kag.layer_state']) {
+  for (const name of ['kag.wait_state', 'kag.save_state', 'capability_catalog', 'capability_json',
+    'target_capabilities', 'capability_runtime', 'capability_backend', 'backend', 'rtt', 'kag.layer_state']) {
     lua.global.set('__module_source', readFileSync(join(here, '../scripts', name.replaceAll('.', '/') + '.lua'), 'utf8'))
     await lua.doString(`package.preload[${JSON.stringify(name)}]=assert(load(__module_source)); __module_source=nil`)
   }

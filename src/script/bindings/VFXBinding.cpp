@@ -106,7 +106,11 @@ static int lua_VFX_particles_create_emitter(lua_State* L) {
     if (cfg.sizeMax < cfg.sizeMin) cfg.sizeMax = cfg.sizeMin;
 
     auto* particles = getParticleSystem(L);
-    if (!particles || !BackendRegistry::instance().tryAlloc("particles_emitters")) {
+    auto* render = BackendRegistry::instance().getRenderDevice();
+    // Public VFX calls must honor the same session availability as the host
+    // profile, before claiming quota or creating a CPU-side emitter owner.
+    if (!particles || !particles->isInitialized() || !render || !render->isInitialized()
+        || !BackendRegistry::instance().tryAlloc("particles_emitters")) {
         lua_pushinteger(L, -1);
         return 1;
     }

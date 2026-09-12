@@ -37,6 +37,7 @@ beforeAll(async () => {
   player = await createPlayer({
     scriptsBase: "http://local/scripts/", fetchImpl: fileFetch, langBase: "http://local/assets/lang/",
     wasmFile: join(here, "node_modules", "wasmoon", "dist", "glue.wasm"),
+    capabilities: JSON.parse(readFileSync(join(here, '../demo/caesura.project.json'), 'utf8')).capabilities,
   })
 })
 const NLx = String.fromCharCode(10)

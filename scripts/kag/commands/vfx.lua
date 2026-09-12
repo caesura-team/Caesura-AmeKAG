@@ -9,6 +9,18 @@ local backend = require("backend")
 
 local VFXCommands = {}
 
+local function valid_postfx_result(value)
+    -- Native PostFxHandle: positive uint32; Web may report an applied ACK.
+    return value == true or (type(value) == "number" and value > 0
+        and value <= 4294967295 and value % 1 == 0)
+end
+
+local function valid_particle_id(value)
+    -- Native emitters use an int vector index, so zero is a valid owner.
+    return type(value) == "number" and value >= 0 and value <= 2147483647
+        and value % 1 == 0
+end
+
 -- ═══════════════════════════════════════════════════════════════════════════
 --  [vfx type="particle" action="create" x=0 y=0 rate=10 lifeMin=0.5 lifeMax=2.0]
 --  [vfx type="particle" action="emit" emitter=0 count=10]
@@ -255,7 +267,8 @@ local function apply_postfx(ctx, kind, strength, params, label)
         lutMix   = params.lutMix or 0,
         rgb      = rgbStr or "",
     }
-    local handle = backend.set_postfx(kind, pf)
+    local handle, result = backend.set_postfx(kind, pf)
+    if not valid_postfx_result(handle) then return false, result end
     if ctx then
         -- Bookkeeping only. NOT WIRED (audit): nothing reads ctx._postfx --
         -- not kag/snapshot.lua, not the save/load path, not scene reload --
@@ -267,7 +280,7 @@ local function apply_postfx(ctx, kind, strength, params, label)
         ctx._postfx = ctx._postfx or {}
         ctx._postfx[kind] = { handle = handle, params = pf }
     end
-    return handle
+    return handle, result
 end
 
 -- [vfx postfx=...] entry point.
@@ -279,8 +292,7 @@ end
 function VFXCommands.vfx(ctx, params)
     -- PostFx chain takes precedence when postfx= is present.
     if params.postfx and params.postfx ~= "" then
-        VFXCommands._postfx(ctx, params)
-        return
+        return VFXCommands._postfx(ctx, params)
     end
     local vtype = params.type or params.effect or "particle"
 
@@ -308,9 +320,11 @@ function VFXCommands.vfx(ctx, params)
                 gravityX = tonumber(params.gravityX or params.gravity_x) or 0,
                 gravityY = tonumber(params.gravityY or params.gravity_y) or 0,
             }
-            local id = backend.particles_create_emitter(cfg)
+            local id, result = backend.particles_create_emitter(cfg)
+            if not valid_particle_id(id) then return false, result end
             ctx._particleEmitters = ctx._particleEmitters or {}
             ctx._particleEmitters[id] = true
+            return id, result
 
         elseif action == "emit" then
             local emitter = tonumber(params.emitter or params.id) or 0
@@ -403,9 +417,11 @@ function VFXCommands.particles(ctx, params)
             gravityX = tonumber(params.gravityX or params.gravity_x) or 0,
             gravityY = tonumber(params.gravityY or params.gravity_y) or 0,
         }
-        local id = backend.particles_create_emitter(cfg)
+        local id, result = backend.particles_create_emitter(cfg)
+        if not valid_particle_id(id) then return false, result end
         ctx._particleEmitters = ctx._particleEmitters or {}
         ctx._particleEmitters[id] = true
+        return id, result
     elseif action == "emit" then
         local emitter = tonumber(params.emitter or params.id) or 0
         local count = tonumber(params.count) or 1
@@ -632,27 +648,27 @@ function VFXCommands.particle_weather(ctx, params)
             gravityY = preset.gravityY or 0,
         }
 
-        -- Clean up existing emitter of same type if present
+        -- Prepare the replacement before changing either owner index. If the
+        -- backend is at its quota, keep the existing weather unchanged.
         local oldId = (ctx and ctx._weatherEmitters and ctx._weatherEmitters[wtype]) or _activeWeatherEmitters[wtype]
-        if oldId then
+        local id, result = backend.particles_create_emitter(cfg)
+        if not valid_particle_id(id) then return false, result end
+        if oldId and oldId ~= id then
             pcall(backend.particles_destroy_emitter, oldId)
             if ctx and ctx._particleEmitters then ctx._particleEmitters[oldId] = nil end
         end
 
-        local id = backend.particles_create_emitter(cfg)
-        if id and id >= 0 then
-            _activeWeatherEmitters[wtype] = id
-            if ctx then
-                ctx._weatherEmitters = ctx._weatherEmitters or {}
-                ctx._weatherEmitters[wtype] = id
-                ctx._particleEmitters = ctx._particleEmitters or {}
-                ctx._particleEmitters[id] = true
-            end
-            if count > 0 then
-                pcall(backend.particles_emit, id, math.min(count, 50))
-            end
+        _activeWeatherEmitters[wtype] = id
+        if ctx then
+            ctx._weatherEmitters = ctx._weatherEmitters or {}
+            ctx._weatherEmitters[wtype] = id
+            ctx._particleEmitters = ctx._particleEmitters or {}
+            ctx._particleEmitters[id] = true
         end
-        return id
+        if count > 0 then
+            pcall(backend.particles_emit, id, math.min(count, 50))
+        end
+        return id, result
 
     elseif action == "stop" then
         local specificType = params.type

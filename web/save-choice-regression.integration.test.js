@@ -37,6 +37,7 @@ beforeAll(async () => {
     scriptsBase: 'http://local/scripts/',
     fetchImpl: fileFetch,
     langBase: 'http://local/assets/lang/',
+    capabilities: JSON.parse(readFileSync(join(rootDir, 'tests/projects/first_vn/caesura.project.json'), 'utf8')).capabilities,
     wasmFile: join(here, 'node_modules', 'wasmoon', 'dist', 'glue.wasm'),
   })
   stage = document.createElement('div')

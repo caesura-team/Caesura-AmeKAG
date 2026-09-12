@@ -202,7 +202,35 @@ function Schema.meta(cmd)
     return registry_meta[cmd]
 end
 
-local function coerceValue(name, spec, raw, whereFn, ctx)
+local interp_namespaces = { f = true, sf = true, tf = true, mp = true, lf = true }
+
+-- Static validation shares the syntax checker but never evaluates its chunks
+-- or reads variable tables. Empty ${} bodies retain checkInterp's literal
+-- behavior; only expressions and supported variable shorthands are deferred.
+local function check_static_interpolation(value, name, whereFn)
+    local issue = Schema.checkInterp(value)[1]
+    if issue then
+        error(string.format("%s: param '%s' interpolation at byte %d: %s",
+            whereFn(), name, issue.offset, issue.error), 0)
+    end
+    local i = 1
+    while true do
+        local open = value:find("${", i, true)
+        if not open then break end
+        local close = match_brace(value, open + 1)
+        if value:sub(open + 2, close - 1):find("%S") then return true end
+        i = close + 1
+    end
+    for namespace in value:gmatch("%$(%a+)%.([%w_]+)") do
+        if interp_namespaces[namespace] then return true end
+    end
+    for namespace in value:gmatch("%%(%a+)%.([%w_]+)%%") do
+        if interp_namespaces[namespace] then return true end
+    end
+    return false
+end
+
+local function coerceValue(name, spec, raw, whereFn, ctx, static_fields)
     local v = raw
     if spec.type == "number" then
         if type(v) == "number" then
@@ -245,28 +273,37 @@ local function coerceValue(name, spec, raw, whereFn, ctx)
         -- full expression (beyond KAG3's eval-glue).
         if spec.interpolate and type(v) == "string"
             and (v:find("$", 1, true) or v:find("%", 1, true)) then
-            -- ${expr}: full expression evaluated in a sandbox env with the
-            -- ctx variable tables (f/sf/tf/mp/lf) -- beyond KAG3's eval-glue.
-            -- Balanced-brace scanning (round 54): the old pattern
-            -- "%${([^{}]+)}" truncated expressions containing literal
-            -- braces (${ {a=1,b=2}.a } leaked the raw span into the
-            -- text). expand_interp_exprs tracks brace depth and skips
-            -- quoted string literals, so ${ "}" .. f.x } balances too.
-            v = expand_interp_exprs(v, ctx)
-            -- $tbl.key / %tbl.key% variable lookup (f/sf/tf/mp/lf). The
-            -- %...% form is KAG3-compatible; bare %ident% stays untouched
-            -- (macro placeholders are expanded earlier by the scheduler).
-            local varLookup = function(tbl, key)
-                local vars = ({ f = "f", sf = "sf", tf = "tf", mp = "mp", lf = "lf" })[tbl]
-                local t = vars and ctx and ctx[vars]
-                if type(t) == "table" then
-                    local val = t[key]
-                    if val ~= nil then return tostring(val) end
+            if static_fields then
+                if check_static_interpolation(v, name, whereFn) then
+                    static_fields[name] = true
+                    -- Choices depend on the unresolved runtime value. Literal
+                    -- strings still reach the normal choices check below.
+                    return v
                 end
-                return "$" .. tbl .. "." .. key  -- leave unresolved as-is
+            else
+                -- ${expr}: full expression evaluated in a sandbox env with the
+                -- ctx variable tables (f/sf/tf/mp/lf) -- beyond KAG3's eval-glue.
+                -- Balanced-brace scanning (round 54): the old pattern
+                -- "%${([^{}]+)}" truncated expressions containing literal
+                -- braces (${ {a=1,b=2}.a } leaked the raw span into the
+                -- text). expand_interp_exprs tracks brace depth and skips
+                -- quoted string literals, so ${ "}" .. f.x } balances too.
+                v = expand_interp_exprs(v, ctx)
+                -- $tbl.key / %tbl.key% variable lookup (f/sf/tf/mp/lf). The
+                -- %...% form is KAG3-compatible; bare %ident% stays untouched
+                -- (macro placeholders are expanded earlier by the scheduler).
+                local varLookup = function(tbl, key)
+                    local vars = ({ f = "f", sf = "sf", tf = "tf", mp = "mp", lf = "lf" })[tbl]
+                    local t = vars and ctx and ctx[vars]
+                    if type(t) == "table" then
+                        local val = t[key]
+                        if val ~= nil then return tostring(val) end
+                    end
+                    return "$" .. tbl .. "." .. key  -- leave unresolved as-is
+                end
+                v = v:gsub("%$(%a+)%.([%w_]+)", varLookup)
+                v = v:gsub("%%(%a+)%.([%w_]+)%%", varLookup)
             end
-            v = v:gsub("%$(%a+)%.([%w_]+)", varLookup)
-            v = v:gsub("%%(%a+)%.([%w_]+)%%", varLookup)
         end
     elseif spec.type == "list" then
         -- Comma-separated value -> array, optionally typed per element.
@@ -389,7 +426,7 @@ end
 
 --- Schema.coerce(cmd, params, ctx) → coerced params table (or raw on unmigrated)
 --  Throws (caller pcall) with a structured message on contract violation.
-function Schema.coerce(cmd, params, ctx)
+local function coerceParams(cmd, params, ctx, static_fields)
     local specs = registry[cmd]
     if not specs then return params end  -- unmigrated: pass-through
 
@@ -442,7 +479,7 @@ function Schema.coerce(cmd, params, ctx)
                 -- (round 97: positional bypassed type coercion before). A
                 -- default is intentionally NOT applied when the slot is
                 -- filled -- the provided value always wins.
-                local coerced = coerceValue(name, spec, pos_raw, W, ctx)
+                local coerced = coerceValue(name, spec, pos_raw, W, ctx, static_fields)
                 out[name] = coerced
                 out[pos] = coerced
             elseif spec.default ~= nil then
@@ -450,10 +487,10 @@ function Schema.coerce(cmd, params, ctx)
                 -- default that violates the contract (number param with
                 -- default="oops") is rejected instead of emitted verbatim
                 -- (round 97).
-                out[name] = coerceValue(name, spec, spec.default, W, ctx)
+                out[name] = coerceValue(name, spec, spec.default, W, ctx, static_fields)
             end
         else
-            out[name] = coerceValue(name, spec, raw, W, ctx)
+            out[name] = coerceValue(name, spec, raw, W, ctx, static_fields)
         end
     end
     -- Copy undeclared params through (compat), but warn on unknown names.
@@ -472,6 +509,22 @@ function Schema.coerce(cmd, params, ctx)
         end
     end
     return out
+end
+
+-- Keep runtime dispatch on the shared executor directly, without an extra
+-- wrapper call per command. Only validate_static supplies the private map.
+Schema.coerce = coerceParams
+
+--- Schema.validate_static(cmd, params, ctx) -> params, sorted dynamic fields
+-- Retains literal contracts but never expands author string interpolation.
+-- The second result contains field names only, with no expression/ctx data.
+function Schema.validate_static(cmd, params, ctx)
+    local fields = {}
+    local out = coerceParams(cmd, params, ctx, fields)
+    local dynamic = {}
+    for name in pairs(fields) do dynamic[#dynamic + 1] = name end
+    table.sort(dynamic)
+    return out, dynamic
 end
 
 --- Schema.isMigrated(cmd) → boolean

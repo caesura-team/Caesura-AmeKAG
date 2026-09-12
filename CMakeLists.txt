@@ -344,6 +344,7 @@ endif()
 
 # -- Live2D Cubism animation (optional, proprietary SDK) ---------------------
 option(CAESURA_LIVE2D "Enable Live2D Cubism animation (requires manual SDK download)" OFF)
+set(CAESURA_CAPABILITY_LIVE2D 0)
 
 if(CAESURA_LIVE2D)
     # Prefer an explicit -DCUBISM_SDK_ROOT; otherwise probe the repo-local
@@ -487,6 +488,7 @@ if(CAESURA_LIVE2D)
         )
         target_compile_definitions(CaesuraLive2D PRIVATE CAESURA_LIVE2D)
         target_compile_definitions(CaesuraEntry PRIVATE CAESURA_LIVE2D)
+        set(CAESURA_CAPABILITY_LIVE2D 1)
         message(STATUS "Live2D: ${CUBISM_FRAMEWORK_RENDERER} renderer for ${CMAKE_SYSTEM_NAME}/${CAESURA_CUBISM_ARCH}")
 
         # Cubism renderers load FrameworkShaders/* at runtime (relative to
@@ -508,6 +510,36 @@ if(CAESURA_LIVE2D)
         endif()
     endif()
 endif()
+# Bind capability queries to the actual configured target. In particular,
+# requested Live2D ON without an SDK is not an effective compiled feature.
+set(CAESURA_CAPABILITY_FFMPEG 0)
+if(CAESURA_FFMPEG_FOUND)
+    set(CAESURA_CAPABILITY_FFMPEG 1)
+endif()
+set(CAESURA_CAPABILITY_STEAM 0)
+if(CAESURA_HAS_STEAM)
+    set(CAESURA_CAPABILITY_STEAM 1)
+endif()
+foreach(_capability FFMPEG LIVE2D STEAM)
+    set(CAESURA_CAPABILITY_${_capability}_JSON false)
+    if(CAESURA_CAPABILITY_${_capability})
+        set(CAESURA_CAPABILITY_${_capability}_JSON true)
+    endif()
+endforeach()
+string(TOLOWER "${CMAKE_SYSTEM_NAME}" CAESURA_CAPABILITY_PLATFORM)
+if(CAESURA_CAPABILITY_PLATFORM STREQUAL "darwin")
+    set(CAESURA_CAPABILITY_PLATFORM "macos")
+endif()
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${CMAKE_SOURCE_DIR}/config/runtime-capabilities.json")
+file(READ "${CMAKE_SOURCE_DIR}/config/runtime-capabilities.json" _capability_catalog)
+string(REPLACE "\r\n" "\n" _capability_catalog "${_capability_catalog}")
+string(SHA256 CAESURA_CAPABILITY_CATALOG_SHA256 "${_capability_catalog}")
+configure_file(cmake/CaesuraCapabilityBuild.h.in
+    "${CMAKE_BINARY_DIR}/generated/CaesuraCapabilityBuild.h" @ONLY)
+target_include_directories(${PROJECT_NAME} PRIVATE "${CMAKE_BINARY_DIR}/generated")
+target_include_directories(CaesuraScript PRIVATE "${CMAKE_BINARY_DIR}/generated")
+
 message(STATUS "Caesura (AmeKAG) configured successfully.")
 
 

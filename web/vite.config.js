@@ -4,6 +4,8 @@ import { resolve } from 'node:path'
 import { buildIndex, serialize } from './gen-index.mjs'
 import { readFileSync, existsSync } from 'node:fs'
 import { copyDirectorySync } from '../scripts/copy_tree.mjs'
+import { collectWebSourceFiles, createWebCapabilityProfile, verifyWebSourceFiles,
+  verifyWebSourceModules } from '../scripts/web_capability_profile.mjs'
 
 // The web player serves the whole repo root as static content so
 // /scripts/, /demo/, /assets/ and /cache/story/story.lua resolve
@@ -15,9 +17,24 @@ const REPO_ROOT = resolve(process.cwd(), '..')
 const RUNTIME_DIRS = ['scripts', 'demo', 'assets', 'cache/story']
 
 function copyRuntimeDirs() {
+  let sourceFiles
+  let bundleWritten = false
   return {
     name: 'caesura-copy-runtime-dirs',
+    apply: 'build',
+    buildStart() {
+      bundleWritten = false
+      sourceFiles = collectWebSourceFiles(REPO_ROOT)
+    },
+    generateBundle() {
+      verifyWebSourceModules(sourceFiles, this.getModuleIds(), REPO_ROOT)
+    },
+    writeBundle() {
+      bundleWritten = true
+    },
     closeBundle() {
+      if (!bundleWritten) return
+      verifyWebSourceFiles(sourceFiles, REPO_ROOT)
       for (const dir of RUNTIME_DIRS) {
         const from = resolve(REPO_ROOT, dir)
         const to = resolve(process.cwd(), 'dist', dir)
@@ -50,6 +67,9 @@ function copyRuntimeDirs() {
       } catch (e) {
         console.error('[vite] WARN: dist scripts/index.json generation failed:', String(e))
       }
+      const dist = resolve(process.cwd(), 'dist')
+      writeFileSync(resolve(dist, 'capabilities-build.json'),
+        JSON.stringify(createWebCapabilityProfile(dist, { sourceFiles, sourceRoot: REPO_ROOT }), null, 2) + '\n')
     },
   }
 }

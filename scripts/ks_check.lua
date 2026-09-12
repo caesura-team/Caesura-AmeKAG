@@ -133,7 +133,24 @@ end
 -- local must be declared before its first use.
 local structuralWarnings
 
-local function checkScene(path)
+local function rawParams(tok)
+    local params = {}
+    for _, pair in ipairs(tok.params or {}) do
+        if type(pair) == "table" and pair[1] then
+            local key = tonumber(pair[1]) or pair[1]
+            if type(key) == "string" and key:find("%.") then
+                local n = 0
+                for index = 1, 20 do if params[index] then n = index end end
+                params[n + 1], params[n + 2] = key, pair[2]
+            else
+                params[key] = pair[2]
+            end
+        end
+    end
+    return params
+end
+
+local function checkScene(path, capabilitySession)
     local f = io.open(path, "r")
     if not f then
         report(path, 0, "cannot open file")
@@ -209,6 +226,30 @@ local function checkScene(path)
             end
         end
     end
+    if capabilitySession then
+        for _, tok in ipairs(tokens) do
+            local command = tok.type == "iscript" and "iscript" or tok.cmd
+            if tok.type == "command" or tok.type == "iscript" then
+                local features, unproven
+                if local_macros[command] and not KNOWN_NONHANDLER[command] then
+                    features, unproven = {}, {"macro_expansion"}
+                else
+                    features, unproven = capabilitySession.module.command_features(command, rawParams(tok), true)
+                end
+                for _, feature in ipairs(features) do
+                    capabilitySession.calls[#capabilitySession.calls + 1] = {
+                        feature=feature, scene=path, line=lineOf(tok.offset or 1), command=command,
+                    }
+                end
+                for _, reason in ipairs(unproven) do
+                    capabilitySession.unproven[#capabilitySession.unproven + 1] = {
+                        scene=path, line=lineOf(tok.offset or 1), command=command, reason=reason,
+                    }
+                end
+            end
+        end
+        if capabilitySession.capabilities_only then return end
+    end
     for _, tok in ipairs(tokens) do
         if tok.type == "command" then
             local cmd = tok.cmd
@@ -268,31 +309,12 @@ local function checkScene(path)
                 end
             end
             if type(cmd) == "string" and schema.isMigrated(cmd) then
-                local params = {}
-                for _, pair in ipairs(tok.params or {}) do
-                    if type(pair) == "table" and pair[1] then
-                        -- numeric-string keys ("1") become NUMBER keys so
-                        -- positional_index contract checks (params[1])
-                        -- work here exactly as they do at runtime after
-                        -- compiler/scheduler normalization.
-                        local k = tonumber(pair[1]) or pair[1]
-                        if type(k) == "string" and k:find("%.") then
-                            -- Dotted key pair { "f.name", "Aoi" } from the
-                            -- tokenizer's ident(.ident)* = value branch:
-                            -- same positional expansion as compiler
-                            -- normalize_params ([set f.x = v] -> var/value).
-                            local n = 0
-                            for i2 = 1, 20 do if params[i2] then n = i2 end end
-                            params[n + 1] = k
-                            params[n + 2] = pair[2]
-                        else
-                            params[k] = pair[2]
-                        end
-                    end
-                end
+                local params = rawParams(tok)
                 local line = lineOf(tok.offset or 1)
                 local ok, err2 = pcall(function()
-                    schema.coerce(cmd, params, { current_scene = path, token_index = line })
+                    -- Check types and interpolation syntax without evaluating
+                    -- author expressions against a fabricated empty context.
+                    schema.validate_static(cmd, params, { current_scene = path, token_index = line })
                 end)
                 if not ok then
                     report(path, line, tostring(err2))
@@ -799,18 +821,110 @@ end
 if is_script and #arg == 0 then
     print("usage: lua scripts/ks_check.lua <scene.ks> [more ...]")
     print("       lua scripts/ks_check.lua --audit-defaults")
+    print("       lua scripts/ks_check.lua --target web|native --profile facts.json --project project.json [--json-output report.json] [--capabilities-only] <scenes ...>")
     os.exit(2)
 end
 if is_script then
-    for _, p in ipairs(arg) do
-        checkScene(p)
+    local options, paths = {}, {}
+    local option_names = {
+        ["--target"]="target", ["--profile"]="profile",
+        ["--project"]="project", ["--json-output"]="output",
+    }
+    local index = 1
+    while index <= #arg do
+        local value = arg[index]
+        if value == "--" then
+            for rest=index+1,#arg do paths[#paths+1] = arg[rest] end
+            break
+        elseif option_names[value] then
+            local key = option_names[value]
+            if options[key] or not arg[index+1] or arg[index+1] == "" then
+                io.stderr:write("ks_check: missing or duplicate option value\n"); os.exit(2)
+            end
+            options[key] = arg[index+1]
+            index = index + 1
+        elseif value == "--capabilities-only" then
+            options.capabilities_only = true
+        elseif value:sub(1,2) == "--" then
+            io.stderr:write("ks_check: unknown option\n"); os.exit(2)
+        else paths[#paths+1] = value end
+        index = index + 1
     end
-    if issues > 0 then
-        print(string.format("%d contract violation(s) found", issues))
-        os.exit(1)
+    if #paths == 0 then io.stderr:write("ks_check: at least one scene is required\n"); os.exit(2) end
+    if not options.target then
+        if options.profile or options.project or options.output or options.capabilities_only then
+            io.stderr:write("ks_check: capability options require --target\n"); os.exit(2)
+        end
+        for _, path in ipairs(paths) do checkScene(path) end
+        if issues > 0 then
+            print(string.format("%d contract violation(s) found", issues))
+            os.exit(1)
+        end
+        print("OK: all scenes pass contract checks")
+        os.exit(0)
     end
-    print("OK: all scenes pass contract checks")
-    os.exit(0)
+    if (options.target ~= "native" and options.target ~= "web")
+        or not options.profile or not options.project then
+        io.stderr:write("ks_check: target checks require web|native, --profile and --project inputs\n"); os.exit(2)
+    end
+    local json = require("capability_json")
+    local capabilities = require("target_capabilities")
+    local function read_json(path)
+        local file = io.open(path, "rb")
+        if not file then return nil, "cannot_open_capability_input" end
+        local content = file:read(json.MAX_BYTES + 1)
+        file:close()
+        return json.decode(content)
+    end
+    local function failure_report(reason, path)
+        return {passed=false, target=options.target, catalog_sha256=capabilities.catalog_sha256,
+            analysis_scope="declared_and_catalogued_static_calls",
+            requirements=json.array(), warnings=json.array(), not_proven=json.array(),
+            errors=json.array({{reason=reason, location={scene=path}}})}
+    end
+    local project, project_error = read_json(options.project)
+    local profile, profile_error = read_json(options.profile)
+    local policy, policy_error
+    if project ~= nil then policy, policy_error = capabilities.validate_project(project) end
+    local profile_ok, profile_reason
+    if profile ~= nil then profile_ok, profile_reason = capabilities.validate_profile(profile) end
+    local result
+    if project == nil then result = failure_report(project_error, options.project)
+    elseif not policy then result = failure_report(policy_error, options.project)
+    elseif profile == nil then result = failure_report(profile_error, options.profile)
+    elseif not profile_ok then result = failure_report(profile_reason, options.profile)
+    elseif profile.target ~= options.target then result = failure_report("target_profile_mismatch", options.profile)
+    else
+        local session = {module=capabilities, calls={}, unproven={}, capabilities_only=options.capabilities_only}
+        for _, path in ipairs(paths) do checkScene(path, session) end
+        result = capabilities.check(policy, profile, session.calls, session.unproven)
+        if issues > 0 then
+            result.passed = false
+            result.errors[#result.errors+1] = {reason="scene_contract_violations", count=issues}
+        end
+    end
+    if options.output then
+        local encoded, reason = json.encode(result)
+        if not encoded then io.stderr:write(reason .. "\n"); os.exit(1) end
+        local file = io.open(options.output, "wb")
+        if not file then io.stderr:write("ks_check: cannot write capability report\n"); os.exit(1) end
+        local written = file:write(encoded, "\n")
+        local closed = file:close()
+        if not written or not closed then io.stderr:write("ks_check: capability report write failed\n"); os.exit(1) end
+    end
+    for _, group in ipairs({result.errors, result.warnings}) do
+        for _, item in ipairs(group) do
+            local query = item.capability or {}
+            local location = item.location or {}
+            print(string.format("[capabilities] target=%s feature=%s decision=%s reason=%s at %s:%s [%s]",
+                options.target, item.feature or query.feature or "?", item.decision or "deny",
+                item.reason or query.reason or "capability_check_failed", location.scene or "project",
+                tostring(location.line or 0), location.command or "declaration"))
+        end
+    end
+    print(string.format("Target capabilities: %s; %d unresolved dynamic span(s)",
+        result.passed and "PASS" or "FAIL", #result.not_proven))
+    os.exit(result.passed and 0 or 1)
 end
 
 return { strip_tail = strip_tail, checkScene = checkScene,

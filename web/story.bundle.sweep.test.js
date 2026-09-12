@@ -118,6 +118,7 @@ describe.skipIf(!bundleExists)('story bundle sweep (ks_bake -> bundle -> play)',
       scriptsBase: 'http://local/scripts/',
       fetchImpl: fileFetch,
       langBase: 'http://local/assets/lang/',
+      capabilities: JSON.parse(readFileSync(join(rootDir, 'demo/caesura.project.json'), 'utf8')).capabilities,
       wasmFile: join(here, 'node_modules', 'wasmoon', 'dist', 'glue.wasm'),
     })
     // Load the same bundle main.mjs loadStoryBundle() produces at boot.

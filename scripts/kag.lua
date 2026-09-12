@@ -598,4 +598,10 @@ _G._KAG_onKeyPageUp = _G._KAG_onKeyPageUp or defaultKeyPageUp
 -- here: a Lua-level redefinition shadows the C functions and breaks the
 -- [save]/[load] command path.
 
+local capabilityRuntime = require("capability_runtime")
+for name, handler in pairs(KAG) do
+    if type(handler) == "function" then
+        KAG[name] = capabilityRuntime.wrap_command(handler, name)
+    end
+end
 return KAG

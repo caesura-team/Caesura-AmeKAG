@@ -14,6 +14,7 @@ class NullAnimationBackend : public IAnimationBackend {
 public:
     bool init() override;
     void shutdown() override;
+    bool isCubismAvailable() const override { return false; }
 
     int  loadModel(const std::string& path, const std::string& name) override;
     void unloadModel(int handle) override;

@@ -36,6 +36,7 @@
 //    --out <dir>       package destination (default dist/<game-name>)
 //    --assets <dir>    asset root to ship (default: repo assets/ shared pool)
 //    --no-web-build    reuse an existing web/dist; do not (re)build it
+//    --skip-check      skip ordinary lint, while retaining required capability checks
 //    --release         also print the CPack desktop-Release handoff (docs only)
 //    --entry <scene>   nominate the entry scene (recorded in the manifest)
 //    --zip <path>      also write a ZIP archive of the package (python zipfile)
@@ -43,14 +44,16 @@
 //  Exit: 0 = packaged, 1 = any step failed.
 // ==============================================================================
 
-import { existsSync, readdirSync, statSync, copyFileSync,
+import { existsSync, readdirSync, statSync, copyFileSync, readFileSync,
          mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { luaLiteralValue } from '../web/lua-value.js'
 import { copyDirectorySync } from './copy_tree.mjs'
 import { join, resolve, dirname, basename, relative, isAbsolute } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
+import { webCatalogSha256, verifyWebCapabilityProfile, createPackagedWebCapabilityProfile } from './web_capability_profile.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(HERE, '..')
@@ -93,6 +96,7 @@ Options
   --out <dir>       package destination (default dist/<game-name>)
   --assets <dir>    asset root to ship (default: repo assets/ shared pool)
   --no-web-build    reuse an existing web/dist; do not (re)build it
+  --skip-check      skip ordinary lint; required capability checks still run
   --release         also print the CPack desktop-Release handoff (docs only)
   --entry <scene>   nominate the entry scene (recorded in the manifest)
   --zip <path>      also write a ZIP archive of the package (python zipfile)
@@ -155,7 +159,7 @@ if (!LUA_PATH) {
 
 // ------------------------------------------------------------- options ------
 const argv = process.argv.slice(2)
-let OUT = '', ASSET_SRC = 'assets', NO_WEB_BUILD = false, RELEASE = false,
+let OUT = '', ASSET_SRC = 'assets', NO_WEB_BUILD = false, RELEASE = false, SKIP_CHECK = false,
     ENTRY = '', ZIP_ARCHIVE = ''
 const POSITIONAL = []
 for (let i = 0; i < argv.length; i++) {
@@ -165,6 +169,7 @@ for (let i = 0; i < argv.length; i++) {
   else if (a === '--entry') { ENTRY = argv[++i]; if (ENTRY === undefined) fail('--entry requires a value') }
   else if (a === '--zip') { ZIP_ARCHIVE = argv[++i]; if (ZIP_ARCHIVE === undefined) fail('--zip requires a value') }
   else if (a === '--no-web-build') { NO_WEB_BUILD = true }
+  else if (a === '--skip-check') { SKIP_CHECK = true }
   else if (a === '--release') { RELEASE = true }
   else if (a === '-h' || a === '--help') { printHelp(); process.exit(0) }
   else if (a.startsWith('-')) fail('unknown option: ' + a)
@@ -175,6 +180,17 @@ for (let i = 0; i < argv.length; i++) {
 if (POSITIONAL.length === 0) POSITIONAL.push(DEFAULT_INPUT)
 const KAGS = []          // absolute paths (for spawn/fs)
 const KAGS_DISPLAY = []  // args as the .sh would echo them (relative, forward slash)
+const excluded = new Set(['node_modules', '.git', '.svn', '__pycache__'])
+function sceneFiles(directory, prefix = '') {
+  const files = []
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    if (excluded.has(entry.name)) continue
+    const name = prefix + entry.name
+    if (entry.isDirectory()) files.push(...sceneFiles(join(directory, entry.name), name + '/'))
+    else if (entry.isFile() && entry.name.endsWith('.ks')) files.push(name)
+  }
+  return files.sort()
+}
 for (const p0 of POSITIONAL) {
   const p = p2r(p0)
   const p0f = p0.replace(/\\/g, '/')
@@ -182,17 +198,24 @@ for (const p0 of POSITIONAL) {
     KAGS.push(p)
     KAGS_DISPLAY.push(p0f)
   } else if (existsSync(p) && statSync(p).isDirectory()) {
-    const found = readdirSync(p).filter((f) => f.endsWith('.ks')).sort()
+    const found = sceneFiles(p)
     for (const f of found) { KAGS.push(join(p, f)); KAGS_DISPLAY.push(p0f + '/' + f) }
   } else {
     fail('not a game dir or .ks file: ' + p0)
   }
 }
+if (ENTRY && !KAGS_DISPLAY.some(path => path === ENTRY || basename(path) === ENTRY)) {
+  const entry = p2r(ENTRY)
+  if (!entry.endsWith('.ks') || !existsSync(entry) || !statSync(entry).isFile()) fail('--entry scene not found: ' + ENTRY)
+  KAGS.push(entry)
+  KAGS_DISPLAY.push(ENTRY.replace(/\\/g, '/'))
+}
 if (KAGS.length === 0) fail('no .ks scenes found in input.')
 pkg('input: ' + KAGS.length + ' scene(s) -> ' + KAGS_DISPLAY.join(' '))
 
 const FIRST = KAGS[0]
-let GAME_NAME = basename(dirname(FIRST))
+const firstInput = p2r(POSITIONAL[0])
+let GAME_NAME = basename(statSync(firstInput).isDirectory() ? firstInput : dirname(FIRST))
 if (GAME_NAME === '.' || GAME_NAME === '') GAME_NAME = basename(FIRST, '.ks')
 if (!OUT) OUT = 'dist/' + GAME_NAME
 const OUT_PATH = p2r(OUT)
@@ -210,28 +233,65 @@ const OUT_PATH = p2r(OUT)
   }
 }
 
+const STAGE = mkdtempSync(join(tmpdir(), 'caesura-pkg-'))
+process.once('exit', () => { try { rmSync(STAGE, { recursive: true, force: true }) } catch { /* owned temp cleanup */ } })
+const sha256 = file => createHash('sha256').update(readFileSync(file)).digest('hex')
+function metadataFor(scene) {
+  let directory = dirname(scene)
+  for (;;) {
+    const metadata = join(directory, 'caesura.project.json')
+    if (existsSync(metadata)) return metadata
+    const parent = dirname(directory)
+    if (parent === directory) return null
+    directory = parent
+  }
+}
+const declarations = new Set(KAGS.map(metadataFor))
+if (declarations.size > 1) fail('input scenes use different project declarations; package each project separately')
+let PROJECT_METADATA = [...declarations][0]
+if (!PROJECT_METADATA) {
+  PROJECT_METADATA = join(STAGE, 'legacy-project.json')
+  writeFileSync(PROJECT_METADATA, '{}\n')
+}
+const CHECKED_METADATA = sha256(PROJECT_METADATA)
+const CHECKED_SCENES = KAGS.map(sha256)
+const PROFILE_PATH = join(STAGE, 'profile.json')
+const REPORT_PATH = join(STAGE, 'capabilities.json')
+const SOURCE_PROFILE = { schema: 1, target: 'web', platform: 'browser', scope: 'build',
+  catalog_sha256: webCatalogSha256(), compiled: {} }
+writeFileSync(PROFILE_PATH, JSON.stringify(SOURCE_PROFILE))
+function inputsUnchanged() {
+  if (sha256(PROJECT_METADATA) !== CHECKED_METADATA || KAGS.some((file, index) => sha256(file) !== CHECKED_SCENES[index])) {
+    fail('project inputs changed after capability checking')
+  }
+  for (const input of POSITIONAL) {
+    const directory = p2r(input)
+    if (statSync(directory).isDirectory()) {
+      const current = sceneFiles(directory).map(file => join(directory, file))
+      if (current.some(file => !KAGS.includes(file))) fail('project scene set changed after capability checking')
+    }
+  }
+}
+
 // -------------------------------------------------- 2. ks_check (gate) ------
 console.log()
 pkg('Step 1/5: ks_check (contract gate)')
-for (const [i, k] of KAGS.entries()) {
-  // Same call face as the .sh: display (relative) path + cwd ROOT, so
-  // ks_check output and bundle-embedded scene keys stay byte-identical.
-  const rr = spawnSync(LUA_PATH, [join(ROOT, 'scripts', 'ks_check.lua'), KAGS_DISPLAY[i]], { cwd: ROOT, stdio: 'inherit' })
-  if (rr.status !== 0) {
-    pkg('FAIL: contract check failed for ' + KAGS_DISPLAY[i])
-    process.exit(1)
-  }
-}
+const checkArgs = [join(ROOT, 'scripts', 'ks_check.lua'), '--target', 'web', '--profile', PROFILE_PATH,
+  '--project', PROJECT_METADATA, '--json-output', REPORT_PATH,
+  ...(SKIP_CHECK ? ['--capabilities-only'] : []), ...KAGS_DISPLAY]
+const checked = spawnSync(LUA_PATH, checkArgs, { cwd: ROOT, stdio: 'inherit' })
+if (checked.status !== 0 || !existsSync(REPORT_PATH)) fail('required Web capabilities or scene contracts are not satisfied')
+const CAPABILITY_REPORT = JSON.parse(readFileSync(REPORT_PATH, 'utf8'))
+if (CAPABILITY_REPORT.passed !== true) fail('Web capability report did not pass')
+inputsUnchanged()
 pkg('ks_check: all scenes pass contracts')
 
 // --------------------------------------------------- 3. ks_bake --web ------
 console.log()
 pkg('Step 2/5: ks_bake --web (story bundle)')
-const STAGE = mkdtempSync(join(tmpdir(), 'caesura-pkg-'))
 // The stage persists until process exit (former `.sh trap ... EXIT`): BUNDLE
 // is consumed by the assemble step below, and process.exit paths run the
 // handler too.
-process.once('exit', () => { try { rmSync(STAGE, { recursive: true, force: true }) } catch { /* temp cleanup */ } })
 let BUNDLE = ''
 let BAKED_SCENE_PATHS = []
 try {
@@ -311,6 +371,24 @@ if (!existsSync(join(WEB_DIST, 'index.html'))) {
   pkg('  Build it once with:  (cd web && npm install && node_modules/.bin/vite build)')
   process.exit(1)
 }
+let BUILT_PROFILE
+try {
+  BUILT_PROFILE = verifyWebCapabilityProfile(WEB_DIST, JSON.parse(readFileSync(join(WEB_DIST, 'capabilities-build.json'), 'utf8')))
+} catch (error) { fail(String(error.message || error)) }
+inputsUnchanged()
+// Complete every declaration/HTML check while the previous delivery still exists.
+const projectDocument = JSON.parse(readFileSync(PROJECT_METADATA, 'utf8'))
+const declarationJson = JSON.stringify(projectDocument.capabilities || {}).replace(/</g, '\\u003c')
+const declarationScript = '<script>self.__CAESURA_PROJECT_CAPABILITIES__=' + declarationJson + ';</' + 'script>'
+const playerHtml = readFileSync(join(WEB_DIST, 'index.html'), 'utf8')
+if (!playerHtml.includes('</head>')) fail('built player has no metadata insertion point')
+const configuredHtml = playerHtml.replace('</head>', declarationScript + '\n</head>')
+if (existsSync(OUT_PATH) && readdirSync(OUT_PATH).length > 0) {
+  const marker = join(OUT_PATH, 'MANIFEST.txt')
+  if (!existsSync(marker) || !readFileSync(marker, 'utf8').startsWith('Caesura (AmeKAG) web package: ')) {
+    fail('refusing to replace a non-empty output without a Caesura package manifest')
+  }
+}
 
 rmSync(OUT_PATH, { recursive: true, force: true })
 mkdirSync(join(OUT_PATH, 'cache', 'story'), { recursive: true })
@@ -319,24 +397,14 @@ mkdirSync(join(OUT_PATH, 'web-assets'), { recursive: true })
 mkdirSync(join(OUT_PATH, 'scripts'), { recursive: true })
 mkdirSync(join(OUT_PATH, ASSET_SRC), { recursive: true })
 
-copyFileSync(join(WEB_DIST, 'index.html'), join(OUT_PATH, 'index.html'))
+writeFileSync(join(OUT_PATH, 'index.html'), configuredHtml)
 if (existsSync(join(WEB_DIST, 'sw.js'))) copyFileSync(join(WEB_DIST, 'sw.js'), join(OUT_PATH, 'sw.js'))
-else if (existsSync(join(ROOT, 'web', 'sw.js'))) copyFileSync(join(ROOT, 'web', 'sw.js'), join(OUT_PATH, 'sw.js'))
 if (existsSync(join(WEB_DIST, 'manifest.webmanifest'))) copyFileSync(join(WEB_DIST, 'manifest.webmanifest'), join(OUT_PATH, 'manifest.webmanifest'))
-else if (existsSync(join(ROOT, 'web', 'manifest.webmanifest'))) copyFileSync(join(ROOT, 'web', 'manifest.webmanifest'), join(OUT_PATH, 'manifest.webmanifest'))
 if (existsSync(join(WEB_DIST, 'web-assets'))) copyDirectorySync(join(WEB_DIST, 'web-assets'), join(OUT_PATH, 'web-assets'))
 else pkg('WARN: ' + join(WEB_DIST, 'web-assets') + ' missing — packaged player may ship without wasm/chunks') // t186 NIT: loud WARN, skip semantics kept
 if (existsSync(join(WEB_DIST, 'scripts'))) copyDirectorySync(join(WEB_DIST, 'scripts'), join(OUT_PATH, 'scripts'))
 
-// The web player bridge.js fetches scriptsBase + index.json -- regenerate it
-// for the packaged script tree so a packaged game boots without manual
-// bundle edits (Validation-Release task book §9).
-if (existsSync(join(ROOT, 'web', 'gen-index.mjs'))) {
-  const gr = spawnSync(process.execPath,
-    [join(ROOT, 'web', 'gen-index.mjs'), join(OUT_PATH, 'scripts'), join(OUT_PATH, 'scripts', 'index.json')],
-    { stdio: 'ignore' })
-  if (gr.status !== 0) pkg('WARN: scripts index.json generation failed')
-}
+// Preserve the verified build's script index along with its matching Lua tree.
 
 // prune dev-only artifacts from the packaged script tree
 function pruneTree(dir) {
@@ -409,8 +477,26 @@ for (const [index, key] of sceneKeys.entries()) {
   const destination = join(OUT_PATH, 'demo', GAME_NAME, key)
   mkdirSync(dirname(destination), { recursive: true })
   copyFileSync(p2r(BAKED_SCENE_PATHS[index]), destination)
+  const checkedIndex = KAGS_DISPLAY.indexOf(BAKED_SCENE_PATHS[index])
+  if (checkedIndex < 0 || sha256(destination) !== CHECKED_SCENES[checkedIndex]) fail('copied scene differs from capability-checked input')
 }
 pkg('delivered bundle matches packaged runtime')
+const packagedNames = new Map(BAKED_SCENE_PATHS.map((file, index) => [file.replace(/\\/g, '/'), sceneKeys[index]]))
+function packageLocations(value) {
+  if (Array.isArray(value)) { value.forEach(packageLocations); return }
+  if (!value || typeof value !== 'object') return
+  if (typeof value.scene === 'string') {
+    const key = value.scene.replace(/\\/g, '/')
+    value.scene = packagedNames.get(key) || (isAbsolute(value.scene) ? 'project' : value.scene)
+  }
+  Object.values(value).forEach(packageLocations)
+}
+packageLocations(CAPABILITY_REPORT)
+CAPABILITY_REPORT.profile = createPackagedWebCapabilityProfile(OUT_PATH, BUILT_PROFILE, { indexHtml: configuredHtml })
+CAPABILITY_REPORT.checked_inputs = Object.fromEntries(BAKED_SCENE_PATHS.map((file, index) =>
+  [sceneKeys[index], CHECKED_SCENES[KAGS_DISPLAY.indexOf(file)]]))
+writeFileSync(join(OUT_PATH, 'capabilities-build.json'), JSON.stringify(CAPABILITY_REPORT.profile, null, 2) + '\n')
+writeFileSync(join(OUT_PATH, 'CAPABILITIES.json'), JSON.stringify(CAPABILITY_REPORT, null, 2) + '\n')
 
 // ---------------------------------------------------- 5. manifest -----------
 console.log()

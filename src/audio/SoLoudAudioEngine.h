@@ -36,6 +36,7 @@ public:
     bool init() override;
     void shutdown() override;
     void update(float deltaTime) override;
+    bool isPlaybackAvailable() const override { return m_initialized; }
     void suspend() override;
     void resume() override;
 

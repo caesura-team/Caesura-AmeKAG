@@ -22,6 +22,8 @@ using namespace Caesura;
 namespace {
 class AudioCreationResult final : public NullAudioBackend {
 public:
+    // Availability is independent of the injected per-operation result.
+    bool isPlaybackAvailable() const override { return true; }
     unsigned int playBGM(const std::string&, float) override { return result(); }
     unsigned int playVoice(const std::string&) override { return result(); }
     unsigned int playSE(const std::string&) override { return result(); }

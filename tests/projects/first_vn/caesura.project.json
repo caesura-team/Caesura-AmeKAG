@@ -1,0 +1,5 @@
+{
+  "capabilities": {
+    "optional": ["audio.play", "audio.fade"]
+  }
+}

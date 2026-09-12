@@ -33,7 +33,9 @@ const ASSET_BASE = baseHref + 'assets/'
 const wasmFile = (typeof self !== 'undefined' && self.__CAESURA_WASM_FILE__)
   ? self.__CAESURA_WASM_FILE__
   : undefined
-const player = await createPlayer({ scriptsBase: SCRIPTS_BASE, ...(wasmFile ? { wasmFile } : {}) })
+const projectCapabilities = typeof self !== 'undefined' ? self.__CAESURA_PROJECT_CAPABILITIES__ : undefined
+const player = await createPlayer({ scriptsBase: SCRIPTS_BASE, capabilities: projectCapabilities,
+  ...(wasmFile ? { wasmFile } : {}) })
 log('engine loaded; kag table ready')
 
 // ---- WebAudio lifecycle & Mobile orientation lock (plan W1/R3) -------

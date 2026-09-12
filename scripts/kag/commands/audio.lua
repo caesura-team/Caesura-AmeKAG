@@ -135,7 +135,7 @@ function AudioCommands.stopbgm(ctx, params)
         backend.audio_fade_volume("bgm", 0, fadeout / 1000.0)
         backend.audio_stop("bgm", { fadeout = fadeout / 1000.0 + 0.1 })
     else
-        backend.audio_stop("bgm")
+        backend.audio_stop("bgm", { fadeout = 0 })
     end
 end
 

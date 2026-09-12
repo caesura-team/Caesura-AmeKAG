@@ -10,8 +10,12 @@ extern "C" {
 
 #include "../../di/BackendRegistry.h"
 #include "../../render/api/IRenderDevice.h"
+#include "../../render/api/IParticleSystem.h"
 #include "../../audio/api/IAudioBackend.h"
 #include "../../platform/api/IPlatformBackend.h"
+#include "../../live2d/api/IAnimationBackend.h"
+#include "../../steam/api/ISteamBackend.h"
+#include "CaesuraCapabilityBuild.h"
 #include "../state/GameState.h"
 #include <cstdio>
 
@@ -108,6 +112,57 @@ static int lua_Engine_get_backend_info(lua_State* L) {
     return 1;
 }
 
+static void capabilityBool(lua_State* L, const char* name, bool value) {
+    lua_pushboolean(L, value);
+    lua_setfield(L, -2, name);
+}
+
+static int lua_Engine_get_capability_profile(lua_State* L) {
+    auto& registry = BackendRegistry::instance();
+    const int top = lua_gettop(L);
+    try {
+        // Return a new value table on each query. No Lua-visible table or
+        // captured backend pointer can outlive/relabel a replaced registry.
+        lua_newtable(L);
+        lua_pushinteger(L, 1); lua_setfield(L, -2, "schema");
+        lua_pushliteral(L, "native"); lua_setfield(L, -2, "target");
+        lua_pushliteral(L, "runtime"); lua_setfield(L, -2, "scope");
+        lua_pushstring(L, capability_build::Platform); lua_setfield(L, -2, "platform");
+        lua_pushstring(L, capability_build::CatalogSha256); lua_setfield(L, -2, "catalog_sha256");
+        lua_newtable(L);
+        capabilityBool(L, "ffmpeg", capability_build::FFmpeg);
+        capabilityBool(L, "live2d", capability_build::Live2D);
+        capabilityBool(L, "steam", capability_build::Steam);
+        lua_setfield(L, -2, "compiled");
+
+        lua_newtable(L);
+        auto* render = registry.getRenderDevice();
+        const bool rendering = render && render->isInitialized();
+        using Kind = IRenderDevice::PostFxKind;
+        capabilityBool(L, "postfx.bloom", rendering && render->isPostFxSupported(Kind::Bloom));
+        capabilityBool(L, "postfx.vignette", rendering && render->isPostFxSupported(Kind::Vignette));
+        capabilityBool(L, "postfx.lut", rendering && render->isPostFxSupported(Kind::LutColorGrade));
+        capabilityBool(L, "postfx.softblur", rendering && render->isPostFxSupported(Kind::SoftBlur));
+        capabilityBool(L, "postfx.lut3d", rendering && render->isPostFxSupported(Kind::Lut3D));
+        auto* particles = registry.getParticleSystem();
+        capabilityBool(L, "particles", rendering && particles && particles->isInitialized());
+        capabilityBool(L, "video", rendering && registry.getVideoPlayer());
+        auto* audio = registry.getAudioBackend();
+        capabilityBool(L, "audio", audio && audio->isPlaybackAvailable());
+        auto* animation = registry.getAnimationBackend();
+        capabilityBool(L, "cubism", animation && animation->isCubismAvailable());
+        auto* steam = registry.getSteamBackend();
+        capabilityBool(L, "steam", steam && steam->isAvailable());
+        lua_setfield(L, -2, "available");
+        return 1;
+    } catch (...) {
+        lua_settop(L, top);
+        lua_pushnil(L);
+        lua_pushliteral(L, "capability_query_failed");
+        return 2;
+    }
+}
+
 // Internal runner bridge: publish its exact session table, or clear on stop.
 // Require an explicit argument so a missing value cannot silently clear state.
 static int lua_Engine_bind_active_context(lua_State* L) {
@@ -145,6 +200,7 @@ void registerEngineBindings(lua_State* L) {
         { "select_audio_backend",    lua_Engine_select_audio_backend    },
         { "select_platform_backend", lua_Engine_select_platform_backend },
         { "get_backend_info",        lua_Engine_get_backend_info        },
+        { "get_capability_profile",  lua_Engine_get_capability_profile  },
         { "bind_active_context",     lua_Engine_bind_active_context     },
         { "report_command_error",      lua_Engine_report_command_error      },
         { nullptr, nullptr }

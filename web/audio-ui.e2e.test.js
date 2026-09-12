@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 // Audio UI integration test for the Caesura web player (main.mjs).
 // Drives the REAL main.mjs against a real jsdom DOM + a real wasmoon engine,
-// mocking only the network (fetch) and pinning the local wasm so the fake
-// browser can boot offline. Covers the audio settings UI wiring that the
+// using local asset bytes and a controlled AudioContext boundary. The real
+// AudioEngine must own playback; this proves UI wiring, not decoding or sound.
+// Covers the audio settings UI wiring that the
 // unit suites cover only in isolation:
 //   * 1. BGM/SE/Voice slider drags -> settings.volumes update -> mirrored
 //          slider position stays in sync, three busses independent.
@@ -47,15 +48,33 @@ function makeFetch() {
     const url = typeof input === 'string' ? input : String(input?.url ?? '')
     const p = resolvePathFromUrl(url)
     if (p && existsSync(p) && statSync(p).isFile()) {
-      const text = () => readFileSync(p, "utf8")
-      return {
-        ok: true, status: 200, text,
-        json: async () => JSON.parse(text()),
-        arrayBuffer: async () => readFileSync(p).buffer,
-      }
+      return new Response(readFileSync(p))
     }
     return { ok: false, status: 404, text: async () => '', json: async () => ({}), arrayBuffer: async () => new ArrayBuffer(0) }
   }
+}
+
+function uiAudioContext() {
+  const context = {
+    state: 'running', currentTime: 0, destination: {},
+    createGain: () => ({ gain: { value: 1 }, connect() {}, disconnect() {} }),
+    async decodeAudioData(bytes) {
+      if (!bytes.byteLength) throw new Error('empty audio fixture')
+      return { duration: 0.04, length: 1920, sampleRate: 48000, numberOfChannels: 1 }
+    },
+    createBufferSource() {
+      let timer
+      return {
+        buffer: null, loop: false, onended: null, connect() {}, disconnect() {},
+        start() { if (!this.loop) timer = setTimeout(() => this.onended?.(), this.buffer.duration * 1000) },
+        stop() { clearTimeout(timer); this.onended?.() },
+      }
+    },
+    async resume() { context.state = 'running' },
+    async suspend() { context.state = 'suspended' },
+    async close() { context.state = 'closed' },
+  }
+  return context
 }
 
 // DOM fixture mirrors web/index.html body (minus the module <script>).
@@ -163,7 +182,9 @@ async function advanceOnce() {
 }
 
 beforeAll(async () => {
+  globalThis.AudioContext = function () { return uiAudioContext() }
   globalThis.__CAESURA_WASM_FILE__ = wasmFile
+  globalThis.__CAESURA_PROJECT_CAPABILITIES__ = JSON.parse(readFileSync(join(root, 'demo/caesura.project.json'), 'utf8')).capabilities
   // CI checkouts never carry cache/story/story.lua (gitignored), so the
   // boot takes the bundle-missing path; the demo fallback is DEV_MODE-gated
   // (b6bfcd98 refuses to fake demo content in production). These suites drive
@@ -246,6 +267,7 @@ describe('audio UI · scene audio status display + one-way lock', () => {
     await runScene(AUDIO_TUTORIAL)
     await waitFor(() => audioStatus().includes('BGM'), 'audio status shows BGM', 15000)
     expect(audioStatus()).toContain('BGM: daily.wav')
+    expect(window.__caesuraAudio.isPlaying('bgm')).toBe(true)
 
     // Anchor the settings/UI at 0.7 (a user pick). [setbgmvolume] happens on
     // the NEXT page and is engine-side only (round 93 one-way lock): it must
@@ -278,5 +300,6 @@ describe('audio UI · scene audio status display + one-way lock', () => {
     }
     await waitFor(() => audioStatus() === EM, 'status reaches the no-audio placeholder', 15000)
     expect(audioStatus()).toBe(EM)
+    expect(['bgm', 'se', 'voice'].some(bus => window.__caesuraAudio.isPlaying(bus))).toBe(false)
   }, 120000)
 })

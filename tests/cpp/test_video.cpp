@@ -72,6 +72,8 @@ public:
 // device. The close contract must stop every submitted voice exactly once.
 class VideoAudioCapture final : public NullAudioBackend {
 public:
+    // PCM submission is simulated by this fixture without a device session.
+    bool isPlaybackAvailable() const override { return true; }
     VideoAudioCapture()
         : previous(BackendRegistry::instance().getAudioBackend()) {
         BackendRegistry::instance().setAudioBackend(this);

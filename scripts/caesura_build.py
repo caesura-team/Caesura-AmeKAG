@@ -46,6 +46,7 @@ io.open — a game placed anywhere else cannot perform cross-scene [jump] at run
 """
 
 import datetime
+import hashlib
 import json
 import os
 import platform
@@ -53,6 +54,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import zipfile
 from pathlib import Path
 
@@ -106,6 +108,16 @@ def _ignore_junk(_dir, names):
 def _copy_tree(src: Path, dst: Path) -> None:
     dst.mkdir(parents=True, exist_ok=True)
     shutil.copytree(src, dst, dirs_exist_ok=True, ignore=_ignore_junk)
+
+
+def _copied_files(directory):
+    """Mirror copytree's existing development-file filter for input manifests."""
+    for current, directories, files in os.walk(directory):
+        ignored = set(_ignore_junk(current, directories + files))
+        directories[:] = [name for name in directories if name not in ignored]
+        for name in files:
+            path = Path(current) / name
+            if name not in ignored and path.is_file(): yield path
 
 
 def _rel(p: Path) -> str:
@@ -165,7 +177,7 @@ def _prepare_out(out: Path) -> None:
 
 
 def _assemble_clean(project: Path, entry_scene: Path, engine: Path, out: Path,
-                    shared_assets: bool, dev_mode: bool, quiet: bool = False) -> dict:
+                    shared_assets: bool, dev_mode: bool, quiet: bool = False, capabilities=None) -> dict:
     """t19/A2: run assemble() and self-clean the output WE own on failure.
 
     A run that fails mid-assemble (disk error, crash, Ctrl+C) must not leave a
@@ -178,10 +190,14 @@ def _assemble_clean(project: Path, entry_scene: Path, engine: Path, out: Path,
     """
     took_ownership = False
     try:
+        if capabilities is not None:
+            if _file_sha256(engine) != capabilities["profile"]["binary_sha256"]:
+                raise BuildError("Selected engine changed after capability validation.")
+            _require_capability_inputs(capabilities, project)
         _prepare_out(out)
         took_ownership = True
         return assemble(project, entry_scene, engine, out,
-                        shared_assets=shared_assets, dev_mode=dev_mode, quiet=quiet)
+                        shared_assets=shared_assets, dev_mode=dev_mode, quiet=quiet, capabilities=capabilities)
     finally:
         if took_ownership and not (out / "BUILD-INFO.json").exists():
             shutil.rmtree(out, ignore_errors=True)
@@ -285,7 +301,7 @@ def resolve_project(spec: str) -> Path:
 
 
 def collect_scenes(project: Path):
-    scenes = sorted(project.rglob("*.ks"))
+    scenes = sorted(path for path in _copied_files(project) if path.match("*.ks"))
     if not scenes:
         raise BuildError(
             "No .ks scenes in project: %s\n"
@@ -395,6 +411,166 @@ def run_ks_check(scenes, lua: str) -> None:
         raise BuildError("\n".join(lines))
 
 
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def capability_catalog_sha256() -> str:
+    generated = ROOT / "scripts" / "capability_catalog.lua"
+    match = re.search(r'^\s*sha256 = "([0-9a-f]{64})",',
+                      generated.read_text(encoding="utf-8"), re.MULTILINE)
+    if not match:
+        raise BuildError("Runtime capability catalog is missing or invalid.")
+    source = ROOT / "config" / "runtime-capabilities.json"
+    if source.is_file():
+        text = source.read_text(encoding="utf-8").replace("\r\n", "\n")
+        if hashlib.sha256(text.encode("utf-8")).hexdigest() != match.group(1):
+            raise BuildError("Runtime capability catalog is stale; run scripts/generate_runtime_capabilities.py.")
+    return match.group(1)
+
+
+def native_capability_profile(engine: Path) -> dict:
+    """Query the selected binary itself, with its identity checked on both sides."""
+    before = _file_sha256(engine)
+    try:
+        result = subprocess.run([str(engine), "--capabilities-json"], cwd=engine.parent,
+                                capture_output=True, text=True, encoding="utf-8", timeout=15)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise BuildError("Selected engine capability query failed: " + type(error).__name__) from error
+    if _file_sha256(engine) != before:
+        raise BuildError("Selected engine changed during the capability query.")
+    if result.returncode:
+        raise BuildError("Selected engine cannot report capabilities; use a compatible U19-or-later engine binary.")
+    try:
+        def unique(pairs):
+            record = {}
+            for key, value in pairs:
+                if key in record: raise ValueError("duplicate key")
+                record[key] = value
+            return record
+        profile = json.loads(result.stdout, object_pairs_hook=unique)
+        if not isinstance(profile, dict) or profile.get("target") != "native" or profile.get("scope") != "build":
+            raise ValueError("not a native build profile")
+    except (ValueError, TypeError) as error:
+        raise BuildError("Selected engine returned an invalid capability profile.") from error
+    profile["binary_sha256"] = before
+    profile["binary"] = engine.name
+    return profile
+
+
+def _project_capability_files(project):
+    files = {path.relative_to(project).as_posix(): _file_sha256(path)
+             for path in _copied_files(project) if path.match("*.ks") or path.match("*.lua")}
+    metadata = project / "caesura.project.json"
+    if metadata.exists(): files["caesura.project.json"] = _file_sha256(metadata)
+    return dict(sorted(files.items()))
+
+
+def _runtime_capability_files(directory):
+    return dict(sorted((path.relative_to(directory).as_posix(), _file_sha256(path))
+                       for path in _copied_files(directory) if path.match("*.lua")))
+
+
+def _capability_inputs(project, scenes):
+    project = project.resolve()
+    return {"scope": "preflight_inputs", "catalog_sha256": capability_catalog_sha256(),
+            "checked_scenes": sorted(scene.resolve().relative_to(project).as_posix() for scene in scenes),
+            "scene_inventory": sorted(scene.relative_to(project).as_posix() for scene in collect_scenes(project)),
+            "project_files": _project_capability_files(project),
+            "runtime_lua": _runtime_capability_files(ROOT / "scripts")}
+
+
+def _require_capability_inputs(report, project):
+    project = project.resolve()
+    expected = report.get("inputs")
+    if not isinstance(expected, dict) or expected.get("checked_scenes") != expected.get("scene_inventory"):
+        raise BuildError("Packaging requires capability checks for the complete project scene set.")
+    scenes = collect_scenes(project)
+    if _capability_inputs(project, scenes) != expected:
+        raise BuildError("Project or runtime inputs changed after capability validation.")
+
+
+def run_capability_check(project: Path, scenes, target: str, *, engine=None,
+                         skip_syntax=False, output=None) -> dict:
+    """One real Lua checker owns declarations and statically identifiable calls."""
+    project = project.resolve()
+    scenes = list(scenes)
+    inputs = _capability_inputs(project, scenes)
+    expected_digest = capability_catalog_sha256()
+    if target == "native":
+        profile = native_capability_profile(engine or find_engine())
+        if profile.get("catalog_sha256") != expected_digest:
+            raise BuildError("Selected engine does not match the runtime capability catalog.")
+    elif target == "web":
+        profile = {"schema": 1, "target": "web", "platform": "browser", "scope": "build",
+                   "catalog_sha256": expected_digest, "compiled": {}}
+    else:
+        raise BuildError("Capability target must be native or web.")
+    with tempfile.TemporaryDirectory(prefix="caesura-capability-check-") as scratch:
+        scratch = Path(scratch)
+        profile_path = scratch / "profile.json"
+        profile_path.write_text(json.dumps(profile), encoding="utf-8")
+        metadata = project / "caesura.project.json"
+        if not metadata.exists():
+            metadata = scratch / "legacy-project.json"
+            metadata.write_text("{}\n", encoding="utf-8")
+        report_path = scratch / "report.json"
+        command = [find_lua(), str(ROOT / "scripts" / "ks_check.lua"),
+                   "--target", target, "--profile", str(profile_path),
+                   "--project", str(metadata), "--json-output", str(report_path)]
+        if skip_syntax: command.append("--capabilities-only")
+        command.extend(str(scene.resolve()) for scene in scenes)
+        try:
+            result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True,
+                                    encoding="utf-8", errors="replace", timeout=120)
+        except subprocess.TimeoutExpired as error:
+            raise BuildError("Capability checker did not finish before its deadline.") from error
+        text = (result.stdout or "") + (result.stderr or "")
+        if not report_path.is_file():
+            raise BuildError("Capability checker did not produce a report:\n" + text[-12000:])
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        if _capability_inputs(project, scenes) != inputs:
+            raise BuildError("Project or runtime inputs changed during capability validation.")
+        report["profile"] = profile
+        report["inputs"] = inputs
+        for path in sorted(_copied_files(project)):
+            if path.match("*.lua"):
+                report["not_proven"].append({"reason": "unanalysed_lua_file",
+                    "location": {"scene": str(path), "line": 0, "command": "lua"}})
+        if output is not None:
+            Path(output).write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        if result.returncode != 0 or report.get("passed") is not True:
+            raise BuildError("Required target capabilities are not satisfied:\n" + text[-12000:])
+        details = "\n".join(line for line in text.splitlines() if not line.startswith("Target capabilities:"))
+        if details.strip(): print(details.rstrip())
+        print("Target capabilities: PASS; %d unproved dynamic span(s) or Lua file(s)" % len(report["not_proven"]))
+        return report
+
+
+def _packaged_capability_report(report, project):
+    """Keep diagnostics useful without shipping the author's absolute paths."""
+    result = json.loads(json.dumps(report))
+    profile = result.get("profile", {})
+    result["profile"] = {key: profile[key] for key in
+        ("schema", "target", "platform", "scope", "catalog_sha256", "compiled", "binary_sha256") if key in profile}
+    if isinstance(profile.get("binary"), str):
+        result["profile"]["binary"] = re.split(r"[/\\]", profile["binary"])[-1]
+    def visit(value):
+        if isinstance(value, dict):
+            if isinstance(value.get("scene"), str) and Path(value["scene"]).is_absolute():
+                try: value["scene"] = Path(value["scene"]).resolve().relative_to(project.resolve()).as_posix()
+                except ValueError: value["scene"] = "project"
+            for child in value.values(): visit(child)
+        elif isinstance(value, list):
+            for child in value: visit(child)
+    visit(result)
+    return result
+
+
 # -------------------------------------------------------------- assembling --
 
 BOOT_TEMPLATE = '''-- ==========================================================================
@@ -409,6 +585,11 @@ local layers     = require("layers")
 
 local GAME_ROOT  = %(game_root)s
 local STORY_PATH = %(story_path)s
+local capabilities = require("capability_runtime")
+local capability_ok, capability_error, capability_detail = capabilities.configure_project_file(GAME_ROOT .. "/caesura.project.json", true)
+if not capability_ok then
+    error("Project capability configuration rejected: " .. (capability_detail and capabilities.message(capability_detail) or capability_error), 0)
+end
 
 -- Published for [iscript] blocks and project entry scripts that want to know
 -- where they were packaged to.
@@ -754,7 +935,7 @@ def precompile_scenes(out: Path, scene_rels):
 
 
 def assemble(project: Path, entry_scene: Path, engine: Path, out: Path,
-             shared_assets: bool, dev_mode: bool, quiet=False) -> dict:
+             shared_assets: bool, dev_mode: bool, quiet=False, capabilities=None) -> dict:
     def say(msg):
         if not quiet:
             print(msg)
@@ -766,6 +947,8 @@ def assemble(project: Path, entry_scene: Path, engine: Path, out: Path,
     # 1. engine binary + every runtime lib beside it (no manual DLL copying
     #    is ever asked of the player — that is the whole point of game-only).
     shutil.copy2(engine, out / engine.name)
+    if capabilities is not None and _file_sha256(out / engine.name) != capabilities["profile"]["binary_sha256"]:
+        raise BuildError("Packaged engine differs from the capability-checked binary.")
     libs = runtime_libs(engine)
     for lib in libs:
         shutil.copy2(lib, out / lib.name)
@@ -774,6 +957,8 @@ def assemble(project: Path, entry_scene: Path, engine: Path, out: Path,
 
     # 2. engine Lua runtime
     _copy_tree(ROOT / "scripts", out / "scripts")
+    if capabilities is not None and _runtime_capability_files(out / "scripts") != capabilities["inputs"]["runtime_lua"]:
+        raise BuildError("Copied runtime differs from the capability-checked inputs.")
     for junk in ("game_logic.lua",):
         p = out / "scripts" / junk
         if p.exists():
@@ -801,12 +986,14 @@ def assemble(project: Path, entry_scene: Path, engine: Path, out: Path,
     # 4. the game itself, under the sandbox-allowlisted projects/ root
     game_root = "projects/%s" % game_name
     _copy_tree(project, out / "projects" / game_name)
+    if capabilities is not None and _project_capability_files(out / "projects" / game_name) != capabilities["inputs"]["project_files"]:
+        raise BuildError("Copied project differs from the capability-checked inputs.")
     story_rel = "%s/%s" % (game_root, entry_scene.relative_to(project).as_posix())
     say("[build] game: %s (entry scene %s)" % (game_root, story_rel))
 
     # 4b. assets the scenes actually reference but the project does not own
     #     (stock templates reference the repo shared pool by design).
-    scenes = sorted(project.rglob("*.ks"))
+    scenes = collect_scenes(project)
     refs = scan_asset_refs(scenes)
     copied, missing = resolve_referenced_assets(refs, project, out)
     dynamic = scan_dynamic_asset_refs(scenes)
@@ -888,7 +1075,7 @@ def assemble(project: Path, entry_scene: Path, engine: Path, out: Path,
         "engine_modified_utc": datetime.datetime.fromtimestamp(
             engine.stat().st_mtime, datetime.timezone.utc).isoformat(),
         "runtime_libs": [l.name for l in libs],
-        "scenes": sorted(p.relative_to(project).as_posix() for p in project.rglob("*.ks")),
+        "scenes": sorted(p.relative_to(project).as_posix() for p in scenes),
         "dev_mode": dev_mode,
         "shared_assets": shared_assets,
         "precompiled_scenes": pre_ok,
@@ -902,6 +1089,8 @@ def assemble(project: Path, entry_scene: Path, engine: Path, out: Path,
         "host": {"os": platform.system(), "machine": platform.machine(),
                  "python": platform.python_version()},
     }
+    if capabilities is not None:
+        info["capabilities"] = _packaged_capability_report(capabilities, project)
     (out / "BUILD-INFO.json").write_text(
         json.dumps(info, indent=2, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
     (out / "HOW-TO-PLAY.txt").write_text(
@@ -925,14 +1114,15 @@ def cmd_build(args) -> int:
         out = Path(args.out) if args.out else (ROOT / "dist" / ("%s-game" % project.name))
         if not out.is_absolute():
             out = (Path.cwd() / out).resolve()
+        capabilities = run_capability_check(project, scenes, "native", engine=engine,
+                                             skip_syntax=args.skip_check)
         if not args.skip_check:
-            run_ks_check(scenes, find_lua())
             print("[build] ks_check: %d scene(s) pass contracts" % len(scenes))
         else:
             print("[build] ks_check: SKIPPED (--skip-check)")
         info = _assemble_clean(project, entry_scene, engine, out,
                                shared_assets=args.with_shared_assets,
-                               dev_mode=args.dev)
+                               dev_mode=args.dev, capabilities=capabilities)
     except (BuildError, OSError) as e:
         # OSError: assembly I/O failure (disk full, source vanished, ...).
         # _assemble_clean already removed the partial output (t19/A2); report
@@ -1007,6 +1197,7 @@ def cmd_package(args) -> int:
             zip_path = out_dir / ("%s-web.zip" % project.name)
             cmd = [find_node(), "scripts/package_game.mjs", _rel(project),
                    "--out", _rel(web_out), "--zip", _rel(zip_path)]
+            if args.skip_check: cmd.append("--skip-check")
             # flush: the child writes straight to the inherited handles, so an
             # unflushed announcement would print AFTER its own output.
             print("[package] web: %s" % " ".join(cmd), flush=True)

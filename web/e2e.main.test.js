@@ -111,6 +111,7 @@ beforeAll(async () => {
   // Pin the local wasm so main.mjs boots offline (when unset, the global is
   // ignored and the production browser path keeps wasmoon's CDN default).
   globalThis.__CAESURA_WASM_FILE__ = wasmFile
+  globalThis.__CAESURA_PROJECT_CAPABILITIES__ = JSON.parse(readFileSync(join(root, 'demo/caesura.project.json'), 'utf8')).capabilities
   // CI checkouts never carry cache/story/story.lua (gitignored), so the
   // boot takes the bundle-missing path; the demo fallback is DEV_MODE-gated
   // (b6bfcd98 refuses to fake demo content in production). These suites drive

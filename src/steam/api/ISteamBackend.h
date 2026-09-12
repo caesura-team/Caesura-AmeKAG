@@ -15,6 +15,11 @@ public:
     // ---- Lifecycle ----
     virtual bool init() = 0;
     virtual void shutdown() = 0;
+
+    // Owner-thread session query; do not race init/shutdown. True means the
+    // Steam implementation is initialized, not that stats have arrived or an
+    // achievement, cloud operation, or account action will succeed.
+    virtual bool isAvailable() const = 0;
     virtual void runCallbacks() = 0;           // SteamAPI_RunCallbacks — call every frame
     virtual bool isOverlayActive() const = 0;   // pause input when overlay is up
 

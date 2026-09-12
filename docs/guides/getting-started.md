@@ -696,5 +696,6 @@ A: `node web/gen-index.mjs` 重生成 `web/scripts-index.json` 并提交。
 - [Lua 模块 API](../../docs/api/lua-modules.md) — Lua 绑定 API
 - [资源管线](asset-pipeline.md) — 资产格式支持矩阵 + 目录规范
 - [一键打包](packaging-ux.md) — 从 .ks 到可分发 Web 站的单条命令
+- [目标能力与作品声明](target-capabilities.md) — 必需/可选能力、CSS 近似接受和可复核的打包结果
 - [桌面发布](release-process.md) — Release + CPack + GitHub Release 全流程
 - [首次贡献](../../CONTRIBUTING.md) — 参与开发的流程与门禁

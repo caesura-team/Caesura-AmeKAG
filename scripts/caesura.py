@@ -6,9 +6,11 @@ Unified interface for project scaffolding, doctor diagnostics, story flow, and i
 
 import sys, os, json, subprocess, shutil, argparse
 from datetime import datetime, timezone
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from caesura_build import cmd_build, cmd_package  # noqa: E402
+import caesura_build
 
 def find_lua():
     # Anchored at the CLI's own root (checkout or extracted package), not the
@@ -181,9 +183,27 @@ def cmd_i18n(args):
         return res.returncode
 
 def cmd_check(args):
-    lua = find_lua()
-    res = subprocess.run([lua, "scripts/ks_check.lua", args.path])
-    return res.returncode
+    try:
+        path = Path(args.path).resolve()
+        if not args.target:
+            if args.engine or args.json_output:
+                raise caesura_build.BuildError("--engine and --json-output require --target for check.")
+            res = subprocess.run([caesura_build.find_lua(), str(caesura_build.ROOT / "scripts/ks_check.lua"), str(path)])
+            return res.returncode
+        if path.is_dir():
+            project, scenes = path, caesura_build.collect_scenes(path)
+        else:
+            project, scenes = path.parent, [path]
+            for parent in path.parents:
+                if (parent / "caesura.project.json").is_file():
+                    project = parent
+                    break
+        engine = caesura_build.find_engine(args.engine) if args.target == "native" else None
+        caesura_build.run_capability_check(project, scenes, args.target, engine=engine, output=args.json_output)
+        return 0
+    except (caesura_build.BuildError, OSError) as error:
+        print("caesura check: " + str(error), file=sys.stderr)
+        return 1
 
 def cmd_patch(args):
     raw_args = args.patch_args
@@ -249,7 +269,10 @@ def main():
     
     # check
     p_check = subparsers.add_parser("check", help="Statically validate .ks contracts")
-    p_check.add_argument("path", help="Path to .ks scene")
+    p_check.add_argument("path", help="Path to .ks scene, or project directory with --target")
+    p_check.add_argument("--target", choices=["native", "web"], help="Check declared and statically identifiable target capabilities")
+    p_check.add_argument("--engine", help="Selected engine binary for native capability checks")
+    p_check.add_argument("--json-output", help="Write the capability report to this file")
     p_check.set_defaults(func=cmd_check)
     
     # patch
@@ -268,7 +291,7 @@ def main():
                          help="Prefer this build configuration when searching for the engine")
     p_build.add_argument("--entry", help="Entry scene (default story.ks)")
     p_build.add_argument("--skip-check", action="store_true",
-                         help="Do not run the ks_check contract gate")
+                         help="Skip ordinary scene lint; required capability checks still run")
     p_build.add_argument("--with-shared-assets", action="store_true",
                          help="Also ship the repo shared asset pool (assets/), not just what the game needs")
     p_build.add_argument("--dev", action="store_true",
@@ -280,13 +303,13 @@ def main():
         "package", help="Package a project into distributable archives (desktop ZIP / web bundle)")
     p_pkg.add_argument("project", help="Project directory or name")
     p_pkg.add_argument("--target", choices=["windows", "web", "both", "auto"], default="windows",
-                       help="windows = game-only desktop ZIP, web = static site via package_game.sh")
+                       help="windows = game-only desktop ZIP, web = static site via package_game.mjs")
     p_pkg.add_argument("-o", "--out", help="Output directory (default dist/)")
     p_pkg.add_argument("--engine", help="Engine binary or its directory (desktop target)")
     p_pkg.add_argument("--config", choices=["Debug", "Release", "RelWithDebInfo"],
                        help="Prefer this build configuration when searching for the engine")
     p_pkg.add_argument("--entry", help="Entry scene (default story.ks)")
-    p_pkg.add_argument("--skip-check", action="store_true", help="Do not run the ks_check contract gate")
+    p_pkg.add_argument("--skip-check", action="store_true", help="Skip ordinary scene lint; required capability checks still run")
     p_pkg.add_argument("--with-shared-assets", action="store_true",
                        help="Also ship the repo shared asset pool (assets/)")
     p_pkg.add_argument("--dev", action="store_true", help="Keep config.dev_mode = true")
