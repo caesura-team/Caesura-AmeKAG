@@ -62,3 +62,15 @@ Lua两文件暂存基线与当前checkout仅换行字节不同，整合前逐字
 - 首次完整原生批次 `u17-native-candidate-01` 固定在 `c564284f881ca06ee92f1ce74e3edf04be1e0931`，完整Debug构建通过；C++ 1361项中1360通过、1失败、0跳过（401711断言中1失败）；Lua147/147与48/48；CTest28项中26通过、1失败、1预先允许的CaesuraHeadlessAiSmoke跳过。唯一失败均为旧源码定位断言误匹配新增的窗口归属wheel过滤，实际wheel处理未进入pointer分支。
 - 修正源码测试的搜索起点，继续检查wheel分支在pointer完整闭括号之后，保留全部原断言；同时在真实SDL事件回归中增加wheel值、KAG/GAME焦点、外部窗口和返回KAG后的计数断言。`u17-wheel-test-green-01.log` 两项用例79/79断言通过，1359项过滤未选中。没有修改生产源码或性能预算；完整候选需在该测试修正后再次冻结执行。
 - 首次批次保留完整原始日志和run.json，未生成通过证据包。首次collector与后续增量链接重叠，读取CaesuraTests.exe被锁而失败，记录在 `u17-native-collect-01.log`；后续二进制已重建，不能把它补入首次批次。下一完整批次结束后须先collect/verify，再修改源码或重建。
+
+## Web同机配对诊断
+
+主工作区 `artifacts/validation/u17-web-perf-diagnosis/paired-01/run.json` 使用相同Node22.23.2、同一个实际Wasmoon VM和JS bridge，对 `074f5f7c` 与本轮Lua三文件执行固定AB/BA/AB三对测量，每个成员先完整预热。切换实际Lua模块及KAG命令表后重新安装runner bridge，避免旧闭包继续驱动旧runner。每次均完成3000token、4000帧/点击、64检查点、2000已读标记，无错误，输入hash稳定且dispose成功。
+
+| pair | 顺序 | 基线ms | 候选ms | 候选/基线 |
+| --- | --- | ---: | ---: | ---: |
+| 1 | 基线→候选 | 2416.7651 | 2356.5516 | 0.975085 |
+| 2 | 候选→基线 | 2615.9329 | 2523.7117 | 0.964746 |
+| 3 | 基线→候选 | 2182.2225 | 2526.5514 | 1.157788 |
+
+两者均未达到2000ms固定预算，配对比中位0.975085但方向不一致，不能据此宣称U17优化或确定退化。该standalone jsdom配对诊断不是完整Vitest通过证据。另一次 `profile-01/run.json` 对两者实际调用计数相同：3000次snapshot.capture、4000次runner.on_click、2000次ch、1000次p、2次operation.cancel_all；没有进入新增voice_wait/input/runner.update等待分支。带观察器时间不参与预算评价，Node CPU profile及Lua指令样本用于后续定位共同成本，绝不减少快照工作或事后放宽门槛。
