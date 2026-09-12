@@ -323,7 +323,11 @@ class RenderContractDriverTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='caesura-synthetic-render-contract-')
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        # Match run_suite's initial canonicalization. macOS may give /var/...
+        # for an OS-owned temporary directory under /private/var/...; Windows
+        # runners may use an 8.3 user alias. Links introduced later by
+        # adversarial tests remain lexical and rejected.
+        self.root = Path(self.temp.name).resolve(strict=True)
 
     def fixture(self, case_id='shader-optional-transition'):
         return SyntheticFixture(self.root, case_id)

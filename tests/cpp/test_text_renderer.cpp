@@ -149,7 +149,10 @@ TEST_CASE("U16 font atlas: actual used CJK glyphs match independent FreeType wit
     CHECK(atlas->width() == 2048);
     CHECK(atlas->height() == 2048);
     IndependentFont reference(28);
-    for (uint32_t cp : {uint32_t('G'), uint32_t(0x6c49), uint32_t(0x6f22), uint32_t(0x304b)}) {
+    // Representatives of all six previously preloaded Unicode groups. Actual
+    // demand preparation must retain glyph metrics and coverage for each.
+    const std::array<uint32_t, 7> codepoints{'G', 0x2014, 0x3002, 0x304b, 0xff21, 0x6c49, 0x6f22};
+    for (uint32_t cp : codepoints) {
         CAPTURE(cp);
         CHECK(atlas->prepareGlyph(cp) == Atlas::PrepareStatus::Added);
         const auto* glyph = atlas->find(cp);
@@ -169,7 +172,7 @@ TEST_CASE("U16 font atlas: actual used CJK glyphs match independent FreeType wit
         }
         CHECK(equal);
     }
-    CHECK(atlas->glyphCount() <= 7);
+    CHECK(atlas->glyphCount() <= 3 + codepoints.size());
     CHECK(atlas->prepareGlyph(0x6f22) == Atlas::PrepareStatus::Existing);
 }
 

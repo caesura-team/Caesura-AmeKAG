@@ -1,13 +1,20 @@
 #!/usr/bin/env python3
 """Pure tests of the production shader emitter/validator; no compiler or GPU."""
 import importlib.util
+import contextlib
+import io
 from pathlib import Path
+import sys
+import tempfile
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location("shader_generator", ROOT / "scripts/generate_render_shaders.py")
 generator = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(generator)
+sys.path.insert(0, str(ROOT / "scripts"))
+import verify_metal_shaders as metal_validator
 
 
 class ShaderGenerationTest(unittest.TestCase):
@@ -63,6 +70,38 @@ class ShaderGenerationTest(unittest.TestCase):
         self.assertEqual(generator.normalize_source("// 中文\n".encode()), "// 中文\n".encode())
         with self.assertRaises(UnicodeDecodeError):
             generator.normalize_source(b"\xff\xfe")
+
+    def test_metal_gate_accepts_actual_generated_arrays(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertTrue(metal_validator.verify_render_shaders())
+
+    def check_metal_fixture(self, source):
+        symbol = "kEmbeddedMetal_vs_sprite"
+        with tempfile.TemporaryDirectory() as directory:
+            header, cpp = Path(directory) / "shaders.h", Path(directory) / "shaders.cpp"
+            header.write_text(f"extern const uint8_t {symbol}[];\nextern const size_t {symbol}_size;\n", encoding="utf-8")
+            cpp.write_text(source, encoding="utf-8")
+            with mock.patch.multiple(metal_validator, RENDER_H=header, RENDER_CPP=cpp,
+                                     REQUIRED_RENDER_SHADERS=[(symbol, symbol + "_size", "vertex")]), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                return metal_validator.verify_render_shaders()
+
+    def test_metal_gate_accepts_matching_numeric_size(self):
+        source = generator.emit_array("kEmbeddedMetal_vs_sprite", b"\x80\xff\x00")
+        self.assertTrue(self.check_metal_fixture(source.replace("sizeof(kEmbeddedMetal_vs_sprite)", "3")))
+
+    def test_metal_gate_rejects_size_drift_and_wrong_sizeof_target(self):
+        source = generator.emit_array("kEmbeddedMetal_vs_sprite", b"\x80\xff\x00")
+        for size in ("2", "0", "sizeof(other_shader)"):
+            with self.subTest(size=size):
+                self.assertFalse(self.check_metal_fixture(source.replace("sizeof(kEmbeddedMetal_vs_sprite)", size)))
+
+    def test_metal_gate_rejects_malformed_bytes_and_duplicate_arrays(self):
+        source = generator.emit_array("kEmbeddedMetal_vs_sprite", b"\x80\xff\x00")
+        source = source.replace("sizeof(kEmbeddedMetal_vs_sprite)", "3")
+        for bad in (source.replace("0x80", "0xffff0x80"), source.replace("0xff,", ""), source + source):
+            with self.subTest(source=bad):
+                self.assertFalse(self.check_metal_fixture(bad))
 
 
 if __name__ == "__main__":
