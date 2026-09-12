@@ -7,6 +7,7 @@
 #include <bx/error.h>
 #include <cstdio>
 #include <cstring>
+#include <deque>
 
 namespace Caesura {
 
@@ -43,6 +44,8 @@ ShaderBuildReport BgfxShaderManager::buildReport() const {
 
 BgfxShaderManager::~BgfxShaderManager() {
     if (bgfx::isValid(m_fallbackProgram))    bgfx::destroy(m_fallbackProgram);
+    if (bgfx::isValid(m_modulatedTextureProgram)) bgfx::destroy(m_modulatedTextureProgram);
+    if (bgfx::isValid(m_u_color)) bgfx::destroy(m_u_color);
     if (bgfx::isValid(m_blendProgram))       bgfx::destroy(m_blendProgram);
     if (bgfx::isValid(m_transitionProgram))  bgfx::destroy(m_transitionProgram);
     if (bgfx::isValid(m_vfxProgram))         bgfx::destroy(m_vfxProgram);
@@ -51,6 +54,7 @@ BgfxShaderManager::~BgfxShaderManager() {
     if (bgfx::isValid(m_texSampler))         bgfx::destroy(m_texSampler);
     if (bgfx::isValid(m_texSampler1))        bgfx::destroy(m_texSampler1);
     if (bgfx::isValid(m_texSampler2))        bgfx::destroy(m_texSampler2);
+    if (bgfx::isValid(m_lutSampler)) bgfx::destroy(m_lutSampler);
     if (bgfx::isValid(m_u_blendParams))      bgfx::destroy(m_u_blendParams);
     if (bgfx::isValid(m_u_transParams))      bgfx::destroy(m_u_transParams);
     if (bgfx::isValid(m_u_vfxParams))        bgfx::destroy(m_u_vfxParams);
@@ -76,7 +80,8 @@ struct ShaderUniformMetadata {
 // Track M device-day: convert GLSL 120 textual bytecode to ESSL 3.00 for
 // the OpenGLES renderer (the vendored blobs are desktop GL; the device
 // driver rejects attribute/varying/gl_FragColor). Text-only rewrites.
-static std::string toEssl300(const uint8_t* code, uint32_t size, bool fragment) {
+std::string BgfxShaderManager::toEssl300(const uint8_t* code, uint32_t size, bool fragment) {
+    if (!isDirectFeedBinary(code, size)) return {};
     // VSH11/FSH11 blobs: binary header then the GLSL text, NUL-terminated
     // before the trailing attribute/uniform metadata. Header length varies
     // (vertex vs fragment), so scan for the first printable ASCII run.
@@ -112,6 +117,8 @@ static std::string toEssl300(const uint8_t* code, uint32_t size, bool fragment) 
         while ((p = t.find(a, p)) != std::string::npos) { t.replace(p, strlen(a), b); p += strlen(b); }
     };
     rep("#version 430 core", "#version 300 es");
+    rep("#version 430", "#version 300 es");
+    rep("#version 130", "#version 300 es");
     rep("#version 120", "#version 300 es");
     rep("#version 110", "#version 300 es");
     rep("#version 100", "#version 300 es");
@@ -119,8 +126,12 @@ static std::string toEssl300(const uint8_t* code, uint32_t size, bool fragment) 
     rep("varying", fragment ? "in" : "out");
     rep("texture2D", "texture");
     rep("textureCube", "texture");
+    const bool legacyOutput = fragment && t.find("gl_FragColor") != std::string::npos;
     rep("gl_FragColor", "oFragColor");
-    if (fragment) { rep("#version 300 es", "#version 300 es\nout vec4 oFragColor;"); }
+    if (t.find("#version") == std::string::npos) t.insert(0, "#version 300 es\n");
+    std::string declarations = "#version 300 es\nprecision highp float;\nprecision highp int;";
+    if (legacyOutput) declarations += "\nout vec4 oFragColor;";
+    rep("#version 300 es", declarations.c_str());
     return t;
 }
 
@@ -265,19 +276,15 @@ bool BgfxShaderManager::isDirectFeedBinary(const uint8_t* data, size_t size) {
 
 bool BgfxShaderManager::coreProgramsBroken() const {
     // CORE = the pipelines the engine cannot render anything with:
-    //   - m_fallbackProgram (vsSprite+fsTexture): sprite/quad/text/blit
-    //     pipeline -- every BgfxDraw blit, BgfxQuadBatch flush,
-    //     TextRenderer pages, ParticleSystem and SmaMeshRenderer fallback
-    //     submit this program (BgfxDraw_Blit.cpp:73-79,
-    //     BgfxQuadBatch.cpp:141, TextRenderer.cpp:662/730,
-    //     ParticleSystem.cpp:43/195, SmaMeshRenderer.cpp:371-408);
+    //   - plain texture and (where supplied) modulated texture pipelines;
     //   - m_blendProgram (vsFullscreen+fsBlend): the composite/blend-mode
     //     pipeline (BgfxDraw_Effects.cpp:60-76).
     // Optional (gracefully skipped by their draw-site guards, so a failure
     // must NOT disable the renderer -- t75): transition, VFX, stretch,
     // affine, postfx stages.
     return !bgfx::isValid(m_fallbackProgram)
-        || !bgfx::isValid(m_blendProgram);
+        || !bgfx::isValid(m_blendProgram)
+        || (m_modulatedTextureRequired && !bgfx::isValid(m_modulatedTextureProgram));
 }
 
 // initEmbeddedShaders
@@ -320,14 +327,13 @@ void BgfxShaderManager::initEmbeddedShaders() {
     // D3D (raw DXBC) and Vulkan (raw SPIR-V) keep the engine wrapper.
     const bool directFeed = usesDirectFeed(isMetal, isGL, isGLESv);
 
-    Bytecode vsSprite, fsTexture, vsFullscreen, fsBlend, fsTransition, fsVfx;
+    Bytecode vsSprite, fsTexture, fsModulatedTexture, vsFullscreen, fsBlend, fsTransition, fsVfx;
     Bytecode stretchVs, stretchFs, affineVs, affineFs;
-    // Round-102 post-processing full-screen PS (vignette / LUT grade /
-    // soft blur / bloom). Compiled for D3D11/D3D12; other backends fall
-    // back to fsTexture (identity copy) so the chain stays functional
-    // (graceful degradation, no visual effect on those backends).
+    // Dedicated post-processing programs. Missing source leaves that effect
+    // unavailable; a plain texture copy does not implement the effect.
     Bytecode fsPostfxVignette, fsPostfxLut, fsPostfxBlur, fsPostfxBloom;
-    Bytecode fsPostfxLut3d; // t214: 3D LUT stage (D3D bytecode today)
+    Bytecode fsPostfxLut3d;
+    std::deque<std::string> convertedSources;
 
     if (isVulkan) {
         vsSprite   = { reinterpret_cast<const uint8_t*>(kEmbeddedVS_Sprite),
@@ -345,6 +351,7 @@ void BgfxShaderManager::initEmbeddedShaders() {
     } else if (isD3D) {
         vsSprite   = { kEmbeddedDXBC_VS_Sprite, kEmbeddedDXBC_VS_Sprite_size };
         fsTexture  = { kEmbeddedDXBC_FS_Texture, kEmbeddedDXBC_FS_Texture_size };
+        fsModulatedTexture = { kEmbeddedDXBC_fs_modulated_texture, kEmbeddedDXBC_fs_modulated_texture_size };
         vsFullscreen = { kEmbeddedDXBC_vs_fullscreen, kEmbeddedDXBC_vs_fullscreen_size };
         fsBlend    = { kEmbeddedDXBC_fs_blend, kEmbeddedDXBC_fs_blend_size };
         fsTransition = { kEmbeddedDXBC_fs_transition, kEmbeddedDXBC_fs_transition_size };
@@ -361,16 +368,15 @@ void BgfxShaderManager::initEmbeddedShaders() {
     } else if (isGL) {
         if (renderer == bgfx::RendererType::OpenGLES) {
             // device-day: ESSL text conversion on every GL bytecode
-            auto conv = [](const uint8_t* d, uint32_t n, bool frag) -> Bytecode {
-                std::string e = toEssl300(d, n, frag);
-                fprintf(stderr, "[ESSL] %s first=%s\n", frag ? "fs" : "vs", e.substr(0, 120).c_str());
-                if (e.find("tmpvar") != std::string::npos) fprintf(stderr, "[ESSL-TMPVAR] %s\n", e.c_str());
-                auto* mem = new uint8_t[e.size()];
-                memcpy(mem, e.data(), e.size());
-                return { mem, e.size() };
+            auto conv = [&convertedSources](const uint8_t* d, uint32_t n, bool frag) -> Bytecode {
+                convertedSources.push_back(toEssl300(d, n, frag));
+                const auto& source = convertedSources.back();
+                // Stable storage until buildBgfxShader copies each payload.
+                return { reinterpret_cast<const uint8_t*>(source.data()), source.size() };
             };
             vsSprite   = conv(kEmbeddedGL_vs_sprite,   uint32_t(kEmbeddedGL_vs_sprite_size), false);
             fsTexture  = conv(kEmbeddedGL_fs_texture,  uint32_t(kEmbeddedGL_fs_texture_size), true);
+            fsModulatedTexture = conv(kEmbeddedGL_fs_modulated_texture, uint32_t(kEmbeddedGL_fs_modulated_texture_size), true);
             vsFullscreen = conv(kEmbeddedGL_vs_fullscreen, uint32_t(kEmbeddedGL_vs_fullscreen_size), false);
             fsBlend    = conv(kEmbeddedGL_fs_blend,    uint32_t(kEmbeddedGL_fs_blend_size), true);
             fsTransition = conv(kEmbeddedGL_fs_transition, uint32_t(kEmbeddedGL_fs_transition_size), true);
@@ -388,6 +394,7 @@ void BgfxShaderManager::initEmbeddedShaders() {
         } else {
         vsSprite   = { kEmbeddedGL_vs_sprite, kEmbeddedGL_vs_sprite_size };
         fsTexture  = { kEmbeddedGL_fs_texture, kEmbeddedGL_fs_texture_size };
+        fsModulatedTexture = { kEmbeddedGL_fs_modulated_texture, kEmbeddedGL_fs_modulated_texture_size };
         vsFullscreen = { kEmbeddedGL_vs_fullscreen, kEmbeddedGL_vs_fullscreen_size };
         fsBlend    = { kEmbeddedGL_fs_blend, kEmbeddedGL_fs_blend_size };
         fsTransition = { kEmbeddedGL_fs_transition, kEmbeddedGL_fs_transition_size };
@@ -406,6 +413,7 @@ void BgfxShaderManager::initEmbeddedShaders() {
     } else if (isMetal) {
         vsSprite   = { kEmbeddedMetal_vs_sprite, kEmbeddedMetal_vs_sprite_size };
         fsTexture  = { kEmbeddedMetal_fs_texture, kEmbeddedMetal_fs_texture_size };
+        fsModulatedTexture = { kEmbeddedMetal_fs_modulated_texture, kEmbeddedMetal_fs_modulated_texture_size };
         vsFullscreen = { kEmbeddedMetal_vs_fullscreen, kEmbeddedMetal_vs_fullscreen_size };
         fsBlend    = { kEmbeddedMetal_fs_blend, kEmbeddedMetal_fs_blend_size };
         fsTransition = { kEmbeddedMetal_fs_transition, kEmbeddedMetal_fs_transition_size };
@@ -427,24 +435,27 @@ void BgfxShaderManager::initEmbeddedShaders() {
     if (stretchVs.size == 0) { stretchVs = vsSprite; stretchFs = fsTexture; }
     if (affineVs.size == 0)  { affineVs  = vsSprite; affineFs  = fsTexture; }
 
-    // Post-processing chain: only D3D ships dedicated PS bytecode today.
-    // On GL/Metal/Vulkan the full-screen PS falls back to the plain texture
-    // copy (identity) so the chain still runs (stages composite as copies).
-    if (fsPostfxVignette.size == 0) fsPostfxVignette = fsTexture;
-    if (fsPostfxLut.size == 0)      fsPostfxLut      = fsTexture;
-    if (fsPostfxBlur.size == 0)     fsPostfxBlur     = fsTexture;
-    if (fsPostfxBloom.size == 0)    fsPostfxBloom    = fsTexture;
-    // t214: Lut3D ships D3D bytecode; GL/Metal/Vulkan fall back to the
-    // identity copy (same policy as the other postfx PS above) until the
-    // shaderc-generated arrays are regen'd (shaders/compile_shaders.bat).
-    if (fsPostfxLut3d.size == 0)    fsPostfxLut3d    = fsTexture;
-
     if (!vsSprite.data || vsSprite.size == 0 ||
         !fsTexture.data || fsTexture.size == 0) {
         printf("[BgfxShaderManager] No embedded shaders for %s. "
                "Debug text only.\n", bgfx::getRendererName(renderer));
         return;
     }
+
+    // Desktop GL reflects custom uniforms once during program creation. Some
+    // generated source containers have no uniform records for createShader to
+    // register automatically, so every referenced name must already exist.
+    m_u_color = bgfx::createUniform("u_color", bgfx::UniformType::Vec4);
+    m_u_blendParams = bgfx::createUniform("BlendParams", bgfx::UniformType::Vec4, 2);
+    m_u_transParams = bgfx::createUniform("TransParams", bgfx::UniformType::Vec4, 1);
+    m_u_vfxParams = bgfx::createUniform("VFXParams", bgfx::UniformType::Vec4, 3);
+    m_u_stretchParams = bgfx::createUniform("StretchParams", bgfx::UniformType::Vec4, 1);
+    m_u_affineParams = bgfx::createUniform("AffineParams", bgfx::UniformType::Vec4, 4);
+    m_u_postfxParams = bgfx::createUniform("PostFxParams", bgfx::UniformType::Vec4, 4);
+    getDefaultSampler();
+    getSampler1();
+    getSampler2();
+    getLutSampler();
 
     auto buildProgram = [&](const Bytecode& vs, const Bytecode& selectedFragment,
                             const char* name,
@@ -524,8 +535,21 @@ void BgfxShaderManager::initEmbeddedShaders() {
     };
 
     m_fallbackProgram = buildProgram(vsSprite, fsTexture, "Fallback", nullptr);
-    m_blendProgram = buildProgram(vsFullscreen, fsBlend, "Blend", nullptr);
-    m_transitionProgram = buildProgram(vsFullscreen, fsTransition, "Transition", nullptr);
+    const ShaderUniformMetadata colorParams = {
+        "u_color", uint8_t(bgfx::UniformType::Vec4) | kUniformFragmentBit, 1, 0, 1, 16
+    };
+    m_modulatedTextureRequired = isD3D || isGL || isMetal;
+    if (m_modulatedTextureRequired) {
+        m_modulatedTextureProgram = buildProgram(vsSprite, fsModulatedTexture, "ModulatedTexture", &colorParams);
+    }
+    const ShaderUniformMetadata blendParams = {
+        "BlendParams", uint8_t(bgfx::UniformType::Vec4) | kUniformFragmentBit, 2, 0, 2, 32
+    };
+    const ShaderUniformMetadata transitionParams = {
+        "TransParams", uint8_t(bgfx::UniformType::Vec4) | kUniformFragmentBit, 1, 0, 1, 16
+    };
+    m_blendProgram = buildProgram(vsFullscreen, fsBlend, "Blend", &blendParams);
+    m_transitionProgram = buildProgram(vsFullscreen, fsTransition, "Transition", &transitionParams);
     m_vfxProgram = buildProgram(vsFullscreen, fsVfx, "VFX", &vfxParams);
     m_stretchProgram = buildProgram(stretchVs, stretchFs, "StretchBlt", nullptr);
     m_affineProgram = buildProgram(affineVs, affineFs, "AffineBlt", nullptr);
@@ -541,20 +565,12 @@ void BgfxShaderManager::initEmbeddedShaders() {
     m_postfxBlur     = buildProgram(vsFullscreen, fsPostfxBlur,     "PostFxSoftBlur",  &postfxParams);
     m_postfxBloom    = buildProgram(vsFullscreen, fsPostfxBloom,    "PostFxBloom",     &postfxParams);
     m_postfxLut3d    = buildProgram(vsFullscreen, fsPostfxLut3d,    "PostFxLut3D",     &postfxParams);
-    m_u_postfxParams = bgfx::createUniform("PostFxParams", bgfx::UniformType::Vec4, 4);
 
     // Verify fallback program is valid before registering
     if (!bgfx::isValid(m_fallbackProgram)) {
         DEBUG_ERR(SubSys::Render, ErrCode::Ok,
                   "[BgfxShaderManager] FALLBACK PROGRAM INVALID, all rendering disabled!");
     }
-
-    // -- Create uniform handles for effect cbuffers -------------------
-    m_u_blendParams = bgfx::createUniform("BlendParams",  bgfx::UniformType::Vec4, 2);
-    m_u_transParams = bgfx::createUniform("TransParams",  bgfx::UniformType::Vec4, 1);
-    m_u_vfxParams   = bgfx::createUniform("VFXParams",    bgfx::UniformType::Vec4, 3);
-    m_u_stretchParams = bgfx::createUniform("StretchParams", bgfx::UniformType::Vec4, 1);
-    m_u_affineParams  = bgfx::createUniform("AffineParams",  bgfx::UniformType::Vec4, 4);
 
     // -- Register with ShaderCache -------------------------------------
     if (bgfx::isValid(m_blendProgram)) {

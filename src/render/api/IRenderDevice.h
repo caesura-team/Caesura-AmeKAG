@@ -67,6 +67,8 @@ struct RenderRuntimeInfo {
     int width = 0;
     int height = 0;
     int viewCount = 0;
+    // The device can render with every required core program. Optional effect
+    // failures do not clear this; Noop, IFH, loss and shutdown never set it.
     bool shaderReady = false;
 };
 
@@ -270,6 +272,9 @@ public:
     // -- Shader / Sampler access (for ParticleSystem and other GPU systems) --
     virtual RenderUniformHandle getDefaultSampler() const = 0;
     virtual RenderProgramHandle getFallbackProgram() const = 0;
+    // RGBA texture multiplied by the per-draw u_color vec4. Invalid when this
+    // backend has no such program; the plain fallback does not imply support.
+    virtual RenderProgramHandle getModulatedTextureProgram() const = 0;
 
     // Backend identification --------------------------------------------
     virtual const char* getBackendName() const = 0;

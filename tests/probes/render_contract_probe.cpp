@@ -143,6 +143,9 @@ public:
         SDL_SetNumberProperty(properties, SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER, width);
         SDL_SetNumberProperty(properties, SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER, height);
         SDL_SetBooleanProperty(properties, SDL_PROP_WINDOW_CREATE_HIDDEN_BOOLEAN, true);
+        // No nonclient frame: monitor DPI changes must not round the requested
+        // fixture client area while the hidden window grows across displays.
+        SDL_SetBooleanProperty(properties, SDL_PROP_WINDOW_CREATE_BORDERLESS_BOOLEAN, true);
         window_ = SDL_CreateWindowWithProperties(properties);
         SDL_DestroyProperties(properties);
         width_ = width; height_ = height;
@@ -167,6 +170,7 @@ public:
     void setFullscreen(bool value) override { if (window_) SDL_SetWindowFullscreen(window_, value); }
     void resizeWindow(int width, int height) override {
         require(window_ && SDL_SetWindowSize(window_, width, height), "SDL resize failed");
+        require(SDL_SyncWindow(window_), "SDL resize synchronization failed");
         width_ = width; height_ = height;
         SDL_PumpEvents();
     }
@@ -206,7 +210,7 @@ public:
         report_ = {{"schema_version", 1}, {"font_path", contract.at("path")}, {"font_sha256", sha(bytes_)},
             {"freetype_version", std::to_string(major) + "." + std::to_string(minor) + "." + std::to_string(patch)},
             {"pixel_size", contract.at("pixel_size")}, {"load_flags", "FT_LOAD_DEFAULT"},
-            {"render_mode", "FT_RENDER_MODE_NORMAL"}, {"sampling", "pixel-center-bilinear"},
+            {"render_mode", "FT_RENDER_MODE_NORMAL"}, {"sampling", "pixel-center-bilinear-zero-extended"},
             {"ascender", face_->size->metrics.ascender / 64.0}, {"references", json::array()}};
     }
     struct Raster { uint32_t codepoint = 0; unsigned index = 0; int left = 0, top = 0, w = 0, h = 0, advance = 0; Bytes alpha; };
@@ -267,9 +271,12 @@ public:
                 auto sample = [&](int sx, int sy) -> double {
                     return sx >= 0 && sy >= 0 && sx < g.w && sy < g.h ? g.alpha[size_t(sy) * g.w + sx] : 0.0;
                 };
-                for (int py = std::max(0, int(std::floor(top))); py < std::min(height, int(std::ceil(top + h))); ++py) {
-                    for (int px = std::max(0, int(std::floor(left))); px < std::min(width, int(std::ceil(left + w))); ++px) {
-                        if (px + .5 < left || px + .5 >= left + w || py + .5 < top || py + .5 >= top + h) continue;
+                // The zero-extended FT bitmap has bilinear support half a
+                // source texel outside its ink rectangle. Do not clip that
+                // support to an API-specific polygon edge inclusion rule.
+                const double halo = .5 * scale;
+                for (int py = std::max(0, int(std::floor(top - halo))); py < std::min(height, int(std::ceil(top + h + halo))); ++py) {
+                    for (int px = std::max(0, int(std::floor(left - halo))); px < std::min(width, int(std::ceil(left + w + halo))); ++px) {
                         const double sx = (px + .5 - left) / scale - .5, sy = (py + .5 - top) / scale - .5;
                         const int x0 = int(std::floor(sx)), y0 = int(std::floor(sy));
                         const double fx = sx - x0, fy = sy - y0;
@@ -447,12 +454,15 @@ public:
             }
         }
     }
-    void frame(const json& definition, const std::function<void()>& drawScene) {
+    void frame(const json& definition, const std::function<void()>& drawScene,
+               const std::function<void()>& afterBegin = {}) {
         const std::string id = definition.at("id"); checkpoint(id + ":before-frame");
         require(definition.at("width") == width_ && definition.at("height") == height_, "Capture requires a real resize first");
         Bytes coverage;
         if (definition.contains("font")) coverage = font_->capture(definition, options_.output);
-        begin(color(definition.at("background"))); drawScene(); drawFonts(definition);
+        begin(color(definition.at("background")));
+        if (afterBegin) afterBegin();
+        drawScene(); drawFonts(definition);
         device().commit_frame();
         auto result = device().requestScreenshot(ScreenshotOptions{});
         require(result.status == ScreenshotStatus::Pending && bool(result.ticket), "Actual screenshot admission failed");
@@ -524,7 +534,9 @@ private:
     void resize(int width, int height) {
         platform_->resizeWindow(width, height);
         const auto size = platform_->drawableSize();
-        require(size[0] == width && size[1] == height, "Actual drawable size differs from fixed pixel recipe");
+        require(size[0] == width && size[1] == height,
+            "Actual drawable size " + std::to_string(size[0]) + "x" + std::to_string(size[1])
+            + " differs from requested " + std::to_string(width) + "x" + std::to_string(height));
         device().setPresentSize(width, height); device().resize(width, height);
         width_ = width; height_ = height;
     }
@@ -600,6 +612,9 @@ void ContractProbe::fillCase() {
     const auto& recipe = definition_.at("recipe");
     const auto sentinel = color(recipe.at("sentinel")), a = color(recipe.at("A")), b = color(recipe.at("B"));
     makeTarget(96, 96);
+    const auto& orientation = recipe.at("orientation");
+    const auto topColor = solid(color(orientation.at("top")));
+    const auto bottomColor = solid(color(orientation.at("bottom")));
     bool rebuilt = false, resized = false, returned = false;
     for (const auto& capture : definition_.at("captures")) {
         const std::string id = capture.at("id");
@@ -619,7 +634,16 @@ void ContractProbe::fillCase() {
         }
         frame(capture, [&] {
             targetClear(sentinel);
-            if (id != "fill-control") {
+            if (id == "rtt-orientation") {
+                // Real draws into the same RTT used by fill/recreation. The
+                // logical canvas maps to the 96x96 target through VIEW_RTT.
+                const auto drawHalf = [&](uint32_t owner, const json& rect) {
+                    device().blitTexture(VIEW_RTT, textures_->getTextureHandle(owner),
+                        rect[0], rect[1], rect[2], rect[3], 255);
+                };
+                drawHalf(topColor, orientation.at("top_rect_xywh"));
+                drawHalf(bottomColor, orientation.at("bottom_rect_xywh"));
+            } else if (id != "fill-control") {
                 const auto c = id == "fill-first-a" || id == "fill-same-a" || id == "recreated" ? a : b;
                 device().fillViewport(target_, c[0], c[1], c[2], c[3]);
             }
@@ -668,6 +692,94 @@ void ContractProbe::lutCase() {
     }
     for (const auto& capture : definition_.at("captures")) {
         device().clearPostFx();
+        const std::string captureId = capture.at("id");
+        if (captureId.starts_with("postfx-")) {
+            const auto& lifecycle = recipe.at("postfx_lifecycle");
+            const auto& scenarios = lifecycle.at("scenarios");
+            const auto scenario = std::find_if(scenarios.begin(), scenarios.end(), [&](const json& value) {
+                return value.at("capture_id") == captureId;
+            });
+            require(scenario != scenarios.end(), "Unknown lifecycle observation");
+            require(captured_.contains("borrowed-after-clear"), "Lifecycle extension must follow all v2 observations");
+            const int width = lifecycle.at("canvas").at(0), height = lifecycle.at("canvas").at(1);
+            if (width_ != width || height_ != height) resize(width, height);
+            const std::string mode = scenario->at("mode");
+            require(mode == "destroy-last" || mode == "invalid-only" || mode == "clear-after-begin"
+                || mode == "swap-invalid-tail", "Unknown lifecycle operation sequence");
+            IRenderDevice::PostFxHandle valid = 0;
+            bool destroyed = false, clearedAfterBegin = false;
+            json requests = json::array();
+            if (mode != "invalid-only") {
+                const auto& definition = lifecycle.at("valid_lut");
+                const int size = definition.at("lut_size");
+                const std::string transform = definition.at("transform");
+                IRenderDevice::PostFxParams params;
+                params.strength = definition.at("strength");
+                params.lutSize = static_cast<uint8_t>(size);
+                params.lutTexture = texture(cubes.at({size, transform}));
+                valid = device().createPostFx(IRenderDevice::PostFxKind::Lut3D, params);
+                require(valid != 0, "Lifecycle positive setup requires a real valid LUT stage");
+                if (mode == "destroy-last") {
+                    device().destroyPostFx(valid);
+                    destroyed = true;
+                }
+            }
+            for (const auto& invalid : scenario->at("invalid_requests")) {
+                IRenderDevice::PostFxParams params;
+                params.strength = invalid.at("strength");
+                params.lutSize = invalid.at("lut_size").get<uint8_t>();
+                const std::string source = invalid.at("texture");
+                require(source == "swap-16" || source == "invalid", "Unknown invalid-input texture selector");
+                params.lutTexture = source == "swap-16" ? texture(cubes.at({16, "swap_rb"})) : RenderTextureHandle{};
+                const auto handle = device().createPostFx(IRenderDevice::PostFxKind::Lut3D, params);
+                requests.push_back({{"label", invalid.at("label")}, {"handle", handle},
+                    {"result", handle == 0 ? "rejected" : "accepted-requires-identity-pixels"}});
+            }
+            const bool activeBeforeBegin = device().isPostFxActive();
+            std::function<void()> afterBegin;
+            if (mode == "clear-after-begin") {
+                require(scenario->at("after_begin") == "clear-postfx", "Mid-frame clear hook changed");
+                afterBegin = [&] {
+                    checkpoint(captureId + ":after-begin-before-clear");
+                    device().clearPostFx();
+                    clearedAfterBegin = true;
+                };
+            } else require(scenario->at("after_begin") == "none", "Unexpected lifecycle frame hook");
+            frame(capture, [&] {
+                for (size_t i = 0; i < patches.size(); ++i) draw(patches[i], recipe.at("patches")[i].at("rect_xywh"));
+            }, afterBegin);
+            const bool completed = report_["checks"][checks_.at("capture:" + captureId)]["passed"].get<bool>();
+            const bool sequence = (mode != "destroy-last" || destroyed)
+                && (mode != "clear-after-begin" || clearedAfterBegin)
+                && requests.size() == scenario->at("invalid_requests").size();
+            check(scenario->at("check_id"), completed && sequence,
+                {{"operation", mode}, {"valid_stage_handle", valid}, {"invalid_requests", requests},
+                 {"before_begin", scenario->at("before_begin")}, {"after_begin", scenario->at("after_begin")},
+                 {"observed_active_before_begin", activeBeforeBegin}, {"observed_active_after_frame", device().isPostFxActive()},
+                 {"completed_ticket", completed}, {"pixel_acceptance", "Independent baseline/swap reference; active flags are observations only"}});
+            continue;
+        }
+        if (capture.at("id") == "borrowed-after-clear") {
+            const auto& observation = recipe.at("borrowed_after_clear");
+            require(captured_.contains("cleared") && !device().isPostFxActive(),
+                "Borrowed atlas observation must follow the original cleared capture");
+            const auto& canvas = observation.at("canvas");
+            resize(canvas.at(0), canvas.at(1));
+            frame(capture, [&] {
+                // These are the original manager-owned LUTs from above. Do not
+                // create/reload a texture to make this post-clear use succeed.
+                for (const auto& atlas : observation.at("atlases")) {
+                    const int size = atlas.at("lut_size");
+                    const std::string transform = atlas.at("transform");
+                    const auto id = cubes.at({size, transform});
+                    const auto& rect = atlas.at("rect_xywh");
+                    require(rect.at(2) == size * size && rect.at(3) == size,
+                        "Borrowed atlas must be drawn at one source texel per output pixel");
+                    draw(id, rect);
+                }
+            });
+            continue;
+        }
         const auto& params = capture.at("parameters"); const int size = params.at("lut_size");
         if (size) {
             IRenderDevice::PostFxParams effect;
@@ -681,9 +793,17 @@ void ContractProbe::lutCase() {
         });
     }
     device().clearPostFx();
-    bool alive = true;
-    for (const auto& [key, id] : cubes) alive = alive && textures_->isValid(id) && texture(id).isValid();
-    check("lut_borrowed_texture_alive", alive);
+    json owners = json::array();
+    for (const auto& atlas : recipe.at("borrowed_after_clear").at("atlases")) {
+        const int size = atlas.at("lut_size");
+        const std::string transform = atlas.at("transform");
+        owners.push_back({{"lut_size", size}, {"transform", transform}, {"manager_id", cubes.at({size, transform})}});
+    }
+    const bool completed = captured_.contains("borrowed-after-clear")
+        && report_["checks"][checks_.at("capture:borrowed-after-clear")]["passed"].get<bool>();
+    check("lut_borrowed_texture_alive", completed && owners.size() == 4 && !device().isPostFxActive(),
+        {{"observation", "Original LUT owner IDs reused by real GPU draws after clear; independent Python atlas pixels decide liveness"},
+         {"capture_id", "borrowed-after-clear"}, {"completed_ticket", completed}, {"owners", owners}});
 }
 
 void ContractProbe::optionalCase() {
@@ -750,7 +870,7 @@ int wmain(int argc, wchar_t** argv) {
         options = arguments(argc, argv);
         const auto bytes = readBytes(options.manifest, 1024 * 1024);
         manifest = json::parse(bytes);
-        require(manifest.at("schema_version") == 1 && manifest.at("suite_id") == "u16-render-contracts-v1", "Unsupported manifest");
+        require(manifest.at("schema_version") == 1 && manifest.at("suite_id") == "u16-render-contracts-v4", "Unsupported manifest");
         const auto& cases = manifest.at("cases");
         const auto found = std::find_if(cases.begin(), cases.end(), [&](const json& value) { return value.at("id") == options.caseId; });
         require(found != cases.end(), "Case absent from manifest");

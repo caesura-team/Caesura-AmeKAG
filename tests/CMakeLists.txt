@@ -409,6 +409,16 @@ if(Python3_EXECUTABLE)
         TIMEOUT 120
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
     )
+    add_test(
+        NAME CaesuraRenderShaderGeneration
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_generate_render_shaders.py
+    )
+    set_tests_properties(CaesuraRenderShaderGeneration PROPERTIES
+        LABELS "qa;render;shaders"
+        TIMEOUT 60
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    )
     # Validate this build/configuration's engine and Lua interpreter. Explicit
     # paths propagate through the real CLI, including package precompilation.
     # Missing products are failures; unconfigured manual runs retain discovery.

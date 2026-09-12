@@ -98,6 +98,7 @@ public:
     void flushAllRTT() override;
 
     RenderProgramHandle getFallbackProgram() const override;
+    RenderProgramHandle getModulatedTextureProgram() const override;
     RenderUniformHandle getDefaultSampler() const override;
 
     // Raw engine fallback program (passthrough VS + texture FS) for
@@ -128,7 +129,7 @@ public:
     void setPostFxParams(PostFxHandle handle, const PostFxParams& params) override;
     void destroyPostFx(PostFxHandle handle) override;
     void clearPostFx() override;
-    bool isPostFxActive() const override { return !m_postFxStages.empty(); }
+    bool isPostFxActive() const override;
 
     // -- Batch protocol (spec [0.3])
     void beginBatch() override;

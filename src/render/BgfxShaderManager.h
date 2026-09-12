@@ -45,10 +45,15 @@ public:
     // shader binary a renderer can consume directly (binary-in-binary inputs
     // and truncated buffers return false).
     static bool isDirectFeedBinary(const uint8_t* data, size_t size);
+    // CPU conversion of the generated desktop-GL payload for the legacy GLES
+    // loader. This is source preparation, not proof of device compilation.
+    static std::string toEssl300(const uint8_t* code, uint32_t size, bool fragment);
     int  shaderBuildFailures() const { return m_buildFailures; }
     bool coreProgramsBroken() const;
 
     bgfx::ProgramHandle getFallbackProgram()    const { return m_fallbackProgram; }
+    bgfx::ProgramHandle getModulatedTextureProgram() const { return m_modulatedTextureProgram; }
+    bgfx::UniformHandle getColorUniform() const { return m_u_color; }
     bgfx::ProgramHandle getBlendProgram()       const { return m_blendProgram; }
     bgfx::ProgramHandle getTransitionProgram()  const { return m_transitionProgram; }
     bgfx::ProgramHandle getVFXProgram()         const { return m_vfxProgram; }
@@ -68,6 +73,11 @@ public:
         if (!bgfx::isValid(m_texSampler2))
             m_texSampler2 = bgfx::createUniform("s_texture2", bgfx::UniformType::Sampler);
         return m_texSampler2;
+    }
+    bgfx::UniformHandle getLutSampler() const {
+        if (!bgfx::isValid(m_lutSampler))
+            m_lutSampler = bgfx::createUniform("s_lut", bgfx::UniformType::Sampler);
+        return m_lutSampler;
     }
     bgfx::UniformHandle getBlendParams()        const { return m_u_blendParams; }
     bgfx::UniformHandle getTransParams()        const { return m_u_transParams; }
@@ -90,6 +100,9 @@ public:
 
 private:
     bgfx::ProgramHandle m_fallbackProgram    = BGFX_INVALID_HANDLE;
+    bgfx::ProgramHandle m_modulatedTextureProgram = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle m_u_color = BGFX_INVALID_HANDLE;
+    bool m_modulatedTextureRequired = false;
     bgfx::ProgramHandle m_blendProgram       = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_transitionProgram  = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_vfxProgram         = BGFX_INVALID_HANDLE;
@@ -98,6 +111,7 @@ private:
     mutable bgfx::UniformHandle m_texSampler  = BGFX_INVALID_HANDLE;
     mutable bgfx::UniformHandle m_texSampler1 = BGFX_INVALID_HANDLE;
     mutable bgfx::UniformHandle m_texSampler2 = BGFX_INVALID_HANDLE;
+    mutable bgfx::UniformHandle m_lutSampler = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle m_u_blendParams      = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle m_u_transParams      = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle m_u_vfxParams        = BGFX_INVALID_HANDLE;

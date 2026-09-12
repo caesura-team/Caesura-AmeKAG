@@ -1,4 +1,4 @@
-﻿// Caesura (AmeKAG) - Fullscreen Quad VS (HLSL vs_4_0)
+// Caesura (AmeKAG) - Fullscreen Quad VS (HLSL vs_4_0)
 // Uses standard POSITION+TEXCOORD0 vertex input (not SV_VertexID)
 // for bgfx compatibility. Caller passes a fullscreen quad in NDC.
 struct VSInput {

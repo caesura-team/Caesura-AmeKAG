@@ -128,6 +128,7 @@ public:
     // -- shaders / sampler --
     RenderUniformHandle getDefaultSampler() const override { return {}; }
     RenderProgramHandle getFallbackProgram() const override { return {}; }
+    RenderProgramHandle getModulatedTextureProgram() const override { return {}; }
 
     // -- backend identification --
     const char* getBackendName() const override { return "CountingRenderDevice"; }

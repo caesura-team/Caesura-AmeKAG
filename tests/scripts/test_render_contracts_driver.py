@@ -20,6 +20,38 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'scripts'))
 import verify_render_contracts as driver
 
+LIFECYCLE_IDS = ('postfx-destroy-last', 'postfx-invalid-only', 'postfx-clear-after-begin', 'postfx-swap-invalid-tail')
+LIFECYCLE_CHECKS = ('postfx_destroy_last_exercised', 'postfx_invalid_only_exercised',
+                    'postfx_clear_after_begin_exercised', 'postfx_swap_invalid_tail_exercised')
+
+
+def without_v4_extension(value):
+    result = copy.deepcopy(value)
+    if result['suite_id'] == 'u16-render-contracts-v4':
+        result['suite_id'] = 'u16-render-contracts-v3'
+        result['font']['sampling'] = 'pixel-center-bilinear'
+        rtt = next(case for case in result['cases'] if case['id'] == 'rtt-fill-resize')
+        rtt['captures'] = [c for c in rtt['captures'] if c['id'] != 'rtt-orientation']
+        rtt['required_checks'].remove('capture:rtt-orientation')
+        del rtt['recipe']['orientation']
+    return result
+
+
+def without_v3_extension(value):
+    result = without_v4_extension(value)
+    if result['suite_id'] == 'u16-render-contracts-v3':
+        result['suite_id'] = 'u16-render-contracts-v2'
+        lut = next(case for case in result['cases'] if case['id'] == 'lut3d')
+        lut['captures'] = [capture for capture in lut['captures'] if capture['id'] not in LIFECYCLE_IDS]
+        lut['required_checks'] = [check for check in lut['required_checks']
+            if check not in LIFECYCLE_CHECKS and check not in ['capture:' + name for name in LIFECYCLE_IDS]]
+        del lut['recipe']['postfx_lifecycle']
+    return result
+
+
+def borrowed_capture(case):
+    return next(capture for capture in case['captures'] if capture['id'] == 'borrowed-after-clear')
+
 
 def digest(data):
     return hashlib.sha256(data).hexdigest()
@@ -73,6 +105,11 @@ def remove_directory_link(link):
 
 def png(width, height, rgba, filters=None, interlace=0):
     """Encode tiny synthetic RGBA fixtures; never a screenshot producer."""
+    if filters is None:
+        stride = width * 4
+        rows = b''.join(b'\0' + rgba[y * stride:(y + 1) * stride] for y in range(height))
+        return (b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', width, height, 8, 6, 0, 0, interlace))
+                + chunk(b'IDAT', zlib.compress(rows)) + chunk(b'IEND', b''))
     rows = []
     stride = width * 4
     previous = bytes(stride)
@@ -164,6 +201,62 @@ class SyntheticFixture:
     def save_receipt(self, receipt):
         self.write_receipt_at(self.output, receipt)
 
+    def write_synthetic_lut_case(self):
+        """Independent integer fixture math, never driver.expected_rgb or a GPU."""
+        receipt = self.receipt()
+        recipe = self.case['recipe']
+        for index, capture in enumerate(self.case['captures']):
+            width, height = capture['width'], capture['height']
+            name = capture['id']
+            if name == 'borrowed-after-clear':
+                raw = bytearray(bytes(capture['background']) * (width * height))
+                for atlas in recipe['borrowed_after_clear']['atlases']:
+                    n = atlas['lut_size']
+                    left, top, _, _ = atlas['rect_xywh']
+                    # Exact rational rounding for the independently generated
+                    # synthetic input: denominators 15/63 have no half ties.
+                    steps = [(2 * value * 255 + n - 1) // (2 * (n - 1)) for value in range(n)]
+                    for green in range(n):
+                        row = bytearray()
+                        for blue in range(n):
+                            for red in range(n):
+                                rgb = [steps[red], steps[green], steps[blue]]
+                                if atlas['transform'] == 'swap_rb': rgb.reverse()
+                                row.extend(rgb + [255])
+                        offset = ((top + green) * width + left) * 4
+                        raw[offset:offset + len(row)] = row
+            else:
+                params = capture['parameters']
+                strength = params['strength'] if params['lut_size'] else 0
+                def transformed(rgb):
+                    mapped = list(reversed(rgb)) if params['transform'] == 'swap_rb' else list(rgb)
+                    if strength == 0: return list(rgb)
+                    if strength == .5: return [(source + target + 1) // 2 for source, target in zip(rgb, mapped)]
+                    if strength != 1: raise AssertionError('Unknown fixed synthetic LUT strength')
+                    return mapped
+                raw = bytearray(bytes(transformed(capture['background'][:3]) + [255]) * (width * height))
+                for patch in recipe['patches']:
+                    left, top, w, h = patch['rect_xywh']
+                    pixel = bytes(transformed(patch['rgb']) + [255])
+                    for y in range(top, top + h):
+                        raw[(y * width + left) * 4:(y * width + left + w) * 4] = pixel * w
+            encoded = png(width, height, raw)
+            (self.output / f'{name}.png').write_bytes(encoded)
+            (self.output / f'{name}.rgba').write_bytes(raw)
+            receipt['captures'].append({'id': name, 'png': f'{name}.png', 'rgba': f'{name}.rgba',
+                'width': width, 'height': height, 'png_sha256': digest(encoded), 'rgba_sha256': digest(raw),
+                'ticket': {'request_id': index + 1, 'generation': 7, 'frame_id': index + 1, 'status': 'Completed'}})
+        self.save_receipt(receipt)
+        return receipt
+
+    def replace_capture_pixels(self, receipt, name, raw):
+        capture = next(value for value in receipt['captures'] if value['id'] == name)
+        encoded = png(capture['width'], capture['height'], raw)
+        (self.output / capture['rgba']).write_bytes(raw)
+        (self.output / capture['png']).write_bytes(encoded)
+        capture['rgba_sha256'], capture['png_sha256'] = digest(raw), digest(encoded)
+        self.save_receipt(receipt)
+
     def write_receipt_at(self, output, receipt=None):
         (output / 'result.json').write_text(json.dumps(receipt or self.receipt()), encoding='utf-8')
         (output / 'checkpoint.json').write_text(json.dumps({
@@ -239,7 +332,7 @@ class RenderContractDriverTests(unittest.TestCase):
         manifest = driver.load_manifest(ROOT / 'tests/projects/render_contracts/manifest.json')
         self.assertEqual([case['id'] for case in manifest['cases']], list(driver.CASE_IDS))
         self.assertEqual(manifest['required_backends'], ['dx11', 'opengl'])
-        self.assertEqual(sum(len(case['captures']) for case in manifest['cases']), 35)
+        self.assertEqual(sum(len(case['captures']) for case in manifest['cases']), 41)
 
     def test_manifest_rejects_missing_cases_extra_backend_and_relaxed_threshold(self):
         fixture = self.fixture()
@@ -658,10 +751,207 @@ class RenderContractDriverTests(unittest.TestCase):
         fixture=self.fixture().canonical_inputs()
         fixture.manifest_file.write_text(json.dumps(fixture.manifest,sort_keys=True,ensure_ascii=True,indent=4),encoding='utf-8')
         parsed=driver.load_manifest(fixture.manifest_file)
-        self.assertEqual(driver.canonical_manifest_sha256(parsed),'37e8832971dac6a1c440caac54f14e2efebf2c5707b58623dea4c6af1be97095')
+        self.assertEqual(driver.canonical_manifest_sha256(parsed),'87454abdd3448c49d271419d90b95217b84576ce9e1461a1d4073be0ed4ad064')
         parsed['cases'][0]['captures'][0]['background'][0]+=1
         fixture.manifest_file.write_text(json.dumps(parsed),encoding='utf-8')
         with self.assertRaises(driver.ContractError): driver.load_manifest(fixture.manifest_file)
+
+    def test_v2_extension_preserves_the_exact_v1_contract(self):
+        manifest = without_v3_extension(json.loads((ROOT / 'tests/projects/render_contracts/manifest.json').read_text(encoding='utf-8')))
+        self.assertEqual(manifest['suite_id'], 'u16-render-contracts-v2')
+        lut = next(case for case in manifest['cases'] if case['id'] == 'lut3d')
+        self.assertEqual(lut['captures'][-1]['id'], 'borrowed-after-clear')
+        self.assertEqual((lut['captures'][-1]['width'], lut['captures'][-1]['height']), (4096, 224))
+        self.assertEqual([atlas['rect_xywh'] for atlas in lut['recipe']['borrowed_after_clear']['atlases']],
+                         [[0,0,256,16], [0,32,256,16], [0,64,4096,64], [0,144,4096,64]])
+        lut['captures'].pop()
+        lut['required_checks'].remove('capture:borrowed-after-clear')
+        del lut['recipe']['borrowed_after_clear']
+        manifest['suite_id'] = 'u16-render-contracts-v1'
+        self.assertEqual(driver.canonical_manifest_sha256(manifest),
+                         '37e8832971dac6a1c440caac54f14e2efebf2c5707b58623dea4c6af1be97095')
+
+    def test_lut_texel_formula_uses_predeclared_indices(self):
+        self.assertEqual(driver.expected_rgb({'kind':'lut_texel','size':16,'indices':[3,7,11],'transform':'identity'}), [51,119,187])
+        self.assertEqual(driver.expected_rgb({'kind':'lut_texel','size':16,'indices':[3,7,11],'transform':'swap_rb'}), [187,119,51])
+        self.assertEqual(driver.expected_rgb({'kind':'lut_texel','size':64,'indices':[9,27,51],'transform':'identity'}), [36,109,206])
+        self.assertEqual(driver.expected_rgb({'kind':'lut_texel','size':64,'indices':[54,5,17],'transform':'swap_rb'}), [69,20,219])
+        for indices in ([16,0,0], [-1,0,0], [True,0,0]):
+            with self.assertRaises(driver.ContractError):
+                driver.expected_rgb({'kind':'lut_texel','size':16,'indices':indices,'transform':'identity'})
+
+    def test_alive_claim_cannot_replace_any_of_the_four_atlas_images(self):
+        fixture = self.fixture('lut3d')
+        self.assertIn('borrowed-after-clear', [capture['id'] for capture in fixture.case['captures']])
+        original = fixture.write_synthetic_lut_case()
+        self.assertTrue(fixture.validate()['passed'])
+        capture = next(c for c in original['captures'] if c['id'] == 'borrowed-after-clear')
+        old = (fixture.output / capture['rgba']).read_bytes()
+        for atlas in fixture.case['recipe']['borrowed_after_clear']['atlases']:
+            with self.subTest(size=atlas['lut_size'], transform=atlas['transform']):
+                raw = bytearray(old)
+                left, top, width, height = atlas['rect_xywh']
+                for y in range(top, top + height):
+                    raw[(y * 4096 + left) * 4:(y * 4096 + left + width) * 4] = bytes([18,35,52,255]) * width
+                receipt = copy.deepcopy(original)
+                fixture.replace_capture_pixels(receipt, 'borrowed-after-clear', raw)
+                self.assertTrue(next(check['passed'] for check in receipt['checks'] if check['id']=='lut_borrowed_texture_alive'))
+                result = fixture.validate()
+                self.assertFalse(result['passed'])
+                self.assertTrue(any('borrowed-after-clear' in error for error in result['errors']), result['errors'])
+
+    def test_asymmetric_texels_detect_identity_in_place_of_swap_atlas(self):
+        fixture = self.fixture('lut3d')
+        self.assertIn('borrowed-after-clear', [capture['id'] for capture in fixture.case['captures']])
+        receipt = fixture.write_synthetic_lut_case()
+        self.assertTrue(fixture.validate()['passed'])
+        raw = bytearray((fixture.output / next(c for c in receipt['captures'] if c['id'] == 'borrowed-after-clear')['rgba']).read_bytes())
+        for y in range(16):
+            raw[((32 + y) * 4096) * 4:((32 + y) * 4096 + 256) * 4] = raw[(y * 4096) * 4:(y * 4096 + 256) * 4]
+        # The four corner RGBs of identity/swap are identical. Only the fixed
+        # asymmetric interior indices can detect this substituted atlas.
+        fixture.replace_capture_pixels(receipt, 'borrowed-after-clear', raw)
+        result = fixture.validate()
+        self.assertFalse(result['passed'])
+        self.assertTrue(any('borrowed-after-clear' in error for error in result['errors']), result['errors'])
+
+    def test_missing_borrowed_capture_fails_even_with_alive_check_true(self):
+        fixture = self.fixture('lut3d')
+        self.assertIn('borrowed-after-clear', [capture['id'] for capture in fixture.case['captures']])
+        receipt = fixture.write_synthetic_lut_case()
+        self.assertTrue(fixture.validate()['passed'])
+        receipt['captures'] = [capture for capture in receipt['captures'] if capture['id'] != 'borrowed-after-clear']
+        fixture.save_receipt(receipt)
+        self.assertFalse(fixture.validate()['passed'])
+
+    def test_frozen_borrowed_observation_and_original_roi_rules_cannot_be_weakened(self):
+        fixture = self.fixture('lut3d').canonical_inputs()
+        self.assertIn('borrowed-after-clear', [capture['id'] for capture in fixture.case['captures']])
+        for edit in (
+            lambda case: case['recipe']['borrowed_after_clear']['atlases'][0]['rect_xywh'].__setitem__(0, 1),
+            lambda case: borrowed_capture(case).__setitem__('width', 4095),
+            lambda case: borrowed_capture(case)['regions'][4]['expect']['indices'].__setitem__(0, 4),
+            lambda case: borrowed_capture(case)['regions'][0].__setitem__('tolerance', 3),
+            lambda case: case['captures'][0]['regions'][0].__setitem__('rect', [32,48,33,49]),
+        ):
+            manifest = copy.deepcopy(fixture.manifest)
+            edit(next(case for case in manifest['cases'] if case['id']=='lut3d'))
+            fixture.manifest_file.write_text(json.dumps(manifest), encoding='utf-8')
+            with self.assertRaises(driver.ContractError): driver.load_manifest(fixture.manifest_file)
+
+    def lifecycle_fixture(self):
+        fixture = self.fixture('lut3d')
+        self.assertEqual(tuple(capture['id'] for capture in fixture.case['captures'][-4:]), LIFECYCLE_IDS)
+        receipt = fixture.write_synthetic_lut_case()
+        positive = fixture.validate()
+        self.assertTrue(positive['passed'], positive['errors'])
+        return fixture, receipt
+
+    def test_v4_preserves_every_v3_field_except_declared_sampling_and_observation(self):
+        manifest = driver.load_manifest(ROOT / 'tests/projects/render_contracts/manifest.json')
+        self.assertEqual(driver.canonical_manifest_sha256(without_v4_extension(manifest)),
+                         '1912f78a537201e2113f1e4723752c28a6e8a97a73a7d2ec195c5b272a5118ed')
+
+    def test_v4_rejects_the_legacy_clipped_font_reference(self):
+        fixture = self.fixture('text-cjk-ruby')
+        _, report = fixture.write_synthetic_font_case()
+        self.assertTrue(fixture.validate()['passed'])
+        report['sampling'] = 'pixel-center-bilinear'
+        (fixture.output / 'font-reference.json').write_text(json.dumps(report), encoding='utf-8')
+        result = fixture.validate()
+        self.assertFalse(result['passed'])
+        self.assertTrue(any('sampling' in error for error in result['errors']), result['errors'])
+
+    def test_rtt_orientation_rejects_vertical_flip_and_uniform_fill(self):
+        manifest = driver.load_manifest(ROOT / 'tests/projects/render_contracts/manifest.json')
+        case = next(c for c in manifest['cases'] if c['id'] == 'rtt-fill-resize')
+        capture = case['captures'][-1]
+        self.assertEqual(capture['id'], 'rtt-orientation')
+        raw = bytearray(bytes([5,11,17,255]) * (640*360))
+        for y in range(96,192):
+            rgb = [42,186,75,255] if y < 144 else [219,53,126,255]
+            raw[(y*640+256)*4:(y*640+352)*4] = bytes(rgb)*96
+        self.assertEqual(driver.check_regions(capture, raw), [])
+        flipped = bytearray(raw)
+        for y in range(96,192):
+            flipped[(y*640+256)*4:(y*640+352)*4] = raw[((287-y)*640+256)*4:((287-y)*640+352)*4]
+        self.assertTrue(driver.check_regions(capture, flipped))
+        uniform = bytes([42,186,75,255]) * (640*360)
+        self.assertTrue(driver.check_regions(capture, uniform))
+
+    def test_v3_extension_preserves_every_v2_field(self):
+        manifest = json.loads((ROOT / 'tests/projects/render_contracts/manifest.json').read_text(encoding='utf-8'))
+        self.assertEqual(without_v4_extension(manifest)['suite_id'], 'u16-render-contracts-v3')
+        self.assertEqual(driver.canonical_manifest_sha256(without_v3_extension(manifest)),
+                         '985f5533d0fdcb97e77da153f347837d7682cbc8283d639c78791f2e8a114e75')
+        lut = next(case for case in manifest['cases'] if case['id'] == 'lut3d')
+        sources = {capture['id']: capture for capture in lut['captures']}
+        for name in LIFECYCLE_IDS:
+            reference = 'swap-16' if name == 'postfx-swap-invalid-tail' else 'baseline'
+            self.assertEqual(sources[name]['regions'], sources[reference]['regions'])
+            self.assertEqual(sources[name]['compare_to'], reference)
+
+    def test_postfx_lifecycle_black_frames_fail_despite_execution_flags(self):
+        fixture, original = self.lifecycle_fixture()
+        for name in LIFECYCLE_IDS[:3]:
+            with self.subTest(capture=name):
+                receipt = copy.deepcopy(original)
+                fixture.replace_capture_pixels(receipt, name, bytes([0,0,0,255]) * (640 * 360))
+                result = fixture.validate()
+                self.assertFalse(result['passed'])
+                self.assertTrue(any(name in error for error in result['errors']), result['errors'])
+                # Restore only the current synthetic file before the next fault.
+                reference = next(c for c in original['captures'] if c['id'] == 'baseline')
+                fixture.replace_capture_pixels(copy.deepcopy(original), name, (fixture.output / reference['rgba']).read_bytes())
+
+    def test_invalid_tail_must_preserve_the_valid_swap_output(self):
+        fixture, receipt = self.lifecycle_fixture()
+        baseline = next(c for c in receipt['captures'] if c['id'] == 'baseline')
+        fixture.replace_capture_pixels(receipt, 'postfx-swap-invalid-tail', (fixture.output / baseline['rgba']).read_bytes())
+        result = fixture.validate()
+        self.assertFalse(result['passed'])
+        self.assertTrue(any('postfx-swap-invalid-tail' in error for error in result['errors']), result['errors'])
+
+    def test_invalid_only_and_midframe_clear_cannot_leave_a_swap_active(self):
+        fixture, original = self.lifecycle_fixture()
+        swap = next(c for c in original['captures'] if c['id'] == 'swap-16')
+        swap_pixels = (fixture.output / swap['rgba']).read_bytes()
+        baseline = next(c for c in original['captures'] if c['id'] == 'baseline')
+        baseline_pixels = (fixture.output / baseline['rgba']).read_bytes()
+        for name in ('postfx-invalid-only', 'postfx-clear-after-begin'):
+            with self.subTest(capture=name):
+                fixture.replace_capture_pixels(copy.deepcopy(original), name, swap_pixels)
+                result = fixture.validate()
+                self.assertFalse(result['passed'])
+                self.assertTrue(any(name in error for error in result['errors']), result['errors'])
+                fixture.replace_capture_pixels(copy.deepcopy(original), name, baseline_pixels)
+
+    def test_lifecycle_captures_and_execution_checks_are_mandatory(self):
+        fixture, original = self.lifecycle_fixture()
+        for name in LIFECYCLE_IDS:
+            receipt = copy.deepcopy(original)
+            receipt['captures'] = [capture for capture in receipt['captures'] if capture['id'] != name]
+            fixture.save_receipt(receipt)
+            self.assertFalse(fixture.validate()['passed'])
+        for name in LIFECYCLE_CHECKS:
+            receipt = copy.deepcopy(original)
+            next(check for check in receipt['checks'] if check['id'] == name)['passed'] = False
+            fixture.save_receipt(receipt)
+            self.assertFalse(fixture.validate()['passed'])
+
+    def test_frozen_lifecycle_timing_and_expected_front_stage_cannot_change(self):
+        fixture = self.fixture('lut3d').canonical_inputs()
+        self.assertIn('postfx_lifecycle', fixture.case['recipe'])
+        for edit in (
+            lambda case: case['recipe']['postfx_lifecycle']['scenarios'][2].__setitem__('after_begin', 'none'),
+            lambda case: case['recipe']['postfx_lifecycle']['scenarios'][3].__setitem__('expected_capture', 'baseline'),
+            lambda case: case['recipe']['postfx_lifecycle']['scenarios'][1]['invalid_requests'][0].__setitem__('lut_size', 16),
+            lambda case: case['captures'][-1].__setitem__('compare_to', 'baseline'),
+        ):
+            manifest = copy.deepcopy(fixture.manifest)
+            edit(next(case for case in manifest['cases'] if case['id'] == 'lut3d'))
+            fixture.manifest_file.write_text(json.dumps(manifest), encoding='utf-8')
+            with self.assertRaises(driver.ContractError): driver.load_manifest(fixture.manifest_file)
 
 
 if __name__ == '__main__':

@@ -85,7 +85,7 @@ struct TextCursor {
     float leftMargin = 32.0f; float lineHeight = 16.0f;
 };
 
-struct GlyphMetrics { int x, y, w, h, advance, offsetX, offsetY; };
+struct GlyphMetrics { int x=0, y=0, w=0, h=0, advance=0, offsetX=0, offsetY=0; };
 
 class TextRenderer : public IDeviceLostListener {
 public:
@@ -97,7 +97,46 @@ public:
     bool init(IRenderDevice* device, bool activateDefault = true);
     void shutdown();
 
-    // TTF loading: loads .ttf, rasterizes ASCII+CJK to runtime atlas, sets FontId::TTF
+    // CPU font owner used by preparation, live demand rasterization and device
+    // recovery. Append-only placement keeps every existing glyph/UV stable.
+    // These operations never access a GPU and expose no mutable atlas storage.
+    class GlyphAtlas {
+    public:
+        enum class PrepareStatus { Existing, Added, Missing, Full, Error };
+        struct DirtyRect { int x=0, y=0, w=0, h=0; };
+        static constexpr size_t MaxGlyphs = 8192;
+        static std::unique_ptr<GlyphAtlas> create(const uint8_t* bytes, size_t size, float pixelSize);
+        ~GlyphAtlas();
+        GlyphAtlas(const GlyphAtlas&) = delete;
+        GlyphAtlas& operator=(const GlyphAtlas&) = delete;
+        PrepareStatus prepareGlyph(uint32_t codepoint) noexcept;
+        const GlyphMetrics* find(uint32_t codepoint) const;
+        const GlyphMetrics& resolve(uint32_t codepoint) const;
+        const GlyphMetrics& replacement() const;
+        int width() const { return atlasW; }
+        int height() const { return atlasH; }
+        size_t glyphCount() const { return glyphs.size(); }
+        const std::vector<uint8_t>& pixels() const { return atlasPixels; }
+        DirtyRect pendingUpload() const { return dirty; }
+        // Called only after the consumer has queued an owned GPU upload.
+        void acknowledgeUpload() { dirty = {}; }
+    private:
+        friend class TextRenderer;
+        GlyphAtlas() = default;
+        FT_Library ftLib = nullptr;
+        FT_Face ftFace = nullptr;
+        float ascent=0, descent=0, lineGap=0;
+        int atlasW=2048, atlasH=2048;
+        int penX=1, penY=1, maxRowH=0;
+        uint32_t replacementCodepoint=0;
+        std::unordered_map<uint32_t, GlyphMetrics> glyphs;
+        std::vector<uint8_t> sourceBytes;
+        std::vector<uint8_t> atlasPixels;
+        DirtyRect dirty;
+    };
+
+    // TTF loading owns source bytes and prepares replacement/space; actual
+    // text codepoints are rasterized on demand before their first submission.
     bool loadTTF(const char* path, float fontSize = 24.0f);
     FontRestoreState captureFontState() const;
     static std::unique_ptr<IPreparedFontState> prepareFontState(
@@ -106,7 +145,7 @@ public:
     void clearFontState();
     std::unique_ptr<IPreparedFontState> takeFontForDeviceRecovery();
 
-    void setScreenSize(int w, int h) { m_screenWidth = w; m_screenHeight = h; }
+    void setScreenSize(int w, int h);
     void setFont(FontId id);
     FontId currentFont() const { return m_currentFont; }
     float lineHeight() const { return m_cursor.lineHeight; }
@@ -125,7 +164,8 @@ public:
     // geometry without a GPU.
     struct NDCQuad { float x0, y0, x1, y1, x2, y2, x3, y3; };
     static NDCQuad glyphQuadToNDC(float x, float y, float w, float h,
-                                  float shear, float screenW, float screenH);
+                                  float shear, float screenW, float screenH,
+                                  float paddingX = 0, float paddingY = 0);
 
     // -- Pure glyph layout (headless-testable) ----------------------------
     // The batch-cache layout math (UTF-8 decode, glyph lookup, quad + UV
@@ -138,6 +178,9 @@ public:
         float gx = 0, gy = 0, w = 0, h = 0;
         float u0 = 0, v0 = 0, u1 = 0, v1 = 0;
         bool fromCjk = false;
+        // Ink/advance metrics above stay unchanged. TTF geometry includes
+        // half a transparent source texel for the complete bilinear footprint.
+        float padding = 0;
     };
     struct GlyphLookupResult {
         GlyphMetrics gm;   // w/h <= 0 means "no glyph" (empty slot)
@@ -272,6 +315,7 @@ public:
     // advance callback so this is GPU-free and unit-testable.
     // Returns byte offsets: line i spans [breaks[i], breaks[i+1]).
     using AdvanceFn = float (*)(uint32_t codepoint, void* userData);
+    static float measureAdvance(const std::string& text, AdvanceFn advance, void* userData);
     static std::vector<size_t> wrapTextKinsoku(const std::string& text,
                                                float maxWidth,
                                                AdvanceFn advance, void* userData);
@@ -320,7 +364,10 @@ private:
     // GlyphQuad: axis-aligned quad + per-glyph italic shear (top-edge
     // horizontal offset in px; 0 = upright). The bottom edge stays fixed,
     // so advance metrics are unchanged by italics.
-    struct GlyphQuad { float x, y, w, h, shear = 0.0f, u0, v0, u1, v1; float advance = 0.0f; };
+    struct GlyphQuad {
+        float x, y, w, h, shear = 0.0f, u0, v0, u1, v1;
+        float advance = 0.0f, paddingX = 0.0f, paddingY = 0.0f;
+    };
     GlyphQuad buildGlyph(char ch, float penX, float penY, float scaleW, float scaleH);
     GlyphQuad buildGlyph(uint32_t cp, float penX, float penY, float scaleW, float scaleH);
 
@@ -334,18 +381,7 @@ private:
     bool loadFontAtlas(FontId id);
 
     // TTF atlas
-    struct TTFState {
-        ~TTFState();
-
-        FT_Library ftLib = nullptr;
-        FT_Face    ftFace = nullptr;
-        float ascent = 0.0f, descent = 0.0f, lineGap = 0.0f;
-        int atlasW = 2048, atlasH = 2048;
-        int penX = 1, penY = 1, maxRowH = 0;
-        std::unordered_map<uint32_t, GlyphMetrics> glyphs;
-        std::vector<uint8_t> sourceBytes;
-        std::vector<uint8_t> atlasPixels;
-    };
+    using TTFState = GlyphAtlas;
     struct PreparedFont final : public IPreparedFontState {
         FontRestoreState state;
         std::unique_ptr<TTFState> ttf;
@@ -359,7 +395,10 @@ private:
     static std::unique_ptr<IPreparedFontState> prepareBitmapFont(const FontRestoreState& state);
     bool activateFont(PreparedFont& prepared);
     std::unique_ptr<TTFState> m_ttf;
-    static bool rasterizeTTFGlyph(TTFState& font, uint32_t cp, std::vector<uint8_t>& atlas);
+    static GlyphAtlas::PrepareStatus rasterizeTTFGlyph(TTFState& font, uint32_t cp);
+    bool prepareTextGlyphs(const std::string& text, size_t byteBegin = 0);
+    bool uploadPendingGlyphs();
+    bool m_reportedMissingGlyph=false, m_reportedAtlasFull=false, m_reportedAtlasUploadFailure=false;
     std::vector<uint8_t> m_bitmapPixels;
     FontRestoreState m_fontDescription;
 
@@ -415,7 +454,7 @@ private:
     bgfx::TextureHandle m_strikeTexture  = BGFX_INVALID_HANDLE;
     bgfx::VertexLayout  m_posTexLayout;
     bgfx::UniformHandle m_texSampler      = BGFX_INVALID_HANDLE;
-    bgfx::ProgramHandle m_fallbackProgram = BGFX_INVALID_HANDLE;
+    bgfx::ProgramHandle m_textProgram = BGFX_INVALID_HANDLE;
 
     int m_screenWidth  = 1280;
     int m_screenHeight = 720;

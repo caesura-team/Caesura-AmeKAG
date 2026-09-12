@@ -21,7 +21,7 @@ void BgfxDraw::blitTexture(uint16_t targetView, uint32_t textureId,
 }
 
 void BgfxDraw::blitTexture(uint16_t targetView, bgfx::TextureHandle tex,
-                                    float x, float y, float w, float h, uint8_t opacity) {
+                                    float x, float y, float w, float h, uint8_t opacity, bool flipV) {
     if (!bgfx::isValid(tex)) return;
 
     float ortho[16];
@@ -48,11 +48,12 @@ void BgfxDraw::blitTexture(uint16_t targetView, bgfx::TextureHandle tex,
 
     struct PosTexVertex { float x, y; float u, v; };
 
+    const float topV = flipV ? 1.0f : 0.0f, bottomV = 1.0f - topV;
     PosTexVertex quad[4] = {
-        { n.x0, n.y0, 0.0f, 0.0f },
-        { n.x1, n.y0, 1.0f, 0.0f },
-        { n.x1, n.y1, 1.0f, 1.0f },
-        { n.x0, n.y1, 0.0f, 1.0f },
+        { n.x0, n.y0, 0.0f, topV },
+        { n.x1, n.y0, 1.0f, topV },
+        { n.x1, n.y1, 1.0f, bottomV },
+        { n.x0, n.y1, 0.0f, bottomV },
     };
 
     bgfx::TransientVertexBuffer tvb;
@@ -70,13 +71,19 @@ void BgfxDraw::blitTexture(uint16_t targetView, bgfx::TextureHandle tex,
                    | BGFX_STATE_BLEND_FUNC(BGFX_STATE_BLEND_SRC_ALPHA,
                                            BGFX_STATE_BLEND_INV_SRC_ALPHA);
 
-    if (!bgfx::isValid(m_state->shaders->getFallbackProgram())) return;
+    const auto modulated = m_state->shaders->getModulatedTextureProgram();
+    const auto program = bgfx::isValid(modulated) ? modulated : m_state->shaders->getFallbackProgram();
+    if (!bgfx::isValid(program) || opacity == 0) return;
+    if (bgfx::isValid(modulated)) {
+        const float color[4] = {1, 1, 1, opacity / 255.0f};
+        bgfx::setUniform(m_state->shaders->getColorUniform(), color);
+    }
 
     bgfx::setVertexBuffer(0, &tvb);
     bgfx::setIndexBuffer(&tib);
     bgfx::setTexture(0, m_state->shaders->getDefaultSampler(), tex);
     bgfx::setState(state);
-    bgfx::submit(targetView, m_state->shaders->getFallbackProgram());
+    bgfx::submit(targetView, program);
 }
 
 void BgfxDraw::stretchBlt(uint16_t targetView, uint32_t dstTexId,

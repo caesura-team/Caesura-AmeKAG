@@ -19,14 +19,14 @@ import zlib
 
 from validation_process import run_owned_command
 
-SUITE_ID = 'u16-render-contracts-v1'
+SUITE_ID = 'u16-render-contracts-v4'
 BACKENDS = ('dx11', 'opengl')
 CAPTURE_IDS = {
     'text-cjk-ruby': ('text-opaque', 'text-alpha', 'ruby-cjk', 'ruby-ascii'),
     'alpha-layers-batch': ('alpha-texture', 'opacity-unbatched', 'opacity-batched', 'multitexture-unbatched', 'multitexture-batched'),
-    'rtt-fill-resize': ('fill-control', 'fill-first-a', 'fill-same-a', 'fill-changed-b', 'resized', 'returned', 'recreated'),
+    'rtt-fill-resize': ('fill-control', 'fill-first-a', 'fill-same-a', 'fill-changed-b', 'resized', 'returned', 'recreated', 'rtt-orientation'),
     'transition': ('blend-0', 'blend-025', 'blend-050', 'blend-1', 'wipe-half', 'rule-half'),
-    'lut3d': ('baseline', 'identity-16', 'identity-64', 'swap-16', 'swap-64', 'half-16', 'half-64', 'strength-zero', 'cleared'),
+    'lut3d': ('baseline', 'identity-16', 'identity-64', 'swap-16', 'swap-64', 'half-16', 'half-64', 'strength-zero', 'cleared', 'borrowed-after-clear', 'postfx-destroy-last', 'postfx-invalid-only', 'postfx-clear-after-begin', 'postfx-swap-invalid-tail'),
     'shader-core-fallback': (), 'shader-core-blend': (),
     'shader-optional-softblur': ('baseline', 'degraded'), 'shader-optional-transition': ('baseline', 'degraded'),
 }
@@ -39,7 +39,7 @@ FAULTS = {
 }
 DEFAULTS = {'width': 640, 'height': 360, 'case_timeout_seconds': 60, 'rgb_tolerance': 2, 'effect_tolerance': 3, 'edge_tolerance': 4}
 FONT_FIXED = {'path': 'assets/fonts/NotoSansCJKsc-Regular.otf', 'pixel_size': 28,
-    'load_flags': 'FT_LOAD_DEFAULT', 'render_mode': 'FT_RENDER_MODE_NORMAL', 'sampling': 'pixel-center-bilinear',
+    'load_flags': 'FT_LOAD_DEFAULT', 'render_mode': 'FT_RENDER_MODE_NORMAL', 'sampling': 'pixel-center-bilinear-zero-extended',
     'minimum_opaque_pixels': 64, 'minimum_edge_pixels': 16, 'opaque_tolerance': 2, 'edge_tolerance': 4, 'center_tolerance': .75}
 SHA = re.compile(r'^[0-9a-f]{64}$')
 MAX_FILE_BYTES = 64 * 1024 * 1024
@@ -48,7 +48,7 @@ MAX_CHECKPOINT_BYTES = 16 * 1024
 MAX_PIXELS = 8 * 1024 * 1024
 # JSON semantic identity, versioned with this suite. Whitespace/key ordering
 # changes are harmless; recipes, font identity, parameters and colors are not.
-CANONICAL_MANIFEST_SHA256 = '37e8832971dac6a1c440caac54f14e2efebf2c5707b58623dea4c6af1be97095'
+CANONICAL_MANIFEST_SHA256 = '87454abdd3448c49d271419d90b95217b84576ce9e1461a1d4073be0ed4ad064'
 
 
 class ContractError(ValueError):
@@ -261,6 +261,15 @@ def expected_rgb(expect):
     if kind == 'rgb':
         fields(expect, ('kind', 'value'))
         return color(expect['value'])
+    if kind == 'lut_texel':
+        fields(expect, ('kind', 'size', 'indices', 'transform'))
+        size = integer(expect['size'], 16, 64)
+        require(size in (16, 64), 'Only the fixed 16/64 LUT atlas sizes are accepted')
+        indices = expect['indices']
+        require(isinstance(indices, list) and len(indices) == 3, 'LUT texel requires r/g/b indices')
+        rgb = [math.floor(integer(index, 0, size - 1) * 255 / (size - 1) + .5) for index in indices]
+        require(expect['transform'] in ('identity', 'swap_rb'), 'Unknown LUT atlas transform')
+        return rgb if expect['transform'] == 'identity' else [rgb[2], rgb[1], rgb[0]]
     if kind == 'alpha_over':
         fields(expect, ('kind', 'src', 'dst', 'texture_alpha', 'opacity'))
         src, dst = color(expect['src']), color(expect['dst'])
@@ -292,7 +301,8 @@ def required_checks(case_id):
     if case_id == 'rtt-fill-resize':
         result += ['fill_cache_reuse', 'resize_roundtrip', 'rtt_recreated']
     if case_id == 'lut3d':
-        result += ['lut_borrowed_texture_alive']
+        result += ['lut_borrowed_texture_alive', 'postfx_destroy_last_exercised', 'postfx_invalid_only_exercised',
+                   'postfx_clear_after_begin_exercised', 'postfx_swap_invalid_tail_exercised']
     return result
 
 
@@ -342,7 +352,9 @@ def load_manifest(path):
         for capture in captures:
             fields(capture, ('id', 'width', 'height', 'background', 'parameters', 'regions'), ('font', 'compare_to'))
             width, height = integer(capture['width'], 1, 8192), integer(capture['height'], 1, 8192)
-            require((width, height) == ((800, 450) if case_id == 'rtt-fill-resize' and capture['id'] == 'resized' else (640, 360)), 'Capture canvas changed')
+            canvas = ((4096, 224) if case_id == 'lut3d' and capture['id'] == 'borrowed-after-clear'
+                      else (800, 450) if case_id == 'rtt-fill-resize' and capture['id'] == 'resized' else (640, 360))
+            require((width, height) == canvas, 'Capture canvas changed')
             color(capture['background'], 4)
             require(isinstance(capture['parameters'], dict), 'Capture parameters must be an object')
             require(isinstance(capture['regions'], list), 'Regions must be an array')
@@ -350,8 +362,13 @@ def load_manifest(path):
             for region in capture['regions']:
                 fields(region, ('rect', 'expect', 'tolerance'))
                 left, top, right, bottom = rectangle(region['rect'], width, height)
-                require(right - left >= 16 and bottom - top >= 16, 'Pixel ROI too small')
                 expected_rgb(region['expect'])
+                if region['expect'].get('kind') == 'lut_texel':
+                    require(case_id == 'lut3d' and capture['id'] == 'borrowed-after-clear'
+                            and right - left == 1 and bottom - top == 1 and region['tolerance'] == 2,
+                            'Single-pixel LUT observations are fixed to borrowed-after-clear with tolerance 2')
+                else:
+                    require(right - left >= 16 and bottom - top >= 16, 'Pixel ROI too small')
                 require(type(region['tolerance']) is int and region['tolerance'] in (2, 3), 'Pixel tolerance must remain 2 or 3')
             if 'compare_to' in capture:
                 require(capture['compare_to'] in previous, 'Comparison must name an earlier capture')
@@ -359,7 +376,7 @@ def load_manifest(path):
                 validate_font_contract(capture['font'], width, height)
             previous.add(capture['id'])
     require(canonical_manifest_sha256(manifest) == CANONICAL_MANIFEST_SHA256,
-            'Manifest semantic identity differs from the frozen u16-render-contracts-v1 contract')
+            'Manifest semantic identity differs from the frozen u16-render-contracts-v4 contract')
     return manifest
 
 

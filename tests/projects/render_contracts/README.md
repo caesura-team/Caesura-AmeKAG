@@ -1,8 +1,53 @@
-# U16 render contracts v1
+# U16 render contracts v4
 
 This is an executable test contract, not a claim that any GPU/platform passed.
 The Python driver's unit tests use synthetic receipts and pixels only. Actual
 D3D11/OpenGL evidence must come from the production-renderer probe below.
+
+Version 1 is preserved at commit `d873f9b91631c5b41e7924085b9e26af12d5a902`.
+Its archived full `red-01` matrix failed and remains failure evidence; v2 never
+overwrites or reclassifies that baseline. Version 2 retains all nine cases and
+two backends, and preserves every field of the original 35 captures, recipes,
+checks and thresholds. Its only observation extension is one appended LUT
+capture and its recipe/check, giving 36 captures per backend and the same
+18 owned processes. Removing that extension and restoring the v1 suite ID
+reproduces the v1 canonical semantic hash
+`37e8832971dac6a1c440caac54f14e2efebf2c5707b58623dea4c6af1be97095`.
+
+
+Candidate v3 appends four postfx lifecycle observations after every v2 capture.
+The original v2 36 captures and all their fields/thresholds remain unchanged;
+there are 40 captures per backend and still nine cases/two backends/18 children.
+Its later actual GPU attempts are recorded separately; preparation alone supplies no GPU evidence.
+Removing only the `postfx_lifecycle` recipe, four appended captures and their
+eight new capture/execution check IDs, then restoring the v2 suite ID, yields
+v2 canonical SHA256 `985f5533d0fdcb97e77da153f347837d7682cbc8283d639c78791f2e8a114e75`.
+
+## Version 4 changes
+
+Version 4 retains every v3 field except the suite ID, the explicit font
+sampling contract below, and one appended `rtt-orientation` capture/recipe/check.
+There are 41 captures per backend and 18 owned processes. Removing only this
+RTT extension and restoring the v3 sampling/suite strings yields canonical
+v3 SHA256 `1912f78a537201e2113f1e4723752c28a6e8a97a73a7d2ec195c5b272a5118ed`.
+The preservation test checks the entire manifest, including all old thresholds.
+
+The independent FT reference now samples the bitmap as a zero-extended image
+through the whole bilinear kernel. Coverage can extend half a source texel
+outside its bitmap bounds. The old implementation additionally clipped to
+half-open quad edges; at ruby scale 0.5, that truncates nonzero coverage at
+pixel centers on polygon edges. The reference no longer depends on the GPU's
+polygon edge ownership. Font, FT flags, ink metrics, advance, baseline, origins,
+ROIs and RGB tolerances remain unchanged. Old failure receipts stay failures.
+The producer's sampling string must be `pixel-center-bilinear-zero-extended`.
+
+The final RTT observation draws upper green `(42,186,75)` and lower pink
+`(219,53,126)` into the existing 96x96 render target using two logical-canvas
+halves. Public `blitViewport` places it at `(256,96,96,96)`. Top interior
+`[272,108,336,132]` must be green; bottom `[272,156,336,180]` must be pink.
+Both use tolerance 2 and retain the background check. The recipe comes from
+coordinates/colors, not a measured image, and rejects vertically flipped or
+uniformly filled targets.
 
 ## Frozen probe invocation
 
@@ -35,9 +80,9 @@ tree, including on timeout/interruption.
 |---|---|---|
 | `text-cjk-ruby` | `rendered` / `none` | `text-opaque`, `text-alpha`, `ruby-cjk`, `ruby-ascii` |
 | `alpha-layers-batch` | `rendered` / `none` | `alpha-texture`, `opacity-unbatched`, `opacity-batched`, `multitexture-unbatched`, `multitexture-batched` |
-| `rtt-fill-resize` | `rendered` / `none` | `fill-control`, `fill-first-a`, `fill-same-a`, `fill-changed-b`, `resized`, `returned`, `recreated` |
+| `rtt-fill-resize` | `rendered` / `none` | `fill-control`, `fill-first-a`, `fill-same-a`, `fill-changed-b`, `resized`, `returned`, `recreated`, `rtt-orientation` |
 | `transition` | `rendered` / `none` | `blend-0`, `blend-025`, `blend-050`, `blend-1`, `wipe-half`, `rule-half` |
-| `lut3d` | `rendered` / `none` | `baseline`, `identity-16`, `identity-64`, `swap-16`, `swap-64`, `half-16`, `half-64`, `strength-zero`, `cleared` |
+| `lut3d` | `rendered` / `none` | `baseline`, `identity-16`, `identity-64`, `swap-16`, `swap-64`, `half-16`, `half-64`, `strength-zero`, `cleared`, `borrowed-after-clear`, `postfx-destroy-last`, `postfx-invalid-only`, `postfx-clear-after-begin`, `postfx-swap-invalid-tail` |
 | `shader-core-fallback` | `core_failure` / `fallback-missing-fragment` | none |
 | `shader-core-blend` | `core_failure` / `blend-missing-fragment` | none |
 | `shader-optional-softblur` | `optional_degrade` / `softblur-missing-fragment` | `baseline`, `degraded` |
@@ -51,7 +96,13 @@ Optional failures additionally require `fault_applied_once`,
 `optional_degraded`, `no_invalid_submit`. The RTT case additionally requires
 `fill_cache_reuse`, `resize_roundtrip`, `rtt_recreated`; the LUT case requires
 `lut_borrowed_texture_alive`. No missing, duplicate or extra check IDs are
-accepted. These checks supplement independent Python image checks.
+accepted. For `lut_borrowed_texture_alive`, the probe records that the original owner IDs
+were submitted to real GPU draws after clear and that the new screenshot ticket
+completed. The independent Python texel comparisons decide whether those LUTs
+remain usable; manager membership or a non-invalid numeric handle is not proof.
+The four new `postfx_*_exercised` checks record actual API sequencing and a
+completed ticket; `isPostFxActive` is an observation, not a substituted result.
+These checks supplement independent Python image checks.
 The checks array may follow actual event order (including shutdown last); only
 its exact unique ID set is fixed. Capture order remains fixed.
 
@@ -68,7 +119,7 @@ extra fields and `diagnostic.json` invalidate a passing receipt.
 ```json
 {
   "schema_version": 1,
-  "suite_id": "u16-render-contracts-v1",
+  "suite_id": "u16-render-contracts-v4",
   "case_id": "transition",
   "requested_backend": "dx11",
   "actual_backend": "dx11",
@@ -122,8 +173,8 @@ then checks manifest RGB regions/formulas and cross-capture comparisons.
 
 ## Manifest recipes
 
-The complete v1 gate binds the manifest's canonical semantic SHA256:
-`37e8832971dac6a1c440caac54f14e2efebf2c5707b58623dea4c6af1be97095`.
+The complete v4 gate binds the manifest's canonical semantic SHA256:
+`87454abdd3448c49d271419d90b95217b84576ce9e1461a1d4073be0ed4ad064`.
 Canonicalization is UTF-8 JSON with sorted object keys, no optional whitespace,
 and Unicode preserved. Keeping case IDs while changing colors, LUT parameters,
 font identity, regions or expectations cannot claim the same complete suite.
@@ -147,6 +198,67 @@ This exercises cached geometry across a real size change; it does not evade
 cache reuse by changing the string or its origin. Frame count and tolerances
 are unchanged.
 
+## Appended borrowed-LUT observation
+
+After the original `cleared` frame, the probe keeps postfx cleared, resizes the
+same real device/window to 4096x224, and draws the four original TextureManager
+owner IDs at one source texel per screen pixel. It must not upload replacements
+or recreate a LUT to make this observation pass. The background is
+`(18,35,52,255)` and the appended capture ID is `borrowed-after-clear`.
+
+| Original atlas | x,y,width,height |
+|---|---|
+| identity N=16 | `0,0,256,16` |
+| swap_rb N=16 | `0,32,256,16` |
+| identity N=64 | `0,64,4096,64` |
+| swap_rb N=64 | `0,144,4096,64` |
+
+Each atlas has six predeclared 1x1 ROIs. Four are the corners, specified by
+`(r,g,b)` indices `(0,0,0)`, `(N-1,0,N-1)`, `(0,N-1,0)` and
+`(N-1,N-1,N-1)`. N=16 additionally uses `(3,7,11)` and `(13,2,5)`;
+N=64 uses `(9,27,51)` and `(54,5,17)`. Their screen coordinates are the atlas
+origin plus `x=b*N+r, y=g`. The asymmetric points distinguish identity from
+swap_rb, whose corner RGBs are identical. No point is chosen from a GPU image.
+
+The new `lut_texel` expectation contains `size`, integer `indices:[r,g,b]` and
+`transform`. Python independently computes each channel as
+`floor(index*255/(N-1)+0.5)` and swaps R/B for swap_rb, with RGB tolerance 2.
+This 1x1 exception is restricted to these canonical `borrowed-after-clear`
+texel expectations; every original region retains its existing minimum size,
+formula and tolerance. Two 16x16 background regions `[0,16,16,32]` and
+`[4000,208,4016,224]` additionally check the untouched gaps.
+
+The appended frame must have its own Completed PNG/raw pair and unique ordered
+ticket just like every original capture. `capture:borrowed-after-clear` is
+required even when the liveness flag is true. This is added evidence, not a
+replacement for the original identity/swap/strength/clear outputs or their
+pixel thresholds. The existing core, shader, font and process protocols below
+remain unchanged.
+
+## Candidate postfx lifecycle extension
+
+After `borrowed-after-clear`, return the real window/device to 640x360. Each
+new capture begins with public `clearPostFx` outside the frame, uses original
+patch textures, and creates any required valid stage from the original N=16
+swap-RB LUT owner ID. No source/output/reference is reloaded from candidate
+pixels. Original v2 `baseline` and `swap-16` ROIs/formulas are copied exactly.
+
+| Capture | Actual sequence | Expected reference |
+|---|---|---|
+| `postfx-destroy-last` | create valid swap16, destroy that handle, then begin/draw/commit | `baseline` |
+| `postfx-invalid-only` | request size0 with swap16 and size16 with invalid texture, then begin/draw/commit | `baseline` |
+| `postfx-clear-after-begin` | create valid swap16; actual begin; clearPostFx before first draw; draw/commit | `baseline` |
+| `postfx-swap-invalid-tail` | create valid swap16 then append size0 with swap16; begin/draw/commit | `swap-16` |
+
+Invalid requests may return handle 0 (explicit refusal). A nonzero handle is
+accepted only if the eventual pixels are identity for that invalid stage. An
+exception/crash is not an expected refusal. Valid setup stages must return a
+nonzero handle. The clear-after-begin hook cannot call another begin/advance
+or modify private active/target flags; it invokes the public clear operation
+at the specified point. Driver comparisons reject black frames, residual swap
+on no-effect cases, and a lost front-stage result even if execution flags say
+true. The existing 60-second process bounds and no-retry policy are unchanged.
+
 ## Independent FreeType reference protocol
 
 Cases with any capture `font` also write `font-reference.json` with exactly:
@@ -160,7 +272,7 @@ Cases with any capture `font` also write `font-reference.json` with exactly:
   "pixel_size":28,
   "load_flags":"FT_LOAD_DEFAULT",
   "render_mode":"FT_RENDER_MODE_NORMAL",
-  "sampling":"pixel-center-bilinear",
+  "sampling":"pixel-center-bilinear-zero-extended",
   "ascender":33,
   "references":[{
     "capture_id":"ruby-cjk", "width":640, "height":360,

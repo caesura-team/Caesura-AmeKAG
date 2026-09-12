@@ -95,7 +95,9 @@ void BgfxQuadBatch::flushBatch() {
     // t75: never submit an invalid program handle -- the fallback program is
     // the core sprite/quad pipeline, but a failure must not turn this into a
     // poison submit; skip the batch and let the next frame retry.
-    if (!bgfx::isValid(m_state->shaders->getFallbackProgram())) {
+    const auto modulated = m_state->shaders->getModulatedTextureProgram();
+    const auto program = bgfx::isValid(modulated) ? modulated : m_state->shaders->getFallbackProgram();
+    if (!bgfx::isValid(program)) {
         m_state->batchQuads.clear();
         m_state->batching = false;
         return;
@@ -103,6 +105,7 @@ void BgfxQuadBatch::flushBatch() {
 
     for (const auto& g : groups) {
         const auto& q = m_state->batchQuads[g.startQuad];
+        if (q.opacity == 0) continue;
         const uint32_t groupVertCount = g.quadCount * 4;
         const uint32_t groupIdxCount  = g.quadCount * 6;
 
@@ -138,16 +141,16 @@ void BgfxQuadBatch::flushBatch() {
         }
 
         bgfx::setTexture(0, m_state->shaders->getDefaultSampler(), q.tex);
-        // Set opacity as a uniform. blendParams is declared Vec4 x2 (8 floats).
-        float bp[8] = { q.opacity / 255.0f, 0.0f, 0.0f, 0.0f,
-                        0.0f, 0.0f, 0.0f, 0.0f };
-        bgfx::setUniform(m_state->shaders->getBlendParams(), bp, 2);
+        if (bgfx::isValid(modulated)) {
+            const float color[4] = {1, 1, 1, q.opacity / 255.0f};
+            bgfx::setUniform(m_state->shaders->getColorUniform(), color);
+        }
 
         // Submit the vertex/index subset for this texture group
         bgfx::setVertexBuffer(0, &gtvb, 0, groupVertCount);
         bgfx::setIndexBuffer(&gtib, 0, groupIdxCount);
         bgfx::setState(state);
-        bgfx::submit(q.viewId, m_state->shaders->getFallbackProgram());
+        bgfx::submit(q.viewId, program);
     }
 
     m_state->batchQuads.clear();

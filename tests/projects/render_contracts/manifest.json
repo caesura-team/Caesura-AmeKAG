@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "suite_id": "u16-render-contracts-v1",
+  "suite_id": "u16-render-contracts-v4",
   "required_backends": [
     "dx11",
     "opengl"
@@ -19,7 +19,7 @@
     "pixel_size": 28,
     "load_flags": "FT_LOAD_DEFAULT",
     "render_mode": "FT_RENDER_MODE_NORMAL",
-    "sampling": "pixel-center-bilinear",
+    "sampling": "pixel-center-bilinear-zero-extended",
     "minimum_opaque_pixels": 64,
     "minimum_edge_pixels": 16,
     "opaque_tolerance": 2,
@@ -830,6 +830,7 @@
         "capture:resized",
         "capture:returned",
         "capture:recreated",
+        "capture:rtt-orientation",
         "fill_cache_reuse",
         "resize_roundtrip",
         "rtt_recreated"
@@ -880,7 +881,33 @@
             640,
             360
           ]
-        ]
+        ],
+        "orientation": {
+          "top": [
+            42,
+            186,
+            75,
+            255
+          ],
+          "bottom": [
+            219,
+            53,
+            126,
+            255
+          ],
+          "top_rect_xywh": [
+            0,
+            0,
+            640,
+            180
+          ],
+          "bottom_rect_xywh": [
+            0,
+            180,
+            640,
+            180
+          ]
+        }
       },
       "captures": [
         {
@@ -1284,6 +1311,71 @@
               "tolerance": 2
             }
           ]
+        },
+        {
+          "id": "rtt-orientation",
+          "width": 640,
+          "height": 360,
+          "background": [
+            5,
+            11,
+            17,
+            255
+          ],
+          "parameters": {},
+          "regions": [
+            {
+              "rect": [
+                272,
+                108,
+                336,
+                132
+              ],
+              "expect": {
+                "kind": "rgb",
+                "value": [
+                  42,
+                  186,
+                  75
+                ]
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                272,
+                156,
+                336,
+                180
+              ],
+              "expect": {
+                "kind": "rgb",
+                "value": [
+                  219,
+                  53,
+                  126
+                ]
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                560,
+                260,
+                608,
+                304
+              ],
+              "expect": {
+                "kind": "rgb",
+                "value": [
+                  5,
+                  11,
+                  17
+                ]
+              },
+              "tolerance": 2
+            }
+          ]
         }
       ]
     },
@@ -1609,7 +1701,16 @@
         "capture:half-64",
         "capture:strength-zero",
         "capture:cleared",
-        "lut_borrowed_texture_alive"
+        "capture:borrowed-after-clear",
+        "capture:postfx-destroy-last",
+        "capture:postfx-invalid-only",
+        "capture:postfx-clear-after-begin",
+        "capture:postfx-swap-invalid-tail",
+        "lut_borrowed_texture_alive",
+        "postfx_destroy_last_exercised",
+        "postfx_invalid_only_exercised",
+        "postfx_clear_after_begin_exercised",
+        "postfx_swap_invalid_tail_exercised"
       ],
       "recipe": {
         "kind": "lut3d",
@@ -1694,7 +1795,131 @@
               102
             ]
           }
-        ]
+        ],
+        "borrowed_after_clear": {
+          "canvas": [
+            4096,
+            224
+          ],
+          "background": [
+            18,
+            35,
+            52,
+            255
+          ],
+          "atlases": [
+            {
+              "lut_size": 16,
+              "transform": "identity",
+              "rect_xywh": [
+                0,
+                0,
+                256,
+                16
+              ]
+            },
+            {
+              "lut_size": 16,
+              "transform": "swap_rb",
+              "rect_xywh": [
+                0,
+                32,
+                256,
+                16
+              ]
+            },
+            {
+              "lut_size": 64,
+              "transform": "identity",
+              "rect_xywh": [
+                0,
+                64,
+                4096,
+                64
+              ]
+            },
+            {
+              "lut_size": 64,
+              "transform": "swap_rb",
+              "rect_xywh": [
+                0,
+                144,
+                4096,
+                64
+              ]
+            }
+          ]
+        },
+        "postfx_lifecycle": {
+          "canvas": [
+            640,
+            360
+          ],
+          "valid_lut": {
+            "lut_size": 16,
+            "transform": "swap_rb",
+            "strength": 1
+          },
+          "invalid_acceptance": "handle-zero-rejection-or-identity-pixels",
+          "scenarios": [
+            {
+              "capture_id": "postfx-destroy-last",
+              "check_id": "postfx_destroy_last_exercised",
+              "mode": "destroy-last",
+              "before_begin": "create-valid-then-destroy",
+              "after_begin": "none",
+              "expected_capture": "baseline",
+              "invalid_requests": []
+            },
+            {
+              "capture_id": "postfx-invalid-only",
+              "check_id": "postfx_invalid_only_exercised",
+              "mode": "invalid-only",
+              "before_begin": "create-invalid-requests",
+              "after_begin": "none",
+              "expected_capture": "baseline",
+              "invalid_requests": [
+                {
+                  "label": "size-zero",
+                  "lut_size": 0,
+                  "texture": "swap-16",
+                  "strength": 1
+                },
+                {
+                  "label": "invalid-texture",
+                  "lut_size": 16,
+                  "texture": "invalid",
+                  "strength": 1
+                }
+              ]
+            },
+            {
+              "capture_id": "postfx-clear-after-begin",
+              "check_id": "postfx_clear_after_begin_exercised",
+              "mode": "clear-after-begin",
+              "before_begin": "create-valid",
+              "after_begin": "clear-postfx",
+              "expected_capture": "baseline",
+              "invalid_requests": []
+            },
+            {
+              "capture_id": "postfx-swap-invalid-tail",
+              "check_id": "postfx_swap_invalid_tail_exercised",
+              "mode": "swap-invalid-tail",
+              "before_begin": "create-valid-then-invalid-tail",
+              "after_begin": "none",
+              "expected_capture": "swap-16",
+              "invalid_requests": [
+                {
+                  "label": "size-zero-tail",
+                  "lut_size": 0,
+                  "texture": "swap-16",
+                  "strength": 1
+                }
+              ]
+            }
+          ]
+        }
       },
       "captures": [
         {
@@ -3068,6 +3293,1127 @@
             }
           ],
           "compare_to": "baseline"
+        },
+        {
+          "id": "borrowed-after-clear",
+          "width": 4096,
+          "height": 224,
+          "background": [
+            18,
+            35,
+            52,
+            255
+          ],
+          "parameters": {
+            "lut_size": 0,
+            "transform": "identity",
+            "strength": 0,
+            "clear": true
+          },
+          "regions": [
+            {
+              "rect": [
+                0,
+                0,
+                1,
+                1
+              ],
+              "expect": {
+                "kind": "lut_texel",
+                "size": 16,
+                "indices": [
+                  0,
+                  0,
+                  0
+                ],
+                "transform": "identity"
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                255,
+                0,
+                256,
+                1
+              ],
+              "expect": {
+                "kind": "lut_texel",
+                "size": 16,
+                "indices": [
+                  15,
+                  0,
+                  15
+                ],
+                "transform": "identity"
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                0,
+                15,
+                1,
+                16
+              ],
+              "expect": {
+                "kind": "lut_texel",
+                "size": 16,
+                "indices": [
+                  0,
+                  15,
+                  0
+                ],
+                "transform": "identity"
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                255,
+                15,
+                256,
+                16
+              ],
+              "expect": {
+                "kind": "lut_texel",
+                "size": 16,
+                "indices": [
+                  15,
+                  15,
+                  15
+                ],
+                "transform": "identity"
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                179,
+                7,
+                180,
+                8
+              ],
+              "expect": {
+                "kind": "lut_texel",
+                "size": 16,
+                "indices": [
+                  3,
+                  7,
+                  11
+                ],
+                "transform": "identity"
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                93,
+                2,
+                94,
+                3
+              ],
+              "expect": {
+                "kind": "lut_texel",
+                "size": 16,
+                "indices": [
+                  13,
+                  2,
+                  5
+                ],
+                "transform": "identity"
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                0,
+                32,
+                1,
+                33
+              ],
+              "expect": {
+                "kind": "lut_texel",
+                "size": 16,
+                "indices": [
+                  0,
+                  0,
+                  0
+                ],
+                "transform": "swap_rb"
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                255,
+                32,
+                256,
+                33
+              ],
+              "expect": {
+                "kind": "lut_texel",
+                "size": 16,
+                "indices": [
+                  15,
+                  0,
+                  15
+                ],
+                "transform": "swap_rb"
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                0,
+                47,
+                1,
+                48
+              ],
+              "expect": {
+                "kind": "lut_texel",
+                "size": 16,
+                "indices": [
+                  0,
+                  15,
+                  0
+                ],
+                "transform": "swap_rb"
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                255,
+                47,
+                256,
+                48
+              ],
+              "expect": {
+                "kind": "lut_texel",
+                "size": 16,
+                "indices": [
+                  15,
+                  15,
+                  15
+                ],
+                "transform": "swap_rb"
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                179,
+                39,
+                180,
+                40
+              ],
+              "expect": {
+                "kind": "lut_texel",
+                "size": 16,
+                "indices": [
+                  3,
+                  7,
+                  11
+                ],
+                "transform": "swap_rb"
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                93,
+                34,
+                94,
+                35
+              ],
+              "expect": {
+                "kind": "lut_texel",
+                "size": 16,
+                "indices": [
+                  13,
+                  2,
+                  5
+                ],
+                "transform": "swap_rb"
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                0,
+                64,
+                1,
+                65
+              ],
+              "expect": {
+                "kind": "lut_texel",
+                "size": 64,
+                "indices": [
+                  0,
+                  0,
+                  0
+                ],
+                "transform": "identity"
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                4095,
+                64,
+                4096,
+                65
+              ],
+              "expect": {
+                "kind": "lut_texel",
+                "size": 64,
+                "indices": [
+                  63,
+                  0,
+                  63
+                ],
+                "transform": "identity"
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                0,
+                127,
+                1,
+                128
+              ],
+              "expect": {
+                "kind": "lut_texel",
+                "size": 64,
+                "indices": [
+                  0,
+                  63,
+                  0
+                ],
+                "transform": "identity"
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                4095,
+                127,
+                4096,
+                128
+              ],
+              "expect": {
+                "kind": "lut_texel",
+                "size": 64,
+                "indices": [
+                  63,
+                  63,
+                  63
+                ],
+                "transform": "identity"
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                3273,
+                91,
+                3274,
+                92
+              ],
+              "expect": {
+                "kind": "lut_texel",
+                "size": 64,
+                "indices": [
+                  9,
+                  27,
+                  51
+                ],
+                "transform": "identity"
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                1142,
+                69,
+                1143,
+                70
+              ],
+              "expect": {
+                "kind": "lut_texel",
+                "size": 64,
+                "indices": [
+                  54,
+                  5,
+                  17
+                ],
+                "transform": "identity"
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                0,
+                144,
+                1,
+                145
+              ],
+              "expect": {
+                "kind": "lut_texel",
+                "size": 64,
+                "indices": [
+                  0,
+                  0,
+                  0
+                ],
+                "transform": "swap_rb"
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                4095,
+                144,
+                4096,
+                145
+              ],
+              "expect": {
+                "kind": "lut_texel",
+                "size": 64,
+                "indices": [
+                  63,
+                  0,
+                  63
+                ],
+                "transform": "swap_rb"
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                0,
+                207,
+                1,
+                208
+              ],
+              "expect": {
+                "kind": "lut_texel",
+                "size": 64,
+                "indices": [
+                  0,
+                  63,
+                  0
+                ],
+                "transform": "swap_rb"
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                4095,
+                207,
+                4096,
+                208
+              ],
+              "expect": {
+                "kind": "lut_texel",
+                "size": 64,
+                "indices": [
+                  63,
+                  63,
+                  63
+                ],
+                "transform": "swap_rb"
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                3273,
+                171,
+                3274,
+                172
+              ],
+              "expect": {
+                "kind": "lut_texel",
+                "size": 64,
+                "indices": [
+                  9,
+                  27,
+                  51
+                ],
+                "transform": "swap_rb"
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                1142,
+                149,
+                1143,
+                150
+              ],
+              "expect": {
+                "kind": "lut_texel",
+                "size": 64,
+                "indices": [
+                  54,
+                  5,
+                  17
+                ],
+                "transform": "swap_rb"
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                0,
+                16,
+                16,
+                32
+              ],
+              "expect": {
+                "kind": "rgb",
+                "value": [
+                  18,
+                  35,
+                  52
+                ]
+              },
+              "tolerance": 2
+            },
+            {
+              "rect": [
+                4000,
+                208,
+                4016,
+                224
+              ],
+              "expect": {
+                "kind": "rgb",
+                "value": [
+                  18,
+                  35,
+                  52
+                ]
+              },
+              "tolerance": 2
+            }
+          ]
+        },
+        {
+          "id": "postfx-destroy-last",
+          "width": 640,
+          "height": 360,
+          "background": [
+            18,
+            35,
+            52,
+            255
+          ],
+          "parameters": {
+            "lut_size": 0,
+            "transform": "identity",
+            "strength": 0,
+            "clear": false
+          },
+          "regions": [
+            {
+              "rect": [
+                40,
+                56,
+                88,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  51,
+                  102,
+                  204
+                ],
+                "transform": "identity",
+                "strength": 0
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                456,
+                232,
+                504,
+                280
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  51,
+                  102,
+                  204
+                ],
+                "transform": "identity",
+                "strength": 0
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                136,
+                56,
+                184,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  0,
+                  0,
+                  0
+                ],
+                "transform": "identity",
+                "strength": 0
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                232,
+                56,
+                280,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  255,
+                  255,
+                  255
+                ],
+                "transform": "identity",
+                "strength": 0
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                328,
+                56,
+                376,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  17,
+                  170,
+                  85
+                ],
+                "transform": "identity",
+                "strength": 0
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                136,
+                168,
+                184,
+                216
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  204,
+                  51,
+                  102
+                ],
+                "transform": "identity",
+                "strength": 0
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                560,
+                32,
+                608,
+                80
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  18,
+                  35,
+                  52
+                ],
+                "transform": "identity",
+                "strength": 0
+              },
+              "tolerance": 3
+            }
+          ],
+          "compare_to": "baseline"
+        },
+        {
+          "id": "postfx-invalid-only",
+          "width": 640,
+          "height": 360,
+          "background": [
+            18,
+            35,
+            52,
+            255
+          ],
+          "parameters": {
+            "lut_size": 0,
+            "transform": "identity",
+            "strength": 0,
+            "clear": false
+          },
+          "regions": [
+            {
+              "rect": [
+                40,
+                56,
+                88,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  51,
+                  102,
+                  204
+                ],
+                "transform": "identity",
+                "strength": 0
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                456,
+                232,
+                504,
+                280
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  51,
+                  102,
+                  204
+                ],
+                "transform": "identity",
+                "strength": 0
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                136,
+                56,
+                184,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  0,
+                  0,
+                  0
+                ],
+                "transform": "identity",
+                "strength": 0
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                232,
+                56,
+                280,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  255,
+                  255,
+                  255
+                ],
+                "transform": "identity",
+                "strength": 0
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                328,
+                56,
+                376,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  17,
+                  170,
+                  85
+                ],
+                "transform": "identity",
+                "strength": 0
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                136,
+                168,
+                184,
+                216
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  204,
+                  51,
+                  102
+                ],
+                "transform": "identity",
+                "strength": 0
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                560,
+                32,
+                608,
+                80
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  18,
+                  35,
+                  52
+                ],
+                "transform": "identity",
+                "strength": 0
+              },
+              "tolerance": 3
+            }
+          ],
+          "compare_to": "baseline"
+        },
+        {
+          "id": "postfx-clear-after-begin",
+          "width": 640,
+          "height": 360,
+          "background": [
+            18,
+            35,
+            52,
+            255
+          ],
+          "parameters": {
+            "lut_size": 0,
+            "transform": "identity",
+            "strength": 0,
+            "clear": false
+          },
+          "regions": [
+            {
+              "rect": [
+                40,
+                56,
+                88,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  51,
+                  102,
+                  204
+                ],
+                "transform": "identity",
+                "strength": 0
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                456,
+                232,
+                504,
+                280
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  51,
+                  102,
+                  204
+                ],
+                "transform": "identity",
+                "strength": 0
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                136,
+                56,
+                184,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  0,
+                  0,
+                  0
+                ],
+                "transform": "identity",
+                "strength": 0
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                232,
+                56,
+                280,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  255,
+                  255,
+                  255
+                ],
+                "transform": "identity",
+                "strength": 0
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                328,
+                56,
+                376,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  17,
+                  170,
+                  85
+                ],
+                "transform": "identity",
+                "strength": 0
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                136,
+                168,
+                184,
+                216
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  204,
+                  51,
+                  102
+                ],
+                "transform": "identity",
+                "strength": 0
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                560,
+                32,
+                608,
+                80
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  18,
+                  35,
+                  52
+                ],
+                "transform": "identity",
+                "strength": 0
+              },
+              "tolerance": 3
+            }
+          ],
+          "compare_to": "baseline"
+        },
+        {
+          "id": "postfx-swap-invalid-tail",
+          "width": 640,
+          "height": 360,
+          "background": [
+            18,
+            35,
+            52,
+            255
+          ],
+          "parameters": {
+            "lut_size": 16,
+            "transform": "swap_rb",
+            "strength": 1,
+            "clear": false
+          },
+          "regions": [
+            {
+              "rect": [
+                40,
+                56,
+                88,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  51,
+                  102,
+                  204
+                ],
+                "transform": "swap_rb",
+                "strength": 1
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                456,
+                232,
+                504,
+                280
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  51,
+                  102,
+                  204
+                ],
+                "transform": "swap_rb",
+                "strength": 1
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                136,
+                56,
+                184,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  0,
+                  0,
+                  0
+                ],
+                "transform": "swap_rb",
+                "strength": 1
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                232,
+                56,
+                280,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  255,
+                  255,
+                  255
+                ],
+                "transform": "swap_rb",
+                "strength": 1
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                328,
+                56,
+                376,
+                104
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  17,
+                  170,
+                  85
+                ],
+                "transform": "swap_rb",
+                "strength": 1
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                136,
+                168,
+                184,
+                216
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  204,
+                  51,
+                  102
+                ],
+                "transform": "swap_rb",
+                "strength": 1
+              },
+              "tolerance": 3
+            },
+            {
+              "rect": [
+                560,
+                32,
+                608,
+                80
+              ],
+              "expect": {
+                "kind": "lut",
+                "input": [
+                  18,
+                  35,
+                  52
+                ],
+                "transform": "swap_rb",
+                "strength": 1
+              },
+              "tolerance": 3
+            }
+          ],
+          "compare_to": "swap-16"
         }
       ]
     },

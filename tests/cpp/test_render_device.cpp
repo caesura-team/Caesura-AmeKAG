@@ -37,12 +37,16 @@ TEST_CASE("BgfxRenderDevice::double shutdown is idempotent") {
 
 TEST_CASE("Bgfx frame entry points are safe outside an initialized lifetime") {
     BgfxRenderDevice rd;
+    CHECK_FALSE(rd.getRuntimeInfo().shaderReady);
+    CHECK_FALSE(rd.getModulatedTextureProgram().isValid());
     CHECK_NOTHROW(rd.beginFrame());
     CHECK_NOTHROW(rd.endFrame());
     CHECK_NOTHROW(rd.commit_frame());
     CHECK_NOTHROW(rd.advanceFrame());
 
     rd.shutdown();
+    CHECK_FALSE(rd.getRuntimeInfo().shaderReady);
+    CHECK_FALSE(rd.getModulatedTextureProgram().isValid());
     CHECK_NOTHROW(rd.beginFrame());
     CHECK_NOTHROW(rd.endFrame());
     CHECK_NOTHROW(rd.commit_frame());

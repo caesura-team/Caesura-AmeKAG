@@ -188,6 +188,7 @@ public:
     bool isPostFxActive() const override { return false; }
     RenderUniformHandle getDefaultSampler() const override { return {}; }
     RenderProgramHandle getFallbackProgram() const override { return {}; }
+    RenderProgramHandle getModulatedTextureProgram() const override { return {}; }
     const char* getBackendName() const override { return "RecordingRender"; }
     RenderRuntimeInfo getRuntimeInfo() const override {
         return {getBackendName(), backbufferWidth, backbufferHeight, 0, true};
