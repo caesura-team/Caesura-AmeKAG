@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { describe, it, expect, vi } from 'vitest'
 import { AudioEngine } from './audio-engine.js'
+import { createAudioRestore } from './restore-audio.js'
 
 // minimal fake WebAudio context for engine tests
 function fakeContext() {
@@ -485,6 +486,467 @@ describe('AudioEngine · autoplay unlock (W1)', () => {
     // a later attempt succeeds once the gesture is trusted
     ctx.resume = vi.fn(async () => { ctx.state = 'running' })
     await expect(eng.unlock()).resolves.toBe(true)
+  })
+
+  it.each(['resolve', 'reject'])('U20: late old-context resume %s cannot borrow a replacement context', async completion => {
+    const first = fakeContext()
+    first.ctx.state = 'suspended'
+    let resolveResume, rejectResume
+    const resume = new Promise((resolve, reject) => { resolveResume = resolve; rejectResume = reject })
+    first.ctx.resume = vi.fn(() => resume)
+    first.ctx.close = vi.fn(async () => { first.ctx.state = 'closed' })
+    const engine = new AudioEngine({ ctx: first.ctx,
+      fetchImpl: async () => new Response(new Uint8Array(8)) })
+    const replacement = fakeContext()
+    replacement.ctx.state = 'running'
+    const previous = globalThis.AudioContext
+    globalThis.AudioContext = function () { return replacement.ctx }
+    try {
+      const oldUnlock = engine.unlock()
+      expect(first.ctx.resume).toHaveBeenCalledOnce()
+      engine.destroy()
+      expect(engine.ensureContext()).toBe(replacement.ctx)
+      await expect(engine.unlock()).resolves.toBe(true)
+      await expect(engine.play('bgm', 'replacement.wav', { loop: true })).resolves.toBe(true)
+      const current = engine._sources.get('bgm')
+
+      if (completion === 'resolve') resolveResume()
+      else rejectResume(new Error('old context closed during resume'))
+      await expect(oldUnlock).resolves.toBe(false)
+      expect(engine._ctx).toBe(replacement.ctx)
+      expect(engine._sources.get('bgm')).toBe(current)
+      replacement.ctx.currentTime = 20
+      expect(engine.isPlaying('bgm')).toBe(true)
+      expect(current.source.stop).not.toHaveBeenCalled()
+      expect(replacement.ctx.close).not.toHaveBeenCalled()
+      expect(first.ctx.close).toHaveBeenCalledOnce()
+    } finally {
+      resolveResume()
+      engine.destroy()
+      if (previous === undefined) delete globalThis.AudioContext
+      else globalThis.AudioContext = previous
+    }
+  })
+
+  it('U20: unlock contains AudioContext construction failure and allows a later gesture', async () => {
+    const engine = new AudioEngine()
+    const previous = globalThis.AudioContext
+    const rejected = vi.fn(function () { throw new Error('AudioContext construction refused') })
+    globalThis.AudioContext = rejected
+    try {
+      await expect(engine.unlock()).resolves.toBe(false)
+      expect(rejected).toHaveBeenCalledOnce()
+      expect(engine.state).toBe('none')
+      expect(engine.ready).toBe(false)
+      expect(engine._sources.size).toBe(0)
+
+      const recovered = fakeContext()
+      recovered.ctx.state = 'suspended'
+      recovered.ctx.resume = vi.fn(async () => { recovered.ctx.state = 'running' })
+      globalThis.AudioContext = function () { return recovered.ctx }
+      await expect(engine.unlock()).resolves.toBe(true)
+      expect(recovered.ctx.resume).toHaveBeenCalledOnce()
+      expect(engine._ctx).toBe(recovered.ctx)
+      expect(engine._busGains.size).toBe(3)
+      expect(engine.ready).toBe(true)
+    } finally {
+      engine.destroy()
+      if (previous === undefined) delete globalThis.AudioContext
+      else globalThis.AudioContext = previous
+    }
+  })
+})
+
+describe('AudioEngine · U20 gain lifecycle', () => {
+  function fixture({ hold = true } = {}) {
+    const f = fakeContext()
+    f.ctx.state = 'running'
+    f.ctx.createGain = vi.fn(() => {
+      const param = {
+        value: 1,
+        setValueAtTime: vi.fn(value => { param.value = value; return param }),
+        linearRampToValueAtTime: vi.fn(() => param),
+        cancelScheduledValues: vi.fn(() => param),
+      }
+      if (hold) param.cancelAndHoldAtTime = vi.fn(() => param)
+      const node = { gain: param, connect: vi.fn(), disconnect: vi.fn() }
+      f.gains.push(node)
+      return node
+    })
+    const fetchImpl = vi.fn(async () => new Response(new Uint8Array(8)))
+    const engine = new AudioEngine({ ctx: f.ctx, fetchImpl })
+    return { ...f, engine, fetchImpl }
+  }
+  const defer = () => {
+    let resolve, reject
+    const promise = new Promise((yes, no) => { resolve = yes; reject = no })
+    return { promise, resolve, reject }
+  }
+
+  it('fades the clip from zero on the audio clock without changing its user bus', async () => {
+    const { engine, ctx } = fixture()
+    ctx.currentTime = 2
+    engine.setBusVolume('bgm', 0.6)
+    expect(await engine.play('bgm', 'fade-in.wav', { volume: 0.2, fadein: 2, loop: true })).toBe(true)
+    const clip = engine._sources.get('bgm')
+    expect(clip.clipGain.gain.setValueAtTime).toHaveBeenCalledWith(0, 2)
+    expect(clip.clipGain.gain.linearRampToValueAtTime).toHaveBeenCalledWith(0.2, 4)
+    expect(engine.captureBgm().gain).toBe(0)
+    ctx.currentTime = 3
+    expect(engine.captureBgm().gain).toBeCloseTo(0.1)
+    ctx.currentTime = 4
+    expect(engine.captureBgm().gain).toBeCloseTo(0.2)
+    ctx.currentTime = 20
+    expect(engine.captureBgm().gain).toBeCloseTo(0.2)
+    expect(engine.isPlaying('bgm')).toBe(true)
+    expect(engine._busVolumes.get('bgm')).toBe(0.6)
+    expect(engine._busGains.get('bgm').gain.value).toBe(0.6)
+    expect(engine._busGains.get('voice').gain.linearRampToValueAtTime).not.toHaveBeenCalled()
+  })
+
+  it('zero duration applies clip gain and stops immediately without a retiring owner', async () => {
+    const { engine } = fixture()
+    expect(await engine.play('bgm', 'immediate.wav', { volume: 0.4, fadein: 0 })).toBe(true)
+    const clip = engine._sources.get('bgm')
+    expect(engine.captureBgm().gain).toBe(0.4)
+    expect(clip.clipGain.gain.linearRampToValueAtTime).not.toHaveBeenCalled()
+    expect(engine.stop('bgm', { fadeout: 0 })).toBe(true)
+    expect(engine.isPlaying('bgm')).toBe(false)
+    expect(engine._retiring.size).toBe(0)
+    expect(clip.source.stop).toHaveBeenCalledOnce()
+    expect(clip.source.disconnect).toHaveBeenCalledOnce()
+    expect(clip.clipGain.disconnect).toHaveBeenCalledOnce()
+    expect(engine.stop('bgm')).toBe(true)
+    expect(clip.source.stop).toHaveBeenCalledOnce()
+  })
+
+  it.each([-1, NaN, Infinity, -Infinity, '2'])('rejects invalid duration %s before changing an owner or bus target', async duration => {
+    const { engine } = fixture()
+    expect(await engine.play('bgm', 'kept.wav', { volume: 0.4, loop: true })).toBe(true)
+    engine.setBusVolume('bgm', 0.6)
+    const clip = engine._sources.get('bgm')
+    expect(await engine.play('bgm', 'rejected.wav', { fadein: duration })).toBe(false)
+    expect(engine.stop('bgm', { fadeout: duration })).toBe(false)
+    expect(engine.fadeVolume('bgm', 0.2, duration)).toBe(false)
+    expect(engine._sources.get('bgm')).toBe(clip)
+    expect(clip.source.stop).not.toHaveBeenCalled()
+    expect(engine._busVolumes.get('bgm')).toBe(0.6)
+    expect(engine._retiring.size).toBe(0)
+  })
+
+  it('unknown buses and invalid fade targets do not publish a request', async () => {
+    const { engine } = fixture()
+    const bus = engine._busGains.get('bgm').gain
+    expect(await engine.play('unknown', 'x.wav', { fadein: 1 })).toBe(false)
+    expect(engine.stop('unknown', { fadeout: 1 })).toBe(false)
+    expect(engine.fadeVolume('unknown', 0.5, 1)).toBe(false)
+    for (const value of [-1, 17, NaN, Infinity, '0.5']) {
+      expect(engine.fadeVolume('bgm', value, 1)).toBe(false)
+    }
+    expect(bus.cancelAndHoldAtTime).not.toHaveBeenCalled()
+    expect(bus.linearRampToValueAtTime).not.toHaveBeenCalled()
+    expect(engine._busVolumes.get('bgm')).toBe(1)
+    expect(engine._sources.size).toBe(0)
+  })
+
+  it('bus fades re-anchor at the held value and preserve clip gain and other buses', async () => {
+    const { engine, ctx } = fixture()
+    engine.setBusVolume('bgm', 0.6)
+    expect(await engine.play('bgm', 'bus.wav', { volume: 0.2, loop: true })).toBe(true)
+    const bus = engine._busGains.get('bgm').gain
+    expect(engine.fadeVolume('bgm', 0.3, 4)).toBe(true)
+    expect(engine._busVolumes.get('bgm')).toBe(0.3)
+    expect(bus.setValueAtTime).toHaveBeenLastCalledWith(0.6, 0)
+    expect(bus.linearRampToValueAtTime).toHaveBeenLastCalledWith(0.3, 4)
+    ctx.currentTime = 2
+    expect(engine.fadeVolume('bgm', 0.9, 2)).toBe(true)
+    expect(bus.cancelAndHoldAtTime).toHaveBeenLastCalledWith(2)
+    expect(bus.setValueAtTime).toHaveBeenLastCalledWith(expect.closeTo(0.45), 2)
+    expect(bus.linearRampToValueAtTime).toHaveBeenLastCalledWith(0.9, 4)
+    expect(engine._busVolumes.get('bgm')).toBe(0.9)
+    expect(engine.captureBgm().gain).toBe(0.2)
+    expect(engine._busGains.get('se').gain.value).toBe(1)
+    expect(engine._busGains.get('se').gain.linearRampToValueAtTime).not.toHaveBeenCalled()
+  })
+
+  it('fallback cancellation re-anchors the current ramp without cancelAndHoldAtTime', () => {
+    const { engine, ctx } = fixture({ hold: false })
+    engine.setBusVolume('bgm', 0.6)
+    const bus = engine._busGains.get('bgm').gain
+    expect(engine.fadeVolume('bgm', 0.2, 4)).toBe(true)
+    ctx.currentTime = 1
+    expect(engine.fadeVolume('bgm', 0.8, 2)).toBe(true)
+    expect(bus.cancelScheduledValues).toHaveBeenLastCalledWith(1)
+    expect(bus.setValueAtTime).toHaveBeenLastCalledWith(expect.closeTo(0.5), 1)
+    expect(bus.linearRampToValueAtTime).toHaveBeenLastCalledWith(0.8, 3)
+  })
+
+  it('a direct user setter cancels a bus fade and becomes the next ramp origin', () => {
+    const { engine, ctx } = fixture()
+    const bus = engine._busGains.get('bgm').gain
+    expect(engine.fadeVolume('bgm', 0, 4)).toBe(true)
+    ctx.currentTime = 2
+    engine.setBusVolume('bgm', 0.8)
+    expect(bus.cancelAndHoldAtTime).toHaveBeenLastCalledWith(2)
+    expect(bus.value).toBe(0.8)
+    expect(engine._busVolumes.get('bgm')).toBe(0.8)
+    ctx.currentTime = 3
+    expect(engine.fadeVolume('bgm', 0.4, 2)).toBe(true)
+    expect(bus.setValueAtTime).toHaveBeenLastCalledWith(0.8, 3)
+    expect(bus.linearRampToValueAtTime).toHaveBeenLastCalledWith(0.4, 5)
+    expect(engine.fadeVolume('bgm', 0.7, 0)).toBe(true)
+    expect(bus.value).toBe(0.7)
+    expect(engine._busVolumes.get('bgm')).toBe(0.7)
+  })
+
+  it('a timed fade needs a live context and is not a pending preference update', () => {
+    const engine = new AudioEngine()
+    engine.setBusVolume('bgm', 0.25)
+    const previous = globalThis.AudioContext
+    const construct = vi.fn(function () { return fakeContext().ctx })
+    globalThis.AudioContext = construct
+    try {
+      expect(engine.fadeVolume('bgm', 0.8, 2)).toBe(false)
+      expect(construct).not.toHaveBeenCalled()
+      expect(engine._busVolumes.get('bgm')).toBe(0.25)
+      expect(engine.state).toBe('none')
+    } finally {
+      if (previous === undefined) delete globalThis.AudioContext
+      else globalThis.AudioContext = previous
+    }
+    const f = fixture()
+    f.ctx.state = 'closed'
+    expect(f.engine.fadeVolume('bgm', 0.5, 1)).toBe(false)
+    expect(f.engine._busVolumes.get('bgm')).toBe(1)
+  })
+
+  it('a fade-out logically stops but retains its physical tail on the audio clock', async () => {
+    const { engine, ctx } = fixture()
+    engine.setBusVolume('bgm', 0.6)
+    expect(await engine.play('bgm', 'tail.wav', { volume: 0.8, fadein: 2, loop: true })).toBe(true)
+    const clip = engine._sources.get('bgm')
+    ctx.currentTime = 1
+    expect(engine.stop('bgm', { fadeout: 2 })).toBe(true)
+    expect(engine._sources.has('bgm')).toBe(false)
+    expect(engine.captureBgm()).toBe(false)
+    expect(engine._retiring.has(clip)).toBe(true)
+    expect(clip.clipGain.gain.setValueAtTime).toHaveBeenLastCalledWith(0.4, 1)
+    expect(clip.clipGain.gain.linearRampToValueAtTime).toHaveBeenLastCalledWith(0, 3)
+    expect(clip.source.stop).toHaveBeenCalledWith(3)
+    expect(clip.source.disconnect).not.toHaveBeenCalled()
+    expect(clip.clipGain.disconnect).not.toHaveBeenCalled()
+    vi.useFakeTimers()
+    try {
+      ctx.state = 'suspended'
+      await vi.advanceTimersByTimeAsync(30000)
+      expect(engine._retiring.has(clip)).toBe(true)
+      expect(clip.source.disconnect).not.toHaveBeenCalled()
+    } finally { vi.useRealTimers() }
+    ctx.state = 'running'
+    ctx.currentTime = 3
+    clip.source.onended()
+    expect(engine._retiring.size).toBe(0)
+    expect(clip.source.disconnect).toHaveBeenCalledOnce()
+    expect(clip.clipGain.disconnect).toHaveBeenCalledOnce()
+    expect(engine._busVolumes.get('bgm')).toBe(0.6)
+  })
+
+  it('repeated fade stop cannot extend an old tail and a hard stop releases it once', async () => {
+    const { engine, ctx } = fixture()
+    await engine.play('bgm', 'repeat.wav', { loop: true })
+    const clip = engine._sources.get('bgm')
+    expect(engine.stop('bgm', { fadeout: 2 })).toBe(true)
+    ctx.currentTime = 1
+    expect(engine.stop('bgm', { fadeout: 8 })).toBe(false)
+    expect(clip.source.stop).toHaveBeenCalledTimes(1)
+    expect(clip.source.stop).toHaveBeenLastCalledWith(2)
+    expect(engine.stop('bgm')).toBe(true)
+    expect(engine.stop('bgm')).toBe(true)
+    expect(engine._retiring.size).toBe(0)
+    expect(clip.source.stop).toHaveBeenCalledTimes(2)
+    expect(clip.source.disconnect).toHaveBeenCalledOnce()
+  })
+
+  it('a retired source ending never clears or stops its replacement', async () => {
+    const { engine } = fixture()
+    await engine.play('bgm', 'old.wav', { loop: true })
+    const old = engine._sources.get('bgm')
+    expect(engine.stop('bgm', { fadeout: 2 })).toBe(true)
+    await engine.play('bgm', 'new.wav', { loop: true })
+    const current = engine._sources.get('bgm')
+    old.source.onended()
+    old.source.onended()
+    expect(engine._retiring.size).toBe(0)
+    expect(engine._sources.get('bgm')).toBe(current)
+    expect(current.source.stop).not.toHaveBeenCalled()
+    expect(old.source.disconnect).toHaveBeenCalledOnce()
+  })
+
+  it.each(['stopAll', 'destroy'])('%s releases active and retiring clips, including stale end callbacks', async action => {
+    const { engine } = fixture()
+    await engine.play('bgm', 'old.wav', { loop: true })
+    const retired = engine._sources.get('bgm')
+    engine.stop('bgm', { fadeout: 10 })
+    await engine.play('bgm', 'new.wav', { loop: true })
+    const active = engine._sources.get('bgm')
+    await engine.play('voice', 'voice.wav')
+    const voice = engine._sources.get('voice')
+    engine[action]()
+    expect(engine._sources.size).toBe(0)
+    expect(engine._retiring.size).toBe(0)
+    for (const record of [retired, active, voice]) {
+      record.source.onended()
+      expect(record.source.disconnect).toHaveBeenCalledOnce()
+      expect(record.clipGain.disconnect).toHaveBeenCalledOnce()
+    }
+    expect(retired.source.stop).toHaveBeenCalledTimes(2)
+  })
+
+  it.each(['live bus ramp', 'new user volume'])('v1 restore freezes clip gain while preserving %s', async mode => {
+    const f = fixture()
+    const { engine, ctx } = f
+    const restore = createAudioRestore({ audio: engine, fetchImpl: f.fetchImpl })
+    engine.setBusVolume('bgm', 0.7)
+    await engine.play('bgm', 'restore.wav', { volume: 0.8, fadein: 4, loop: true })
+    const old = engine._sources.get('bgm')
+    expect(engine.fadeVolume('bgm', 0.3, 8)).toBe(true)
+    ctx.currentTime = 1
+    const snapshot = restore.capture_audio()
+    expect(snapshot.bgm.gain).toBeCloseTo(0.2)
+    const ticket = await restore.prepare_audio(snapshot)
+    expect(old.source.stop).not.toHaveBeenCalled()
+    engine.stop('bgm', { fadeout: 4 })
+    const bus = engine._busGains.get('bgm').gain
+    if (mode === 'new user volume') engine.setBusVolume('bgm', 0.9)
+    const cancellations = bus.cancelAndHoldAtTime.mock.calls.length
+    const ramps = bus.linearRampToValueAtTime.mock.calls.length
+    expect(restore.apply_audio(ticket)).toBe(true)
+    const current = engine._sources.get('bgm')
+    expect(current).not.toBe(old)
+    expect(engine._busGains.get('bgm').gain).toBe(bus)
+    expect(engine._retiring.size).toBe(0)
+    expect(current.clipGain.gain.value).toBeCloseTo(0.2)
+    expect(current.clipGain.gain.linearRampToValueAtTime).not.toHaveBeenCalled()
+    expect(bus.cancelAndHoldAtTime).toHaveBeenCalledTimes(cancellations)
+    expect(bus.linearRampToValueAtTime).toHaveBeenCalledTimes(ramps)
+    expect(engine._busVolumes.get('bgm')).toBe(mode === 'new user volume' ? 0.9 : 0.3)
+    ctx.currentTime = 3
+    expect(restore.capture_audio().bgm.gain).toBeCloseTo(0.2)
+    old.source.onended()
+    expect(engine._sources.get('bgm')).toBe(current)
+    expect(current.source.stop).not.toHaveBeenCalled()
+    expect(old.source.disconnect).toHaveBeenCalledOnce()
+  })
+
+  it('a restore invalidates an older pending fade-in decode without publishing its envelope', async () => {
+    const f = fixture()
+    const pending = defer()
+    const entered = defer()
+    f.ctx.decodeAudioData.mockImplementationOnce(() => { entered.resolve(); return pending.promise })
+    const play = f.engine.play('bgm', 'late.wav', { fadein: 2 })
+    await entered.promise
+    const packet = await f.engine.decodePrepared(new Uint8Array(8))
+    let applied
+    try {
+      applied = f.engine.applyPreparedBgm(packet, { path: 'saved.wav', position: 1, gain: 0.7, looping: true })
+    } finally {
+      pending.resolve({ duration: 5, length: 240000, sampleRate: 48000, numberOfChannels: 2 })
+    }
+    const current = f.engine._sources.get('bgm')
+    expect(applied).toBe(true)
+    expect(await play).toBe(false)
+    expect(f.sources).toHaveLength(1)
+    expect(f.engine._sources.get('bgm')).toBe(current)
+    expect(current.clipGain.gain.linearRampToValueAtTime).not.toHaveBeenCalled()
+  })
+
+  it('positive stop cancels a pending decode without pretending a fade was applied', async () => {
+    const f = fixture()
+    const pending = defer(), entered = defer()
+    f.ctx.decodeAudioData.mockImplementationOnce(() => { entered.resolve(); return pending.promise })
+    const play = f.engine.play('bgm', 'pending.wav', { fadein: 2 })
+    await entered.promise
+    const stopped = f.engine.stop('bgm', { fadeout: 1 })
+    pending.resolve({ duration: 5, length: 240000, sampleRate: 48000, numberOfChannels: 2 })
+    const played = await play
+    expect(stopped).toBe(false)
+    expect(played).toBe(false)
+    expect(f.sources).toHaveLength(0)
+    expect(f.engine._pending.size).toBe(0)
+    expect(f.engine._retiring.size).toBe(0)
+  })
+
+  it.each(['missing ramp', 'ramp throws'])('failed fade-in (%s) preserves the previous source and discards its candidate', async failure => {
+    const f = fixture()
+    await f.engine.play('bgm', 'kept.wav', { loop: true })
+    const old = f.engine._sources.get('bgm')
+    const createGain = f.ctx.createGain.getMockImplementation()
+    f.ctx.createGain.mockImplementationOnce(() => {
+      const node = createGain()
+      if (failure === 'missing ramp') delete node.gain.linearRampToValueAtTime
+      else node.gain.linearRampToValueAtTime.mockImplementation(() => { throw new Error('schedule failed') })
+      return node
+    })
+    expect(await f.engine.play('bgm', 'rejected.wav', { fadein: 2 })).toBe(false)
+    expect(f.engine._sources.get('bgm')).toBe(old)
+    expect(old.source.stop).not.toHaveBeenCalled()
+    expect(f.sources[1].start).not.toHaveBeenCalled()
+    expect(f.sources[1].disconnect).toHaveBeenCalledOnce()
+    expect(f.gains.at(-1).disconnect).toHaveBeenCalledOnce()
+  })
+
+  it('a source start failure after preparation never leaves a new owner', async () => {
+    const f = fixture()
+    const createSource = f.ctx.createBufferSource
+    f.ctx.createBufferSource = () => {
+      const source = createSource()
+      source.start.mockImplementation(() => { throw new Error('start failed') })
+      return source
+    }
+    expect(await f.engine.play('bgm', 'start-failed.wav', { fadein: 2 })).toBe(false)
+    expect(f.engine._sources.size).toBe(0)
+    expect(f.engine._retiring.size).toBe(0)
+    expect(f.sources[0].disconnect).toHaveBeenCalledOnce()
+  })
+
+  it.each(['ramp', 'scheduled stop'])('fade-out %s failure performs immediate cleanup and returns false', async failure => {
+    const { engine } = fixture()
+    await engine.play('bgm', 'stop-failed.wav', { loop: true })
+    const clip = engine._sources.get('bgm')
+    if (failure === 'ramp') clip.clipGain.gain.linearRampToValueAtTime.mockImplementation(() => { throw new Error('ramp failed') })
+    else clip.source.stop.mockImplementationOnce(() => { throw new Error('stop scheduling failed') })
+    expect(engine.stop('bgm', { fadeout: 2 })).toBe(false)
+    expect(engine._sources.size).toBe(0)
+    expect(engine._retiring.size).toBe(0)
+    expect(clip.source.disconnect).toHaveBeenCalledOnce()
+    expect(clip.clipGain.disconnect).toHaveBeenCalledOnce()
+    clip.source.onended()
+    expect(clip.source.disconnect).toHaveBeenCalledOnce()
+  })
+
+  it('bus scheduling failure does not publish a new target and holds the previous value', () => {
+    const { engine } = fixture()
+    engine.setBusVolume('bgm', 0.6)
+    const bus = engine._busGains.get('bgm').gain
+    bus.linearRampToValueAtTime.mockImplementationOnce(() => { throw new Error('bus scheduling failed') })
+    expect(engine.fadeVolume('bgm', 0.2, 2)).toBe(false)
+    expect(engine._busVolumes.get('bgm')).toBe(0.6)
+    expect(bus.value).toBe(0.6)
+    expect(engine.fadeVolume('bgm', 0.8, 1)).toBe(true)
+    expect(bus.setValueAtTime).toHaveBeenLastCalledWith(0.6, 0)
+    expect(engine._busVolumes.get('bgm')).toBe(0.8)
+  })
+
+  it('missing bus automation support refuses a positive fade without changing state', () => {
+    const { engine } = fixture()
+    engine.setBusVolume('bgm', 0.6)
+    const bus = engine._busGains.get('bgm').gain
+    delete bus.linearRampToValueAtTime
+    const cancellations = bus.cancelAndHoldAtTime.mock.calls.length
+    expect(engine.fadeVolume('bgm', 0.2, 1)).toBe(false)
+    expect(bus.cancelAndHoldAtTime).toHaveBeenCalledTimes(cancellations)
+    expect(bus.value).toBe(0.6)
+    expect(engine._busVolumes.get('bgm')).toBe(0.6)
   })
 })
 

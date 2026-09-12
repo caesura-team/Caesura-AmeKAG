@@ -1,7 +1,26 @@
 // Web supplies trusted scenes and input/output; kag_runner owns every session.
-export async function installRunnerBridge(lua) {
+export async function installRunnerBridge(lua, audioClock) {
+  lua.global.set('__READ_WEB_AUDIO_CLOCK', audioClock)
   await lua.doString(`
     local runner = require('kag_runner')
+    local read_audio_clock = __READ_WEB_AUDIO_CLOCK
+    __READ_WEB_AUDIO_CLOCK = nil
+    local audio_wait_owner, audio_wait_clock
+    local function park_audio(ctx)
+      if audio_wait_owner ~= ctx._audio_wait then
+        audio_wait_owner = ctx._audio_wait
+        audio_wait_clock = read_audio_clock()
+      end
+      return 'WAIT_AUDIO:'..tostring(ctx.token_index)
+    end
+    local function audio_delta(ctx)
+      local now = read_audio_clock()
+      local elapsed = audio_wait_owner == ctx._audio_wait and math.max(0, now-audio_wait_clock) or 0
+      -- This cutoff belongs to the update being consumed. Audio can advance
+      -- during async publication; that later interval belongs to the next tick.
+      audio_wait_owner, audio_wait_clock = ctx._audio_wait, now
+      return elapsed
+    end
     runner.set_resume_adapter({
       is_paused = function() return _CAESURA_DEBUG_PAUSED == true end,
       resume = function(_, co, value) return __resume_web_scene(co, value) end,
@@ -45,6 +64,7 @@ export async function installRunnerBridge(lua) {
 
     local function publish()
       local ctx = runner.get_ctx()
+      if not ctx or not ctx._audio_wait then audio_wait_owner, audio_wait_clock = nil, nil end
       __CTXREF, __LAST_CTX, __CO = ctx, ctx, ctx and ctx.co
       publishText(ctx)
       __SCENE_ENDINGS = {}
@@ -100,6 +120,7 @@ export async function installRunnerBridge(lua) {
 
     local function pump(opts, advance)
       local frames, clicks = 0, 0
+      local audio_tick = opts.audioTick == true
       local limit = tonumber(opts.maxFrames) or 200000
       local clicked = advance or __CLICK == true
       __CLICK = false
@@ -115,7 +136,20 @@ export async function installRunnerBridge(lua) {
         -- A manual advance releases a restored checkpoint even when the host
         -- retains skip mode. Automatic input still stops at the checkpoint.
         local resume_rollback = ctx._rollback_waiting and clicked
-        if ctx.waiting_input and not ctx._pendingRestore and (not ctx.skip_mode or resume_rollback) then
+        if ctx._audio_wait then
+          if clicked and ctx._voice_wait_poll then
+            ok, reason = click(ctx, opts)
+            clicked = false
+            clicks = clicks+1
+          elseif audio_tick or (ctx._voice_wait_poll and ctx.skip_mode) then
+            -- One real audio-clock delta per host frame, even when suspended.
+            -- Never burn through a sound's timeout with synthetic 16-ms ticks.
+            ok, reason = runner.update(audio_tick and audio_delta(ctx) or 0)
+          else
+            return park_audio(ctx)
+          end
+          audio_tick = false
+        elseif ctx.waiting_input and not ctx._pendingRestore and (not ctx.skip_mode or resume_rollback) then
           if clicked or (opts.autoClick and clicks < 10000) then
             ok, reason = click(ctx, opts)
             clicked = false
@@ -151,6 +185,9 @@ export async function installRunnerBridge(lua) {
         if not ok and reason ~= 'waiting-input' and reason ~= 'ended' and reason ~= 'dead' then
           return 'ERR:'..tostring(reason)
         end
+        if current and current._audio_wait then
+          return park_audio(current)
+        end
       end
       local ctx = runner.get_ctx()
       return 'ERR:frame-limit@'..tostring(ctx and ctx.token_index or 0)
@@ -170,7 +207,11 @@ export async function installRunnerBridge(lua) {
       if owner and owner._rollback_waiting then owner._web_restore_history=true end
       local advance = opts.advance == true and opts.advanceScene == name
         and owner ~= nil
-      if mode == 'load' or not advance then
+      if mode == 'audio-tick' then
+        -- A stopped/replaced session may have retired the parked wait since
+        -- the last publication. A frame must never restart or click it.
+        if not owner or not owner._audio_wait then publish(); return nil end
+      elseif mode == 'load' or not advance then
         local old_loader, old_has = __PREPARE_SCENE_TOKENS, __HAS_RESTORE_SCENE
         if sources ~= nil or bundle ~= nil then
           __PREPARE_SCENE_TOKENS, __HAS_RESTORE_SCENE = provider(sources, bundle)
@@ -201,7 +242,7 @@ export async function installRunnerBridge(lua) {
       local ctx = runner.get_ctx()
       local cps = tonumber(opts.textSpeed)
       if cps and cps > 0 then ctx.cps=cps; ctx.text_speed=math.max(1,math.floor(1000/cps)) end
-      if mode~='load' or opts.skip~=nil then ctx.skip_mode = opts.skip == true end
+      if (mode~='load' and mode~='audio-tick') or opts.skip~=nil then ctx.skip_mode = opts.skip == true end
       local ok, result = pcall(pump, opts, advance)
       publish()
       return ok and result or 'ERR:'..tostring(result)

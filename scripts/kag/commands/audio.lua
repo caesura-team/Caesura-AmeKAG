@@ -10,6 +10,17 @@ local backend = require("backend")
 
 local AudioCommands = {}
 
+-- A real-time host must yield control while the audio clock is pending.
+-- Ownership is scoped to this command, including coroutine close on replace.
+local function audio_wait_scope(ctx, bus)
+    if not ctx then return nil end
+    local scope = { bus = bus }
+    ctx._audio_wait = scope
+    return setmetatable(scope, { __close = function()
+        if ctx._audio_wait == scope then ctx._audio_wait = nil end
+    end })
+end
+
 -- Internal: resolve file path (storage > path > file > positional)
 local function resolve_file(params)
     -- string-only: with ALL-named params (even a typo), params[1] is
@@ -131,18 +142,14 @@ end
 function AudioCommands.stopbgm(ctx, params)
     local fadeout = params.fadeout or params.time or 0  -- KAG3 `time` alias
 
-    if fadeout > 0 then
-        backend.audio_fade_volume("bgm", 0, fadeout / 1000.0)
-        backend.audio_stop("bgm", { fadeout = fadeout / 1000.0 + 0.1 })
-    else
-        backend.audio_stop("bgm", { fadeout = 0 })
-    end
+    -- Stop fades the clip; changing the bus here would mute its next BGM.
+    backend.audio_stop("bgm", { fadeout = fadeout > 0 and fadeout / 1000.0 or 0 })
 end
 
 -- =============================================================================
 --  [playbgmstop storage="file.ogg" fadeout=2000 fadein=2000]
 --  krkrz KAG: stop current BGM with fadeout, then play new BGM with fadein.
---  This is an alias for xfadebgm.
+--  Requests clip stop, then optional play; leaves the bus volume unchanged.
 -- =============================================================================
 
 function AudioCommands.playbgmstop(ctx, params)
@@ -150,12 +157,7 @@ function AudioCommands.playbgmstop(ctx, params)
     local fadeout = params.fadeout
     local fadein  = params.fadein
 
-    if fadeout > 0 then
-        backend.audio_fade_volume("bgm", 0, fadeout / 1000.0)
-        backend.audio_stop("bgm", { fadeout = fadeout / 1000.0 + 0.1 })
-    else
-        backend.audio_stop("bgm")
-    end
+    backend.audio_stop("bgm", { fadeout = fadeout > 0 and fadeout / 1000.0 or 0 })
 
     if file then
         backend.audio_play("bgm", file, {
@@ -256,6 +258,8 @@ function AudioCommands.playvoice(ctx, params)
     -- Play the voice line
     backend.audio_play("voice", file, {})
 
+    local audio_wait <close> = audio_wait_scope(ctx, "voice")
+
     -- Block until voice finishes �?cooperative yield each frame.
     -- Two exit conditions: SoLoud handle invalid (normal) or C++ edge trigger.
     while backend.audio_is_playing("voice") do
@@ -275,6 +279,7 @@ end
 --  KAG3 needed stopvoice glue + a hand-rolled loop for this.
 -- =============================================================================
 function AudioCommands.voice_wait(ctx, params)
+    local audio_wait <close> = audio_wait_scope(ctx, "voice")
     -- Click detection uses the runner's consumed flag (on_click clears it
     -- and batch-resumes) -- _KAG_onClick is a permanent callback function,
     -- always truthy, and must NOT be used as a click indicator.
@@ -337,6 +342,7 @@ end
 local WAIT_AUDIO_LIMIT_MS = 60000
 
 function AudioCommands.waitsound(ctx, params)
+    local audio_wait <close> = audio_wait_scope(ctx, "se")
     local elapsed = 0
     while backend.audio_is_playing("se") and elapsed < WAIT_AUDIO_LIMIT_MS do
         elapsed = elapsed + (coroutine.yield() or 16)
@@ -349,6 +355,7 @@ end
 -- =============================================================================
 
 function AudioCommands.waitbgm(ctx, params)
+    local audio_wait <close> = audio_wait_scope(ctx, "bgm")
     local elapsed = 0
     while backend.audio_is_playing("bgm") and elapsed < WAIT_AUDIO_LIMIT_MS do
         elapsed = elapsed + (coroutine.yield() or 16)

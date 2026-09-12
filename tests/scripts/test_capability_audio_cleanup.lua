@@ -6,7 +6,7 @@ local json = require("capability_json")
 local target = require("target_capabilities")
 local profile = {
     schema = 1, target = "web", platform = "browser", scope = "runtime",
-    catalog_sha256 = target.catalog_sha256, compiled = {}, available = { audio = true },
+    catalog_sha256 = target.catalog_sha256, compiled = {}, available = { audio = false },
 }
 _G.__CAESURA_CAPABILITY_PROFILE_JSON = function() return assert(json.encode(profile)) end
 
@@ -59,9 +59,13 @@ local function context(command)
 end
 local function start_owner()
     if owner.playing then backend.audio_stop("bgm", { fadeout = 0 }) end
+    profile.available.audio = true
     local value, result = backend.audio_play("bgm", "controlled.ogg", { fadein = 0 })
     check("setup creates a playing owner through the actual backend module",
         value == 1 and result.status == "applied" and backend.audio_is_playing("bgm"))
+    -- The implementation now supports fade, but a later unavailable host must
+    -- still allow cleanup of its previously registered playback owner.
+    profile.available.audio = false
 end
 local function reported_unsupported(ctx)
     local entries = ctx.capability_diagnostics
@@ -69,8 +73,8 @@ local function reported_unsupported(ctx)
         and entries[1].status == "unsupported" and entries[1].feature == "audio.fade"
 end
 
-check("controlled host has audio playback but no implemented fade",
-    backend.get_capability("audio.play").status == "supported"
+check("controlled host is currently unavailable despite implemented playback and fade",
+    backend.get_capability("audio.play").status == "unsupported"
         and backend.get_capability("audio.fade").status == "unsupported")
 
 for _, policy in ipairs({ "optional", "required" }) do

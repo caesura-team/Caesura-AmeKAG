@@ -18,7 +18,7 @@ check("pbs fadein clamped", p.fadein == 0)
 -- handler registered
 check("playbgmstop registered", type(KAG.playbgmstop) == "function")
 
--- source-level: stop-then-play chain, race guard on fadeout, file optional
+-- source-level: stop-then-play chain and optional file
 -- anchored to the playbgmstop function's line range (review nit: the
 -- shared substrings also exist in playbgm/stopbgm -- presence alone is
 -- not discriminating).
@@ -31,8 +31,22 @@ local body = sstart and send and src:sub(sstart, send) or ""
 check("pbs body found", #body > 0)
 check("stop in pbs body", body:find('backend.audio_stop("bgm"', 1, true) ~= nil)
 check("play in pbs body", body:find('backend.audio_play("bgm", file, {', 1, true) ~= nil)
-check("race guard in pbs body", body:find("fadeout / 1000.0 + 0.1", 1, true) ~= nil)
+-- U20: observe the real handler through the actual backend module, rather
+-- than locking the old source string that added an arbitrary 0.1 seconds.
+local previous_backend = _G._CAESURA_BACKEND
+local calls = {}
+_G._CAESURA_BACKEND = { audio = function(command, ...)
+    calls[#calls + 1] = { command, ... }
+    return true
+end }
+require("kag.commands.audio").playbgmstop({}, schema.coerce("playbgmstop", { fadeout = 500 }, {}))
+_G._CAESURA_BACKEND = previous_backend
+check("pbs uses one clip stop without a bus fade", #calls == 1 and calls[1][1] == "stop_bgm")
+local stop
+for _, call in ipairs(calls) do if call[1] == "stop_bgm" then stop = call end end
+check("pbs clip stop uses exactly the requested seconds", stop and stop[2] == 0.5)
 check("file optional in pbs body", body:find("if file then", 1, true) ~= nil)
 
+print(string.format("PLAYBGMSTOP ROUTING: %d passed, %d failed", passed, failed))
 if failed > 0 then os.exit(1) end
 print("PLAYBGMSTOP TESTS DONE")

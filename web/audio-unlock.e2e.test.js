@@ -11,8 +11,9 @@
 //   * dispatching pointerdown fires main.mjs's capture listener -> unlock();
 //   * returning from 'hidden' fires the visibilitychange listener -> resume
 //     again after a re-suspend (tab background recovery).
-// The fake context is a real decode path (fetch mapped to the actual assets)
-// so play() reaches source.start() exactly as in a browser.
+// This context controls autoplay state only; its decoder is a stub and does
+// not prove successful playback. scripts/web_audio_smoke.mjs separately checks
+// real decoding, source ownership and PCM with Chromium WebAudio.
 import { describe, it, expect, beforeAll, vi } from 'vitest'
 import { readFileSync, existsSync, statSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'

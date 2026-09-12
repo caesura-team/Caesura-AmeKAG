@@ -27,6 +27,8 @@ const here = dirname(fileURLToPath(import.meta.url))
 const root = join(here, '..')
 const wasmFile = join(here, 'node_modules', 'wasmoon', 'dist', 'glue.wasm')
 const AUDIO_TUTORIAL = 'tutorial/tutorial_04_audio.ks'
+const NATURAL_END_SCENE = 'u20-natural-voice.ks'
+let holdNaturalEnds = false
 const EM = String.fromCharCode(0x2014) // — (no-audio placeholder)
 beforeAll(()=>{installCanvasHost()})
 
@@ -46,6 +48,9 @@ function resolvePathFromUrl(urlStr) {
 function makeFetch() {
   return async (input) => {
     const url = typeof input === 'string' ? input : String(input?.url ?? '')
+    if (new URL(url, 'http://local').pathname === '/demo/' + NATURAL_END_SCENE) {
+      return new Response('[stopbgm fadeout=0]\n[playvoice file="assets/voice/line01.wav"]\n[p]\n[end]')
+    }
     const p = resolvePathFromUrl(url)
     if (p && existsSync(p) && statSync(p).isFile()) {
       return new Response(readFileSync(p))
@@ -55,9 +60,16 @@ function makeFetch() {
 }
 
 function uiAudioContext() {
+  const parameter = () => ({
+    value: 1,
+    setValueAtTime(value) { this.value = value; return this },
+    linearRampToValueAtTime(value) { this.value = value; return this },
+    cancelScheduledValues() { return this },
+    cancelAndHoldAtTime() { return this },
+  })
   const context = {
     state: 'running', currentTime: 0, destination: {},
-    createGain: () => ({ gain: { value: 1 }, connect() {}, disconnect() {} }),
+    createGain: () => ({ gain: parameter(), connect() {}, disconnect() {} }),
     async decodeAudioData(bytes) {
       if (!bytes.byteLength) throw new Error('empty audio fixture')
       return { duration: 0.04, length: 1920, sampleRate: 48000, numberOfChannels: 1 }
@@ -66,7 +78,7 @@ function uiAudioContext() {
       let timer
       return {
         buffer: null, loop: false, onended: null, connect() {}, disconnect() {},
-        start() { if (!this.loop) timer = setTimeout(() => this.onended?.(), this.buffer.duration * 1000) },
+        start() { if (!this.loop && !holdNaturalEnds) timer = setTimeout(() => this.onended?.(), this.buffer.duration * 1000) },
         stop() { clearTimeout(timer); this.onended?.() },
       }
     },
@@ -172,12 +184,15 @@ async function runScene(name) {
 
 // Every completed click writes a log entry, including [ch] -> explicit [p]
 // boundaries that keep the same display-token status and visible page.
+// An audio boundary finishes later through RAF and publishes "parked:";
+// require that settled page as well as this click's successful receipt.
 async function advanceOnce() {
   const before = $('log').textContent.split('\n').filter(line => line.startsWith('advance: ')).length
   $('advance').click()
   return waitFor(() => {
-    const completed = $('log').textContent.split('\n').filter(line => line.startsWith('advance: ')).length
-    return completed > before && /^advance: (WAIT:|DONE:)/.test(statusText())
+    const completed = $('log').textContent.split('\n').filter(line => line.startsWith('advance: '))
+    return completed.length > before && /^advance: (WAIT:|WAIT_AUDIO:|DONE:)/.test(completed.at(-1))
+      && /^(advance|parked): (WAIT:|DONE:)/.test(statusText())
   }, 'advance completes its input boundary', 60000)
 }
 
@@ -302,4 +317,23 @@ describe('audio UI · scene audio status display + one-way lock', () => {
     expect(audioStatus()).toBe(EM)
     expect(['bgm', 'se', 'voice'].some(bus => window.__caesuraAudio.isPlaying(bus))).toBe(false)
   }, 120000)
+
+  it('natural source completion updates the parked UI without an explicit playback query', async () => {
+    const option = document.createElement('option')
+    option.value = NATURAL_END_SCENE
+    option.textContent = NATURAL_END_SCENE
+    $('scene').appendChild(option)
+    holdNaturalEnds = true
+    try {
+      await runScene(NATURAL_END_SCENE)
+      await waitFor(() => audioStatus().includes('VOICE:'), 'voice source is displayed')
+      const source = window.__caesuraAudio._sources.get('voice').source
+      source.onended()
+      // Only the normal requestAnimationFrame UI path may observe completion.
+      await waitFor(() => audioStatus() === EM, 'natural completion clears parked audio status', 2000)
+      expect(window.__caesuraCore.audioBus.voice.playing).toBe(false)
+    } finally {
+      holdNaturalEnds = false
+    }
+  }, 20000)
 })

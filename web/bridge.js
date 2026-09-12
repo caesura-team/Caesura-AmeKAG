@@ -293,14 +293,22 @@ export async function createPlayer({ scriptsBase, fetchImpl = fetch, wasmFile, a
       if (typeof window !== 'undefined') window.__caesuraLayoutRes = [1280, 720]
       return '1280x720'
     },
-    // audio_play routes through the real WebAudio engine when available;
-    // the core state machine always records the call (telemetry + fallback).
+    // Publish playback only after a real source starts. Failed or cancelled
+    // preparation must not replace the current source's UI identity.
     audio_play: async (kind, file, opts) => {
       const k = String(kind), f = String(file)
-      core.audioPlay(k, f, opts && opts.volume)
-      return await audio.play(k, f, {volume:opts && opts.volume,loop:opts?.loop ?? k==='bgm',assetUrl:audioAssetUrl})
+      const receipt = await audio.playWithReceipt(k, f, {volume:opts && opts.volume,loop:opts?.loop ?? k==='bgm',
+        fadein:opts?.fadein ?? 0,assetUrl:audioAssetUrl})
+      if (receipt.played && audio.isCurrentPlayback(k, receipt.owner)) core.audioPlay(k, f, opts && opts.volume)
+      else if (!audio.isPlaying(k) && core.audioBus[k]?.playing) core.audioEnded(k)
+      return receipt.played
     },
-    audio_stop: (kind) => { const k = String(kind); core.audioStop(k); audio.stop(k) },
+    audio_stop: (kind, opts) => {
+      const k = String(kind)
+      const stopped = audio.stop(k, {fadeout:opts?.fadeout ?? 0})
+      if (!audio.isPlaying(k)) core.audioStop(k)
+      return stopped
+    },
     audio_xfade: () => {},
     audio_is_playing: (kind) => {
       const key=String(kind),playing=audio.isPlaying(key)
@@ -308,7 +316,12 @@ export async function createPlayer({ scriptsBase, fetchImpl = fetch, wasmFile, a
       return playing
     },
     audio_set_bus_volume: (kind, v) => { core.audioSetBusVolume(String(kind), v); audio.setBusVolume(String(kind), v) },
-    audio_fade_volume: () => {},
+    audio_fade_volume: (kind, value, seconds) => {
+      const k = String(kind)
+      const applied = audio.fadeVolume(k, value, seconds)
+      if (applied) core.audioSetBusVolume(k, value)
+      return applied
+    },
     load_texture: (f) => {
       // resolve via mods.resolve-like identity; fetch metadata in browser
       const id = core.loadTexture(f)
@@ -533,7 +546,7 @@ export async function createPlayer({ scriptsBase, fetchImpl = fetch, wasmFile, a
     __TRANSIENT_RESTORE = nil
     local kag = require('kag')
   `)
-  await installRunnerBridge(lua)
+  await installRunnerBridge(lua, () => audio.currentTime)
 
 
 
@@ -638,6 +651,8 @@ export async function createPlayer({ scriptsBase, fetchImpl = fetch, wasmFile, a
 
   let driving = false
   let disposed = false
+  let audioWaiting = false
+  let audioWaitOptions = {}
   async function drive(player, mode, name, opts, sources, bundle) {
     if (disposed) return 'ERR:player-closed'
     if (driving) return 'ERR:player-busy'
@@ -663,6 +678,13 @@ export async function createPlayer({ scriptsBase, fetchImpl = fetch, wasmFile, a
       lua.global.set('__SCENE_BACKLOG', null)
       player._ctx = lua.global.get('__CTXREF')
       player._co = await lua.doString("return __CO and coroutine.status(__CO) or 'nil'")
+      audioWaiting = typeof out === 'string' && out.startsWith('WAIT_AUDIO:')
+      if (mode !== 'audio-tick') {
+        audioWaitOptions = {}
+        for (const key of ['autoClick', 'maxFrames', 'textSpeed', 'skip', 'choiceIndex', 'choiceX', 'choiceY']) {
+          if (opts[key] !== undefined) audioWaitOptions[key] = opts[key]
+        }
+      }
       return out
     } finally { driving = false }
   }
@@ -730,6 +752,12 @@ export async function createPlayer({ scriptsBase, fetchImpl = fetch, wasmFile, a
       if (bundle?.version !== 1) return 'ERR:bundle-format-mismatch'
       if (!bundle?.scenes?.[sceneKey]) return 'ERR:scene-not-in-bundle:' + String(sceneKey)
       return drive(this, 'bundle', sceneKey, opts, opts.sceneSources ?? {}, bundle.scenes)
+    },
+    get isWaitingForAudio() { return audioWaiting && !disposed },
+    /** Advance only an existing audio wait, without a click or a new session. */
+    async tickAudio() {
+      if (disposed || driving || !audioWaiting) return null
+      return drive(this, 'audio-tick', '', { ...audioWaitOptions, audioTick: true })
     },
     /** Raise the click signal for the next runScene. */
     async click() { lua.global.set('__CLICK', true) },

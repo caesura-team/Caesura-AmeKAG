@@ -263,6 +263,10 @@ jobs:
           # parent diff and would misreport the tip as the evidence HEAD.
           fetch-depth: 0
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.2'
+
       - name: Install Dependencies
         run: |
           sudo apt-get update
@@ -350,6 +354,17 @@ jobs:
             echo "web-smoke attempt $attempt failed; retrying"
           done
           exit 1
+
+      - name: Web Audio real PCM and lifecycle checks
+        run: node scripts/web_audio_smoke.mjs --out artifacts/validation/web-audio-ci --browser chrome
+
+      - name: Upload Web Audio evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-web-audio-evidence
+          path: artifacts/validation/web-audio-ci/report.json
+          if-no-files-found: warn
 
       - name: Web Player unit & integration tests (vitest)
         run: |

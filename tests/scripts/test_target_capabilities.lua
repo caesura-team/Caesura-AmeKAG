@@ -294,7 +294,7 @@ check("real vfx and postprocess defaults agree",table.concat(calls,",")=="partic
 calls={};actual_audio.stopbgm({},schema.coerce("stopbgm",{time=100},{}))
 check("actual coerced stopbgm time is shadowed",table.concat(calls,",")=="audio:stop")
 calls={};actual_audio.playbgmstop({},schema.coerce("playbgmstop",{file="a.ogg",fadeout=100},{}))
-check("actual playbgmstop is not backend crossfade",table.concat(calls,",")=="audio:fade,audio:stop,audio:play")
+check("actual playbgmstop stops then plays without bus fade or crossfade",table.concat(calls,",")=="audio:stop,audio:play")
 calls={};actual_audio.stopse({},schema.coerce("stopse",{fadeout=100},{}))
 check("actual stopse ignores its fade field",table.concat(calls,",")=="audio:stop")
 
