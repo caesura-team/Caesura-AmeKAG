@@ -131,3 +131,15 @@ CI 34702706010、head e91d15a9257d1945030b7767fc070edc1a1a8415的macOS Test有�
 同一构建的Windows真实进程增量也通过：u18-darwin-output-windows-process-01为3/3（包括1MiB完整回包、暂停消费者、Running后断开），u18-timeout-observation-windows-01为6/6；共9个本轮PID自然exit0，无forced termination，二进制前后hash稳定。HTTP两项late用例的stop状态均200、正文status=ok。这只增加Windows路径证据，仍不解释上轮macOS的stop失败。
 
 首轮CI最终为Linux GCC、Windows Debug/Release、Android静态/交叉编译包、iOS编译均成功，macOS失败；3个发布包job按PR事件规则跳过。该CI整体FAIL，不满足合并门禁。
+
+## macOS 第二轮与超时测试前提修正（2026-09-13）
+
+CI34703842837的Mac job103580212090实际checkout为PR合并候选172485a6（PR head5008aa5a），二进制SHA256为3217a4673f387e73ca327c2060949651713ca9b447561a9433bf668e53477661。原始job和失败artifact保存在主工作区artifacts/validation/u18-macos-ci-02/。
+
+Darwin背压3/3通过：断开输出路径仍验证mutation一次、同ID迟到终态一次、检测输出错误，现已自然exit0且无强杀。HTTP三项通过，late-success的Stop为200/status=ok、52ms内Started/Completed。这只证明本次HTTP路径通过，不能补推首轮丢失Stop响应的原因。
+
+第二轮唯一失败为stdio-late-success：eval在104ms仍Queued，被正确取消并返回request_cancelled；旧测试却把这个没有Started的请求当作Running，等待不会出现的Completed。这证实了原100ms调度前提不可靠。新的进程夹具保留Queued场景100ms/owner停滞；Running场景使用实际默认5000ms，并在测试自有tests/u18-rpc-<唯一目录>/release.flag上等待。主线程必须观察真实Started、封闭gate、同ID的result_unknown（HTTP503）后才释放；变更计数和预期失败均在读到release之后执行。每请求只提交一次，未在deadline前Started直接判setup失败，不重试，不改变生产队列或其取消合同。
+
+Lua等待受30秒和50000轮双限额约束，固定1MiB C字符串操作控制指令成本，不累计字符串。清理先尝试释放，IO错误记录为失败但仍回收本轮进程/线程；只删除本次创建的flag与空唯一目录。stdio观察EOF后排空最终响应队列，避免将进程先退出、reader稍后读到Stop回包的次序误判成丢失响应。
+
+实际本地记录：barrier-windows-01因binary/tests目录尚不存在，2项Queued通过、4项setup失败，原始失败与强制回收记录保留；修正目录准备后barrier-windows-02为6/6，随后完成清理/EOF独立审查增量。最终u18-timeout-barrier-windows-03/report.json为6/6，6个PID全部自然exit0，四项Running均先观察到Started和真实超时，再完成一次变更和唯一迟到终态；submitter/readers均join，barrier清理通过，二进制hash前后稳定。测试源码3E5AA73356C7E6AA4D7E08892DA80A056265B12A94FF0D7E9CCB87D80E5EC815。该结果是Windows夹具验证，新Mac执行仍待CI；没有通过放宽生产性能门槛、接受请求取消冒充Running或循环重跑同一候选获得绿色。
