@@ -29,8 +29,8 @@ public:
     bool createGLContext() override;
     void* getGLContext() override { return m_glContext; }
     void postFrame() override;
-    int getWindowWidth() const override  { return m_width; }
-    int getWindowHeight() const override { return m_height; }
+    int getWindowWidth() const override;
+    int getWindowHeight() const override;
     void setFullscreen(bool fullscreen) override;
     void resizeWindow(int width, int height) override;
 

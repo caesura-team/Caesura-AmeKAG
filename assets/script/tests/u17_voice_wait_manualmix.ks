@@ -1,0 +1,6 @@
+[set var="f.u17_entered" value=1]
+[voice_wait]
+[set var="f.u17_done" value=1]
+[p]
+[set var="f.u17_beyond_page" value=1]
+[end]

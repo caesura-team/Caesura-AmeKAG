@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstring>
 #include <cstdio>
+#include <utility>
 #include <SDL3/SDL.h>
 
 // ── Android JNI audio-focus bridge (t211 / Track M A2 JNI) ──────────────────
@@ -162,73 +163,158 @@ void MobileAdapter::onTerminate(lua_State* L) {
 //  Touch → Mouse Mapping
 // ══════════════════════════════════════════════════════════════════════════
 
-void MobileAdapter::onFingerDown(float x, float y, int fingerId) {
-    if (!validCoord(x) || !validCoord(y)) return; // non-finite input
-    if (fingerId < 0 || fingerId >= MAX_TOUCH_POINTS) {
-        return; // out of range -- ignore
+void MobileAdapter::setEventSink(std::function<void(const SDL_Event&)> sink) {
+    m_eventSink = std::move(sink);
+}
+
+void MobileAdapter::emitEvent(const SDL_Event& event) {
+    // The callback may replace the configured sink while it is executing.
+    const auto sink = m_eventSink;
+    if (sink) sink(event);
+    else {
+        SDL_Event queued = event;
+        SDL_PushEvent(&queued);
     }
+}
+
+MobileAdapter::EmittedButton& MobileAdapter::emittedButton(uint8_t button) {
+    return button == SDL_BUTTON_LEFT ? m_leftButton : m_rightButton;
+}
+
+uint64_t MobileAdapter::emitButtonDown(uint8_t button, float x, float y) {
+    // Zero denotes no current owner. Unsigned wrap never publishes that value.
+    if (++m_buttonSerial == 0) ++m_buttonSerial;
+    const uint64_t owner = m_buttonSerial;
+    emittedButton(button) = EmittedButton{true, owner, x, y};
+    SDL_Event event{};
+    event.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
+    event.button.x = x;
+    event.button.y = y;
+    event.button.button = button;
+    event.button.down = true;
+    event.button.clicks = 1;
+    emitEvent(event);
+    return owner;
+}
+
+void MobileAdapter::emitButtonUp(uint8_t button, float x, float y) {
+    // Publish release before callbacks: a nested new down must survive return.
+    emittedButton(button) = EmittedButton{false, 0, x, y};
+    SDL_Event event{};
+    event.type = SDL_EVENT_MOUSE_BUTTON_UP;
+    event.button.x = x;
+    event.button.y = y;
+    event.button.button = button;
+    event.button.down = false;
+    event.button.clicks = 1;
+    emitEvent(event);
+}
+
+void MobileAdapter::emitButtonPair(uint8_t button, float x, float y) {
+    const uint64_t owner = emitButtonDown(button, x, y);
+    const auto& current = emittedButton(button);
+    // Cancellation may already have released this down, or a nested press may
+    // own the button now. New contacts that emitted no press do not supersede it.
+    if (current.down && current.owner == owner) emitButtonUp(button, x, y);
+}
+
+void MobileAdapter::setDeferredTouchClicks(bool enabled) {
+    if (m_deferredTouchClicks == enabled) return;
+    m_deferredTouchClicks = enabled;
+    cancelTouches(); // A release callback sees the new mode, never a stale one.
+}
+
+void MobileAdapter::cancelTouches() {
+    for (int i = 0; i < MAX_TOUCH_POINTS; ++i) {
+        m_touchPoints[i] = {};
+        m_touchOrigins[i] = {};
+    }
+    m_activeTouches = 0;
+    m_sequenceTapSuppressed = false;
+    m_lastPinchScale = 0.0f;
+    // This includes a deferred tap's transient down. All contact cleanup is
+    // finished before emission; a release callback may immediately reuse a slot.
+    if (m_leftButton.down) {
+        const float x = m_leftButton.x, y = m_leftButton.y;
+        emitButtonUp(SDL_BUTTON_LEFT, x, y);
+    }
+}
+
+void MobileAdapter::rememberTouchPosition(int fingerId, float x, float y) {
+    auto& point = m_touchPoints[fingerId];
+    auto& origin = m_touchOrigins[fingerId];
+    point.x = x;
+    point.y = y;
+    const float dx = x - origin.x, dy = y - origin.y;
+    const float travelSq = dx * dx + dy * dy;
+    if (travelSq > origin.maxTravelSq) origin.maxTravelSq = travelSq;
+}
+
+void MobileAdapter::consumeTouchTap() {
+    if (m_activeTouches > 0) m_sequenceTapSuppressed = true;
+}
+
+void MobileAdapter::onFingerDown(float x, float y, int fingerId) {
+    if (!validCoord(x) || !validCoord(y)) return;
+    if (fingerId < 0 || fingerId >= MAX_TOUCH_POINTS) return;
     if (m_touchPoints[fingerId].active) {
-        // Finger already tracked (duplicate down): update position only.
-        m_touchPoints[fingerId].x = x;
-        m_touchPoints[fingerId].y = y;
+        // Retain duplicate-down counting/injection behavior, without letting a
+        // changed duplicate position erase earlier travel or reset the origin.
+        rememberTouchPosition(fingerId, x, y);
         return;
     }
-    m_touchPoints[fingerId] = TouchPoint{ x, y, fingerId, true };
-    m_activeTouches++;
-
-    // Touch-to-mouse: inject SDL mouse button down event
-    SDL_Event ev = {};
-    ev.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
-    ev.button.x = x * m_displayScale;
-    ev.button.y = y * m_displayScale;
-    ev.button.button = SDL_BUTTON_LEFT;
-    ev.button.down = true;
-    ev.button.clicks = 1;
-    SDL_PushEvent(&ev);
+    if (m_activeTouches == 0) m_sequenceTapSuppressed = false;
+    m_touchPoints[fingerId] = TouchPoint{x, y, fingerId, true};
+    m_touchOrigins[fingerId] = TouchOrigin{x, y, 0.0f};
+    ++m_activeTouches;
+    if (m_activeTouches > 1) m_sequenceTapSuppressed = true;
+    if (!m_deferredTouchClicks)
+        emitButtonDown(SDL_BUTTON_LEFT, x * m_displayScale, y * m_displayScale);
 }
 
 void MobileAdapter::onFingerMotion(float x, float y, int fingerId) {
-    if (!validCoord(x) || !validCoord(y)) return; // non-finite input
-    if (fingerId < 0 || fingerId >= MAX_TOUCH_POINTS) {
-        return; // out of range -- ignore
+    if (!validCoord(x) || !validCoord(y)) return;
+    if (fingerId < 0 || fingerId >= MAX_TOUCH_POINTS) return;
+    if (!m_touchPoints[fingerId].active) return;
+    rememberTouchPosition(fingerId, x, y);
+    SDL_Event event{};
+    event.type = SDL_EVENT_MOUSE_MOTION;
+    event.motion.x = x * m_displayScale;
+    event.motion.y = y * m_displayScale;
+    event.motion.state = (m_leftButton.down ? SDL_BUTTON_LMASK : 0)
+        | (m_rightButton.down ? SDL_BUTTON_RMASK : 0);
+    if (m_leftButton.down) {
+        m_leftButton.x = event.motion.x;
+        m_leftButton.y = event.motion.y;
     }
-    if (!m_touchPoints[fingerId].active) {
-        return; // motion only valid for a tracked finger
+    if (m_rightButton.down) {
+        m_rightButton.x = event.motion.x;
+        m_rightButton.y = event.motion.y;
     }
-    m_touchPoints[fingerId].x = x;
-    m_touchPoints[fingerId].y = y;
-
-    // Touch-to-mouse: inject SDL mouse motion event
-    SDL_Event ev = {};
-    ev.type = SDL_EVENT_MOUSE_MOTION;
-    ev.motion.x = x * m_displayScale;
-    ev.motion.y = y * m_displayScale;
-    SDL_PushEvent(&ev);
+    emitEvent(event);
 }
 
 void MobileAdapter::onFingerUp(float x, float y, int fingerId) {
-    // Note: rejecting non-finite up coordinates intentionally leaves the
-    // finger tracked (asserted by the non-finite-inputs test) -- the
-    // platform layer must send the up with valid coordinates.
-    if (!validCoord(x) || !validCoord(y)) return; // non-finite input
-    if (fingerId < 0 || fingerId >= MAX_TOUCH_POINTS) {
-        return; // out of range -- ignore
-    }
-    if (!m_touchPoints[fingerId].active) {
-        return; // finger was never down -- ignore (no underflow)
-    }
-    m_touchPoints[fingerId] = TouchPoint{ x, y, fingerId, false };
-    if (m_activeTouches > 0) m_activeTouches--;
+    // Preserve the existing invalid-up contract: an invalid coordinate leaves
+    // the contact tracked until the host supplies a valid up or cancellation.
+    if (!validCoord(x) || !validCoord(y)) return;
+    if (fingerId < 0 || fingerId >= MAX_TOUCH_POINTS) return;
+    if (!m_touchPoints[fingerId].active) return;
+    rememberTouchPosition(fingerId, x, y);
+    // Same raw window-pixel boundary as GestureDetector's moved >16px test.
+    constexpr float moveSlopSq = 16.0f * 16.0f;
+    const bool deferred = m_deferredTouchClicks;
+    const bool tap = deferred && m_activeTouches == 1 && !m_sequenceTapSuppressed
+        && m_touchOrigins[fingerId].maxTravelSq <= moveSlopSq;
+    m_touchPoints[fingerId] = TouchPoint{x, y, fingerId, false};
+    m_touchOrigins[fingerId] = {};
+    --m_activeTouches;
+    if (m_activeTouches == 0) m_sequenceTapSuppressed = false;
 
-    // Touch-to-mouse: inject SDL mouse button up event
-    SDL_Event ev = {};
-    ev.type = SDL_EVENT_MOUSE_BUTTON_UP;
-    ev.button.x = x * m_displayScale;
-    ev.button.y = y * m_displayScale;
-    ev.button.button = SDL_BUTTON_LEFT;
-    ev.button.down = false;
-    ev.button.clicks = 1;
-    SDL_PushEvent(&ev);
+    // No contact writes after emission: the sink may cancel, switch modes, or
+    // create a new sequence in this very slot before this call returns.
+    if (tap) emitButtonPair(SDL_BUTTON_LEFT, x * m_displayScale, y * m_displayScale);
+    else if (!deferred) emitButtonUp(SDL_BUTTON_LEFT, x * m_displayScale, y * m_displayScale);
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -242,6 +328,7 @@ void MobileAdapter::onPinch(float centerX, float centerY, float scale) {
     if (!validCoord(centerX) || !validCoord(centerY) || !validCoord(scale)) {
         return; // non-finite input -- must not poison the scale baseline
     }
+    consumeTouchTap(); // Even the initial recognized pinch baseline consumes a tap.
     if (m_lastPinchScale <= 0.0f) {
         // First event of a new pinch gesture: establish the baseline.
         m_lastPinchScale = scale;
@@ -259,49 +346,31 @@ void MobileAdapter::onPinch(float centerX, float centerY, float scale) {
     ev.wheel.y = delta * kPinchToWheelScale;
     ev.wheel.mouse_x = centerX * m_displayScale;
     ev.wheel.mouse_y = centerY * m_displayScale;
-    SDL_PushEvent(&ev);
+    emitEvent(ev);
 }
 
 void MobileAdapter::onLongPress(float x, float y) {
     if (!validCoord(x) || !validCoord(y)) return; // non-finite input
+    consumeTouchTap();
     // Long press → right mouse button click.
     // Note: press-duration tracking (>500ms) is done by the platform layer;
     // this adapter only maps the detected press to a right-click.
     MOBILE_GESTURE_TRACE("[Mobile] Long press -> right click (%.0f, %.0f)",
                          x * m_displayScale, y * m_displayScale);
-    SDL_Event ev = {};
-    ev.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
-    ev.button.x = x * m_displayScale;
-    ev.button.y = y * m_displayScale;
-    ev.button.button = SDL_BUTTON_RIGHT;
-    ev.button.down = true;
-    ev.button.clicks = 1;
-    SDL_PushEvent(&ev);
-    // Synthesize immediate button-up
-    ev.type = SDL_EVENT_MOUSE_BUTTON_UP;
-    ev.button.down = false;
-    SDL_PushEvent(&ev);
+    emitButtonPair(SDL_BUTTON_RIGHT, x * m_displayScale, y * m_displayScale);
 }
 
 void MobileAdapter::onTwoFingerTap(float centerX, float centerY) {
     if (!validCoord(centerX) || !validCoord(centerY)) return;
+    consumeTouchTap();
     MOBILE_GESTURE_TRACE("[Mobile] Two-finger tap -> right click (%.0f, %.0f)",
                          centerX * m_displayScale, centerY * m_displayScale);
-    SDL_Event ev = {};
-    ev.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
-    ev.button.x = centerX * m_displayScale;
-    ev.button.y = centerY * m_displayScale;
-    ev.button.button = SDL_BUTTON_RIGHT;
-    ev.button.down = true;
-    ev.button.clicks = 1;
-    SDL_PushEvent(&ev);
-    ev.type = SDL_EVENT_MOUSE_BUTTON_UP;
-    ev.button.down = false;
-    SDL_PushEvent(&ev);
+    emitButtonPair(SDL_BUTTON_RIGHT, centerX * m_displayScale, centerY * m_displayScale);
 }
 
 void MobileAdapter::onThreeFingerHold(float centerX, float centerY) {
     if (!validCoord(centerX) || !validCoord(centerY)) return;
+    consumeTouchTap();
     MOBILE_GESTURE_TRACE("[Mobile] Three-finger hold -> skip toggle (%.0f, %.0f)",
                          centerX * m_displayScale, centerY * m_displayScale);
     SDL_Event ev = {};
@@ -309,7 +378,7 @@ void MobileAdapter::onThreeFingerHold(float centerX, float centerY) {
     ev.key.key = SDLK_LCTRL;
     ev.key.down = true;
     ev.key.repeat = false;
-    SDL_PushEvent(&ev);
+    emitEvent(ev);
 }
 
 // WIRED (t109): Engine.cpp's key-down handler routes SDLK_SPACE to the Lua
@@ -317,6 +386,7 @@ void MobileAdapter::onThreeFingerHold(float centerX, float centerY) {
 // visibility -- mirroring the web gesture (web/main.mjs onSwipeDown).
 void MobileAdapter::onSwipeDown(float startX, float startY, float endX, float endY) {
     if (!validCoord(startX) || !validCoord(startY) || !validCoord(endX) || !validCoord(endY)) return;
+    consumeTouchTap();
     MOBILE_GESTURE_TRACE("[Mobile] SwipeDown -> SPACE (%.0f, %.0f -> %.0f, %.0f)",
                          startX * m_displayScale, startY * m_displayScale,
                          endX * m_displayScale, endY * m_displayScale);
@@ -325,7 +395,7 @@ void MobileAdapter::onSwipeDown(float startX, float startY, float endX, float en
     ev.key.key = SDLK_SPACE;
     ev.key.down = true;
     ev.key.repeat = false;
-    SDL_PushEvent(&ev);
+    emitEvent(ev);
 }
 
 // WIRED (t109): Engine.cpp routes SDLK_PAGEUP to the Lua hook
@@ -333,6 +403,7 @@ void MobileAdapter::onSwipeDown(float startX, float startY, float endX, float en
 // overlay -- mirroring the web gesture (web/main.mjs onSwipeUp).
 void MobileAdapter::onSwipeUp(float startX, float startY, float endX, float endY) {
     if (!validCoord(startX) || !validCoord(startY) || !validCoord(endX) || !validCoord(endY)) return;
+    consumeTouchTap();
     MOBILE_GESTURE_TRACE("[Mobile] SwipeUp -> PAGEUP (%.0f, %.0f -> %.0f, %.0f)",
                          startX * m_displayScale, startY * m_displayScale,
                          endX * m_displayScale, endY * m_displayScale);
@@ -341,7 +412,7 @@ void MobileAdapter::onSwipeUp(float startX, float startY, float endX, float endY
     ev.key.key = SDLK_PAGEUP;
     ev.key.down = true;
     ev.key.repeat = false;
-    SDL_PushEvent(&ev);
+    emitEvent(ev);
 }
 
 // ══════════════════════════════════════════════════════════════════════════

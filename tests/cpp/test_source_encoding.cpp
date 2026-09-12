@@ -307,7 +307,9 @@ TEST_CASE("Engine input loop keeps wheel and save shortcuts reachable") {
         "if ((event.type == SDL_EVENT_MOUSE_MOTION ||");
     const auto pointerOpen = source.find('{', pointerBranch);
     const auto pointerClose = findMatchingBrace(source, pointerOpen);
-    const auto wheelBranch = source.find("if (event.type == SDL_EVENT_MOUSE_WHEEL");
+    // Ignore the earlier window-ownership filter; the behavioral wheel
+    // branch must still be outside the complete pointer handler below.
+    const auto wheelBranch = source.find("if (event.type == SDL_EVENT_MOUSE_WHEEL", pointerBranch);
 
     REQUIRE(pointerBranch != std::string::npos);
     REQUIRE(pointerOpen != std::string::npos);

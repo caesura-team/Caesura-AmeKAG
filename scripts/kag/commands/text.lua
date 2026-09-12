@@ -1929,16 +1929,23 @@ function TextCommands.input(ctx, params)
             return
         end
         if keyName == "backspace" or keyCode == 8 or keyCode == 0x08 then
+            -- The IME owns edits to active preedit. Only its subsequent
+            -- TextEditing notification changes that preview; repeated keys
+            -- before the notification must not delete committed characters.
+            if #comp_text == 0 then
+                buffer = utf8_pop(buffer)
+                redraw_ui()
+            end
+        elseif keyName == "return" or keyCode == 13 or keyCode == 0x0D then
+            -- Candidate confirmation is not submission of the whole form.
+            if #comp_text == 0 then cleanup_and_finish(true) end
+        elseif keyName == "escape" or keyCode == 27 or keyCode == 0x1B then
             if #comp_text > 0 then
                 comp_text = ""
+                redraw_ui()
             else
-                buffer = utf8_pop(buffer)
+                cleanup_and_finish(false)
             end
-            redraw_ui()
-        elseif keyName == "return" or keyCode == 13 or keyCode == 0x0D then
-            cleanup_and_finish(true)
-        elseif keyName == "escape" or keyCode == 27 or keyCode == 0x1B then
-            cleanup_and_finish(false)
         end
     end
 

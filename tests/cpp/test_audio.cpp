@@ -1362,3 +1362,27 @@ TEST_CASE("AudioFocus: interface upcast") {
     CHECK(iface->currentState() == AudioFocusState::Interrupted);
 }
 
+
+TEST_CASE("U17 AudioFocus: independent lost and interrupted reasons survive interleaving") {
+    Caesura::AudioFocusService focus;
+    using Event = Caesura::AudioFocusEvent;
+    using State = Caesura::AudioFocusState;
+    focus.post(Event::FocusLost);
+    CHECK(focus.currentState() == State::Lost);
+    focus.post(Event::InterruptionBegin);
+    CHECK(focus.currentState() == State::Interrupted);
+    focus.post(Event::FocusGained);
+    CHECK(focus.currentState() == State::Interrupted);
+    focus.post(Event::InterruptionEnd);
+    CHECK(focus.currentState() == State::Normal);
+
+    focus.post(Event::InterruptionBegin);
+    focus.post(Event::FocusLost);
+    CHECK(focus.currentState() == State::Interrupted);
+    focus.post(Event::InterruptionEnd);
+    CHECK(focus.currentState() == State::Lost);
+    focus.post(Event::InterruptionEnd);
+    CHECK(focus.currentState() == State::Lost);
+    focus.post(Event::FocusGained);
+    CHECK(focus.currentState() == State::Normal);
+}

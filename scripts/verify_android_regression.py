@@ -144,8 +144,20 @@ class AndroidVerifier:
         self.check("Engine.cpp exists", engine_path.exists())
         if engine_path.exists():
             content = engine_path.read_text(encoding="utf-8")
-            self.check("Scaled finger X coordinate", "event.tfinger.x * winW" in content)
-            self.check("Scaled finger Y coordinate", "event.tfinger.y * winH" in content)
+            # U17 routes the same SDL event through a dedicated dispatcher.
+            # These are source-wiring checks; actual coordinate and resize
+            # behavior is exercised by the U17 SDL route cases in CaesuraTests.
+            code = re.sub(r"//[^\n]*|/\*.*?\*/", "", content, flags=re.DOTALL)
+            dispatch = re.search(r"void\s+Engine::dispatchTouchEvent\([^)]*\)\s*\{(.*?)^\}",
+                                 code, re.DOTALL | re.MULTILINE)
+            body = dispatch.group(1) if dispatch else ""
+            alias = re.search(r"const\s+auto\s*&\s*(\w+)\s*=\s*event\.tfinger\s*;", body)
+            def scaled(axis, dimension):
+                return bool(alias and re.search(
+                    rf"\b{re.escape(alias.group(1))}\.{axis}\s*\*\s*float\(\s*"
+                    rf"m_platformBackend->getWindow{dimension}\(\s*\)\s*\)", body))
+            self.check("Normalized finger X uses current window width", scaled("x", "Width"))
+            self.check("Normalized finger Y uses current window height", scaled("y", "Height"))
             self.check("GestureDetector integrated for finger down/move/up", "m_gestureDetector" in content)
             self.check("MobileAdapter integrated for touch injection", "m_mobileAdapter" in content)
 

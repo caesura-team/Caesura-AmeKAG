@@ -73,3 +73,13 @@ PR #19 的候选CI `34688500985` 在iOS源检查失败：`verify_metal_shaders.p
 同轮macOS完整构建通过，CTest仅 `CaesuraRenderContractDriver` 失败：临时目录使用 `/var/...` 别名，其系统父目录链接至 `/private/var/...`，导致正控制在进入被测逻辑前被路径边界拒绝。Windows Release同样仅此CTest失败，但别名来自 `RUNNER~1` 短文件名。测试根路径改为创建后立即resolve，与生产run_suite开始时的一次规范化一致；随后恶意替换目录/链接仍按原词法路径固定和拒绝。本机62/62通过，生产输出边界没有放宽，CI主机实际通过须由新CI确认。
 
 Linux本轮完整构建与CTest28项零失败，后续Android源码审计的8项旧要求失败：它仍搜索TTFState整段Unicode预加载和旧图集分配。按需图集已经替代该实现，源检查更新为实际所有权、尺寸/格式、UTF-8准备、容量限制、透明padding、动态上传与同图集缺字替代，保留总88项；本机88/88通过，6项移除关键源码连接的隔离负控制均拒绝。真实FT对照另扩充一般标点U+2014、CJK标点U+3002和全角U+FF21，加上原ASCII/Han/Kana共7个代表字符，6项字体用例239断言通过。用例数没有减少；固定字体28px的代表字符不等于整段Unicode或Android/GLES设备证明。上述最终增量未改变生产实现与shader字节，原生/GPU生产代码证据保持有效，最终候选CI仍须通过。
+
+## U16交付
+
+最终干净候选 `1458cf67b6868169ca35940eefa556e9cb046ddf` 的 `u16-native-full-03` 全部11检查通过：C++1333/1333、400327断言，Lua147/147与46/46，CTest27通过及1项预声明AI跳过，源码/夹具前后稳定。run ID `9d6b5263-9411-47c8-879a-4a081ee7a6b1` 的collector和严格verifier通过。
+
+[PR #19](https://github.com/caesura-team/Caesura-AmeKAG/pull/19)最终[CI 34689313983](https://github.com/caesura-team/Caesura-AmeKAG/actions/runs/34689313983)成功：Windows Debug/Release、Linux、macOS、iOS编译、Android静态及编译/测试签名产物共7项成功；3项合并后打包任务按PR条件跳过。2026-09-12按既有授权合并为 `074f5f7c2e1aa958a488f7645692307361d29134`。合并后CI另行跟踪，不把PR打包跳过写成已打包。
+
+U16的固定两后端图像合同和必要整合门禁已交付。上文旧失败保持原结论；Metal/GLES/Vulkan及未覆盖复杂效果/真实设备事件的边界不变。后续继续U17–U29和其他未验收项。
+
+合并后 [master CI 34690073493](https://github.com/caesura-team/Caesura-AmeKAG/actions/runs/34690073493) 在074f5f7c完成，10项作业全部成功，包括Windows Release、macOS及Linux打包；这是实际合并后结果，不是PR条件跳过的重分类。
