@@ -18,7 +18,7 @@ extern "C" {
 #include "script/vm/LuaManager.h"
 #include "script/vm/ManagedCoroutine.h"
 #include "entry/Engine.h"
-#include "entry/OwnerRpcQueue.h"
+#include "rpc/OwnerRpcQueue.h"
 #include "debug/DebugProtocol.h"
 #include "rpc/EditorServer.h"
 #include <nlohmann_json.hpp>

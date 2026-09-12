@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../rpc/api/IRpcDispatcher.h"
+#include "api/IRpcDispatcher.h"
 
 #include <chrono>
 #include <cstdint>
@@ -13,7 +13,7 @@
 
 namespace Caesura {
 
-// Composition-root helper, not a backend or another RPC protocol. Only the
+// Internal RPC queue, constructed by main's composition root. Only the
 // constructing thread may pump; the executor stays on that owner thread.
 class OwnerRpcQueue final {
 public:

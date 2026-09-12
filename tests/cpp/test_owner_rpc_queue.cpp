@@ -1,5 +1,5 @@
 #include "doctest.h"
-#include "entry/OwnerRpcQueue.h"
+#include "rpc/OwnerRpcQueue.h"
 
 #include <algorithm>
 #include <atomic>

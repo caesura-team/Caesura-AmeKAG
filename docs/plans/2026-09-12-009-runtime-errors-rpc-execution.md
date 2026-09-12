@@ -98,3 +98,13 @@ Queued回复request_cancelled，日志从未started，变更marker为0。Running
 u18-managed-formal-green-01包含新增实际kagDebugContinue的8个进程场景，全部通过、自然退出、无强制终止。此前被覆盖的场景继续路径现在返回false:true:0的正确页等待状态，随后单次点击执行后续命令一次。该二进制已包括页等待标记和场景调试入口；最后三行click-owner guard是之后的Lua增量，完整批次将重新同步并覆盖。
 
 当前实际CTest发现32项，注册检查为196个Lua文件、91个C++文件都有执行入口；模块索引88项与计划事实生成检查通过，能力矩阵已用原生成器同步输入指纹与位置。这些静态计数不是覆盖率，也不代替随后的完整候选执行。
+
+## 首轮完整门禁与合同衔接
+
+冻结提交c906ed1f78ae2aebb8fdfd07f225d928aa1b8712的`u18-native-candidate-01`完整执行结束；run_id为621e8fba-3750-43dd-acb5-7311ec9edeab。Debug构建、1378/1378 C++（402148断言、0失败0跳过）、Lua主套件147/147和验证器自身检查通过。Lua隔离套件47/48、coupling及CTest失败（29通过、2失败、1项profile预声明的可选AI跳过）；collector保存FAIL，严格verifier拒绝这批证据。原始日志和失败bundle保留，不作为成功候选使用。
+
+Lua失败来自U17语音查询异常测试：旧测试在默认handler后要求继续剧情，与U18默认严重命令错误停止合同冲突。显式自定义成功handler现在承接原有后续到页、等待、停止次数、无重复推进及poll清理的全部断言；另增加默认handler返回command-error、保留位置、关闭执行、不能被后续帧或点击推进、显式stop释放音频一次及新会话健康正控制。`u18-voice-error-contract-01`实际67/67，不减少用例或恢复默认静默继续。
+
+coupling发现entry因OwnerRpcQueue增加rpc依赖而达到15/14。最终将同一队列实现归入`src/rpc/OwnerRpcQueue.h/.cpp`和既有CaesuraRpc静态库，仍仅由main组合根创建；不改变队列算法或公共接口。`u18-coupling-correction-01`为entry14/14、rpc2/4并通过，迁移后的完整Debug构建通过；同一队列定向回归9项122断言通过。
+
+两项CTest失败由本工作区首次CMake发现`C:/Windows/System32/bash.exe`（WSL启动器）造成，它不能以Git Bash方式解释含括号的Windows脚本路径。仅将本地CAESURA_BASH_PROGRAM配置为已安装的`C:/Program Files/Git/bin/bash.exe`，未跳过或修改用例；`u18-bash-tests-01`中Golden VN和ValidationOutputPaths两项通过。完整批次将重新固定源码及配置执行，不能把这些定向结果拼作首轮全绿。
