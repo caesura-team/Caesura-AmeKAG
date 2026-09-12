@@ -1,6 +1,6 @@
 # U19 目标能力与作者声明执行记录
 
-开始日期：2026-09-12；当前更新：2026-09-13。唯一计划U19，底层优先、Studio暂停。独立分支codex/u19-target-capabilities从U18冻结候选2552e225开始，现已保留全部U19工作并快进整合U18合并提交9b269ab7。能力查询、声明预检、Web包身份与运行时拒绝已接通，正在冻结候选并验收完整原生门禁。首次完整Web为528/528；随后palette清理/模式结果补丁另有88项定向通过，须随最终候选重新验收。U19尚未合并，U1–U29其他未验收项继续保留。作者使用方式见[目标能力指南](../guides/target-capabilities.md)。
+开始日期：2026-09-12；当前更新：2026-09-13。唯一计划U19，底层优先、Studio暂停。独立分支codex/u19-target-capabilities从U18冻结候选2552e225开始，已整合U18合并提交9b269ab7。最终代码候选2dfe451e完成严格原生门禁、完整Web531/531、实际浏览器与桌面包启动正反验证，候选CI七个执行job通过。PR #22待最终文档提交的CI及合并；本记录不把U20–U29或整个计划标为完成。作者使用方式见[目标能力指南](../guides/target-capabilities.md)。
 
 ## 行为合同与实施顺序
 
@@ -81,3 +81,13 @@ Palette后续审查又复现夜间模式在应用失败时仍宣称成功，以�
 现有Web画面与存档夹具读取示例作品的显式能力声明，断言真实降级诊断；没有把省略的后处理当作已实现。Audio UI通过受控AudioContext边界检查真实AudioEngine owner与DOM（5/5），不是物理解码或声卡验证。实际浏览器、最终原生receipt和候选CI仍需记录。未测量覆盖率；接口、SDK OFF、Null、ManualMix、Wasmoon/jsdom和真实GPU/浏览器的证据不得互换。
 
 干净候选36b15aae的u19-native-candidate-01真实receipt为fdf94dce-d959-463e-836d-0f5998859f34：完整Debug、C++1397/1397（402490断言）、Lua147/147与54/54通过；CTest为30通过、2失败、1项预声明AI跳过，源/夹具前后稳定。失败分别是build CLI诊断丢失ks_check/普通lint跳过提示，以及显式无效Lua路径在核验前先查询另一无效引擎、导致路径验证超时。恢复准确且有边界的诊断提示，并在任何外部进程前验证Lua选择后，原有CLI35/35与路径12/12通过；不修改旧测试断言，也不允许skip-check绕过能力。此修复仍须进入新的完整候选门禁。PR #22已作为草稿启动CI，未合并。
+
+## 最终代码候选验收（2dfe451e）
+
+- u19-native-candidate-02的receipt为704c6ccd-6d40-48e0-a597-4a310d40b8a7：11/11命令exit0，完整Debug、C++1397例/402490断言零失败零跳过，Lua147/147与54/54，CTest32通过及1项原先声明的可选AI服务跳过。dirty=false，源码与夹具前后稳定；收集后严格verify_release_candidate通过。该结论仅覆盖windows-debug profile。
+- u19-web-full-02：bake、Vite及39个测试文件全部通过，531/531、零失败零跳过，104.01秒。源码2dfe451e且dirty=false，指纹210184e31d3ab16921436612fbc2d243c33a9311b66829451321c9b4d4074968前后相同，Node/Lua二进制未变化。原预算下故事median871.6ms、1000行median1570.2ms、配对2000/1000 medianRatio2.109。
+- 实际Web包dist/u19-browser-candidate在Chrome153.0.8010.36、`/games/u19/`子路径、默认autoplay规则下14项通过：图文、本地Wasm、无CDN、存档刷新保留、真实WebAudio source，以及用户手势后suspended→running。截图u19-browser-smoke-01.png已目视核对。冒烟脚本的Chrome启动器退出后仍有属于本次独立profile的子进程，已对确切浏览器实例发送Browser.close并验证剩余进程数0；未操作用户浏览器会话。
+- u19-native-boot-03用实际桌面包普通启动路径验证：相同引擎SHA256为6114b24fd5f55f90ab30f2f10ac1d1150d92e3df6515b702324b6228d2d6439e，正控制执行作者entry并exit0；负控制只在包的独立副本中声明必需video.ffmpeg，实际启动在作者entry前拒绝并exit1。设置六帧上限及隐藏启动窗口。之前probe01误用不自动启动作品的headless模式，probe02又请求了锁定后不存在的loadfile；两份失败保留，未将它们算作实现缺陷或通过证据。
+- CI34715182298对应2dfe451e：Windows Debug/Release、macOS、Linux、iOS CMake probe、Android静态合同与CMake probe共七个执行job成功；三个PR发布包job按条件跳过。Windows Debug和Linux的真实Node包CLI均23/23通过，三桌面Lua均147/54，CTest33均无失败（可选AI跳过仍单列）。旧36b15aae的CI34714593601已由更新候选替代并取消，不能记为通过。
+
+SDK ON/账号、其他浏览器与设备、仓外完整作者旅程和发行包验收仍按原计划继续。本轮没有测量覆盖率，没有把测试通过数或源文件清单当作覆盖率、发布批准或全动态路径证明。
