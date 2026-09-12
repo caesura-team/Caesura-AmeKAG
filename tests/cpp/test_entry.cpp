@@ -1470,13 +1470,14 @@ TEST_CASE("U17 SDL route: text and shortcut callbacks follow KAG focus and windo
     U17InputHarness h;
     REQUIRE(h.platform->startTextInput());
     REQUIRE(luaL_dostring(h.L,
-        "texts=0; edits=0; keys=0; shortcuts=0; "
+        "texts=0; edits=0; keys=0; shortcuts=0; wheels=0; "
         "function _KAG_onTextInput(t) texts=texts+1; committed=t end; "
         "function _KAG_onTextEditing(t,s,n) edits=edits+1; composed=t; cs=s; cn=n end; "
         "function _KAG_onKeyDown() keys=keys+1 end; "
         "function _KAG_onCtrlDown() shortcuts=shortcuts+1 end; "
         "function _KAG_onKeySpace() shortcuts=shortcuts+1 end; "
-        "function _KAG_onKeyPageUp() shortcuts=shortcuts+1 end") == LUA_OK);
+        "function _KAG_onKeyPageUp() shortcuts=shortcuts+1 end; "
+        "function _KAG_onMouseWheel() wheels=wheels+1; wheel_y=_KAG_MOUSE_WHEEL_Y end") == LUA_OK);
     const auto send = [&](SDL_WindowID window) {
         SDL_Event event{};
         event.type=SDL_EVENT_TEXT_EDITING; event.edit.windowID=window;
@@ -1484,6 +1485,8 @@ TEST_CASE("U17 SDL route: text and shortcut callbacks follow KAG focus and windo
         REQUIRE(SDL_PushEvent(&event));
         event={}; event.type=SDL_EVENT_TEXT_INPUT; event.text.windowID=window;
         event.text.text="名字"; REQUIRE(SDL_PushEvent(&event));
+        event={}; event.type=SDL_EVENT_MOUSE_WHEEL; event.wheel.windowID=window;
+        event.wheel.y=-2.0f; REQUIRE(SDL_PushEvent(&event));
         for (const auto key : {SDLK_BACKSPACE, SDLK_RETURN, SDLK_ESCAPE, SDLK_LCTRL, SDLK_SPACE, SDLK_PAGEUP}) {
             event={}; event.type=SDL_EVENT_KEY_DOWN; event.key.windowID=window;
             event.key.key=key; event.key.down=true; REQUIRE(SDL_PushEvent(&event));
@@ -1492,6 +1495,7 @@ TEST_CASE("U17 SDL route: text and shortcut callbacks follow KAG focus and windo
     const auto checkCounts = [&](int expected) {
         CHECK(h.number("texts") == expected); CHECK(h.number("edits") == expected);
         CHECK(h.number("keys") == 3*expected); CHECK(h.number("shortcuts") == 3*expected);
+        CHECK(h.number("wheels") == expected); CHECK(h.number("wheel_y") == -2.0);
     };
     int tick=0;
     h.engine->run([&] {
