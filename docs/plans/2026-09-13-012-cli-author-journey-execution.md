@@ -45,6 +45,16 @@ prepared-02六条实际命令全通过且源码、作品与引擎身份稳定。
 
 Web第一进程NEW_A真实保存成功；第二个新浏览器触发fmtTime初始化顺序异常。真实首player生成存档、dispose后新main启动的回归先失败并出现未处理异常；改为可提前调用的函数声明后，入口/选项/冷槽位5/5通过。完整作者旅程随后两分支和两次冷恢复通过，但离线阶段发现异步启动错过window.load，worker未注册；按document.readyState立即注册或一次性等待load修复，两个时序回归均通过。
 
-prepared-04的basic/kag3乘根路径/子路径四组Chrome各104检查通过，实际3个浏览器进程均关闭，离线阶段确认本包SW后停止唯一服务器并断网重载。此处的通过仅覆盖当时声明的状态/资源/离线检查。随后截图复核发现恢复背景Canvas遮住已有消息：相同实际文字矩形正常页面有1004个白色字形像素，冷恢复后为0，即使等待350ms。该新视觉RED已保存，不能用DOM文字存在冒充可见画面。消息层现取最高有效图形z并在必要时置于同层最后位置；新增3个DOM回归先全失败，整个渲染器文件修复后8/8通过。增加实际截图字形检查后的完整四组浏览器验收仍待运行。
+prepared-04的basic/kag3乘根路径/子路径四组Chrome各104检查通过，实际3个浏览器进程均关闭，离线阶段确认本包SW后停止唯一服务器并断网重载。此处的通过仅覆盖当时声明的状态/资源/离线检查。随后截图复核发现恢复背景Canvas遮住已有消息：相同实际文字矩形正常页面有1004个白色字形像素，冷恢复后为0，即使等待350ms。该新视觉RED已保存，不能用DOM文字存在冒充可见画面。消息层现取最高有效图形z并在必要时置于同层最后位置；新增3个DOM回归先全失败，整个渲染器文件修复后8/8通过。prepared-05增加实际截图字形检查后的四组浏览器验收均通过：每组114检查、三次真实进程边界、两条分支/冷恢复及离线重载；全部浏览器退出与端点关闭，包字节稳定。基本模板包inventory为2192a79c0245e6301197dce580ffaf7521cbb8c2302cdaa4ab495a329bca7152，kag3为e60ab3189b4224303f37cc7f5d202509753d8c0dbbc4a80ecce8272b67455213。实际PNG、原始响应与报告的逐文件相等副本位于artifacts/validation/u21-author-web-phase-02。
 
 所有首次失败均保留在artifacts/validation/u21-author-web-phase-01、u21-native-author-diagnosis及各定向日志中。U21尚未提交合并验收；剩余为新包真实Native/Web作者闭环、完整原生/Web/CLI门禁、CI和最终文档状态同步。
+
+## 最终候选前的严格沙箱与目录别名闭合
+
+原生prepared-05在成功准备UTF-8图像后仍未恢复：实际runner错误为严格沙箱拒绝Render.is_valid_handle。C++绑定只通过BackendRegistry查询纹理句柄有效性，没有分配、删除或文件动作；仅将该具名只读查询加入既有白名单，未开放invalidate_handles、DevCore.quit或表写入。新的真实backend_factory/strict代理回归使用明确宿主替身，从6通过/4失败到10/10，原严格/逃逸回归保持通过。隔离Lua发现门槛55提升为56；C++新增7个Windows、5个跨平台用例相应提升各profile最低发现数，实际通过数仍以执行结果为准。
+
+prepared-06使用相同两份仓外作品及相同21bbb引擎，只显式选择新的脚本、打包器与输出目录。六条真实check/package命令全部通过，源码、作者文件和引擎在该命令区间前后一致。随后basic与kag3各完成producer-A/consumer-A/producer-B/consumer-B：8个普通D3D11引擎进程自然exit0，4组实际磁盘存档经前一进程退出后交给新进程，RESTORED/DONE各一次、reward=1，存档与包内静态字节未改变，无resource_failed或脚本错误。记录位于artifacts/validation/u21-author-native-final-01；这不声称新增截图或PCM等价证明。
+
+首轮CI 34730231824保留失败：Windows生成API文档过期，Linux平台证据锚点过期，macOS的标准/var父目录别名被输出链接保护误拒绝。Python与Node现仅在命令开始固定输出物理父目录，后续输出叶子、内部链接与所有权检查保持。8项新增真实CLI回归全通过，涵盖父别名、复制期间别名改向、链接拒绝和Web物理ROOT边界；另8项原有notes/save/modified-output/ZIP负控制通过。完整事务发现45例（原37+8），Mac实际CI结果仍须以新候选运行核对。
+
+prepared-06最终Web包正在进行与prepared-05相同的四组114项验证。最终完整Debug/C++/Lua/CTest、Web全套、CLI/事务/资产套件与新CI尚待记录；此前分段通过不替代这些候选门禁。PR24保持待验收，不宣称U21或整个U1–U29计划已完成。

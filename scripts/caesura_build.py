@@ -153,8 +153,14 @@ def _looks_like_caesura_output(out: Path) -> bool:
 OUTPUT_LEDGER = ".caesura-output.json"
 
 
+def _canonical_output_path(path: Path) -> Path:
+    """Pin parent aliases once, leaving the named output leaf for link checks."""
+    absolute = Path(os.path.abspath(path))
+    return absolute.parent.resolve() / absolute.name
+
+
 def _no_output_links(path: Path) -> None:
-    """Reject symlinks/junctions in destinations before following any parent."""
+    """Reject links in pinned destinations, including later parent replacements."""
     for part in (path, *path.parents):
         if os.path.lexists(part):
             value = part.lstat()
@@ -1269,7 +1275,7 @@ def cmd_build(args) -> int:
         entry_scene = pick_entry_scene(project, scenes, getattr(args, "entry", None))
         engine = find_engine(getattr(args, "engine", None), getattr(args, "config", None))
         out = Path(args.out) if args.out else (ROOT / "dist" / ("%s-game" % project.name))
-        out = Path(os.path.abspath(out))
+        out = _canonical_output_path(out)
         capabilities = run_capability_check(project, scenes, "native", engine=engine,
                                              skip_syntax=args.skip_check)
         if not args.skip_check:
@@ -1393,11 +1399,12 @@ def cmd_package(args) -> int:
     try:
         project = resolve_project(args.project)
         project_entry = pick_entry_scene(project, collect_scenes(project), getattr(args, "entry", None))
-    except BuildError as e:
+        # --out is a container for named game/ZIP leaves. Resolve this parent
+        # once so an alias retarget cannot redirect later preparation/promotion.
+        out_dir = (Path(args.out) if args.out else (ROOT / "dist")).resolve()
+    except (BuildError, OSError) as e:
         print("caesura package: %s" % e, file=sys.stderr)
         return 1
-    out_dir = Path(args.out) if args.out else (ROOT / "dist")
-    out_dir = Path(os.path.abspath(out_dir))
     if len(targets) > 1 and "web" in targets:
         # Match the Web tool's existing destination boundary before publishing
         # any Native artifact in a combined request.

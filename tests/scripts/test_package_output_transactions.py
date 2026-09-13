@@ -106,6 +106,8 @@ rename=Path.rename
 promotion_failed=False
 def copy_boundary(source,destination,*args,**kwargs):
     result=copy(source,destination,*args,**kwargs)
+    if Path(source).resolve()==Path(os.environ['CAESURA_ENGINE']).resolve() and fault=='parent-alias-retarget':
+        caesura_build.subprocess.run([os.environ['CAESURA_NODE'],os.environ['U21_ALIAS_RETARGET_SCRIPT']],check=True)
     if Path(source).resolve()==Path(os.environ['CAESURA_ENGINE']).resolve() and fault=='concurrent-note':
         Path(os.environ['U21_PUBLIC_DIRECTORY'],'notes-during-build.txt').write_bytes(b'user edit while packaging')
         print('U21_REAL_CONCURRENT_NOTE',flush=True)
@@ -171,6 +173,10 @@ const rename=fs.renameSync;
 let promotionFailed=false;
 fs.copyFileSync=function(source,destination,...args){
   const result=copy(source,destination,...args);
+  if(String(destination).replaceAll('\\\\','/').endsWith('/cache/story/story.lua') && fault==='parent-alias-retarget'){
+    const moved=spawn(process.execPath,[process.env.U21_ALIAS_RETARGET_SCRIPT],{stdio:'inherit'});
+    if(moved.status!==0) throw new Error('owned parent alias retarget failed');
+  }
   if(String(destination).replaceAll('\\\\','/').endsWith('/cache/story/story.lua') && fault==='concurrent-note'){
     write(join(process.env.U21_PUBLIC_DIRECTORY,'notes-during-build.txt'),'user edit while packaging');
     console.log('U21_REAL_CONCURRENT_NOTE');
@@ -278,6 +284,113 @@ syncBuiltinESMExports();
         target = self.directory / ("projects" if self.kind == "native" else "demo") / self.project.name / "story.ks"
         self.assertIn("REPLACEMENT_PACKAGE", target.read_text(encoding="utf-8"))
 
+    def directory_alias(self, alias, target):
+        self.assertTrue(alias.parent.resolve().is_relative_to(self.fixture.resolve()))
+        self.assertTrue(target.resolve().is_relative_to(self.fixture.resolve()))
+        command = [str(self.node), "-e",
+                   "require('node:fs').symlinkSync(process.argv[1],process.argv[2],process.platform==='win32'?'junction':'dir')",
+                   str(target), str(alias)]
+        result = subprocess.run(command, cwd=self.tool, capture_output=True, text=True,
+                                encoding="utf-8", errors="replace", timeout=30)
+        self.save_log(self._testMethodName + "-create-alias", command, result)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(alias.resolve(), target.resolve())
+        self.addCleanup(self.remove_directory_alias, alias)
+
+    def remove_directory_alias(self, alias):
+        if not os.path.lexists(alias):
+            return
+        self.assertTrue(alias.parent.resolve().is_relative_to(self.fixture.resolve()))
+        self.assertTrue(alias.resolve().is_relative_to(self.fixture.resolve()))
+        self.assertTrue(alias.is_symlink() or getattr(alias.lstat(), "st_file_attributes", 0) & 0x400)
+        if os.name == "nt": alias.rmdir()
+        else: alias.unlink()
+
+    def test_parent_directory_alias_publishes_only_the_named_physical_outputs(self):
+        physical = self.case / "physical parent"
+        physical.mkdir()
+        sentinel = physical / "unrelated.txt"
+        sentinel.write_bytes(b"unrelated physical parent contents")
+        alias = self.case / "parent alias"
+        self.directory_alias(alias, physical)
+        for existing in (False, True):
+            with self.subTest(existing=existing):
+                parent = alias / ("new nested/output" if not existing else "existing output")
+                actual_parent = physical / parent.relative_to(alias)
+                if existing:
+                    shutil.copytree(self.baseline, actual_parent)
+                result = self.invoke(parent, label=self._testMethodName + "-" + str(existing))
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("PACKAGE COMPLETE", result.stdout)
+                directory, archive = self.paths(actual_parent)
+                self.assertTrue(archive.is_file())
+                self.assertTrue((directory / ".caesura-output.json").is_file())
+                target = directory / ("projects" if self.kind == "native" else "demo") / self.project.name / "story.ks"
+                self.assertIn("REPLACEMENT_PACKAGE", target.read_text(encoding="utf-8"))
+                self.assertEqual(alias.resolve(), physical.resolve())
+                self.assertEqual(sentinel.read_bytes(), b"unrelated physical parent contents")
+                self.assertEqual(set(path.name for path in actual_parent.iterdir()),
+                                 {directory.name, archive.name, "." + archive.name + ".caesura.json"})
+
+    def test_parent_alias_retarget_during_copy_cannot_redirect_publication(self):
+        physical, redirected = self.case / "physical parent", self.case / "redirected parent"
+        for path in (physical, redirected):
+            path.mkdir()
+            (path / "unrelated.txt").write_bytes(b"unrelated parent bytes")
+        redirected_before = tree_bytes(redirected)
+        alias = self.case / "parent alias"
+        self.directory_alias(alias, physical)
+        script = self.case / "retarget-owned-alias.mjs"
+        script.write_text("""import fs from 'node:fs';
+import {resolve,relative,dirname,isAbsolute} from 'node:path';
+const [alias,target,owned]=['U21_ALIAS_PATH','U21_ALIAS_TARGET','U21_ALIAS_OWNER'].map(name=>process.env[name]);
+for(const path of [resolve(alias),fs.realpathSync(dirname(alias)),fs.realpathSync(target)]) {
+  const r=relative(fs.realpathSync(owned),path);
+  if(!r || r.startsWith('..') || isAbsolute(r)) throw new Error('alias operation escapes the owned fixture');
+}
+if(!fs.lstatSync(alias).isSymbolicLink()) throw new Error('expected an owned directory alias');
+fs.unlinkSync(alias);
+fs.symlinkSync(target,alias,process.platform==='win32'?'junction':'dir');
+console.log('U21_REAL_PARENT_ALIAS_RETARGET');
+""", encoding="utf-8")
+        command, env = self.command(alias / "named output", "parent-alias-retarget")
+        env.update(U21_ALIAS_PATH=str(alias), U21_ALIAS_TARGET=str(redirected),
+                   U21_ALIAS_OWNER=str(self.fixture), U21_ALIAS_RETARGET_SCRIPT=str(script))
+        result = subprocess.run(command, cwd=self.tool, env=env, capture_output=True, text=True,
+                                encoding="utf-8", errors="replace", timeout=180)
+        self.save_log(self._testMethodName, command, result)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stdout.count("U21_REAL_PARENT_ALIAS_RETARGET"), 1)
+        directory, archive = self.paths(physical / "named output")
+        self.assertTrue((directory / ".caesura-output.json").is_file())
+        self.assertTrue(archive.is_file())
+        self.assertEqual(alias.resolve(), redirected.resolve())
+        self.assertEqual(tree_bytes(redirected), redirected_before)
+        self.assertEqual((physical / "unrelated.txt").read_bytes(), b"unrelated parent bytes")
+
+    def test_output_leaf_and_internal_directory_links_are_preserved_and_refused(self):
+        linked_target = self.case / "linked target"
+        linked_target.mkdir()
+        (linked_target / "user.txt").write_bytes(b"linked user content")
+        target_before = tree_bytes(linked_target)
+        for internal in (False, True):
+            with self.subTest(internal=internal):
+                parent = self.case / ("internal-link output" if internal else "leaf-link output")
+                parent.mkdir()
+                directory, archive = self.paths(parent)
+                if internal:
+                    shutil.copytree(self.baseline, parent, dirs_exist_ok=True)
+                link = directory / "linked child" if internal else directory
+                self.directory_alias(link, linked_target)
+                before = tree_bytes(parent)
+                result = self.invoke(parent, label=self._testMethodName + "-" + str(internal))
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertNotIn("COMPLETE", result.stdout)
+                self.assertIn("linked output", (result.stdout + result.stderr).lower())
+                self.assertEqual(tree_bytes(parent), before)
+                self.assertEqual(tree_bytes(linked_target), target_before)
+                self.assertEqual(link.resolve(), linked_target.resolve())
+
     def test_added_notes_are_preserved_and_replacement_is_refused(self):
         (self.directory / "notes.txt").write_text("user notes must survive", encoding="utf-8")
         before = tree_bytes(self.output)
@@ -374,6 +487,33 @@ syncBuiltinESMExports();
 class TestNativeOutputTransactions(OutputTransactions, unittest.TestCase):
     kind = "native"
 
+    def test_build_accepts_parent_alias_without_following_the_output_leaf(self):
+        physical = self.case / "physical builds"
+        physical.mkdir()
+        (physical / "sentinel.txt").write_bytes(b"preserve build parent")
+        alias = self.case / "build parent alias"
+        self.directory_alias(alias, physical)
+        command = [sys.executable, str(self.tool / "scripts/caesura.py"), "build", str(self.project),
+                   "--engine", str(self.engine), "--out", str(alias / "named build")]
+        _, env = self.command(self.output)
+        result = subprocess.run(command, cwd=self.tool, env=env, capture_output=True, text=True,
+                                encoding="utf-8", errors="replace", timeout=180)
+        self.save_log(self._testMethodName, command, result)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        actual = physical / "named build"
+        self.assertTrue((actual / "BUILD-INFO.json").is_file())
+        before = tree_bytes(actual)
+        self.directory_alias(alias / "linked build", actual)
+        command[-1] = str(alias / "linked build")
+        result = subprocess.run(command, cwd=self.tool, env=env, capture_output=True, text=True,
+                                encoding="utf-8", errors="replace", timeout=180)
+        self.save_log(self._testMethodName + "-leaf", command, result)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("linked output", result.stderr.lower())
+        self.assertNotIn("COMPLETE", result.stdout)
+        self.assertEqual(tree_bytes(actual), before)
+        self.assertEqual((physical / "sentinel.txt").read_bytes(), b"preserve build parent")
+
     def test_both_rejects_web_destination_escape_before_native_publication(self):
         for existing in (False, True):
             with self.subTest(existing=existing):
@@ -394,6 +534,19 @@ class TestNativeOutputTransactions(OutputTransactions, unittest.TestCase):
 
 class TestWebOutputTransactions(OutputTransactions, unittest.TestCase):
     kind = "web"
+
+    def test_parent_alias_cannot_escape_the_web_output_root(self):
+        physical = self.fixture / "outside tool root"
+        physical.mkdir()
+        (physical / "sentinel.txt").write_bytes(b"outside root must stay unchanged")
+        before = tree_bytes(physical)
+        alias = self.case / "outside parent alias"
+        self.directory_alias(alias, physical)
+        result = self.invoke(alias / "named output", label=self._testMethodName)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("COMPLETE", result.stdout)
+        self.assertEqual(tree_bytes(physical), before)
+        self.assertEqual(alias.resolve(), physical.resolve())
 
     def test_prototype_named_user_file_is_preserved(self):
         (self.directory / "__proto__").write_bytes(b"user file with a JavaScript property name")

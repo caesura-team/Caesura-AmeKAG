@@ -531,6 +531,7 @@ end
 local RENDER_WHITELIST = {
     load_texture        = true,
     destroy_texture     = true,
+    is_valid_handle     = true,  -- read-only validity query used by restored layers
     create_solid_texture = true,
     get_resolution      = true,
     set_view_name       = true,

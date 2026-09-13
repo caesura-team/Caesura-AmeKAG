@@ -45,7 +45,7 @@
 // ==============================================================================
 
 import { existsSync, readdirSync, statSync, copyFileSync, readFileSync,
-         mkdirSync, mkdtempSync, rmSync, writeFileSync, lstatSync, renameSync, rmdirSync } from 'node:fs'
+         mkdirSync, mkdtempSync, rmSync, writeFileSync, lstatSync, renameSync, rmdirSync, realpathSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { luaLiteralValue } from '../web/lua-value.js'
@@ -64,6 +64,22 @@ const pkg = (...a) => console.log('[package]', ...a)
 function fail(msg) { console.error('[package] FATAL: ' + msg); process.exit(1) }
 // Relative CLI paths are resolved against ROOT (the former script cd'd to it).
 const p2r = (p) => (isAbsolute(p) ? p : resolve(ROOT, p))
+function canonicalOutputPath(path) {
+  // Resolve only existing parents. Never dereference the named output leaf:
+  // its link/ownership checks still run before replacing anything.
+  try {
+    const absolute = resolve(path), tail = [basename(absolute)]
+    let parent = dirname(absolute)
+    while (!outputExists(parent)) {
+      tail.unshift(basename(parent))
+      const next = dirname(parent)
+      if (next === parent) throw new Error('output has no existing parent')
+      parent = next
+    }
+    if (!statSync(parent).isDirectory()) throw new Error('output parent is not a directory: ' + parent)
+    return join(realpathSync(parent), ...tail)
+  } catch (error) { fail('cannot resolve output parent: ' + error.message) }
+}
 // Manifest rows use '/' separators regardless of host platform (.sh find %P).
 const toPosix = (s) => s.split(/[\\/]/).join('/')
 
@@ -240,7 +256,8 @@ const FIRST = KAGS[0]
 let GAME_NAME = basename(statSync(firstInput).isDirectory() ? firstInput : dirname(FIRST))
 if (GAME_NAME === '.' || GAME_NAME === '') GAME_NAME = basename(FIRST, '.ks')
 if (!OUT) OUT = 'dist/' + GAME_NAME
-const FINAL_OUT = p2r(OUT)
+const FINAL_OUT = canonicalOutputPath(p2r(OUT))
+const FINAL_ZIP = ZIP_ARCHIVE ? canonicalOutputPath(p2r(ZIP_ARCHIVE)) : null
 let OUT_PATH = FINAL_OUT
 // t186 A2: Node fs.rmSync has NO '..' refusal — it deletes exactly what the
 // resolved path names (verified: rmSync on '../x' removes the sibling dir,
@@ -250,7 +267,7 @@ let OUT_PATH = FINAL_OUT
 // ROOT (e.g. dist/<game>). Denied: ROOT itself, '..' traversal, absolute
 // paths outside ROOT.
 {
-  const rel = relative(ROOT, OUT_PATH)
+  const rel = relative(realpathSync(ROOT), OUT_PATH)
   if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) {
     fail('--out must stay inside the repo root (' + ROOT + '); resolved OUT_PATH=' + OUT_PATH + ' — allowed form: dist/<game> or another repo-relative subdirectory')
   }
@@ -562,7 +579,6 @@ const playerHtml = readFileSync(join(WEB_DIST, 'index.html'), 'utf8')
 if (!playerHtml.includes('</head>')) fail('built player has no metadata insertion point')
 const configuredHtml = playerHtml.replace('</head>', declarationScript + '\n</head>')
 let previousOutput, previousZip, previousReceipt
-const FINAL_ZIP = ZIP_ARCHIVE ? p2r(ZIP_ARCHIVE) : null
 try {
   previousOutput = prepareOutput(FINAL_OUT)
   if (FINAL_ZIP) {
