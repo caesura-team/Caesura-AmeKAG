@@ -110,6 +110,7 @@ export async function installRunnerBridge(lua, audioClock) {
 
     local function click(ctx, opts)
       aim_choice(ctx, opts)
+      if ctx._choiceMode then return false, 'waiting-input' end
       local pending_page = ctx.waiting_input and page(ctx)
       local ok, reason = runner.on_click()
       if ok and reason ~= 'revealed' and pending_page then

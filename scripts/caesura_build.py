@@ -52,6 +52,7 @@ import os
 import platform
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -149,20 +150,68 @@ def _looks_like_caesura_output(out: Path) -> bool:
         return False
 
 
-def _prepare_out(out: Path) -> None:
-    """S2 guard + ownership acquisition for an assemble() output directory.
+OUTPUT_LEDGER = ".caesura-output.json"
 
-    Refuses to delete a directory we did not create: -o accepts any path, and an
-    unconditional rmtree would erase e.g. a pre-existing dist/ full of unrelated
-    files. Every assemble() run writes BUILD-INFO.json, so its presence marks the
-    directory as a previous build output; an empty directory is also safe to
-    reuse. t19/A2: the refusal message now distinguishes a crashed build's
-    residue (marker files, no BUILD-INFO) from an unrelated user directory.
-    """
-    if not out.exists():
-        return
-    if any(out.iterdir()) and not (out / "BUILD-INFO.json").exists():
-        if _looks_like_caesura_output(out):
+
+def _canonical_output_path(path: Path) -> Path:
+    """Pin parent aliases once, leaving the named output leaf for link checks."""
+    absolute = Path(os.path.abspath(path))
+    return absolute.parent.resolve() / absolute.name
+
+
+def _no_output_links(path: Path) -> None:
+    """Reject links in pinned destinations, including later parent replacements."""
+    for part in (path, *path.parents):
+        if os.path.lexists(part):
+            value = part.lstat()
+            if stat.S_ISLNK(value.st_mode) or getattr(value, "st_file_attributes", 0) & 0x400:
+                raise BuildError("Refusing linked output path: %s" % part)
+
+
+def _output_tree(out: Path, *, omit_ledger=False, ignore_junk=False) -> dict:
+    files, directories = {}, []
+    for current, dirs, names in os.walk(out, followlinks=False):
+        if ignore_junk:
+            ignored = set(_ignore_junk(current, dirs + names))
+            dirs[:] = [name for name in dirs if name not in ignored]
+            names = [name for name in names if name not in ignored]
+        for name in sorted(dirs + names):
+            path = Path(current) / name
+            value = path.lstat()
+            if stat.S_ISLNK(value.st_mode) or getattr(value, "st_file_attributes", 0) & 0x400:
+                raise BuildError("Refusing linked output entry: %s" % path)
+            key = path.relative_to(out).as_posix()
+            if stat.S_ISDIR(value.st_mode):
+                directories.append(key)
+            elif stat.S_ISREG(value.st_mode):
+                if not (omit_ledger and key == OUTPUT_LEDGER):
+                    files[key] = _file_sha256(path)
+            else:
+                raise BuildError("Refusing non-regular output entry: %s" % path)
+    return {"files": files, "directories": sorted(directories)}
+
+
+def _output_state(path: Path):
+    _no_output_links(path)
+    if not path.exists():
+        return None
+    if path.is_dir():
+        return _output_tree(path)
+    if path.is_file():
+        return _file_sha256(path)
+    raise BuildError("Refusing non-regular output: %s" % path)
+
+
+def _prepare_out(out: Path, *, kind="caesura-native-output"):
+    """Read-only ownership check; a marker alone never grants delete rights."""
+    state = _output_state(out)
+    if state is None or state == {"files": {}, "directories": []}:
+        return state
+    if not out.is_dir():
+        raise BuildError("Refusing to replace output that is not a directory: %s" % out)
+    ledger = out / OUTPUT_LEDGER
+    if not ledger.is_file():
+        if not (out / "BUILD-INFO.json").exists() and _looks_like_caesura_output(out):
             raise BuildError(
                 "Refusing to overwrite %s: a previous 'caesura build' into this "
                 "directory FAILED before BUILD-INFO.json was written, leaving "
@@ -170,37 +219,129 @@ def _prepare_out(out: Path) -> None:
                 "itself up). Delete it, or pick a new -o, then re-run." % _rel(out))
         raise BuildError(
             "Refusing to overwrite %s: it exists, is not empty, and has no "
-            "BUILD-INFO.json (not a previous 'caesura build' output). "
+            "verifiable content ownership (not a previous unchanged 'caesura build' output). "
             "Pick a new or empty -o directory, or delete it yourself."
             % _rel(out))
-    shutil.rmtree(out)
+    try:
+        recorded = json.loads(ledger.read_text(encoding="utf-8"))
+    except (ValueError, OSError) as error:
+        raise BuildError("Refusing output with unreadable ownership record: %s" % out) from error
+    # Node sorts Unicode strings by UTF-16 code units; directory ordering is
+    # not ownership, so compare both serializers' complete directory sets.
+    if isinstance(recorded, dict) and isinstance(recorded.get("directories"), list) \
+            and all(isinstance(name, str) for name in recorded["directories"]):
+        recorded["directories"] = sorted(recorded["directories"])
+    expected = {"kind": kind, "schema": 1, **_output_tree(out, omit_ledger=True)}
+    if recorded != expected:
+        raise BuildError("Refusing to replace modified output (added files, saves, or changed generated content): %s" % out)
+    return state
+
+
+def _seal_output(out: Path) -> None:
+    payload = {"kind": "caesura-native-output", "schema": 1, **_output_tree(out, omit_ledger=True)}
+    (out / OUTPUT_LEDGER).write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    _prepare_out(out)
+
+
+def _zip_receipt(path: Path) -> Path:
+    return path.with_name("." + path.name + ".caesura.json")
+
+
+def _prepare_zip(path: Path):
+    state, receipt_state = _output_state(path), _output_state(_zip_receipt(path))
+    if state is None and receipt_state is None:
+        return state, receipt_state
+    try:
+        expected = {"kind": "caesura-archive", "schema": 1, "file": path.name, "sha256": state}
+        recorded = json.loads(_zip_receipt(path).read_text(encoding="utf-8"))
+        if not isinstance(state, str) or recorded != expected:
+            raise ValueError("changed archive")
+    except (OSError, ValueError) as error:
+        raise BuildError("Refusing to replace unowned or modified archive: %s" % path) from error
+    return state, receipt_state
+
+
+def _publish_outputs(items) -> None:
+    """Promote only complete candidates; restore earlier names on ordinary I/O failure.
+
+    Filesystem renames cannot make several names power-loss atomic. Old copies
+    remain in unique sibling backup directories until every rename succeeds.
+    An interrupted promotion therefore retains recoverable previous bytes.
+    """
+    backups, promoted = [], []
+    new_states = [_output_state(source) for source, _, _ in items]
+    try:
+        for _, destination, expected in items:
+            if _output_state(destination) != expected:
+                raise BuildError("Output changed during packaging; preserved: %s" % destination)
+        for index, (source, destination, expected) in enumerate(items):
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            if expected is not None:
+                container = Path(tempfile.mkdtemp(prefix="." + destination.name + ".previous-", dir=destination.parent))
+                backup = container / "previous"
+                try:
+                    destination.rename(backup)
+                except OSError:
+                    container.rmdir()
+                    raise
+                backups.append((destination, backup, expected))
+                if _output_state(backup) != expected:
+                    raise BuildError("Output changed while acquiring replacement: %s" % destination)
+            elif os.path.lexists(destination):
+                raise BuildError("Output appeared during packaging: %s" % destination)
+            source.rename(destination)
+            promoted.append((index, source, destination))
+        for index, (_, destination, _) in enumerate(items):
+            if _output_state(destination) != new_states[index]:
+                raise BuildError("Published output changed before completion: %s" % destination)
+    except BaseException:
+        for index, source, destination in reversed(promoted):
+            try:
+                if _output_state(destination) == new_states[index]:
+                    destination.rename(source)
+            except (OSError, BuildError):
+                pass  # Preserve the public and backup names for recovery.
+        for destination, backup, _ in reversed(backups):
+            try:
+                if not os.path.lexists(destination):
+                    backup.rename(destination)
+                    backup.parent.rmdir()
+                    continue
+            except OSError:
+                pass
+            print("[package] previous output retained for recovery: %s" % backup, file=sys.stderr)
+        raise
+    for _, backup, expected in backups:
+        try:
+            if _output_state(backup) != expected:
+                raise BuildError("Previous output changed")
+            if backup.is_dir():
+                shutil.rmtree(backup)
+            else:
+                backup.unlink()
+            backup.parent.rmdir()
+        except (OSError, BuildError):
+            print("[package] previous output retained for recovery: %s" % backup, file=sys.stderr)
 
 
 def _assemble_clean(project: Path, entry_scene: Path, engine: Path, out: Path,
                     shared_assets: bool, dev_mode: bool, quiet: bool = False, capabilities=None) -> dict:
-    """t19/A2: run assemble() and self-clean the output WE own on failure.
-
-    A run that fails mid-assemble (disk error, crash, Ctrl+C) must not leave a
-    half-written directory that blocks the same -o forever: the S2 guarantee
-    refuses any non-empty dir without BUILD-INFO.json, and a failure before that
-    file was written creates exactly that state. So from the moment _prepare_out
-    gave us ownership (cleared previous build output or confirmed a fresh path),
-    any failure removes only what we created -- user directories are refused
-    BEFORE ownership, and never touched.
-    """
-    took_ownership = False
-    try:
-        if capabilities is not None:
-            if _file_sha256(engine) != capabilities["profile"]["binary_sha256"]:
-                raise BuildError("Selected engine changed after capability validation.")
-            _require_capability_inputs(capabilities, project)
-        _prepare_out(out)
-        took_ownership = True
-        return assemble(project, entry_scene, engine, out,
+    """Assemble privately; failures never expose or remove the old delivery."""
+    if out.absolute().is_relative_to(project.resolve()):
+        raise BuildError("Output must not be inside the source project: %s" % out)
+    if capabilities is not None:
+        if _file_sha256(engine) != capabilities["profile"]["binary_sha256"]:
+            raise BuildError("Selected engine changed after capability validation.")
+        _require_capability_inputs(capabilities, project)
+    previous = _prepare_out(out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="." + out.name + ".staging-", dir=out.parent) as temporary:
+        candidate = Path(temporary) / "game"
+        info = assemble(project, entry_scene, engine, candidate,
                         shared_assets=shared_assets, dev_mode=dev_mode, quiet=quiet, capabilities=capabilities)
-    finally:
-        if took_ownership and not (out / "BUILD-INFO.json").exists():
-            shutil.rmtree(out, ignore_errors=True)
+        _seal_output(candidate)
+        _publish_outputs([(candidate, out, previous)])
+        return info
 
 
 def find_node() -> str:
@@ -314,12 +455,24 @@ def collect_scenes(project: Path):
 def pick_entry_scene(project: Path, scenes, requested):
     """Entry scene: --entry, else story.ks, else the shallowest scene."""
     if requested:
-        for s in scenes:
-            if s.name == requested or str(s).replace("\\", "/").endswith(requested):
-                return s
+        normalized = str(requested).replace("\\", "/")
+        selected = Path(normalized)
+        exact = selected.resolve() if selected.is_absolute() else (project / selected).resolve()
+        for scene in scenes:
+            if scene.resolve() == exact:
+                return scene
+        if not selected.is_absolute() and "/" not in normalized:
+            matches = [scene for scene in scenes if scene.name == normalized]
+            if len(matches) == 1:
+                return matches[0]
+            if len(matches) > 1:
+                raise BuildError(
+                    "--entry basename is ambiguous: %s\n  Choose a project-relative path: %s"
+                    % (requested, ", ".join(scene.relative_to(project).as_posix() for scene in matches))
+                )
         raise BuildError(
             "--entry scene not found in project: %s\n  Available: %s"
-            % (requested, ", ".join(s.name for s in scenes))
+            % (requested, ", ".join(scene.relative_to(project).as_posix() for scene in scenes))
         )
     for s in scenes:
         if s.name == "story.ks":
@@ -695,51 +848,49 @@ def patch_runtime_config(config_lua: Path, entry_rel: str, dev_mode: bool) -> No
     config_lua.write_bytes(data)
 
 
-# Attributes that name an asset in a KAG token, per docs/api/command-contracts.md
-# (storage= for bg/playbgm/playse/image, sprite= for [ch], file= for video/SMA).
-ASSET_ATTR_RE = re.compile(r'\b(storage|sprite|file)\s*=\s*"([^"]+)"')
+def scan_asset_dependencies(scenes, *, capabilities=None, project=None):
+    """Use the actual Lua tokenizer/command contracts; never scan source text as attributes."""
+    files = [{"path": str(scene.resolve()),
+              "name": scene.relative_to(project).as_posix() if project else scene.name}
+             for scene in scenes]
+    with tempfile.TemporaryDirectory(prefix="caesura-media-dependencies-") as temporary:
+        request, output = Path(temporary) / "request.json", Path(temporary) / "report.json"
+        request.write_text(json.dumps({"files": files, "capabilities": capabilities}, ensure_ascii=False), encoding="utf-8")
+        script = """package.path=%s..';'..package.path
+local json=require('capability_json')
+local dependencies=require('kag.asset_dependencies')
+local input=assert(io.open(%s,'rb'))
+local request=assert(json.decode(input:read('*a')))
+assert(input:close())
+local checked=request.capabilities
+if checked==json.null then checked=nil end
+local report=dependencies.apply_capabilities(dependencies.scan_files(request.files),checked)
+local encoded=assert(json.encode(report))
+local output=assert(io.open(%s,'wb'))
+assert(output:write(encoded))
+assert(output:close())
+""" % (_lua_str((ROOT / "scripts/?.lua").as_posix() + ";" + (ROOT / "scripts/?/init.lua").as_posix()),
+       _lua_str(str(request)), _lua_str(str(output)))
+        try:
+            result = subprocess.run([find_lua(), "-e", script], cwd=ROOT, capture_output=True,
+                                    text=True, encoding="utf-8", errors="replace", timeout=120)
+        except subprocess.TimeoutExpired as error:
+            raise BuildError("Media dependency collection exceeded its deadline.") from error
+        if result.returncode != 0 or not output.is_file():
+            raise BuildError("Media dependency collection failed:\n" + (result.stdout + result.stderr)[-12000:])
+        report = json.loads(output.read_text(encoding="utf-8"))
+        if report.get("schema") != 1 or not all(isinstance(report.get(field), list)
+                for field in ("static", "dynamic", "skipped", "invalid")):
+            raise BuildError("Media dependency collector returned an invalid report.")
+        return report
 
 
 def scan_asset_refs(scenes):
-    """Every distinct STATIC asset path the scenes reference (source order, deduped).
-
-    Paths carrying a macro parameter (%name%) or a brace interpolation (${...})
-    are resolved at runtime, not at build time -- e.g.
-    demo/example_game/story.ks:16 has storage="assets/bg/%bg%" inside a
-    [macro]. Reporting those as "missing" would be a false alarm, so they are
-    excluded here and surfaced separately by scan_dynamic_asset_refs.
-    """
-    refs, seen = [], set()
-    for s in scenes:
-        try:
-            text = s.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        for _attr, ref in ASSET_ATTR_RE.findall(text):
-            ref = ref.replace("\\", "/")
-            if not ref or ref in seen or ".." in ref:
-                continue
-            if "%" in ref or "${" in ref:
-                continue
-            seen.add(ref)
-            refs.append(ref)
-    return refs
+    return scan_asset_dependencies(scenes)["static"]
 
 
 def scan_dynamic_asset_refs(scenes):
-    """Asset references whose path is computed at runtime (macro arg / ${expr})."""
-    out, seen = [], set()
-    for s in scenes:
-        try:
-            text = s.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        for _attr, ref in ASSET_ATTR_RE.findall(text):
-            ref = ref.replace("\\", "/")
-            if ("%" in ref or "${" in ref) and ref not in seen:
-                seen.add(ref)
-                out.append(ref)
-    return out
+    return list(dict.fromkeys(item["path"] for item in scan_asset_dependencies(scenes)["dynamic"]))
 
 
 def resolve_referenced_assets(refs, project: Path, out: Path):
@@ -754,8 +905,10 @@ def resolve_referenced_assets(refs, project: Path, out: Path):
     copied, missing = [], []
     for ref in refs:
         dst = out / ref
-        if dst.exists():
+        if dst.is_file():
             continue
+        if dst.exists():
+            raise BuildError("Media dependency is not a regular file: %s" % ref)
         for src in (project / ref, ROOT / ref):
             if src.is_file():
                 dst.parent.mkdir(parents=True, exist_ok=True)
@@ -999,15 +1152,17 @@ def assemble(project: Path, entry_scene: Path, engine: Path, out: Path,
     # 4b. assets the scenes actually reference but the project does not own
     #     (stock templates reference the repo shared pool by design).
     scenes = collect_scenes(project)
-    refs = scan_asset_refs(scenes)
+    dependencies = scan_asset_dependencies(scenes, capabilities=capabilities, project=project)
+    if dependencies["invalid"]:
+        raise BuildError("Invalid static media paths: " + ", ".join(item["path"] for item in dependencies["invalid"]))
+    refs = dependencies["static"]
     copied, missing = resolve_referenced_assets(refs, project, out)
-    dynamic = scan_dynamic_asset_refs(scenes)
+    dynamic = list(dict.fromkeys(item["path"] for item in dependencies["dynamic"]))
     say("[build] referenced assets: %d static (%d pulled from repo pool, %d missing)%s"
         % (len(refs), len(copied), len(missing),
            ", %d runtime-computed" % len(dynamic) if dynamic else ""))
     if missing:
-        for m in missing[:8]:
-            say("[build]   WARN missing asset (engine will draw a placeholder): %s" % m)
+        raise BuildError("Missing required static media: " + ", ".join(missing))
     if dynamic and not shared_assets:
         # A macro/expression path cannot be resolved statically: whatever the
         # author passes at runtime must already be in the package.
@@ -1091,6 +1246,9 @@ def assemble(project: Path, entry_scene: Path, engine: Path, out: Path,
         "assets_pulled_from_repo": copied,
         "assets_missing": missing,
         "assets_runtime_computed": dynamic,
+        "asset_dependency_unproven": [{"path": item["path"], "reason": item["reason"]}
+                                      for item in dependencies["dynamic"]],
+        "assets_skipped_capabilities": list(dict.fromkeys(item["path"] for item in dependencies["skipped"])),
         "host": {"os": platform.system(), "machine": platform.machine(),
                  "python": platform.python_version()},
     }
@@ -1117,8 +1275,7 @@ def cmd_build(args) -> int:
         entry_scene = pick_entry_scene(project, scenes, getattr(args, "entry", None))
         engine = find_engine(getattr(args, "engine", None), getattr(args, "config", None))
         out = Path(args.out) if args.out else (ROOT / "dist" / ("%s-game" % project.name))
-        if not out.is_absolute():
-            out = (Path.cwd() / out).resolve()
+        out = _canonical_output_path(out)
         capabilities = run_capability_check(project, scenes, "native", engine=engine,
                                              skip_syntax=args.skip_check)
         if not args.skip_check:
@@ -1134,6 +1291,8 @@ def cmd_build(args) -> int:
         # the error plainly instead of a traceback.
         print("caesura build: %s" % e, file=sys.stderr)
         return 1
+    if getattr(args, "_defer_complete", False):
+        return 0
     print("")
     print("=" * 66)
     print("  GAME-ONLY BUILD COMPLETE -> %s" % out)
@@ -1145,20 +1304,91 @@ def cmd_build(args) -> int:
 
 
 def _zip_dir(src: Path, zip_path: Path) -> int:
+    """Write a fresh private candidate and verify every archived byte."""
     zip_path.parent.mkdir(parents=True, exist_ok=True)
-    if zip_path.exists():
-        zip_path.unlink()
     top = zip_path.name
     for suf in (".zip",):
         if top.endswith(suf):
             top = top[: -len(suf)]
-    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+    with zipfile.ZipFile(zip_path, "x", zipfile.ZIP_DEFLATED) as zf:
         for root, dirs, files in os.walk(src):
             dirs[:] = [d for d in dirs if d not in PRUNE_DIR_NAMES]
             for f in files:
                 full = Path(root) / f
                 zf.write(full, str(Path(top) / full.relative_to(src)))
+    with zipfile.ZipFile(zip_path) as zf:
+        if zf.testzip() is not None:
+            raise BuildError("Archive verification failed: %s" % zip_path)
+        for name, digest in _output_tree(src)["files"].items():
+            if hashlib.sha256(zf.read(top + "/" + name)).hexdigest() != digest:
+                raise BuildError("Archived content differs from completed package: %s" % name)
     return zip_path.stat().st_size
+
+
+def _package_complete(produced) -> None:
+    print("")
+    print("=" * 66)
+    print("  PACKAGE COMPLETE (%d artifact%s)" % (len(produced), "" if len(produced) == 1 else "s"))
+    for path, size in produced:
+        print("    %s  (%.2f MB)" % (path, size / (1024 * 1024)))
+    print("=" * 66)
+
+
+def _package_both(args, project: Path, out_dir: Path) -> int:
+    """Prepare both validated packages privately, then commit all six names."""
+    tag = "win64" if os.name == "nt" else platform.system().lower()
+    specifications = [(project.name + "-game", project.name + "-" + tag + ".zip", "caesura-native-output"),
+                      (project.name + "-web", project.name + "-web.zip", "caesura-web-output")]
+    previous, produced = {}, []
+    try:
+        def copied_inputs():
+            # Native copies the filtered project tree. Web also copies the
+            # entire shared/author asset pools, including unreferenced files
+            # and files that the Native development-file filter would omit.
+            return {"project": _output_tree(project, ignore_junk=True),
+                    "runtime": _runtime_capability_files(ROOT / "scripts"),
+                    "project_assets": _output_state(project / "assets"),
+                    "shared_assets": _output_state(ROOT / "assets")}
+        checked_inputs = copied_inputs()
+        def require_same_inputs():
+            if copied_inputs() != checked_inputs:
+                raise BuildError("Project, runtime, or asset inputs changed during combined packaging.")
+        # Acquire no final name until every requested destination is eligible.
+        for directory_name, archive_name, kind in specifications:
+            directory, archive = out_dir / directory_name, out_dir / archive_name
+            previous[directory] = _prepare_out(directory, kind=kind)
+            previous[archive], previous[_zip_receipt(archive)] = _prepare_zip(archive)
+        stage_parent = out_dir.parent
+        if not stage_parent.is_relative_to(ROOT.resolve()):
+            stage_parent = ROOT  # --out ROOT still needs Node's ROOT boundary.
+        stage_parent.mkdir(parents=True, exist_ok=True)
+        if out_dir.exists() and out_dir.stat().st_dev != stage_parent.stat().st_dev:
+            stage_parent = out_dir  # An actual mounted destination volume.
+        with tempfile.TemporaryDirectory(prefix=".caesura-both-", dir=stage_parent) as temporary:
+            prepared = Path(temporary)
+            for target in ("windows", "web"):
+                child_args = type("A", (), {**vars(args), "project": str(project),
+                                             "target": target, "out": str(prepared),
+                                             "_defer_complete": True})()
+                result = cmd_package(child_args)
+                if result != 0:
+                    return result
+                require_same_inputs()
+            promotions = []
+            for directory_name, archive_name, kind in specifications:
+                directory, archive = out_dir / directory_name, out_dir / archive_name
+                _prepare_out(prepared / directory_name, kind=kind)
+                _prepare_zip(prepared / archive_name)
+                for destination in (archive, _zip_receipt(archive), directory):
+                    promotions.append((prepared / destination.name, destination, previous[destination]))
+                produced.append((archive, (prepared / archive_name).stat().st_size))
+            require_same_inputs()
+            _publish_outputs(promotions)
+    except (BuildError, OSError, zipfile.BadZipFile) as error:
+        print("caesura package: %s" % error, file=sys.stderr)
+        return 1
+    _package_complete(produced)
+    return 0
 
 
 def cmd_package(args) -> int:
@@ -1168,40 +1398,75 @@ def cmd_package(args) -> int:
     produced = []
     try:
         project = resolve_project(args.project)
-    except BuildError as e:
+        project_entry = pick_entry_scene(project, collect_scenes(project), getattr(args, "entry", None))
+        # --out is a container for named game/ZIP leaves. Resolve this parent
+        # once so an alias retarget cannot redirect later preparation/promotion.
+        out_dir = (Path(args.out) if args.out else (ROOT / "dist")).resolve()
+    except (BuildError, OSError) as e:
         print("caesura package: %s" % e, file=sys.stderr)
         return 1
-    out_dir = Path(args.out) if args.out else (ROOT / "dist")
-    if not out_dir.is_absolute():
-        out_dir = (Path.cwd() / out_dir).resolve()
+    if len(targets) > 1 and "web" in targets:
+        # Match the Web tool's existing destination boundary before publishing
+        # any Native artifact in a combined request.
+        web_out = out_dir / ("%s-web" % project.name)
+        try:
+            _no_output_links(web_out)
+            if not web_out.is_relative_to(ROOT.resolve()) or web_out == ROOT.resolve():
+                raise BuildError("Web output must stay inside the repo root: %s" % web_out)
+        except (BuildError, OSError) as error:
+            print("caesura package: %s" % error, file=sys.stderr)
+            return 1
+        return _package_both(args, project, out_dir)
 
     for target in targets:
         if target == "windows":
-            # Desktop game-only ZIP: build the directory, then archive it.
-            stage = out_dir / ("%s-game" % project.name)
-            build_args = type("A", (), {
-                "project": str(project), "out": str(stage),
-                "engine": getattr(args, "engine", None),
-                "config": getattr(args, "config", None),
-                "entry": getattr(args, "entry", None),
-                "skip_check": args.skip_check,
-                "with_shared_assets": args.with_shared_assets,
-                "dev": args.dev,
-            })()
-            rc = cmd_build(build_args)
-            if rc != 0:
-                return rc
+            # Stage outside the delivery parent, on its volume. Even a killed
+            # copy/ZIP process leaves the previous public directory untouched.
+            destination = out_dir / ("%s-game" % project.name)
             tag = "win64" if os.name == "nt" else platform.system().lower()
             zip_path = out_dir / ("%s-%s.zip" % (project.name, tag))
-            size = _zip_dir(stage, zip_path)
+            try:
+                previous = _prepare_out(destination)
+                previous_zip, previous_receipt = _prepare_zip(zip_path)
+                out_dir.parent.mkdir(parents=True, exist_ok=True)
+                with tempfile.TemporaryDirectory(prefix="." + out_dir.name + ".package-", dir=out_dir.parent) as temporary:
+                    stage = Path(temporary) / destination.name
+                    build_args = type("A", (), {
+                        "project": str(project), "out": str(stage),
+                        "engine": getattr(args, "engine", None),
+                        "config": getattr(args, "config", None),
+                        "entry": getattr(args, "entry", None),
+                        "skip_check": args.skip_check,
+                        "with_shared_assets": args.with_shared_assets,
+                        "dev": args.dev, "_defer_complete": True,
+                    })()
+                    rc = cmd_build(build_args)
+                    if rc != 0:
+                        return rc
+                    archive = Path(temporary) / zip_path.name
+                    size = _zip_dir(stage, archive)
+                    receipt = _zip_receipt(archive)
+                    receipt.write_text(json.dumps({"kind": "caesura-archive", "schema": 1,
+                                                  "file": zip_path.name, "sha256": _file_sha256(archive)}) + "\n", encoding="utf-8")
+                    _prepare_out(stage)
+                    _publish_outputs([(archive, zip_path, previous_zip),
+                                      (receipt, _zip_receipt(zip_path), previous_receipt),
+                                      (stage, destination, previous)])
+            except (BuildError, OSError, zipfile.BadZipFile) as error:
+                print("caesura package: %s" % error, file=sys.stderr)
+                return 1
             produced.append((zip_path, size))
             print("[package] windows game-only ZIP: %s (%d bytes)" % (zip_path, size))
         elif target == "web":
-            # Reuse the existing, verified Web pipeline verbatim.
+            # Carry the same selected project inputs into the Web pipeline.
             web_out = out_dir / ("%s-web" % project.name)
             zip_path = out_dir / ("%s-web.zip" % project.name)
             cmd = [find_node(), "scripts/package_game.mjs", _rel(project),
-                   "--out", _rel(web_out), "--zip", _rel(zip_path)]
+                   "--out", _rel(web_out), "--zip", _rel(zip_path),
+                   "--entry", project_entry.relative_to(project).as_posix(),
+                   "--defer-complete"]
+            if (project / "assets").is_dir():
+                cmd.extend(["--assets", str(project / "assets")])
             if args.skip_check: cmd.append("--skip-check")
             # flush: the child writes straight to the inherited handles, so an
             # unflushed announcement would print AFTER its own output.
@@ -1218,10 +1483,6 @@ def cmd_package(args) -> int:
                   file=sys.stderr)
             return 1
 
-    print("")
-    print("=" * 66)
-    print("  PACKAGE COMPLETE (%d artifact%s)" % (len(produced), "" if len(produced) == 1 else "s"))
-    for p, s in produced:
-        print("    %s  (%.2f MB)" % (p, s / (1024 * 1024)))
-    print("=" * 66)
+    if not getattr(args, "_defer_complete", False):
+        _package_complete(produced)
     return 0

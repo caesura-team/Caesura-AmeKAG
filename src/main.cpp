@@ -1480,9 +1480,6 @@ extern "C" int main(int argc, char* argv[]) {
     lua_pop(L, 1);
 
 
-    // C3+W8: lockdown script env after ALL scripts are preloaded
-    engine.lua().lockdownScriptEnv();
-
     // Demo/video export: activate replay playback before the main loop.
     // kag_runner.update() fires the recorded events (same on_click path);
     // Engine::run writes one PNG per frame into the export dir.
@@ -1506,27 +1503,81 @@ extern "C" int main(int argc, char* argv[]) {
             return 1;
         }
         lua_State* exL = engine.lua().state();
-        if (exL) {
+        const int replayStackTop = exL ? lua_gettop(exL) : 0;
+        const auto initializeReplay = [&]() {
+            if (!exL) {
+                fprintf(stderr, "[main] replay initialization failed: no Lua state\n");
+                return false;
+            }
+            const auto replayError = [&](const char* stage, const char* detail) {
+                fprintf(stderr, "[main] replay %s failed: %s\n", stage,
+                        detail ? detail : "unknown Lua error");
+                return false;
+            };
             lua_getglobal(exL, "require");
             lua_pushstring(exL, "replay");
-            if (lua_pcall(exL, 1, 1, 0) == LUA_OK && lua_istable(exL, -1)) {
-                lua_getfield(exL, -1, "set_mode");
-                if (lua_isfunction(exL, -1)) {
-                    lua_pushvalue(exL, -2);  // self
-                    lua_pushstring(exL, "playback");
-                    lua_pushstring(exL, exportReplayFile.c_str());
-                    if (lua_pcall(exL, 3, 0, 0) != LUA_OK) {
-                        fprintf(stderr, "[main] replay set_mode failed: %s\n",
-                                lua_tostring(exL, -1) ? lua_tostring(exL, -1)
-                                                      : "unknown");
-                    }
-                }
+            if (lua_pcall(exL, 1, 1, 0) != LUA_OK) {
+                return replayError("require", lua_tostring(exL, -1));
             }
-            lua_settop(exL, 0);
+            if (!lua_istable(exL, -1)) {
+                return replayError("require", "module must return a table");
+            }
+            // Module fields may be supplied by __index. Resolve them inside
+            // Lua's protected boundary so a failing accessor cannot panic the VM.
+            const lua_CFunction getReplayField = [](lua_State* state) -> int {
+                lua_gettable(state, 1);
+                return 1;
+            };
+            const auto pushReplayField = [&](const char* field) {
+                lua_pushcfunction(exL, getReplayField);
+                lua_pushvalue(exL, -2);  // replay module
+                lua_pushstring(exL, field);
+                return lua_pcall(exL, 2, 1, 0) == LUA_OK;
+            };
+            // The explicitly requested host file must be loaded while startup
+            // still permits host I/O. The sandbox is locked before any frame.
+            if (!pushReplayField("load")) {
+                return replayError("load lookup", lua_tostring(exL, -1));
+            }
+            if (!lua_isfunction(exL, -1)) {
+                return replayError("load", "module has no load function");
+            }
+            lua_pushstring(exL, exportReplayFile.c_str());
+            if (lua_pcall(exL, 1, 2, 0) != LUA_OK) {
+                return replayError("load", lua_tostring(exL, -1));
+            }
+            if (!lua_isinteger(exL, -2) || lua_tointeger(exL, -2) < 0) {
+                return replayError("load", lua_tostring(exL, -1));
+            }
+            lua_pop(exL, 2);
+            if (!pushReplayField("set_mode")) {
+                return replayError("set_mode lookup", lua_tostring(exL, -1));
+            }
+            if (!lua_isfunction(exL, -1)) {
+                return replayError("set_mode", "module has no set_mode function");
+            }
+            lua_pushstring(exL, "playback");
+            lua_pushstring(exL, exportReplayFile.c_str());
+            if (lua_pcall(exL, 2, 2, 0) != LUA_OK) {
+                return replayError("set_mode", lua_tostring(exL, -1));
+            }
+            if (!lua_isboolean(exL, -2) || !lua_toboolean(exL, -2)) {
+                return replayError("set_mode", lua_tostring(exL, -1));
+            }
+            return true;
+        };
+        const bool replayReady = initializeReplay();
+        if (exL) lua_settop(exL, replayStackTop);
+        if (!replayReady) {
+            engine.shutdown();
+            return 1;
         }
         printf("[main] Export mode: replay %s -> %s (frames=%u)\n",
                exportReplayFile.c_str(), exportDir.c_str(), frameLimit);
     }
+
+    // C3+W8: lockdown after startup scripts and explicit replay input are loaded.
+    engine.lua().lockdownScriptEnv();
 
     engine.run();
     engine.shutdown();

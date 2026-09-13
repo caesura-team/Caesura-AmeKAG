@@ -824,11 +824,20 @@ function kag_runner.update(dt)
         if replay_mode == "record" then
             replay.tick(delta_ms, nil)
         elseif replay_mode == "playback" then
+            local replay_owner, replay_co = ctx, kag_co
             replay.tick(delta_ms, function(x, y)
+                if ctx ~= replay_owner or kag_co ~= replay_co then return end
                 if x ~= nil then _G._GAME_MOUSE_X = x end
                 if y ~= nil then _G._GAME_MOUSE_Y = y end
-                kag_runner.on_click()
+                -- Match the native click dispatch. A choice owns this hook;
+                -- the ordinary page hook already calls on_click itself.
+                local click = rawget(_G, "_KAG_onClick")
+                if type(click) == "function" then click()
+                else kag_runner.on_click() end
             end)
+            if ctx ~= replay_owner or kag_co ~= replay_co then
+                return ctx ~= nil, ctx and "replay-owner-changed" or "ended"
+            end
         end
     end
     -- Engine frame delta is seconds; KAG command durations are milliseconds.

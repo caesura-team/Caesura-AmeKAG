@@ -293,6 +293,10 @@ async function loadStoryBundle() {
     // silently offered demo content in place of the game.
     const sceneCount = bundle && bundle.scenes ? Object.keys(bundle.scenes).length : 0
     if (sceneCount === 0) throw new Error('bundle carries 0 scenes')
+    if (bundle.entry !== undefined && (typeof bundle.entry !== 'string'
+        || !Object.hasOwn(bundle.scenes, bundle.entry))) {
+      throw new Error('bundle entry does not name a delivered scene')
+    }
     storyBundle = bundle
     log('story bundle: ' + sceneCount + ' scenes, ' + bundle.assets.length + ' assets')
     populateScenePicker(bundle.scenes)
@@ -414,7 +418,7 @@ async function runScene(name) {
   syncAudioStatus()
 }
 
-async function advance() {
+async function advance(pointer = null) {
   const sel = document.getElementById('scene').value
   // VN semantics: advance resumes the previously parked scene cursor one page
   // (desktop on_click parity) instead of re-running the whole scene from token 1.
@@ -424,6 +428,10 @@ async function advance() {
     autoClick: false, maxFrames: 5000, advance: true, advanceScene: sel,
     textSpeed: settings.get('textSpeed'),
     skip: settings.get('skipMode'),
+  }
+  if (pointer) {
+    advOpts.choiceX = pointer.x
+    advOpts.choiceY = pointer.y
   }
   let out
   if (storyBundle && storyBundle.scenes[sel]) {
@@ -454,6 +462,17 @@ document.getElementById('run').addEventListener('click', () => {
 })
 document.getElementById('advance').addEventListener('click', () => {
   void advance()
+})
+stage.addEventListener('click', (event) => {
+  if (event.button !== 0 || event.defaultPrevented) return
+  const rect = stage.getBoundingClientRect()
+  if (!(rect.width > 0 && rect.height > 0)) return
+  const width = stage.clientWidth || renderer.width
+  const height = stage.clientHeight || renderer.height
+  const x = (event.clientX - rect.left) * width / rect.width
+  const y = (event.clientY - rect.top) * height / rect.height
+  if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0 || x >= width || y >= height) return
+  void advance({x,y}).catch(error => log('input error: ' + String(error?.message || error).slice(0,120)))
 })
 document.getElementById('auto').addEventListener('click', () => {
   // persist the toggle through player settings (round 86); autoMode + UI
@@ -486,7 +505,7 @@ const syncBacklog = () => {
 }
 
 // --- save slots (round 49) ---
-const fmtTime = (ts) => (ts ? new Date(ts).toLocaleTimeString() : '—')
+function fmtTime(ts) { return ts ? new Date(ts).toLocaleTimeString() : '—' }
 
 async function renderSlots() {
   const slots = player.listSlots()
@@ -614,9 +633,11 @@ requestAnimationFrame(frame)
 const requestedScene = new URLSearchParams(location.search).get('scene')
 const initialScene =
     requestedScene
+    ?? storyBundle?.entry
     ?? (storyBundle ? Object.keys(storyBundle.scenes)[0] : null)
     ?? (DEV_MODE ? 'galgame_demo.ks' : null)
 if (initialScene) {
+  document.getElementById('scene').value = initialScene
   void runScene(initialScene)
 } else {
   // Bundle load failed and this is not an explicit dev session: booting a
@@ -675,9 +696,11 @@ if (typeof window !== 'undefined') {
 // while this call stays classic is a SyntaxError that kills the whole PWA offline
 // cache silently (web/test/sw.test.mjs locks both halves of this contract).
 if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator && location.protocol.startsWith('http')) {
-  window.addEventListener('load', () => {
+  const registerWorker = () => {
     navigator.serviceWorker.register('./sw.js').catch((err) => {
       console.warn('[PWA] ServiceWorker registration failed:', err)
     })
-  })
+  }
+  if (document.readyState === 'complete') registerWorker()
+  else window.addEventListener('load', registerWorker, {once:true})
 }

@@ -137,6 +137,7 @@ export class DomRenderer {
    *  the layer fetch above). */
   _renderWithList(list) {
     const alive = new Set()
+    let messageZ = '0'
     // Web-side color grading: the active LUT (backend.set_palette ->
     // core.palette) tints the whole render output via a CSS filter, the
     // DOM analog of the desktop s_lutTex/u_paletteParams binding. day/
@@ -177,6 +178,8 @@ export class DomRenderer {
       // engine opacity is 0..255; DOM wants 0..1
       setStyle(el, 'opacity', String(Number(n.opacity ?? 255) / 255))
       setStyle(el, 'zIndex', String(n.z))
+      // Keep the accepted CSS value, including its integer representation.
+      if (Number(el.style.zIndex) > Number(messageZ)) messageZ = el.style.zIndex
       const url = n.texture && (!this.core.textures || texture)
         ? this.textureUrls.get(n.texture) : null
       if (prepared) {
@@ -227,6 +230,11 @@ export class DomRenderer {
       this.root.appendChild(this._textEl)
     }
     if (this._textEl) {
+      // Text is drawn after ordinary graphics, even when restoring a texture
+      // replaces an existing IMG with a newly appended CANVAS. Equal highest
+      // z plus last sibling also avoids overflowing the CSS integer limit.
+      setStyle(this._textEl, 'zIndex', messageZ)
+      if (this.root.lastElementChild !== this._textEl) this.root.appendChild(this._textEl)
       this._textEl.textContent = ''
       if (draws.length > 0) {
         for (const d of draws) {

@@ -16,7 +16,7 @@
 | KAG contract commands (command-contracts.md) | 134 |
 | RPC HTTP endpoints (EditorServer) | 36 |
 | RPC stdin JSON-RPC methods | 29 |
-| Lua runtime scripts (scripts/, excl. demo/check) | 91 |
+| Lua runtime scripts (scripts/, excl. demo/check) | 92 |
 
 ## 2. C++ interfaces by module
 

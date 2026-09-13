@@ -34,18 +34,18 @@
 //
 //  Options
 //    --out <dir>       package destination (default dist/<game-name>)
-//    --assets <dir>    asset root to ship (default: repo assets/ shared pool)
+//    --assets <dir>    author asset source over the shared pool, shipped as assets/
 //    --no-web-build    reuse an existing web/dist; do not (re)build it
 //    --skip-check      skip ordinary lint, while retaining required capability checks
 //    --release         also print the CPack desktop-Release handoff (docs only)
-//    --entry <scene>   nominate the entry scene (recorded in the manifest)
+//    --entry <scene>   select the bundle's default startup scene
 //    --zip <path>      also write a ZIP archive of the package (python zipfile)
 //
 //  Exit: 0 = packaged, 1 = any step failed.
 // ==============================================================================
 
 import { existsSync, readdirSync, statSync, copyFileSync, readFileSync,
-         mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+         mkdirSync, mkdtempSync, rmSync, writeFileSync, lstatSync, renameSync, rmdirSync, realpathSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { luaLiteralValue } from '../web/lua-value.js'
@@ -64,6 +64,22 @@ const pkg = (...a) => console.log('[package]', ...a)
 function fail(msg) { console.error('[package] FATAL: ' + msg); process.exit(1) }
 // Relative CLI paths are resolved against ROOT (the former script cd'd to it).
 const p2r = (p) => (isAbsolute(p) ? p : resolve(ROOT, p))
+function canonicalOutputPath(path) {
+  // Resolve only existing parents. Never dereference the named output leaf:
+  // its link/ownership checks still run before replacing anything.
+  try {
+    const absolute = resolve(path), tail = [basename(absolute)]
+    let parent = dirname(absolute)
+    while (!outputExists(parent)) {
+      tail.unshift(basename(parent))
+      const next = dirname(parent)
+      if (next === parent) throw new Error('output has no existing parent')
+      parent = next
+    }
+    if (!statSync(parent).isDirectory()) throw new Error('output parent is not a directory: ' + parent)
+    return join(realpathSync(parent), ...tail)
+  } catch (error) { fail('cannot resolve output parent: ' + error.message) }
+}
 // Manifest rows use '/' separators regardless of host platform (.sh find %P).
 const toPosix = (s) => s.split(/[\\/]/).join('/')
 
@@ -94,11 +110,11 @@ Usage (from repo root)
 
 Options
   --out <dir>       package destination (default dist/<game-name>)
-  --assets <dir>    asset root to ship (default: repo assets/ shared pool)
+  --assets <dir>    author asset source (default: project assets/ over shared pool)
   --no-web-build    reuse an existing web/dist; do not (re)build it
   --skip-check      skip ordinary lint; required capability checks still run
   --release         also print the CPack desktop-Release handoff (docs only)
-  --entry <scene>   nominate the entry scene (recorded in the manifest)
+  --entry <scene>   select the bundle's default startup scene
   --zip <path>      also write a ZIP archive of the package (python zipfile)
 
 Exit: 0 = packaged, 1 = any step failed.`)
@@ -159,7 +175,7 @@ if (!LUA_PATH) {
 
 // ------------------------------------------------------------- options ------
 const argv = process.argv.slice(2)
-let OUT = '', ASSET_SRC = 'assets', NO_WEB_BUILD = false, RELEASE = false, SKIP_CHECK = false,
+let OUT = '', ASSET_SRC = '', NO_WEB_BUILD = false, RELEASE = false, SKIP_CHECK = false, DEFER_COMPLETE = false,
     ENTRY = '', ZIP_ARCHIVE = ''
 const POSITIONAL = []
 for (let i = 0; i < argv.length; i++) {
@@ -170,6 +186,8 @@ for (let i = 0; i < argv.length; i++) {
   else if (a === '--zip') { ZIP_ARCHIVE = argv[++i]; if (ZIP_ARCHIVE === undefined) fail('--zip requires a value') }
   else if (a === '--no-web-build') { NO_WEB_BUILD = true }
   else if (a === '--skip-check') { SKIP_CHECK = true }
+  // The creator wrapper reports completion after all requested targets commit.
+  else if (a === '--defer-complete') { DEFER_COMPLETE = true }
   else if (a === '--release') { RELEASE = true }
   else if (a === '-h' || a === '--help') { printHelp(); process.exit(0) }
   else if (a.startsWith('-')) fail('unknown option: ' + a)
@@ -204,21 +222,43 @@ for (const p0 of POSITIONAL) {
     fail('not a game dir or .ks file: ' + p0)
   }
 }
-if (ENTRY && !KAGS_DISPLAY.some(path => path === ENTRY || basename(path) === ENTRY)) {
-  const entry = p2r(ENTRY)
-  if (!entry.endsWith('.ks') || !existsSync(entry) || !statSync(entry).isFile()) fail('--entry scene not found: ' + ENTRY)
-  KAGS.push(entry)
-  KAGS_DISPLAY.push(ENTRY.replace(/\\/g, '/'))
+const firstInput = p2r(POSITIONAL[0])
+const INPUT_ROOT = statSync(firstInput).isDirectory() ? firstInput : dirname(firstInput)
+const pathIdentity = path => process.platform === 'win32' ? resolve(path).toLowerCase() : resolve(path)
+const includedPath = path => KAGS.find(file => pathIdentity(file) === pathIdentity(path))
+let ENTRY_PATH
+if (ENTRY) {
+  const requested = toPosix(ENTRY)
+  const projectPath = isAbsolute(requested) ? resolve(requested) : resolve(INPUT_ROOT, requested)
+  const rootPath = p2r(requested)
+  ENTRY_PATH = includedPath(projectPath) || includedPath(rootPath)
+  if (!ENTRY_PATH && !isAbsolute(requested) && !requested.includes('/')) {
+    const matches = KAGS.filter(file => basename(file) === requested)
+    if (matches.length > 1) fail('--entry basename is ambiguous: ' + ENTRY + '; choose a project-relative path: '
+      + matches.map(file => toPosix(relative(INPUT_ROOT, file))).join(', '))
+    if (matches.length === 1) ENTRY_PATH = matches[0]
+  }
+  if (!ENTRY_PATH) {
+    ENTRY_PATH = [projectPath, rootPath].find(file => file.endsWith('.ks') && existsSync(file) && statSync(file).isFile())
+    if (!ENTRY_PATH) fail('--entry scene not found: ' + ENTRY)
+    // An explicit scene outside a selected file list still receives the same
+    // declaration, capability and source-identity checks as every other scene.
+    KAGS.push(ENTRY_PATH)
+    KAGS_DISPLAY.push(toPosix(ENTRY_PATH))
+  }
 }
 if (KAGS.length === 0) fail('no .ks scenes found in input.')
+ENTRY_PATH ||= includedPath(join(INPUT_ROOT, 'story.ks')) || KAGS[0]
+const ENTRY_INDEX = KAGS.indexOf(ENTRY_PATH)
 pkg('input: ' + KAGS.length + ' scene(s) -> ' + KAGS_DISPLAY.join(' '))
 
 const FIRST = KAGS[0]
-const firstInput = p2r(POSITIONAL[0])
 let GAME_NAME = basename(statSync(firstInput).isDirectory() ? firstInput : dirname(FIRST))
 if (GAME_NAME === '.' || GAME_NAME === '') GAME_NAME = basename(FIRST, '.ks')
 if (!OUT) OUT = 'dist/' + GAME_NAME
-const OUT_PATH = p2r(OUT)
+const FINAL_OUT = canonicalOutputPath(p2r(OUT))
+const FINAL_ZIP = ZIP_ARCHIVE ? canonicalOutputPath(p2r(ZIP_ARCHIVE)) : null
+let OUT_PATH = FINAL_OUT
 // t186 A2: Node fs.rmSync has NO '..' refusal — it deletes exactly what the
 // resolved path names (verified: rmSync on '../x' removes the sibling dir,
 // unlike GNU coreutils rm which refuses; the old .sh leaned on that coreutils
@@ -227,7 +267,7 @@ const OUT_PATH = p2r(OUT)
 // ROOT (e.g. dist/<game>). Denied: ROOT itself, '..' traversal, absolute
 // paths outside ROOT.
 {
-  const rel = relative(ROOT, OUT_PATH)
+  const rel = relative(realpathSync(ROOT), OUT_PATH)
   if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) {
     fail('--out must stay inside the repo root (' + ROOT + '); resolved OUT_PATH=' + OUT_PATH + ' — allowed form: dist/<game> or another repo-relative subdirectory')
   }
@@ -236,6 +276,124 @@ const OUT_PATH = p2r(OUT)
 const STAGE = mkdtempSync(join(tmpdir(), 'caesura-pkg-'))
 process.once('exit', () => { try { rmSync(STAGE, { recursive: true, force: true }) } catch { /* owned temp cleanup */ } })
 const sha256 = file => createHash('sha256').update(readFileSync(file)).digest('hex')
+const OUTPUT_LEDGER = '.caesura-output.json'
+const ownedStages = []
+process.once('exit', () => {
+  for (const directory of ownedStages) {
+    try { rmSync(directory, { recursive: true, force: true }) } catch { /* exclusive scratch only */ }
+  }
+})
+function noOutputLinks(path) {
+  for (let current = resolve(path);; current = dirname(current)) {
+    try {
+      if (lstatSync(current).isSymbolicLink()) throw new Error('refusing linked output path: ' + current)
+    } catch (error) { if (error.code !== 'ENOENT') throw error }
+    if (dirname(current) === current) break
+  }
+}
+function outputTree(directory, omitLedger = false) {
+  // Every filesystem name is data, including Object.prototype property names.
+  const files = Object.create(null), directories = []
+  function walk(current) {
+    for (const name of readdirSync(current).sort()) {
+      const path = join(current, name), value = lstatSync(path), key = toPosix(relative(directory, path))
+      if (value.isSymbolicLink()) throw new Error('refusing linked output entry: ' + path)
+      if (value.isDirectory()) { directories.push(key); walk(path) }
+      else if (value.isFile()) { if (!(omitLedger && key === OUTPUT_LEDGER)) files[key] = sha256(path) }
+      else throw new Error('refusing non-regular output entry: ' + path)
+    }
+  }
+  walk(directory)
+  return { files, directories: directories.sort() }
+}
+function outputState(path) {
+  noOutputLinks(path)
+  if (!existsSync(path)) return null
+  if (statSync(path).isDirectory()) return outputTree(path)
+  if (statSync(path).isFile()) return sha256(path)
+  throw new Error('refusing non-regular output: ' + path)
+}
+const sameState = (a, b) => JSON.stringify(a) === JSON.stringify(b)
+function outputExists(path) {
+  try { lstatSync(path); return true }
+  catch (error) { if (error.code === 'ENOENT') return false; throw error }
+}
+function prepareOutput(directory) {
+  const state = outputState(directory)
+  if (state === null || sameState(state, { files: {}, directories: [] })) return state
+  if (!statSync(directory).isDirectory()) throw new Error('output is not a directory: ' + directory)
+  let ledger
+  try { ledger = JSON.parse(readFileSync(join(directory, OUTPUT_LEDGER), 'utf8')) }
+  catch { throw new Error('refusing to replace a non-empty output without verifiable Caesura content ownership: ' + directory) }
+  if (!sameState(ledger, { kind: 'caesura-web-output', schema: 1, ...outputTree(directory, true) })) {
+    throw new Error('refusing to replace modified output (added files, saves, or changed generated content): ' + directory)
+  }
+  return state
+}
+const zipReceipt = path => join(dirname(path), '.' + basename(path) + '.caesura.json')
+function prepareArchive(path) {
+  const state = outputState(path), receiptState = outputState(zipReceipt(path))
+  if (state === null && receiptState === null) return [state, receiptState]
+  try {
+    const ledger = JSON.parse(readFileSync(zipReceipt(path), 'utf8'))
+    if (typeof state !== 'string' || !sameState(ledger,
+      { kind: 'caesura-archive', schema: 1, file: basename(path), sha256: state })) throw new Error('changed archive')
+  } catch { throw new Error('refusing to replace unowned or modified archive: ' + path) }
+  return [state, receiptState]
+}
+function privateStage(destination) {
+  // Keep incomplete work outside the delivery parent, even after a hard kill.
+  const parent = dirname(dirname(destination))
+  noOutputLinks(destination)
+  mkdirSync(parent, { recursive: true })
+  const directory = mkdtempSync(join(parent, '.' + basename(destination) + '.staging-'))
+  ownedStages.push(directory)
+  return directory
+}
+function publishOutputs(items) {
+  // A set of directory/file renames is not power-loss atomic. Preserve each
+  // old object under a unique sibling name until all promotions have succeeded.
+  const backups = [], promoted = [], newStates = items.map(([source]) => outputState(source))
+  try {
+    for (const [, destination, expected] of items) {
+      if (!sameState(outputState(destination), expected)) throw new Error('output changed during packaging: ' + destination)
+    }
+    for (const [index, [source, destination, expected]] of items.entries()) {
+      mkdirSync(dirname(destination), { recursive: true })
+      if (expected !== null) {
+        const container = mkdtempSync(join(dirname(destination), '.' + basename(destination) + '.previous-'))
+        const backup = join(container, 'previous')
+        try { renameSync(destination, backup) }
+        catch (error) { rmdirSync(container); throw error }
+        backups.push([destination, backup, expected])
+        if (!sameState(outputState(backup), expected)) throw new Error('output changed while acquiring replacement: ' + destination)
+      } else if (outputExists(destination)) throw new Error('output appeared during packaging: ' + destination)
+      renameSync(source, destination)
+      promoted.push([index, source, destination])
+    }
+    for (const [index, [, destination]] of items.entries()) {
+      if (!sameState(outputState(destination), newStates[index])) throw new Error('published output changed before completion: ' + destination)
+    }
+  } catch (error) {
+    for (const [index, source, destination] of promoted.reverse()) {
+      try { if (sameState(outputState(destination), newStates[index])) renameSync(destination, source) }
+      catch { /* preserve both names for recovery */ }
+    }
+    for (const [destination, backup] of backups.reverse()) {
+      try {
+        if (!outputExists(destination)) { renameSync(backup, destination); rmdirSync(dirname(backup)); continue }
+      } catch { /* never erase a backup on failed rollback */ }
+      console.error('[package] previous output retained for recovery: ' + backup)
+    }
+    throw error
+  }
+  for (const [, backup, expected] of backups) {
+    try {
+      if (!sameState(outputState(backup), expected)) throw new Error('previous output changed')
+      rmSync(backup, { recursive: true }); rmdirSync(dirname(backup))
+    } catch { console.error('[package] previous output retained for recovery: ' + backup) }
+  }
+}
 function metadataFor(scene) {
   let directory = dirname(scene)
   for (;;) {
@@ -249,6 +407,17 @@ function metadataFor(scene) {
 const declarations = new Set(KAGS.map(metadataFor))
 if (declarations.size > 1) fail('input scenes use different project declarations; package each project separately')
 let PROJECT_METADATA = [...declarations][0]
+const projectRoot = PROJECT_METADATA ? dirname(PROJECT_METADATA) : INPUT_ROOT
+const authorAssets = ASSET_SRC ? p2r(ASSET_SRC) : join(projectRoot, 'assets')
+if (ASSET_SRC && (!existsSync(authorAssets) || !statSync(authorAssets).isDirectory())) {
+  fail('--assets source is not a directory: ' + ASSET_SRC)
+}
+const ASSET_ROOTS = []
+for (const source of [join(ROOT, 'assets'), authorAssets]) {
+  if (!existsSync(source)) continue
+  if (!statSync(source).isDirectory()) fail('asset source is not a directory: ' + source)
+  if (!ASSET_ROOTS.some(previous => pathIdentity(previous) === pathIdentity(source))) ASSET_ROOTS.push(source)
+}
 if (!PROJECT_METADATA) {
   PROJECT_METADATA = join(STAGE, 'legacy-project.json')
   writeFileSync(PROJECT_METADATA, '{}\n')
@@ -294,19 +463,11 @@ pkg('Step 2/5: ks_bake --web (story bundle)')
 // handler too.
 let BUNDLE = ''
 let BAKED_SCENE_PATHS = []
+let BUNDLE_SHA256 = ''
+let ASSET_DEPENDENCIES
+const DEPENDENCIES_PATH = join(STAGE, 'asset-dependencies.json')
 try {
-  let baked = [...KAGS_DISPLAY]
-  if (ENTRY) {
-    let es = null
-    for (const k of KAGS_DISPLAY) {
-      if (basename(k) === ENTRY || k === ENTRY) { es = k; break }
-    }
-    if (es === null) {
-      es = ENTRY
-      if (!existsSync(p2r(ENTRY))) { pkg('FAIL: --entry scene not found: ' + ENTRY); process.exit(1) }
-      baked = [es, ...baked]
-    }
-  }
+  const baked = [...KAGS_DISPLAY]
   BAKED_SCENE_PATHS = baked
   const rr = spawnSync(LUA_PATH, [join(ROOT, 'scripts', 'ks_bake.lua'), ...baked, '--web', STAGE], { cwd: ROOT, stdio: 'inherit' })
   if (rr.status !== 0) {
@@ -314,6 +475,40 @@ try {
     process.exit(1)
   }
   BUNDLE = join(STAGE, 'story.lua')
+  // Derive the entry key using the real compiler's mapping, including duplicate
+  // basenames. The player consumes this field; Lua table order is not a contract.
+  const selected = spawnSync(LUA_PATH, ['-e', `
+package.path='scripts/?.lua;scripts/?/init.lua;'..package.path
+require('kag')
+local compiler=require('kag.compiler')
+local path=${luaLiteralValue(BUNDLE)}
+local bundle=assert(loadfile(path,'t',{}))()
+local keys=assert(compiler.bundleSceneKeys(${luaLiteralValue(BAKED_SCENE_PATHS)}))
+assert(compiler.validateBundle(bundle,keys))
+bundle.entry=assert(keys[${ENTRY_INDEX + 1}])
+assert(bundle.scenes[bundle.entry],'selected-entry-not-in-bundle')
+local json=require('capability_json')
+local dependency_collector=require('kag.asset_dependencies')
+local checked_file=assert(io.open(${luaLiteralValue(REPORT_PATH)},'rb'))
+local checked=assert(json.decode(checked_file:read('*a')))
+assert(checked_file:close())
+bundle.asset_dependencies=dependency_collector.apply_capabilities(bundle.asset_dependencies,checked)
+bundle.assets=bundle.asset_dependencies.static
+local dependency_json=assert(json.encode(bundle.asset_dependencies))
+local dependency_file=assert(io.open(${luaLiteralValue(DEPENDENCIES_PATH)},'wb'))
+assert(dependency_file:write(dependency_json))
+assert(dependency_file:close())
+local file=assert(io.open(path,'wb'))
+assert(file:write('return '..compiler.encode_lua_literal(bundle)..'\\n'))
+assert(file:close())
+`], { cwd: ROOT, encoding: 'utf8' })
+  if (selected.status !== 0) fail('cannot set bundle entry: ' + (selected.stderr || selected.stdout || selected.error?.message || 'Lua failed'))
+  ASSET_DEPENDENCIES = JSON.parse(readFileSync(DEPENDENCIES_PATH, 'utf8'))
+  if (ASSET_DEPENDENCIES.schema !== 1 || !['static', 'dynamic', 'skipped', 'invalid'].every(key => Array.isArray(ASSET_DEPENDENCIES[key]))) {
+    fail('invalid media dependency report')
+  }
+  if (ASSET_DEPENDENCIES.invalid.length) fail('invalid static media paths: ' + ASSET_DEPENDENCIES.invalid.map(item => item.path).join(', '))
+  BUNDLE_SHA256 = sha256(BUNDLE)
 } catch (e) {
   rmSync(STAGE, { recursive: true, force: true })
   throw e
@@ -383,19 +578,26 @@ const declarationScript = '<script>self.__CAESURA_PROJECT_CAPABILITIES__=' + dec
 const playerHtml = readFileSync(join(WEB_DIST, 'index.html'), 'utf8')
 if (!playerHtml.includes('</head>')) fail('built player has no metadata insertion point')
 const configuredHtml = playerHtml.replace('</head>', declarationScript + '\n</head>')
-if (existsSync(OUT_PATH) && readdirSync(OUT_PATH).length > 0) {
-  const marker = join(OUT_PATH, 'MANIFEST.txt')
-  if (!existsSync(marker) || !readFileSync(marker, 'utf8').startsWith('Caesura (AmeKAG) web package: ')) {
-    fail('refusing to replace a non-empty output without a Caesura package manifest')
+let previousOutput, previousZip, previousReceipt
+try {
+  previousOutput = prepareOutput(FINAL_OUT)
+  if (FINAL_ZIP) {
+    const archiveRelative = relative(FINAL_OUT, FINAL_ZIP)
+    const outputRelative = relative(FINAL_ZIP, FINAL_OUT)
+    if ((!archiveRelative.startsWith('..') && !isAbsolute(archiveRelative)) ||
+        (!outputRelative.startsWith('..') && !isAbsolute(outputRelative))) {
+      throw new Error('--zip must not overlap the output directory')
+    }
+    ;[previousZip, previousReceipt] = prepareArchive(FINAL_ZIP)
   }
-}
+  OUT_PATH = join(privateStage(FINAL_OUT), 'game')
+} catch (error) { fail(error.message) }
 
-rmSync(OUT_PATH, { recursive: true, force: true })
 mkdirSync(join(OUT_PATH, 'cache', 'story'), { recursive: true })
 mkdirSync(join(OUT_PATH, 'demo', GAME_NAME), { recursive: true })
 mkdirSync(join(OUT_PATH, 'web-assets'), { recursive: true })
 mkdirSync(join(OUT_PATH, 'scripts'), { recursive: true })
-mkdirSync(join(OUT_PATH, ASSET_SRC), { recursive: true })
+mkdirSync(join(OUT_PATH, 'assets'), { recursive: true })
 
 writeFileSync(join(OUT_PATH, 'index.html'), configuredHtml)
 if (existsSync(join(WEB_DIST, 'sw.js'))) copyFileSync(join(WEB_DIST, 'sw.js'), join(OUT_PATH, 'sw.js'))
@@ -421,12 +623,27 @@ function pruneTree(dir) {
 }
 pruneTree(join(OUT_PATH, 'scripts'))
 
-const ASSET_PATH = p2r(ASSET_SRC)
-if (existsSync(ASSET_PATH)) {
-  copyDirectorySync(ASSET_PATH, join(OUT_PATH, ASSET_SRC))
-} else {
-  pkg('WARN: asset root [' + ASSET_SRC + '] not found — shipping without game assets')
+// Shared template resources remain available. Author files are copied last,
+// including same-name overrides, and always land under the package's assets/.
+for (const source of ASSET_ROOTS) {
+  copyDirectorySync(source, join(OUT_PATH, 'assets'))
+  pkg('asset source: ' + toPosix(source) + ' -> assets/')
 }
+if (!ASSET_ROOTS.length) pkg('WARN: no shared or project assets found')
+
+const missingMedia = []
+for (const reference of ASSET_DEPENDENCIES.static) {
+  const path = resolve(OUT_PATH, reference)
+  const rel = relative(OUT_PATH, path)
+  if (!rel || rel === '..' || rel.startsWith('..' + (process.platform === 'win32' ? '\\' : '/')) || isAbsolute(rel)) {
+    fail('media dependency escapes the package: ' + reference)
+  }
+  if (!existsSync(path) || !statSync(path).isFile()) missingMedia.push(reference)
+}
+if (missingMedia.length) fail('missing required static media: ' + missingMedia.join(', '))
+pkg('media dependencies: ' + ASSET_DEPENDENCIES.static.length + ' static; '
+  + ASSET_DEPENDENCIES.dynamic.length + ' dynamic (not proven); '
+  + ASSET_DEPENDENCIES.skipped.length + ' capability-skipped (not verified)')
 
 copyFileSync(BUNDLE, join(OUT_PATH, 'cache', 'story', 'story.lua'))
 
@@ -444,6 +661,9 @@ local keys,key_error=compiler.bundleSceneKeys(${luaLiteralValue(BAKED_SCENE_PATH
 if not keys then io.stderr:write(tostring(key_error));os.exit(1) end
 local compatible,reason=compiler.validateBundle(bundle,keys)
 if not compatible then io.stderr:write(tostring(reason));os.exit(1) end
+if type(bundle.entry)~='string' or bundle.entry~=keys[${ENTRY_INDEX + 1}] or bundle.scenes[bundle.entry]==nil then
+  io.stderr:write('delivered-bundle-entry-mismatch');os.exit(1)
+end
 io.write('PACKAGE-SCENE-KEYS:',table.concat(keys,string.char(0)))
 `], { cwd: OUT_PATH, encoding: 'utf8' })
 function reportRuntimeCheckFailure() {
@@ -468,6 +688,7 @@ if (!runtimeCheck.stdout.startsWith(keyPrefix)) {
 }
 const sceneKeys = runtimeCheck.stdout.slice(keyPrefix.length).split('\0')
 if (sceneKeys.length !== BAKED_SCENE_PATHS.length) fail('packaged runtime returned incomplete scene keys')
+if (sha256(join(OUT_PATH, 'cache/story/story.lua')) !== BUNDLE_SHA256) fail('copied story bundle differs from checked entry bundle')
 for (const [index, key] of sceneKeys.entries()) {
   // Consume the same runtime-derived mapping for the editable source copies.
   // Never flatten two distinct story.ks inputs onto the same destination.
@@ -521,7 +742,10 @@ manifestLines.push('Caesura (AmeKAG) web package: ' + GAME_NAME)
 manifestLines.push('built: ' + new Date().toISOString()
   .replace('T', 'T').slice(0, 19) + 'Z')
 manifestLines.push('scenes: ' + KAGS.length)
-if (ENTRY) manifestLines.push('entry scene: ' + ENTRY)
+manifestLines.push('entry scene: ' + sceneKeys[ENTRY_INDEX])
+manifestLines.push('static media dependencies: ' + ASSET_DEPENDENCIES.static.length)
+manifestLines.push('dynamic media dependencies (not proven): ' + ASSET_DEPENDENCIES.dynamic.length)
+manifestLines.push('capability-skipped media dependencies (not verified): ' + ASSET_DEPENDENCIES.skipped.length)
 manifestLines.push('---')
 manifestLines.push('files (size bytes, path):')
 for (const f of allFiles) {
@@ -532,47 +756,47 @@ for (const f of allFiles) {
 manifestLines.push('---')
 manifestLines.push('total KB: ' + Math.floor(totalBytes / 1024))
 writeFileSync(join(OUT_PATH, 'MANIFEST.txt'), manifestLines.join('\n') + '\n', 'utf8')
-
-console.log()
-console.log('==================================================================')
-console.log('  PACKAGE COMPLETE -> ' + OUT)
-console.log('    scenes:  ' + KAGS.length + '  (pick one from the web scene dropdown)')
-console.log('    bundle:  ' + OUT + '/cache/story/story.lua')
-console.log('    assets:  ' + OUT + '/' + ASSET_SRC + '/')
-if (ENTRY) console.log('    entry:   ' + ENTRY)
-console.log('    manifest: ' + OUT + '/MANIFEST.txt')
-console.log('------------------------------------------------------------------')
-console.log('  Serve locally:  cd [' + OUT + '] && python -m http.server 8080')
-console.log('  Or upload to itch.io / Netlify / GitHub Pages / S3.')
-console.log('==================================================================')
+writeFileSync(join(OUT_PATH, OUTPUT_LEDGER), JSON.stringify({
+  kind: 'caesura-web-output', schema: 1, ...outputTree(OUT_PATH, true),
+}, null, 2) + '\n')
+prepareOutput(OUT_PATH)
 
 // ---------------------------------------------------- 6. zip archive ---------
 const ZIP_CODE = [
-  'import os, zipfile, sys',
+  'import os, zipfile, sys, hashlib, json',
   'out_dir = sys.argv[1]',
   'zip_path = sys.argv[2]',
-  "with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:",
+  "with zipfile.ZipFile(zip_path, 'x', zipfile.ZIP_DEFLATED) as zf:",
   '    for root, dirs, files in os.walk(out_dir):',
   '        for f in files:',
   '            full_p = os.path.join(root, f)',
   '            rel_p = os.path.relpath(full_p, out_dir)',
   '            zf.write(full_p, rel_p)',
-  "print(f'  Created zip archive: {zip_path} ({os.path.getsize(zip_path)} bytes)')",
+  'with zipfile.ZipFile(zip_path) as zf:',
+  '    if zf.testzip() is not None: raise ValueError("archive verification failed")',
+  '    for root, dirs, files in os.walk(out_dir):',
+  '        for name in files:',
+  '            full_p = os.path.join(root, name)',
+  '            rel_p = os.path.relpath(full_p, out_dir).replace("\\\\", "/")',
+  '            with open(full_p, "rb") as source:',
+  '                if hashlib.sha256(zf.read(rel_p)).digest() != hashlib.sha256(source.read()).digest():',
+  '                    raise ValueError("archive content differs: " + rel_p)',
 ].join('\n')
+const promotions = []
 if (ZIP_ARCHIVE) {
   console.log()
   pkg('Step 5/5: archive -> ' + ZIP_ARCHIVE)
-  mkdirSync(dirname(p2r(ZIP_ARCHIVE)), { recursive: true })
+  const stagedZip = join(privateStage(FINAL_ZIP), basename(FINAL_ZIP))
   let zr
   try {
-    zr = spawnSync('python', ['-c', ZIP_CODE, OUT_PATH, p2r(ZIP_ARCHIVE)], { stdio: 'inherit' })
+    zr = spawnSync('python', ['-c', ZIP_CODE, OUT_PATH, stagedZip], { stdio: 'inherit' })
   } catch (e) {
     pkg('FAIL: python not available for --zip: ' + e.message)
     process.exit(1)
   }
   if (zr.error) {
     try {
-      zr = spawnSync('python3', ['-c', ZIP_CODE, OUT_PATH, p2r(ZIP_ARCHIVE)], { stdio: 'inherit' })
+      zr = spawnSync('python3', ['-c', ZIP_CODE, OUT_PATH, stagedZip], { stdio: 'inherit' })
     } catch (e) {
       pkg('FAIL: python not available for --zip: ' + e.message)
       process.exit(1)
@@ -583,6 +807,31 @@ if (ZIP_ARCHIVE) {
     pkg('FAIL: python not available for --zip: ' + zr.error.message)
     process.exit(1)
   }
+  writeFileSync(zipReceipt(stagedZip), JSON.stringify({
+    kind: 'caesura-archive', schema: 1, file: basename(FINAL_ZIP), sha256: sha256(stagedZip),
+  }) + '\n')
+  promotions.push([stagedZip, FINAL_ZIP, previousZip], [zipReceipt(stagedZip), zipReceipt(FINAL_ZIP), previousReceipt])
+}
+try {
+  prepareOutput(OUT_PATH)
+  promotions.push([OUT_PATH, FINAL_OUT, previousOutput])
+  publishOutputs(promotions)
+} catch (error) { fail(error.message) }
+
+if (!DEFER_COMPLETE) {
+  console.log()
+  console.log('==================================================================')
+  console.log('  PACKAGE COMPLETE -> ' + OUT)
+  console.log('    scenes:  ' + KAGS.length + '  (pick one from the web scene dropdown)')
+  console.log('    bundle:  ' + OUT + '/cache/story/story.lua')
+  console.log('    assets:  ' + OUT + '/assets/')
+  console.log('    entry:   ' + sceneKeys[ENTRY_INDEX])
+  console.log('    manifest: ' + OUT + '/MANIFEST.txt')
+  if (FINAL_ZIP) console.log('    archive: ' + ZIP_ARCHIVE + ' (' + statSync(FINAL_ZIP).size + ' bytes)')
+  console.log('------------------------------------------------------------------')
+  console.log('  Serve locally:  cd [' + OUT + '] && python -m http.server 8080')
+  console.log('  Or upload to itch.io / Netlify / GitHub Pages / S3.')
+  console.log('==================================================================')
 }
 
 // --------------------------------------------------- 7. --release -----------

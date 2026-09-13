@@ -186,6 +186,24 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python tests/scripts/test_package_game_node_cli.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:CAESURA_ENGINE = (Resolve-Path "build/${{ matrix.config }}/CaesuraAmeKAG.exe").Path
+          $env:CAESURA_LUA = (Resolve-Path "build/lua/${{ matrix.config }}/lua.exe").Path
+          $env:U21_TXN_EVIDENCE = "$pwd/artifacts/validation/package-transactions-ci"
+          python tests/scripts/test_package_output_transactions.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:U21_TXN_EVIDENCE = "$pwd/artifacts/validation/asset-dependencies-ci"
+          python tests/scripts/test_package_asset_dependencies.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Preserve Windows authoring evidence
+        if: always() && matrix.config == 'Debug'
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-authoring-evidence
+          path: |
+            artifacts/validation/package-transactions-ci/
+            artifacts/validation/asset-dependencies-ci/
+          if-no-files-found: warn
 
   # ============================================================
   # macOS Clang
@@ -334,6 +352,22 @@ jobs:
           bash scripts/package_game.sh --no-web-build tests/projects/first_vn
           bash scripts/verify_web_package.sh dist/first_vn
           python3 tests/scripts/test_package_game_node_cli.py
+          CAESURA_ENGINE="$PWD/build/CaesuraAmeKAG" CAESURA_LUA="$PWD/build/lua/lua" \
+            U21_TXN_EVIDENCE="$PWD/artifacts/validation/package-transactions-ci" \
+            python3 tests/scripts/test_package_output_transactions.py
+          CAESURA_ENGINE="$PWD/build/CaesuraAmeKAG" CAESURA_LUA="$PWD/build/lua/lua" \
+            U21_TXN_EVIDENCE="$PWD/artifacts/validation/asset-dependencies-ci" \
+            python3 tests/scripts/test_package_asset_dependencies.py
+
+      - name: Preserve Linux authoring evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-authoring-evidence
+          path: |
+            artifacts/validation/package-transactions-ci/
+            artifacts/validation/asset-dependencies-ci/
+          if-no-files-found: warn
 
       - name: Web package real-browser boot smoke (t199 A gate)
         run: |
@@ -371,6 +405,25 @@ jobs:
           cd web
           npm test
           cd ..
+
+      - name: Replay export real OpenGL CLI contract
+        run: |
+          xvfb-run -a -s "-screen 0 1280x720x24" python3 tests/scripts/test_replay_cli.py \
+            --engine build/CaesuraAmeKAG --backend opengl --output artifacts/validation/replay-cli-ci
+
+      - name: Preserve replay export evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-replay-export-evidence
+          path: |
+            artifacts/validation/replay-cli-ci/result.json
+            artifacts/validation/replay-cli-ci/source.json
+            artifacts/validation/replay-cli-ci/*/process.json
+            artifacts/validation/replay-cli-ci/*/stdout.log
+            artifacts/validation/replay-cli-ci/*/stderr.log
+            artifacts/validation/replay-cli-ci/*/game/frames/*.png
+          if-no-files-found: warn
 
       - name: Test
         run: |

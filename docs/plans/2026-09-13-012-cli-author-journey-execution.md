@@ -1,0 +1,76 @@
+# U21 CLI 作者路径执行记录
+
+开始：2026-09-13。按当前运行时计划推进U21，底层优先、Studio暂停。U21从U20候选开始，并已整合U20合并基线c747；U20的合并后CI 34724868950十个job全部通过。本文只在各自证据支持的范围记录结果，完整作者旅程与最终候选门禁另列。
+
+## 最终行为合同
+
+实际CLI创建basic与kag3作品，支持中文和空格目录、嵌套自定义入口、跨场景调用及项目资源覆盖。Native按规范化项目相对路径精确匹配入口；仅当唯一时兼容裸basename。Web打包器通过真实compiler.bundleSceneKeys生成bundle.entry，播放器检验该字段为现有scene的字符串key，默认启动和场景选择器保持一致；显式URL选择仍优先，旧无entry bundle保留首scene兼容。
+
+项目资产优先于共享模板资产。即使资源源为显式绝对目录，交付目标也在包内assets。Native、Web与bake共享基于真实tokenizer、compiler参数归一化及命令合同的媒体依赖收集器；导航目标、注释和Lua字符串不再误作图片或声音。静态必需媒体缺失会在交付前失败。动态插值或宏派发无法静态判断的条目标记未验证，能力明确skip的可选媒体单列，不冒充静态闭合或实际播放证明。
+
+输出在同卷独占暂存目录准备。旧生成目录只有完整文件/目录清单和字节摘要均匹配时才可替换；新增笔记、存档、修改、缺项、链接和只有旧marker的目录都保留并拒绝覆盖。ZIP完成并验证后才进入交付。both命令先准备两目标，全部有效后统一发布；普通构建或提升失败回滚已提升的目标，只有父命令在所有要求产物完成后输出成功。该合同没有声称断电、强杀或回滚I/O失败下跨目录原子性。
+
+## 作者输入与回放修复
+
+普通Web页面的stage左键/兼容tap点击按实际client尺寸与缩放矩形转换choiceX/Y；未命中选项保持WAIT。原有Advance按钮保持既有行为。实际main、Wasmoon与DOM回归验证0.5缩放下点击第二项只进入B分支、空白点击不误选，后续页面仍可前进；没有将此证据表述为手机真机触摸验证。
+
+共享KAG回放把记录的坐标交给当前实际点击回调，播放回调若停止或替换runner所有者便结束旧帧处理，避免旧协程继续更新。原生export-replay CLI先读取回放文件、确认load和set_mode结果，再进入首帧；Lua方法读取也处于受保护调用中，__index抛错会受控失败。入口准备仍发生在lockdown前，首帧不能恢复被禁用的任意文件访问。
+
+## 已完成的定向证据
+
+- 入口与资源传递：Python新增5例真实CLI、Node新增6例真实打包全部通过；现有9项能力/profile/复制负控制保持通过。早期使用U20 Lua仅作为明确解释器宿主，后续已使用U21自身构建的Lua。
+- 页面入口：三个独立实际main/Wasmoon页面从2失败/1兼容正控到3/3；缺失entry显示失败，数字字符串key用于稳定首项负控制。加入实际stage点击回归后4/4通过。
+- 输出事务：Native14、Web14、both9共37例已完成实现；其间保留了用户文件保护、__proto__名称、ZIP故障、复制期间源码/资产变动等真实RED。最终组合CLI套件结果待本候选统一运行，不将此前分次结果拼成一次全绿。
+- 共享回放：test_replay_choice.lua从8通过/7失败到15/15；旧回放用例继续通过；U21自身Lua主套件147/147、隔离套件55/55通过。六个可信profile的隔离发现门槛已更新为55。
+- 原生回放CLI：普通GPU进程的13例通过，包括合法文件、空回放、代理模块与失败路径。原始getter异常RED触发Debug panic且需超时回收；修正后自然exit1、零导出帧、无panic。正控首帧继续验证Lua文件沙箱拒绝。最终测试使用U21自身App SHA256 c7d09aaf696104a36e59ca0b2d9b5afb1333b2225a60da7ecf5575f34b55955a，运行前后源码与二进制一致。
+- 资源分类：初始Native5与旧scanner3通过；Web往返时JSON弱数组标记丢失的失败保留，随后改为复制并重建features数组标记。独立审查发现的playbgmstop、宏定义前和erase后的漏检有真实CLI RED，最终18例结果待记录。
+
+运行时真实GPU回放证据不等于画面像素等价或物理扬声器输出。Web DOM与Wasmoon回归不等于独立交付包的浏览器闭环。
+
+## 完整作者旅程与候选门禁
+
+两份作品已经通过真实create产生，定制后源码hash冻结。首次prepared-01的六个check/package命令成功，但Native BUILD-INFO把跨场景call目标误列为缺失媒体；原生旅程在启动前拒绝该前提。首次包和日志保留，不将命令成功计为作者闭环通过。
+
+prepared-02使用相同两份仓外作品和新的输出目录。后续必须记录两模板Native新目录运行、A/B两分支保存与已退出后的新进程恢复，以及Web两模板各root/subpath、真实DOM选项、实际持久槽位、独立浏览器进程和Service Worker离线重载。运行前后包内字节、原始日志、进程关闭与错误状态分别核对。
+
+Windows与Linux CI已配置现有CLI套件之后执行输出事务与资源依赖测试，使用实际引擎/Lua/Web产物；Linux另有Xvfb下原生回放CLI，保留日志和帧。配置存在不表示远端已执行。最终完整Debug、C++、Lua、CTest、Web、CLI与CI状态待本候选执行后填写。
+
+U21尚未因上述分段进展改判完成，U22–U29与此前未验收项继续按原计划跟踪。覆盖率未测量；本记录不授予发布或商店上传批准。
+
+## 真实作者运行追加发现与修复（最终验收前）
+
+prepared-02六条实际命令全通过且源码、作品与引擎身份稳定。第一次原生producer成功保存并到达奖励检查点，但测试作品的退出钩子在严格沙箱下被拒绝；没有放宽沙箱。新的作者修订完整复制原create产物，只移除entry.lua自退出钩子，由现有--frames有限运行负责退出，全部KS、metadata及素材字节保持不变。原作品、包和原始日志均保留，prepared-03/04记录新目录及明确的引擎选择。
+
+真实运行同时确认两个独立Windows UTF-8文件入口缺陷。SoLoud窄字符fopen不能打开中文目录/文件名；同一静音PCM在ASCII路径成功、中文路径失败，而Lua可读完整字节。共用DiskFile Windows入口改为严格UTF-8转UTF-16再_wfopen，保留POSIX及流式重新打开语义。4个维护性C++测试从1通过/3失败到4/4、104断言通过，同6项真实Engine诊断全部符合预期。随后producer完整退出，但consumer在图层准备中被DirAssetProvider的窄路径转换拒绝。该provider私有路径从UTF-8入口到canonical与ifstream/exists保持原生fs::path；3个真实资源回归全部失败后，连同原约束/U11 reader达到5/5、163断言通过。新App为21bbb93fd74b6ccbc611ffceae4cc9597f18d35cc3097df12048f1c98e2cd809，实际作者冷恢复仍待重新运行，不能把定向测试当作完成。
+
+Web第一进程NEW_A真实保存成功；第二个新浏览器触发fmtTime初始化顺序异常。真实首player生成存档、dispose后新main启动的回归先失败并出现未处理异常；改为可提前调用的函数声明后，入口/选项/冷槽位5/5通过。完整作者旅程随后两分支和两次冷恢复通过，但离线阶段发现异步启动错过window.load，worker未注册；按document.readyState立即注册或一次性等待load修复，两个时序回归均通过。
+
+prepared-04的basic/kag3乘根路径/子路径四组Chrome各104检查通过，实际3个浏览器进程均关闭，离线阶段确认本包SW后停止唯一服务器并断网重载。此处的通过仅覆盖当时声明的状态/资源/离线检查。随后截图复核发现恢复背景Canvas遮住已有消息：相同实际文字矩形正常页面有1004个白色字形像素，冷恢复后为0，即使等待350ms。该新视觉RED已保存，不能用DOM文字存在冒充可见画面。消息层现取最高有效图形z并在必要时置于同层最后位置；新增3个DOM回归先全失败，整个渲染器文件修复后8/8通过。prepared-05增加实际截图字形检查后的四组浏览器验收均通过：每组114检查、三次真实进程边界、两条分支/冷恢复及离线重载；全部浏览器退出与端点关闭，包字节稳定。基本模板包inventory为2192a79c0245e6301197dce580ffaf7521cbb8c2302cdaa4ab495a329bca7152，kag3为e60ab3189b4224303f37cc7f5d202509753d8c0dbbc4a80ecce8272b67455213。实际PNG、原始响应与报告的逐文件相等副本位于artifacts/validation/u21-author-web-phase-02。
+
+所有首次失败均保留在artifacts/validation/u21-author-web-phase-01、u21-native-author-diagnosis及各定向日志中。U21尚未提交合并验收；剩余为新包真实Native/Web作者闭环、完整原生/Web/CLI门禁、CI和最终文档状态同步。
+
+## 最终候选前的严格沙箱与目录别名闭合
+
+原生prepared-05在成功准备UTF-8图像后仍未恢复：实际runner错误为严格沙箱拒绝Render.is_valid_handle。C++绑定只通过BackendRegistry查询纹理句柄有效性，没有分配、删除或文件动作；仅将该具名只读查询加入既有白名单，未开放invalidate_handles、DevCore.quit或表写入。新的真实backend_factory/strict代理回归使用明确宿主替身，从6通过/4失败到10/10，原严格/逃逸回归保持通过。隔离Lua发现门槛55提升为56；C++新增7个Windows、5个跨平台用例相应提升各profile最低发现数，实际通过数仍以执行结果为准。
+
+prepared-06使用相同两份仓外作品及相同21bbb引擎，只显式选择新的脚本、打包器与输出目录。六条真实check/package命令全部通过，源码、作者文件和引擎在该命令区间前后一致。随后basic与kag3各完成producer-A/consumer-A/producer-B/consumer-B：8个普通D3D11引擎进程自然exit0，4组实际磁盘存档经前一进程退出后交给新进程，RESTORED/DONE各一次、reward=1，存档与包内静态字节未改变，无resource_failed或脚本错误。记录位于artifacts/validation/u21-author-native-final-01；这不声称新增截图或PCM等价证明。
+
+首轮CI 34730231824保留失败：Windows生成API文档过期，Linux平台证据锚点过期，macOS的标准/var父目录别名被输出链接保护误拒绝。Python与Node现仅在命令开始固定输出物理父目录，后续输出叶子、内部链接与所有权检查保持。8项新增真实CLI回归全通过，涵盖父别名、复制期间别名改向、链接拒绝和Web物理ROOT边界；另8项原有notes/save/modified-output/ZIP负控制通过。完整事务发现45例（原37+8），Mac实际CI结果仍须以新候选运行核对。
+
+prepared-06最终Web包四组各114项检查均已通过，三次新浏览器进程、两分支、冷恢复、字形可见性、停止服务器并禁网后的SW重载均通过，12个实际浏览器进程与端口已关闭。最终basic包inventory为f931035b8e53fb1779c40cfa5a58dc2b411f34f42507ea9bf63092ebb837bb23，kag3为ec70fbd537489508685db2c3f668dea3e81d9d5efbe953ad71bdd0d4db23343b；原始报告逐文件相等副本位于artifacts/validation/u21-author-web-final-01。
+
+CLEAN候选4c007407的串行完整CLI验证107/107通过、零失败/错误/跳过：目标能力15、Node打包29、输出事务45、静态资产依赖18。每套件后及最终的全部tracked源码、Web profile/实际bundle、App/Lua/Node/Python身份均一致，日志在主工作树artifacts/validation/u21-final-cli-20260913-01。原生BuildCli40由随后完整CTest再次覆盖，不把旧35项阶段事务数重复累加。
+
+CI34731712257的macOS已通过BuildCli40，但TargetCapabilities仍有同一测试的两个subcase失败：该用例直接传/var临时别名给内部_assemble_clean，绕过命令入口的物理路径固定，在实际复制变异前失败。仅对该内部调用补齐_canonical_output_path前提，保留Copied runtime/project differs、changed==[mutation]、失败输出不存在三组原断言；本地同15项全通过。产品链接保护未再次放宽，真实CLI别名/重定向/leaf边界仍由前述完整45覆盖。新远端CI须独立确认此修正。
+
+最终完整Debug/C++/Lua/CTest、Web全套与新CI尚待记录；此前通过不替代这些候选门禁。PR24保持待验收，不宣称U21或整个U1–U29计划已完成。
+
+## 候选完整门禁（136deefe）
+
+2026-09-13，干净提交136deefee22d1c323d127522c453273594286e46完成一次windows-debug受控执行。完整Debug构建、C++1404/1404（402737断言，0失败/跳过）、Lua主147/147与隔离56/56、验证工具及耦合/注册检查全部通过。CTest发现33项，32通过、0失败，仅跳过profile预先声明的外部AI服务CaesuraHeadlessAiSmoke。11个必需检查全部PASS，源码与夹具前后未变化。原始收据为artifacts/validation/u21-native-candidate-01/run.json，run_id为119f9ddb-edd5-4064-9163-0fd728acaf5d；collector与非diagnostic严格校验通过，证据目录为artifacts/validation/u21-native-evidence-01/136deefee22d1c323d127522c453273594286e46/119f9ddb-edd5-4064-9163-0fd728acaf5d/windows-debug。
+
+同一干净源码的完整Web链路完成真实Lua烘焙、Vite生产构建和全部49文件608/608测试，0失败/跳过，耗时155.68秒；源码与固定Node22/Lua摘要前后相同。报告与原始日志位于artifacts/validation/u21-web-full-02。最初中断只留下u21-web-full-01空目录，恢复启动被exclusive mkdir拒绝，未执行任何测试；空目录与拒绝日志保留，未把它记为测试通过或覆盖它。
+
+CI34732265133在136deefe上overall success，但逐job实际为6成功、1失败、3项PR包条件跳过。Windows Debug/Release、Linux、macOS、iOS编译与Android静态合同成功；macOS此前/var测试前提修正已通过真实CTest。Android audit的编译、APK/AAB生成、zipalign/apksigner均成功，随后上传APK/AAB因GitHub artifact存储域名getaddrinfo EAI_AGAIN失败。该失败原始日志保存在artifacts/validation/u21-ci-34732265133-android.log，不能把overall绿色描述为七项执行全部成功。最终文档提交继续核对CI，PR24尚待合并。
+
+U20已在PR23合并c7471141，合并后CI34724868950十项全部成功。U22独立工作区已开始最终包身份/解包、静态内容与进程隔离合同，不因U21门禁通过而宣称U22–U29或整个计划完成。真实作者Windows/Chrome范围与未新增原生像素/PCM等价范围保持上述记录，覆盖率未测量。

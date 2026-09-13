@@ -24,6 +24,7 @@ package.path = here .. "?.lua;" .. here .. "kag/?.lua;" .. package.path
 
 local tokenizer = require("tokenizer")
 local compiler = require("kag.compiler")
+local asset_dependencies = require("kag.asset_dependencies")
 
 local OUT_ROOT = "cache/ksc"
 local IS_WINDOWS = package.config:sub(1, 1) == BS
@@ -101,19 +102,11 @@ end
 
 --- Web export (round 35): bake every scene into a story.json bundle for
 --  the web player: { version, scenes: { path = serialized }, assets: [...] }.
---  Assets are discovered from [bg]/[fg]/[playbgm]/[playse]/[playvoice]
---  storage/file params (best-effort; the player falls back to the .ksc
---  stream when an asset is missing).
+--  Media roles come from the shared token/contract collector. Packaging applies
+--  target capability decisions and verifies the actual copied media files.
 local function bakeWeb(scenes, outDir)
     local bundle = { version = 1, scenes = {}, assets = {} }
-    local seen = {}
-    local assetCount = 0
-    local function addAsset(p)
-        if type(p) ~= "string" or #p == 0 or seen[p] then return end
-        seen[p] = true
-        assetCount = assetCount + 1
-        bundle.assets[assetCount] = p
-    end
+    local dependencies=asset_dependencies.new_report()
     local expected,key_error=compiler.bundleSceneKeys(scenes)
     if not expected then return nil,key_error end
     for index, path in ipairs(scenes) do
@@ -123,27 +116,18 @@ local function bakeWeb(scenes, outDir)
         f:close()
         local ok, tokens = pcall(tokenizer.parse, src)
         if not ok or not tokens then return nil, "tokenize failed: " .. path end
+        asset_dependencies.extend(dependencies,asset_dependencies.collect(tokens,expected[index]))
         compiler.compile(tokens)
         local serialized = compiler.serialize(tokens)
         if not serialized then return nil, "serialize failed: " .. path end
         local key = expected[index]
         bundle.scenes[key] = serialized
-        -- asset discovery: scan token params for storage/file values
-        for _, tok in ipairs(tokens) do
-            local p2 = tok[2]
-            if type(p2) == "table" then
-                for _, k in ipairs({ "storage", "file" }) do
-                    local v = p2[k]
-                    if type(v) == "string" and v:find("%.%a%a%a?$") then
-                        addAsset(v)
-                    end
-                end
-            end
-        end
     end
+    bundle.asset_dependencies=asset_dependencies.apply_capabilities(dependencies)
+    bundle.assets=bundle.asset_dependencies.static
     local compatible,reason=compiler.validateBundle(bundle,expected)
     if not compatible then return nil,reason end
-    return bundle, assetCount
+    return bundle, #bundle.assets
 end
 
 local function checkWeb(path,expected)

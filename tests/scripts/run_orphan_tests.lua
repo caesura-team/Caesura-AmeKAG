@@ -68,6 +68,8 @@ local tests = {
     "test_capability_resource_results",
     "test_capability_runtime",
     "test_capability_audio_cleanup",
+    "test_replay_choice",
+    "test_sandbox_render_query",
 }
 
 local passed, failed = 0, 0

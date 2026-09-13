@@ -2,6 +2,7 @@
 #pragma once
 #include "api/IAssetProvider.h"
 #include <cstdint>  // fixed-width types (GCC strict)
+#include <filesystem>
 #include <string>
 
 namespace Caesura {
@@ -19,7 +20,7 @@ public:
 
 private:
     std::string m_rootDir;
-    std::string fullPath(const std::string& path) const;
+    std::filesystem::path fullPath(const std::string& path) const;
 };
 
 } // namespace Caesura
