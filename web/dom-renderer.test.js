@@ -19,12 +19,14 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { DomRenderer } from './dom-renderer.js'
+import { AdapterCore } from './adapter-core.js'
+import { installCanvasHost } from './test-support/canvas-host.js'
 
 const COUNTED_STYLE_PROPS = [
   'transition', 'left', 'top', 'width', 'height', 'opacity', 'zIndex', 'filter',
 ]
 
-function installCounters() {
+function installCounters(styles = null) {
   const counts = { style: 0, setAttribute: 0, srcSet: 0, srcRemoved: 0, byProp: {} }
   const restore = []
 
@@ -42,8 +44,10 @@ function installCounters() {
     Object.defineProperty(proto, prop, {
       ...desc,
       set(value) {
-        counts.style += 1
-        counts.byProp[prop] = (counts.byProp[prop] || 0) + 1
+        if (!styles || styles.has(this)) {
+          counts.style += 1
+          counts.byProp[prop] = (counts.byProp[prop] || 0) + 1
+        }
         return originalSet.call(this, value)
       },
     })
@@ -237,5 +241,95 @@ describe('DomRenderer per-frame DOM cost (t12)', () => {
     await renderer.render()
     await first
     expect(root.querySelector('img[data-layer="bg"]').style.left).toBe('777px')
+  })
+})
+
+describe('DomRenderer message overlay after graphics replacement (U21)', () => {
+  // These positioned siblings share one stacking context. Compare their real
+  // CSS stacking levels and document order; jsdom cannot prove glyph pixels.
+  function expectMessageAboveGraphics(message) {
+    expect(message.style.position).toBe('absolute')
+    const messageZ = Number(getComputedStyle(message).zIndex) || 0
+    for (const graphics of root.querySelectorAll('.caesura-layer')) {
+      const graphicsZ = Number(getComputedStyle(graphics).zIndex) || 0
+      const follows = Boolean(graphics.compareDocumentPosition(message) & Node.DOCUMENT_POSITION_FOLLOWING)
+      expect(messageZ > graphicsZ || (messageZ === graphicsZ && follows),
+        'message must paint above ' + graphics.tagName + ':' + graphics.dataset.layer).toBe(true)
+    }
+  }
+
+  it.each(['structured', 'flat'])('keeps %s text above the same layer when IMG becomes a prepared CANVAS and back', async mode => {
+    const restoreCanvas = installCanvasHost()
+    const core = new AdapterCore()
+    const renderer = new DomRenderer(core, root)
+    try {
+      const bg = core.ensureLayer('bg', {id:'background', z:0, w:1280, h:720})
+      const original = core.loadTexture('assets/bg.png')
+      core.setLayerImage(bg, original)
+      renderer.setTextureUrl(original, '/assets/bg.png')
+      if (mode === 'structured') core.setDraws([{t:'VISIBLE_DONE', x:40, y:50, r:255, g:255, b:255, s:1}])
+      else core.setText('VISIBLE_DONE')
+      await renderer.render()
+      const image = root.querySelector('img[data-layer="bg"]')
+      const message = root.querySelector('.caesura-message')
+      expect(image?.getAttribute('src')).toBe('/assets/bg.png')
+      expect(message?.textContent).toBe('VISIBLE_DONE')
+      expectMessageAboveGraphics(message)
+
+      const restored = core.registerPreparedTexture({kind:'asset', path:'assets/bg.png'}, {
+        width:2, height:2,
+        draw(context) { context.fillStyle = '#106010'; context.fillRect(0, 0, 2, 2) },
+        dispose() {},
+      })
+      core.setLayerImage(bg, restored)
+      await renderer.render()
+      const canvas = root.querySelector('canvas[data-layer="bg"]')
+      expect(canvas).not.toBeNull()
+      expect(image.isConnected).toBe(false)
+      expect(core.getLayer('bg').id).toBe('background')
+      expect(root.querySelector('.caesura-message')).toBe(message)
+      expect(message.textContent).toBe('VISIBLE_DONE')
+      expect([...canvas.getContext('2d').getImageData(0, 0, 1, 1).data]).toEqual([16, 96, 16, 255])
+      expectMessageAboveGraphics(message)
+
+      core.setLayerImage(bg, original)
+      await renderer.render()
+      expect(root.querySelector('img[data-layer="bg"]')?.getAttribute('src')).toBe('/assets/bg.png')
+      expect(canvas.isConnected).toBe(false)
+      expect(root.querySelector('.caesura-message')).toBe(message)
+      expectMessageAboveGraphics(message)
+    } finally { renderer.destroy(); restoreCanvas() }
+  })
+
+  it('keeps the overlay above added and reordered graphics without steady container style or root-order writes', async () => {
+    const core = new AdapterCore()
+    const renderer = new DomRenderer(core, root)
+    const texture = core.loadTexture('assets/foreground.png')
+    core.setLayerImage(core.ensureLayer('bg', {z:0}), texture)
+    core.setText('VISIBLE_DONE')
+    await renderer.render()
+    const message = root.querySelector('.caesura-message')
+    const foreground = core.ensureLayer('fg', {z:10})
+    core.setLayerImage(foreground, texture)
+    await renderer.render()
+    expectMessageAboveGraphics(message)
+    core.setLayerProperty(foreground, 'z', 2147483647)
+    await renderer.render()
+    expectMessageAboveGraphics(message)
+    expect(root.querySelector('.caesura-message')).toBe(message)
+
+    // Text descendants are rebuilt by the existing renderer. Measure the
+    // persistent containers affected by stacking, without claiming to remove
+    // those unrelated text-layout writes.
+    harness = installCounters(new Set([message, ...root.querySelectorAll('.caesura-layer')].map(node => node.style)))
+    const changes = []
+    const observer = new MutationObserver(records => changes.push(...records))
+    observer.observe(root, {childList:true})
+    try {
+      for (let frame = 0; frame < 10; ++frame) await renderer.render()
+      expect(harness.counts.style).toBe(0)
+      expect(changes).toEqual([])
+      expectMessageAboveGraphics(message)
+    } finally { observer.disconnect(); renderer.destroy() }
   })
 })

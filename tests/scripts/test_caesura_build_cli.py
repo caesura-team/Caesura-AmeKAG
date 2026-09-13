@@ -144,6 +144,83 @@ class TestErrorPaths(unittest.TestCase):
             self.assertIsNotNone(ENGINE)
 
 
+class TestEntryAndWebForwarding(unittest.TestCase):
+    """Real CLI entry resolution and the actual Python-to-Node argv boundary."""
+
+    def build_entry(self, directory, names, requested):
+        project = Path(directory) / "作品 中文 空格"
+        project.mkdir()
+        for name in names:
+            scene = project / name
+            scene.parent.mkdir(parents=True, exist_ok=True)
+            scene.write_text("[end]\n", encoding="utf-8")
+        # A missing engine is an intentional downstream boundary: successful
+        # entry selection must reach its diagnostic; invalid entry must not.
+        return run_cli("build", project, "--entry", requested,
+                       "--engine", project / "not-an-engine.exe")
+
+    def test_entry_does_not_match_an_arbitrary_filename_suffix(self):
+        with tempfile.TemporaryDirectory() as directory:
+            rc, out = self.build_entry(directory, ["prefixcustom.ks"], "custom.ks")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("--entry scene not found", out)
+        self.assertNotIn("--engine", out)
+
+    def test_entry_rejects_an_ambiguous_bare_basename(self):
+        with tempfile.TemporaryDirectory() as directory:
+            rc, out = self.build_entry(directory, ["第一章/opening.ks", "第二章/opening.ks"], "opening.ks")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("ambiguous", out)
+        self.assertIn("第一章/opening.ks", out)
+        self.assertIn("第二章/opening.ks", out)
+        self.assertNotIn("--engine", out)
+
+    def test_entry_normalizes_windows_project_relative_separators(self):
+        with tempfile.TemporaryDirectory() as directory:
+            rc, out = self.build_entry(directory, ["story.ks", "章节 一/custom.ks"], "章节 一\\custom.ks")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("--engine", out)
+        self.assertNotIn("--entry scene not found", out)
+
+    def test_entry_retains_unique_basename_compatibility(self):
+        with tempfile.TemporaryDirectory() as directory:
+            rc, out = self.build_entry(directory, ["story.ks", "章节 一/custom.ks"], "custom.ks")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("--engine", out)
+        self.assertNotIn("--entry scene not found", out)
+
+    def test_web_wrapper_forwards_selected_entry_and_project_asset_source(self):
+        node = caesura_build.find_node()
+        with tempfile.TemporaryDirectory(prefix="u21-forward-") as directory:
+            project = Path(directory) / "作品 中文 空格"
+            (project / "章节 一").mkdir(parents=True)
+            (project / "assets").mkdir()
+            (project / "story.ks").write_text("[end]\n", encoding="utf-8")
+            (project / "章节 一/custom.ks").write_text("[end]\n", encoding="utf-8")
+            observation = Path(directory) / "node-argv.json"
+            observer = Path(directory) / "observe-node.mjs"
+            observer.write_text("""import {writeFileSync} from 'node:fs';
+if ((process.argv[1] || '').replaceAll('\\\\','/').endsWith('/package_game.mjs')) {
+  writeFileSync(process.env.U21_FORWARD_ARGS, JSON.stringify(process.argv.slice(2)));
+  process.exit(23);
+}
+""", encoding="utf-8")
+            env = dict(os.environ, CAESURA_NODE=str(node),
+                       NODE_OPTIONS="--import=" + observer.as_uri(), U21_FORWARD_ARGS=str(observation))
+            result = subprocess.run([sys.executable, str(CLI), "package", str(project),
+                                     "--target", "web", "--entry", "章节 一/custom.ks",
+                                     "--skip-check", "--out", str(Path(directory) / "output")],
+                                    cwd=ROOT, env=env, capture_output=True, text=True,
+                                    encoding="utf-8", errors="replace", timeout=30)
+            self.assertEqual(result.returncode, 23, result.stdout + result.stderr)
+            forwarded = json.loads(observation.read_text(encoding="utf-8"))
+            self.assertIn("--skip-check", forwarded)
+            self.assertIn("--entry", forwarded)
+            self.assertEqual(forwarded[forwarded.index("--entry") + 1].replace("\\", "/"), "章节 一/custom.ks")
+            self.assertIn("--assets", forwarded)
+            self.assertEqual(Path(forwarded[forwarded.index("--assets") + 1]).resolve(), (project / "assets").resolve())
+
+
 class TestAssetScanner(unittest.TestCase):
     """The reference scanner decides whether a package ships holes."""
 

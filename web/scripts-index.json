@@ -22,6 +22,7 @@
  "kag": true,
  "kag.aidev": true,
  "kag.aiwriter": true,
+ "kag.asset_dependencies": true,
  "kag.audio_state": true,
  "kag.cancel_token": true,
  "kag.commands.audio": true,

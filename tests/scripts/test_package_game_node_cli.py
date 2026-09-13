@@ -132,17 +132,20 @@ class PackageGameCliTest(unittest.TestCase):
                          Path(temp) / 'caesura.project.json')
             destination = self.out_path / 'cache/story/story.lua'
             injection.write_text('''import fs from 'node:fs';
-import {resolve} from 'node:path';
+import {resolve,dirname} from 'node:path';
 import {syncBuiltinESMExports} from 'node:module';
 const destination = %s;
 const packageRoot = %s;
 const copy = fs.copyFileSync;
+const ownsPackage = (process.argv[1] || '').replaceAll('\\\\','/').endsWith('/package_game.mjs');
 fs.copyFileSync = function(source,target,...args) {
   const result = copy(source,target,...args);
-  if (resolve(String(target)) === resolve(destination)) {
+  if (ownsPackage && String(target).replaceAll('\\\\','/').endsWith('/cache/story/story.lua')) {
+    console.log('U14_REAL_PACKAGE_COPY_MUTATED');
     if (process.env.U14_COPY_MUTATION==='missing-runtime') {
-      fs.unlinkSync(resolve(packageRoot,'scripts/kag.lua'));
-      fs.unlinkSync(resolve(packageRoot,'scripts/kag/init.lua'));
+      const actualRoot=dirname(dirname(dirname(resolve(String(target)))));
+      fs.unlinkSync(resolve(actualRoot,'scripts/kag.lua'));
+      fs.unlinkSync(resolve(actualRoot,'scripts/kag/init.lua'));
       return result;
     }
     const text=fs.readFileSync(target,'utf8');
@@ -170,6 +173,7 @@ syncBuiltinESMExports();
                     rc, out, err = run_cli_full('--out', self.out_name, first_scene.relative_to(ROOT).as_posix(),
                                                 callee.relative_to(ROOT).as_posix(), env=env)
                     self.assertEqual(rc, 1, out + err)
+                    self.assertEqual(out.count('U14_REAL_PACKAGE_COPY_MUTATED'), 1, out + err)
                     self.assertIn(reason, out + err)
                     self.assertNotIn('PACKAGE COMPLETE', out)
                     self.assertFalse((self.out_path / 'MANIFEST.txt').exists())
@@ -201,21 +205,28 @@ syncBuiltinESMExports();
         with tempfile.TemporaryDirectory(prefix='u14-runtime-spawn-', dir=ROOT / 'tmp') as temp:
             injection = Path(temp) / 'spawn-boundary.mjs'
             missing_lua = Path(temp) / 'missing-lua-interpreter.exe'
+            copied_bundle = Path(temp) / 'actual-staged-story.lua'
             injection.write_text('''import child from 'node:child_process';
+import fs from 'node:fs';
+import {join} from 'node:path';
 import {syncBuiltinESMExports} from 'node:module';
 const spawn = child.spawnSync;
 child.spawnSync = function(command,args,options) {
   if (args?.[0]==='-e' && args[1]?.includes('PACKAGE-SCENE-KEYS:')) {
+    fs.copyFileSync(join(options.cwd,'cache/story/story.lua'), %s);
     command = %s;
   }
   return spawn(command,args,options);
 };
 syncBuiltinESMExports();
-''' % json.dumps(str(missing_lua)), encoding='utf-8')
+''' % (json.dumps(str(copied_bundle)), json.dumps(str(missing_lua))), encoding='utf-8')
             env = dict(os.environ, NODE_OPTIONS='--import=' + injection.as_uri())
             rc, out, err = run_cli_full('--out', self.out_name, FIRST_VN_KS, env=env)
             self.assertEqual(rc, 1, out + err)
-            self.assertTrue((self.out_path / 'cache/story/story.lua').is_file())
+            # Preserve the real-copy oracle at the actual verifier boundary;
+            # a failed transaction must not publish that staged copy at --out.
+            self.assertTrue(copied_bundle.is_file())
+            self.assertFalse(self.out_path.exists())
             self.assertIn('runtime verifier failed', out + err)
             self.assertIn('ENOENT', out + err)
             self.assertIn('missing-lua-interpreter.exe', out + err)
@@ -557,6 +568,7 @@ fs.writeFileSync(process.argv[2]+'/capabilities-build.json',JSON.stringify(creat
         self.unchanged(self.cli(self.project), "metadata insertion point")
 
     def test_optional_feature_has_inspectable_delivered_report(self):
+        self.out = self.fixture / "optional-fresh-output"
         self.declare({"optional": ["video.play"]})
         (self.project / "story.ks").write_text('[video file="opening.mpg"]\n[end]\n', encoding="utf-8")
         result = self.cli(self.project)
@@ -594,11 +606,11 @@ fs.writeFileSync(process.argv[2]+'/capabilities-build.json',JSON.stringify(creat
         injection.write_text("""import fs from 'node:fs';
 import {resolve} from 'node:path';
 import {syncBuiltinESMExports} from 'node:module';
-const target=resolve(process.env.U19_COPY_TARGET);
+const target=process.env.U19_COPY_TARGET;
 const copy=fs.copyFileSync;
 fs.copyFileSync=function(source,destination,...args) {
   const value=copy(source,destination,...args);
-  if(resolve(String(destination))===target) {
+  if(String(destination).replaceAll('\\\\','/').endsWith('/'+target)) {
     fs.appendFileSync(destination,'\\n'+process.env.U19_COPY_COMMENT+' changed final copy\\n');
     console.log('U19_REAL_COPY_MUTATED');
   }
@@ -608,21 +620,128 @@ syncBuiltinESMExports();
 """, encoding="utf-8")
         for file, comment in (("scripts/capability_runtime.lua", "--"), ("sw.js", "//")):
             with self.subTest(file=file):
+                self.out = self.fixture / ("copied-fresh-" + file.replace("/", "-"))
                 result = self.cli(self.project, extra_env={
                     "NODE_OPTIONS": "--import=" + injection.as_uri(),
-                    "U19_COPY_TARGET": str(self.out / file), "U19_COPY_COMMENT": comment})
+                    "U19_COPY_TARGET": file, "U19_COPY_COMMENT": comment})
                 self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertIn("U19_REAL_COPY_MUTATED", result.stdout)
                 self.assertIn("Copied Web player changed: " + file, result.stderr)
                 self.assertNotIn("PACKAGE COMPLETE", result.stdout)
                 self.assertFalse((self.out / "CAPABILITIES.json").exists())
                 self.assertFalse((self.out / "MANIFEST.txt").exists())
-                # Restore only this test-owned incomplete output for the next mutation.
-                self.assertTrue(self.out.resolve().is_relative_to(self.fixture.resolve()))
-                shutil.rmtree(self.out)
-                self.out.mkdir()
-                for name, contents in self.old_files.items():
-                    (self.out / name).write_bytes(contents)
+
+
+class PackageEntryAssetsCliTest(unittest.TestCase):
+    """Real Node/Lua packaging against the already built, profiled Web player."""
+
+    @classmethod
+    def setUpClass(cls):
+        PackageWebCapabilitiesCliTest.setUpClass.__func__(cls)
+
+    def setUp(self):
+        PackageWebCapabilitiesCliTest.setUp(self)
+        # This slice always creates a fresh package; replacement ownership and
+        # ZIP transaction tests belong to their separate delivery workstream.
+        self.out = self.fixture / "作品 成品"
+        self.declare({})
+
+    cli = PackageWebCapabilitiesCliTest.cli
+    declare = PackageWebCapabilitiesCliTest.declare
+
+    def packaged_entry(self):
+        code = """package.path='scripts/?.lua;scripts/?/init.lua;'..package.path
+require('kag')
+local bundle=assert(loadfile('cache/story/story.lua','t',{}))()
+assert(type(bundle.entry)=='string' and bundle.scenes[bundle.entry], 'missing-valid-bundle-entry')
+local tokens,reason=require('kag.compiler').deserialize(bundle.scenes[bundle.entry])
+assert(tokens,reason)
+local text=''
+for _,token in ipairs(tokens) do
+  if token[1]=='ch' then text=text..tostring(token[2].text or '') end
+end
+io.write('U21-ENTRY:',bundle.entry,'\\nU21-TEXT:',text)
+"""
+        result = subprocess.run([str(self.lua), "-e", code], cwd=self.out,
+                                capture_output=True, text=True, encoding="utf-8",
+                                errors="replace", timeout=30)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        return result.stdout
+
+    def test_entry_already_in_inputs_is_written_as_the_actual_bundle_default(self):
+        (self.project / "story.ks").write_text('[ch text="DEFAULT_STORY"]\n[end]\n', encoding="utf-8")
+        (self.project / "selected.ks").write_text('[ch text="SELECTED_ENTRY"]\n[end]\n', encoding="utf-8")
+        result = self.cli("--entry", "selected.ks", self.project)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.packaged_entry(), "U21-ENTRY:selected.ks\nU21-TEXT:SELECTED_ENTRY")
+
+    def test_project_relative_entry_keeps_duplicate_basename_scene_keys_distinct(self):
+        for chapter, marker in (("章节 一", "FIRST_ENTRY"), ("章节 二", "SECOND_ENTRY")):
+            scene = self.project / chapter / "opening.ks"
+            scene.parent.mkdir()
+            scene.write_text('[ch text="' + marker + '"]\n[end]\n', encoding="utf-8")
+        result = self.cli("--entry", "章节 二\\opening.ks", self.project)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.packaged_entry(), "U21-ENTRY:章节 二/opening.ks\nU21-TEXT:SECOND_ENTRY")
+
+    def test_bare_entry_basename_is_rejected_when_ambiguous(self):
+        for chapter in ("chapter-a", "chapter-b"):
+            scene = self.project / chapter / "opening.ks"
+            scene.parent.mkdir()
+            scene.write_text("[end]\n", encoding="utf-8")
+        result = self.cli("--entry", "opening.ks", self.project)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("ambiguous", result.stderr)
+        self.assertFalse(self.out.exists())
+
+    def test_project_assets_overlay_shared_assets_at_the_fixed_package_root(self):
+        shared = self.fixture / "assets"
+        (shared / "shared-only.bin").write_bytes(b"shared template resource")
+        (shared / "same.bin").write_bytes(b"shared version")
+        own = self.project / "assets"
+        own.mkdir()
+        (own / "project-only.bin").write_bytes(b"project unique resource")
+        (own / "same.bin").write_bytes(b"project override")
+        result = self.cli(self.project)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual((self.out / "assets/shared-only.bin").read_bytes(), b"shared template resource")
+        self.assertEqual((self.out / "assets/project-only.bin").read_bytes(), b"project unique resource")
+        self.assertEqual((self.out / "assets/same.bin").read_bytes(), b"project override")
+
+    def test_absolute_asset_source_does_not_become_a_package_destination_path(self):
+        selected = self.fixture / "额外 资源"
+        selected.mkdir()
+        (selected / "chosen.bin").write_bytes(b"selected absolute source")
+        result = self.cli("--assets", selected, self.project)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual((self.out / "assets/chosen.bin").read_bytes(), b"selected absolute source")
+        self.assertFalse((self.out / selected.name).exists())
+
+    def test_delivered_entry_mutation_cannot_pass_bundle_verification(self):
+        injection = self.fixture / "mutate-entry-copy.mjs"
+        injection.write_text("""import fs from 'node:fs';
+import {resolve} from 'node:path';
+import {syncBuiltinESMExports} from 'node:module';
+const original=fs.copyFileSync;
+fs.copyFileSync=function(source,destination,...args) {
+  const result=original(source,destination,...args);
+  if(String(destination).replaceAll('\\\\','/').endsWith('/cache/story/story.lua')) {
+    const copied=fs.readFileSync(destination,'utf8');
+    fs.writeFileSync(destination,'local bundle=(function() '+copied+' end)()\\nbundle.entry="missing-entry.ks"\\nreturn bundle\\n');
+    console.log('U21_ENTRY_COPY_MUTATED');
+  }
+  return result;
+};
+syncBuiltinESMExports();
+""", encoding="utf-8")
+        result = self.cli("--entry", "story.ks", self.project, extra_env={
+            "NODE_OPTIONS": "--import=" + injection.as_uri(),
+            "U21_BUNDLE_COPY": str(self.out / "cache/story/story.lua")})
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("U21_ENTRY_COPY_MUTATED", result.stdout)
+        self.assertIn("entry", (result.stdout + result.stderr).lower())
+        self.assertNotIn("PACKAGE COMPLETE", result.stdout)
+        self.assertFalse((self.out / "MANIFEST.txt").exists())
 
 
 if __name__ == "__main__":

@@ -8,7 +8,16 @@
 #include "di/api/ISandboxQuota.h"
 #include "job/JobSystem.h"
 #include <atomic>
+#include <chrono>
+#include <filesystem>
+#include <fstream>
+#include <memory>
+#include <stdexcept>
 #include <thread>
+#include <vector>
+#include <soloud_file.h>
+#include <soloud_wav.h>
+#include <soloud_wavstream.h>
 
 using namespace Caesura;
 
@@ -77,7 +86,164 @@ private:
     ISandboxQuota* m_previous;
 };
 
+class AudioPathFiles final {
+public:
+    AudioPathFiles() {
+        static std::atomic<unsigned> sequence{0};
+        const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+        for (unsigned attempt = 0; attempt != 16; ++attempt) {
+            m_root = std::filesystem::path("tests/audio") /
+                ("u21-paths-" + std::to_string(stamp) + "-" + std::to_string(sequence++));
+            if (std::filesystem::create_directory(m_root)) return;
+        }
+        throw std::runtime_error("Cannot create exclusive audio path fixture directory");
+    }
+
+    ~AudioPathFiles() {
+        std::error_code ignored;
+        for (const auto& file : m_files) std::filesystem::remove(file, ignored);
+        for (auto directory = m_directories.rbegin(); directory != m_directories.rend(); ++directory)
+            std::filesystem::remove(*directory, ignored);
+        std::filesystem::remove(m_root, ignored);
+    }
+
+    std::string path(const std::filesystem::path& relative) const {
+        const auto utf8 = (m_root / relative).generic_u8string();
+        return std::string(utf8.begin(), utf8.end());
+    }
+
+    std::string copyWave(const std::filesystem::path& relative) {
+        const auto destination = m_root / relative;
+        if (destination.parent_path() != m_root &&
+            std::filesystem::create_directory(destination.parent_path())) {
+            m_directories.push_back(destination.parent_path());
+        }
+        std::filesystem::copy_file("tests/audio/silence.wav", destination);
+        m_files.push_back(destination);
+        return path(relative);
+    }
+
+    std::string corruptWave() {
+        const auto destination = m_root / "corrupt.wav";
+        std::ofstream output(destination, std::ios::binary);
+        output.exceptions(std::ios::badbit | std::ios::failbit);
+        m_files.push_back(destination);
+        output << "not a WAV file\n";
+        output.close();
+        return path("corrupt.wav");
+    }
+
+    AudioPathFiles(const AudioPathFiles&) = delete;
+    AudioPathFiles& operator=(const AudioPathFiles&) = delete;
+
+private:
+    std::filesystem::path m_root;
+    std::vector<std::filesystem::path> m_files;
+    std::vector<std::filesystem::path> m_directories;
+};
+
 } // namespace
+
+TEST_CASE("U21 audio paths: WAV playback accepts UTF-8 directories and filenames") {
+    REQUIRE(std::filesystem::is_regular_file("tests/audio/silence.wav"));
+    std::filesystem::path relative;
+    SUBCASE("ASCII") { relative = "ascii.wav"; }
+    SUBCASE("UTF-8 directory") { relative = u8"\u65c5\u7a0b/loop.wav"; }
+    SUBCASE("UTF-8 filename") { relative = u8"\u5faa\u73af.wav"; }
+    AudioPathFiles files;
+    const auto file = files.copyWave(relative);
+    CAPTURE(file);
+    AudioQuota quota(4);
+    ScopedAudioQuota scopedQuota(quota);
+    SoLoudAudioEngine audio{SoLoudAudioEngine::OutputMode::ManualMix};
+    REQUIRE(audio.init());
+    REQUIRE(audio.playBGM(file, 0) != 0);
+    CHECK(audio.isBGMPlaying());
+    std::vector<float> pcm(512 * 2, 1.0f);
+    audio.soloud().mix(pcm.data(), 512);
+    CHECK(std::all_of(pcm.begin(), pcm.end(), [](float sample) { return sample == 0.0f; }));
+    CHECK(audio.getPosition("bgm") > 0);
+    audio.stopBGM(0);
+    CHECK(quota.activeCount == 0);
+}
+
+TEST_CASE("U21 audio paths: WavStream reopens UTF-8 files for each decoder instance") {
+    REQUIRE(std::filesystem::is_regular_file("tests/audio/silence.wav"));
+    std::filesystem::path relative;
+    SUBCASE("ASCII") { relative = "stream.wav"; }
+    SUBCASE("UTF-8 directory") { relative = u8"\u65c5\u7a0b/stream.wav"; }
+    SUBCASE("UTF-8 filename") { relative = u8"\u6d41\u5f0f.wav"; }
+    AudioPathFiles files;
+    const auto file = files.copyWave(relative);
+    CAPTURE(file);
+    SoLoud::WavStream stream;
+    REQUIRE(stream.load(file.c_str()) == SoLoud::SO_NO_ERROR);
+    REQUIRE(stream.mMemFile == nullptr);
+    REQUIRE(stream.mStreamFile == nullptr);
+    REQUIRE(stream.mFilename != nullptr);
+    CHECK(std::string(stream.mFilename) == file);
+    REQUIRE(stream.mChannels > 0);
+    REQUIRE(stream.mSampleCount > 128);
+    for (int generation = 0; generation != 2; ++generation) {
+        CAPTURE(generation);
+        // Each constructor reopens mFilename through the production DiskFile;
+        // no memory/file override can make this a load-only success.
+        std::unique_ptr<SoLoud::AudioSourceInstance> instance(stream.createInstance());
+        REQUIRE(instance != nullptr);
+        instance->init(stream, 0);
+        std::vector<float> pcm(64 * stream.mChannels, 1.0f);
+        REQUIRE(instance->getAudio(pcm.data(), 64, 64) == 64);
+        CHECK(std::all_of(pcm.begin(), pcm.end(), [](float sample) { return sample == 0.0f; }));
+        REQUIRE(instance->seekFrame(32) == SoLoud::SO_NO_ERROR);
+        REQUIRE(instance->getAudio(pcm.data(), 64, 64) == 64);
+        CHECK(std::all_of(pcm.begin(), pcm.end(), [](float sample) { return sample == 0.0f; }));
+    }
+}
+
+TEST_CASE("U21 audio paths: missing and corrupt inputs fail without poisoning later playback") {
+    REQUIRE(std::filesystem::is_regular_file("tests/audio/silence.wav"));
+    AudioPathFiles files;
+    const auto missing = files.path("missing.wav");
+    const auto corrupt = files.corruptWave();
+    const auto valid = files.copyWave("recovery.wav");
+    AudioQuota quota(4);
+    ScopedAudioQuota scopedQuota(quota);
+    SoLoudAudioEngine audio{SoLoudAudioEngine::OutputMode::ManualMix};
+    REQUIRE(audio.init());
+    CHECK(audio.playBGM(missing, 0) == 0);
+    CHECK(audio.playBGM(corrupt, 0) == 0);
+    CHECK(quota.activeCount == 0);
+    REQUIRE(audio.playBGM(valid, 0) != 0);
+    CHECK(audio.isBGMPlaying());
+    audio.stopBGM(0);
+    CHECK(quota.activeCount == 0);
+    SoLoud::WavStream stream;
+    CHECK(stream.load(missing.c_str()) != SoLoud::SO_NO_ERROR);
+    CHECK(stream.load(corrupt.c_str()) != SoLoud::SO_NO_ERROR);
+    REQUIRE(stream.load(valid.c_str()) == SoLoud::SO_NO_ERROR);
+    std::unique_ptr<SoLoud::AudioSourceInstance> instance(stream.createInstance());
+    REQUIRE(instance != nullptr);
+    instance->init(stream, 0);
+    std::vector<float> pcm(64 * stream.mChannels);
+    CHECK(instance->getAudio(pcm.data(), 64, 64) == 64);
+}
+
+#ifdef _WIN32
+TEST_CASE("U21 audio paths: Windows rejects invalid UTF-8 before opening a file") {
+    AudioPathFiles files;
+    const std::string invalid[] = {"\xc0\xaf", "\xed\xa0\x80", "\xff", "\xe4\xb8"};
+    for (const auto& sequence : invalid) {
+        const std::string path = files.path("invalid-") + sequence + ".wav";
+        SoLoud::DiskFile file;
+        CHECK(file.open(path.c_str()) == SoLoud::INVALID_PARAMETER);
+        CHECK(file.getFilePtr() == nullptr);
+    }
+    const auto valid = files.copyWave("valid-after-invalid.wav");
+    SoLoud::DiskFile file;
+    CHECK(file.open(valid.c_str()) == SoLoud::SO_NO_ERROR);
+    CHECK(file.length() == std::filesystem::file_size(std::filesystem::path(valid)));
+}
+#endif
 
 TEST_CASE("SoLoudAudioEngine::name") {
     SoLoudAudioEngine eng;

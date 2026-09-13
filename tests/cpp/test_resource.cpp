@@ -152,6 +152,112 @@ TEST_CASE("DirAssetProvider confines reads to its root") {
     CHECK(workingDirectoryRoot.read(fs::absolute(outside).string()).empty());
 }
 
+namespace {
+std::string resourceUtf8(const std::filesystem::path& path) {
+    const auto bytes = path.generic_u8string();
+    return std::string(bytes.begin(), bytes.end());
+}
+
+void writeResourceBytes(const std::filesystem::path& path, const std::vector<uint8_t>& bytes) {
+    std::filesystem::create_directories(path.parent_path());
+    std::ofstream output(path, std::ios::binary);
+    REQUIRE(output.is_open());
+    output.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+    output.close();
+    REQUIRE(output.good());
+}
+}
+
+TEST_CASE("U21 resource paths: directory provider reads UTF-8 names and roots") {
+    namespace fs = std::filesystem;
+    TestPaths::ScopedTempDir temp("u21_provider_utf8");
+    fs::path rootName = "root";
+    fs::path relative = "data.bin";
+    SUBCASE("ASCII control") {}
+    SUBCASE("UTF-8 directory") { relative = u8"\u65c5\u7a0b/data.bin"; }
+    SUBCASE("UTF-8 basename outside the ANSI repertoire") { relative = u8"\u56fe\u50cf-\U0001f3b5.bin"; }
+    SUBCASE("UTF-8 provider root") { rootName = u8"\u8d44\u6e90\u6839-\U0001f3b5"; }
+    const fs::path root = temp.path() / rootName;
+    const std::vector<uint8_t> expected{0, 1, 2, 127, 128, 255};
+    writeResourceBytes(root / relative, expected);
+    const fs::path outside = temp.path() / "outside.bin";
+    writeResourceBytes(outside, std::vector<uint8_t>{99});
+    DirAssetProvider provider(resourceUtf8(root));
+    const std::string requested = resourceUtf8(relative);
+    CAPTURE(requested);
+    bool exists = false;
+    std::vector<uint8_t> actual;
+    CHECK_NOTHROW(exists = provider.exists(requested));
+    CHECK(exists);
+    CHECK_NOTHROW(actual = provider.read(requested));
+    CHECK(actual == expected);
+    CHECK_FALSE(provider.exists("missing.bin"));
+    CHECK(provider.read("missing.bin").empty());
+    CHECK_FALSE(provider.exists("../outside.bin"));
+    CHECK(provider.read("../outside.bin").empty());
+    CHECK_FALSE(provider.exists(resourceUtf8(outside)));
+    CHECK(provider.read(resourceUtf8(outside)).empty());
+    CHECK(provider.read(requested) == expected);
+}
+
+TEST_CASE("U21 resource paths: asset reader preserves UTF-8 bytes and size guards") {
+    namespace fs = std::filesystem;
+    TestPaths::ScopedTempDir temp("u21_reader_utf8");
+    fs::path rootName = "root";
+    fs::path relative = "u21-reader/data.bin";
+    SUBCASE("ASCII control") {}
+    SUBCASE("UTF-8 directory") { relative = u8"u21-reader/\u65c5\u7a0b/data.bin"; }
+    SUBCASE("UTF-8 basename") { relative = u8"u21-reader/\u8d44\u6e90-\U0001f3b5.bin"; }
+    SUBCASE("UTF-8 provider root") { rootName = u8"\u8bfb\u53d6\u6839-\U0001f3b5"; }
+    const fs::path root = temp.path() / rootName;
+    const std::vector<uint8_t> expected{0, 1, 2, 127, 128, 255};
+    writeResourceBytes(root / relative, expected);
+    const std::string requested = resourceUtf8(relative);
+    CAPTURE(requested);
+    // Ensure no ambient default provider can satisfy this positive control.
+    REQUIRE_FALSE(fs::exists(relative));
+    REQUIRE_FALSE(fs::exists(fs::path("assets") / relative));
+    AssetManager assets;
+    assets.init();
+    assets.addProvider(std::make_unique<DirAssetProvider>(resourceUtf8(root)));
+    IAssetReader& reader = assets;
+    CHECK(reader.readAsset(requested, expected.size()) == expected);
+    CHECK(reader.readAsset(requested, expected.size() - 1).empty());
+    CHECK(reader.readAsset(requested, 0).empty());
+    CHECK(reader.readAsset("u21-reader/missing.bin", 64).empty());
+    CHECK(reader.readAsset("../outside.bin", 64).empty());
+    CHECK(reader.readAsset(resourceUtf8(root / relative), 64).empty());
+    CHECK(reader.readAsset(std::string("u21-reader/\0data.bin", 20), 64).empty());
+    CHECK(reader.readAsset(requested, 64) == expected);
+}
+
+#ifdef _WIN32
+TEST_CASE("U21 resource paths: invalid Windows UTF-8 fails without throwing") {
+    namespace fs = std::filesystem;
+    TestPaths::ScopedTempDir temp("u21_provider_invalid_utf8");
+    const fs::path root = temp.path() / "root";
+    const std::vector<uint8_t> expected{7, 8, 9};
+    writeResourceBytes(root / "valid.bin", expected);
+    DirAssetProvider provider(resourceUtf8(root));
+    const std::string invalid[] = {"\xc0\xaf", "\xed\xa0\x80", "\xff", "\xe4\xb8"};
+    for (const auto& bytes : invalid) {
+        const std::string requested = "bad-" + bytes + ".bin";
+        bool exists = false;
+        std::vector<uint8_t> data;
+        CHECK_NOTHROW(exists = provider.exists(requested));
+        CHECK_FALSE(exists);
+        CHECK_NOTHROW(data = provider.read(requested));
+        CHECK(data.empty());
+        DirAssetProvider badRoot(resourceUtf8(root) + "/" + bytes);
+        CHECK_NOTHROW(exists = badRoot.exists("valid.bin"));
+        CHECK_FALSE(exists);
+        CHECK_NOTHROW(data = badRoot.read("valid.bin"));
+        CHECK(data.empty());
+    }
+    CHECK(provider.read("valid.bin") == expected);
+}
+#endif
+
 TEST_CASE("XP3Archive rejects raw segment size mismatch") {
     namespace fs = std::filesystem;
     TestPaths::ScopedTempDir temp("xp3_raw_size_mismatch");

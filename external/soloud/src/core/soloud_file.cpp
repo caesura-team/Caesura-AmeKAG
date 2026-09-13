@@ -29,6 +29,10 @@ distribution.
 #include <string.h>
 #include "soloud.h"
 #include "soloud_file.h"
+#if defined(_WIN32)
+#include <windows.h>
+#include <new>
+#endif
 
 namespace SoLoud
 {
@@ -105,7 +109,28 @@ mFileHandle(fp)
 	{
 		if (!aFilename)
 			return INVALID_PARAMETER;
+#if defined(_WIN32)
+		// Caesura modification: engine paths are UTF-8. Decode explicitly for
+		// Windows, including WavStream instances which reopen this filename.
+		// Do not fall back to the ANSI code page for malformed UTF-8 input.
+		const int wideLength = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+			aFilename, -1, NULL, 0);
+		if (wideLength <= 0)
+			return INVALID_PARAMETER;
+		wchar_t *widePath = new (std::nothrow) wchar_t[wideLength];
+		if (!widePath)
+			return OUT_OF_MEMORY;
+		if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+			aFilename, -1, widePath, wideLength) <= 0)
+		{
+			delete[] widePath;
+			return INVALID_PARAMETER;
+		}
+		mFileHandle = _wfopen(widePath, L"rb");
+		delete[] widePath;
+#else
 		mFileHandle = fopen(aFilename, "rb");
+#endif
 		if (!mFileHandle)
 			return FILE_NOT_FOUND;
 		return SO_NO_ERROR;
