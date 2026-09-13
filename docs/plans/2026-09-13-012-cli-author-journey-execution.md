@@ -57,4 +57,10 @@ prepared-06使用相同两份仓外作品及相同21bbb引擎，只显式选择�
 
 首轮CI 34730231824保留失败：Windows生成API文档过期，Linux平台证据锚点过期，macOS的标准/var父目录别名被输出链接保护误拒绝。Python与Node现仅在命令开始固定输出物理父目录，后续输出叶子、内部链接与所有权检查保持。8项新增真实CLI回归全通过，涵盖父别名、复制期间别名改向、链接拒绝和Web物理ROOT边界；另8项原有notes/save/modified-output/ZIP负控制通过。完整事务发现45例（原37+8），Mac实际CI结果仍须以新候选运行核对。
 
-prepared-06最终Web包正在进行与prepared-05相同的四组114项验证。最终完整Debug/C++/Lua/CTest、Web全套、CLI/事务/资产套件与新CI尚待记录；此前分段通过不替代这些候选门禁。PR24保持待验收，不宣称U21或整个U1–U29计划已完成。
+prepared-06最终Web包四组各114项检查均已通过，三次新浏览器进程、两分支、冷恢复、字形可见性、停止服务器并禁网后的SW重载均通过，12个实际浏览器进程与端口已关闭。最终basic包inventory为f931035b8e53fb1779c40cfa5a58dc2b411f34f42507ea9bf63092ebb837bb23，kag3为ec70fbd537489508685db2c3f668dea3e81d9d5efbe953ad71bdd0d4db23343b；原始报告逐文件相等副本位于artifacts/validation/u21-author-web-final-01。
+
+CLEAN候选4c007407的串行完整CLI验证107/107通过、零失败/错误/跳过：目标能力15、Node打包29、输出事务45、静态资产依赖18。每套件后及最终的全部tracked源码、Web profile/实际bundle、App/Lua/Node/Python身份均一致，日志在主工作树artifacts/validation/u21-final-cli-20260913-01。原生BuildCli40由随后完整CTest再次覆盖，不把旧35项阶段事务数重复累加。
+
+CI34731712257的macOS已通过BuildCli40，但TargetCapabilities仍有同一测试的两个subcase失败：该用例直接传/var临时别名给内部_assemble_clean，绕过命令入口的物理路径固定，在实际复制变异前失败。仅对该内部调用补齐_canonical_output_path前提，保留Copied runtime/project differs、changed==[mutation]、失败输出不存在三组原断言；本地同15项全通过。产品链接保护未再次放宽，真实CLI别名/重定向/leaf边界仍由前述完整45覆盖。新远端CI须独立确认此修正。
+
+最终完整Debug/C++/Lua/CTest、Web全套与新CI尚待记录；此前通过不替代这些候选门禁。PR24保持待验收，不宣称U21或整个U1–U29计划已完成。

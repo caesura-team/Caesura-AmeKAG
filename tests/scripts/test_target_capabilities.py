@@ -234,7 +234,9 @@ class AuthorCapabilityEntrypoints(unittest.TestCase):
         for mutation in ("runtime", "project"):
             with self.subTest(mutation=mutation):
                 report = caesura_build.run_capability_check(self.project, [self.story], "native", engine=self.engine)
-                output = self.directory / ("new-copy-" + mutation)
+                # This private assembly entry receives the physical path pinned
+                # by cmd_build/cmd_package (macOS temp roots may use /var).
+                output = caesura_build._canonical_output_path(self.directory / ("new-copy-" + mutation))
                 changed = []
                 def corrupt_owned_copy(source, destination):
                     original_copy(source, destination)
