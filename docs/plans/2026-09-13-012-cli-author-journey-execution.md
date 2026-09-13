@@ -64,3 +64,13 @@ CLEAN候选4c007407的串行完整CLI验证107/107通过、零失败/错误/跳�
 CI34731712257的macOS已通过BuildCli40，但TargetCapabilities仍有同一测试的两个subcase失败：该用例直接传/var临时别名给内部_assemble_clean，绕过命令入口的物理路径固定，在实际复制变异前失败。仅对该内部调用补齐_canonical_output_path前提，保留Copied runtime/project differs、changed==[mutation]、失败输出不存在三组原断言；本地同15项全通过。产品链接保护未再次放宽，真实CLI别名/重定向/leaf边界仍由前述完整45覆盖。新远端CI须独立确认此修正。
 
 最终完整Debug/C++/Lua/CTest、Web全套与新CI尚待记录；此前通过不替代这些候选门禁。PR24保持待验收，不宣称U21或整个U1–U29计划已完成。
+
+## 候选完整门禁（136deefe）
+
+2026-09-13，干净提交136deefee22d1c323d127522c453273594286e46完成一次windows-debug受控执行。完整Debug构建、C++1404/1404（402737断言，0失败/跳过）、Lua主147/147与隔离56/56、验证工具及耦合/注册检查全部通过。CTest发现33项，32通过、0失败，仅跳过profile预先声明的外部AI服务CaesuraHeadlessAiSmoke。11个必需检查全部PASS，源码与夹具前后未变化。原始收据为artifacts/validation/u21-native-candidate-01/run.json，run_id为119f9ddb-edd5-4064-9163-0fd728acaf5d；collector与非diagnostic严格校验通过，证据目录为artifacts/validation/u21-native-evidence-01/136deefee22d1c323d127522c453273594286e46/119f9ddb-edd5-4064-9163-0fd728acaf5d/windows-debug。
+
+同一干净源码的完整Web链路完成真实Lua烘焙、Vite生产构建和全部49文件608/608测试，0失败/跳过，耗时155.68秒；源码与固定Node22/Lua摘要前后相同。报告与原始日志位于artifacts/validation/u21-web-full-02。最初中断只留下u21-web-full-01空目录，恢复启动被exclusive mkdir拒绝，未执行任何测试；空目录与拒绝日志保留，未把它记为测试通过或覆盖它。
+
+CI34732265133在136deefe上overall success，但逐job实际为6成功、1失败、3项PR包条件跳过。Windows Debug/Release、Linux、macOS、iOS编译与Android静态合同成功；macOS此前/var测试前提修正已通过真实CTest。Android audit的编译、APK/AAB生成、zipalign/apksigner均成功，随后上传APK/AAB因GitHub artifact存储域名getaddrinfo EAI_AGAIN失败。该失败原始日志保存在artifacts/validation/u21-ci-34732265133-android.log，不能把overall绿色描述为七项执行全部成功。最终文档提交继续核对CI，PR24尚待合并。
+
+U20已在PR23合并c7471141，合并后CI34724868950十项全部成功。U22独立工作区已开始最终包身份/解包、静态内容与进程隔离合同，不因U21门禁通过而宣称U22–U29或整个计划完成。真实作者Windows/Chrome范围与未新增原生像素/PCM等价范围保持上述记录，覆盖率未测量。
