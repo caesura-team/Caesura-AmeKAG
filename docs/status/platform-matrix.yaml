@@ -4,7 +4,7 @@ generated_document: "docs/status/platform-status.md"
 # Review synchronization anchor only; execution commits and dates remain per capability.
 # U23 workflow and Pages byte-binding changes are under candidate validation.
 # A docs-only sync does not revalidate packages, devices, releases, or the code anchor.
-evidence_head_commit: 766407a51045ff883e333d787c75ddb053d3e6ab
+evidence_head_commit: 91fbb0ac83a0afd5e1b74a06de88f0ee12929a7d
 
 allowed_status_enums:
   - verified
