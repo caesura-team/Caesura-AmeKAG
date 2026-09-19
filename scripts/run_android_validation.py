@@ -221,28 +221,108 @@ def _env(toolchain, work):
     return env
 
 
+def _source_link_file(repo, name, target):
+    """Only a tracked source alias may use this single-hop file contract."""
+    path = repo / relative(name)
+    _no_links(path.parent)
+    before = path.lstat()
+    need(stat.S_ISLNK(before.st_mode) and not path.is_junction(), 'Expected physical source symlink: ' + name)
+    need(type(target) is str and target and len(target.encode('utf-8')) <= 4096
+         and not Path(target).is_absolute() and not any(c in target for c in ('\\', ':'))
+         and all(ord(c) >= 32 for c in target), 'Unsafe source link target: ' + name)
+    need(os.readlink(path) == target, 'Source link target differs from Git index: ' + name)
+    terminal = path.parent
+    for component in target.split('/'):
+        # Do not collapse x/.. lexically: x might be a directory link, missing,
+        # or a regular file. Validate each actual prefix before consuming '..'.
+        _no_links(terminal)
+        need(terminal.is_dir(), 'Source link intermediate component is not a directory')
+        if component == '..':
+            need(terminal != repo, 'Source link escapes checkout: ' + name)
+            terminal = terminal.parent
+        elif component not in ('', '.'):
+            terminal = terminal / component
+    # Reject chains, directory links and all reparse/junction parents, even if
+    # following them could eventually produce an in-checkout regular file.
+    terminal = _no_links(terminal)
+    info = terminal.stat()
+    need(stat.S_ISREG(info.st_mode) and info.st_nlink == 1, 'Source link must end at a single-link regular file')
+    need(path.resolve(strict=True) == terminal, 'Source link OS endpoint differs from its checked components')
+    after = path.lstat()
+    signature = lambda s: (s.st_dev, s.st_ino, s.st_mode, s.st_size, s.st_mtime_ns)
+    need(signature(before) == signature(after) and os.readlink(path) == target, 'Source link changed while observed')
+    return terminal
+
+
+def _source_tree(repo, selected, files, links):
+    """Enumerate actual compile inputs without traversing any directory link."""
+    stack, count = [repo / selected], 0
+    while stack:
+        path = stack.pop()
+        count += 1
+        need(count + len(stack) <= MAX_FILES, 'Source inventory exceeds entry limit')
+        info = path.lstat()
+        name = path.relative_to(repo).as_posix()
+        need(not path.is_junction(), 'Source inventory rejects junctions')
+        if stat.S_ISLNK(info.st_mode):
+            need(name in links, 'Undeclared source link: ' + name)
+            terminal = _source_link_file(repo, name, links[name]['target'])
+            need(terminal.relative_to(repo).as_posix() == links[name]['resolved'], 'Source link endpoint changed')
+            file_lock(terminal, files[name])
+        elif stat.S_ISDIR(info.st_mode):
+            _no_links(path)
+            for child in path.iterdir():
+                stack.append(child)
+                need(count + len(stack) <= MAX_FILES, 'Source inventory exceeds entry limit')
+        else:
+            need(name in files and name not in links, 'Undeclared compile/stage input: ' + name)
+            need(lock(path)['sha256'] == files[name], 'Source file changed while enumerating: ' + name)
+
+
 def _source(repo, git, env):
+    repo = _no_links(repo)
     need((repo / '.git').exists(), 'Git checkout required')
     def read(*args):
         return subprocess.run([git, '--no-optional-locks', '-c', 'core.fsmonitor=false', *args], cwd=repo, env=env,
                               capture_output=True, check=True, timeout=30).stdout
     head = read('rev-parse', 'HEAD').decode('ascii').strip()
     need(not read('status', '--porcelain', '-z', '--untracked-files=all'), 'Clean source checkout required')
-    names = [p.decode('utf-8') for p in read('ls-files', '-z', '--cached').split(b'\0') if p]
-    need(len(names) == len(set(names)) and 0 < len(names) <= MAX_FILES, 'Invalid source file set')
-    files = {}
-    for name in names:
+    raw_index = read('ls-files', '--stage', '-z')
+    entries = {}
+    for row in raw_index.split(b'\0'):
+        if not row:
+            continue
+        metadata, raw_name = row.split(b'\t', 1)
+        mode, oid, stage = metadata.decode('ascii').split()
+        name = raw_name.decode('utf-8')
         relative(name)
-        files[name] = lock(repo / name)['sha256']
+        need(name not in entries and stage == '0' and mode in ('100644', '100755', '120000'), 'Unsupported source index entry')
+        entries[name] = dict(mode=mode, git_oid=oid)
+    need(0 < len(entries) <= MAX_FILES, 'Invalid source file set')
+    files, links = {}, {}
+    for name, entry in entries.items():
+        if entry['mode'] != '120000':
+            files[name] = lock(repo / name)['sha256']
+    for name, entry in entries.items():
+        if entry['mode'] == '120000':
+            target = read('cat-file', 'blob', entry['git_oid']).decode('utf-8')
+            terminal = _source_link_file(repo, name, target)
+            resolved = terminal.relative_to(repo).as_posix()
+            need(resolved in files and entries[resolved]['mode'] in ('100644', '100755'),
+                 'Source link endpoint must be a tracked regular file')
+            file_lock(terminal, files[resolved])
+            files[name] = files[resolved]
+            links[name] = dict(entry, target=target, resolved=resolved, target_mode=entries[resolved]['mode'])
     # CMake glob/include and package inputs must not consume Git-ignored extras.
     for selected in ('src', 'cmake', 'external', 'scripts', 'assets', 'fonts', 'lang', 'tests'):
-        if not (repo / selected).exists():
+        if not os.path.lexists(repo / selected):
             continue
-        actual = _tree(repo, [selected])['files']
         # The controller itself may create Python bytecode; disable bytecode in
         # the CLI before import and require clean selected inputs for acceptance.
-        need(all(name in files for name in actual), 'Undeclared compile/stage input: ' + selected)
-    return dict(source_sha=head, files=files)
+        _source_tree(repo, selected, files, links)
+    need(read('ls-files', '--stage', '-z') == raw_index and read('rev-parse', 'HEAD').decode('ascii').strip() == head
+         and not read('status', '--porcelain', '-z', '--untracked-files=all'), 'Source Git identity changed during selection')
+    return dict(source_sha=head, files=files, **({'links': links} if links else {}))
 
 
 class Commands:
@@ -352,7 +432,14 @@ def _stage(value, source, native, tc, dep, work):
     stage_files = {}
     def copy_file(name, dest):
         digest = source['files'][name]
-        _copy(repo / name, stage / dest, digest)
+        link = source.get('links', {}).get(name)
+        original = _source_link_file(repo, name, link['target']) if link else repo / name
+        if link:
+            need(original.relative_to(repo).as_posix() == link['resolved'], 'Source link endpoint changed before stage')
+        _copy(original, stage / dest, digest)
+        if link:
+            need(_source_link_file(repo, name, link['target']) == original, 'Source link changed during stage')
+            file_lock(original, digest)
         stage_files[dest] = dict(source=name, source_sha256=digest, sha256=digest)
     project_exact = {'android/build.gradle', 'android/settings.gradle', 'android/gradle.properties',
                      'android/app/build.gradle', 'android/app/proguard-rules.pro', 'android/app/src/main/AndroidManifest.xml'}

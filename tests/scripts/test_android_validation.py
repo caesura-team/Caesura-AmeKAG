@@ -270,6 +270,39 @@ class AndroidDriverTests(unittest.TestCase):
             self.call()
         self.assertFalse(self.calls)
 
+    def test_tracked_asset_link_stages_locked_regular_bytes_and_stable_checks_target(self):
+        link = self.repo / 'assets/fonts/font-alias.ttf'
+        link.symlink_to('test.ttf')
+        self.assertEqual(link.read_bytes(), (self.repo / 'assets/fonts/test.ttf').read_bytes())
+        self.commit(); self.value['source_sha'] = self.head
+        result = self.call()
+        self.assertEqual(result['status'], 'FIXTURE_ONLY')
+        staged = self.work / 'android-stage/app/src/main/assets/game/assets/fonts/font-alias.ttf'
+        self.assertFalse(staged.is_symlink())
+        self.assertEqual(staged.read_bytes(), (self.repo / 'assets/fonts/test.ttf').read_bytes())
+        self.assertEqual(driver.verify_android_validation_stable(result)['status'], 'ANDROID_VALIDATION_STABLE')
+        link.unlink(); link.symlink_to('../src/main.cpp')
+        with self.assertRaises(ValueError):
+            driver.verify_android_validation_stable(result)
+
+    def test_source_alias_changed_during_stage_copy_is_rejected(self):
+        link = self.repo / 'assets/fonts/font-alias.ttf'
+        link.symlink_to('test.ttf')
+        self.assertEqual(link.read_bytes(), (self.repo / 'assets/fonts/test.ttf').read_bytes())
+        self.commit(); self.value['source_sha'] = self.head
+        original = driver._copy
+        changed = []
+        def change_after_copy(source, destination, digest):
+            original(source, destination, digest)
+            if Path(destination).name == 'font-alias.ttf':
+                link.unlink(); link.symlink_to('../src/main.cpp')
+                changed.append(True)
+        with patch.object(driver, '_copy', side_effect=change_after_copy):
+            with self.assertRaisesRegex(ValueError, 'Source link target differs'):
+                self.call()
+        self.assertEqual(changed, [True])
+        self.assertFalse(any(name == 'gradle' for name, _, _ in self.calls))
+
     def test_existing_work_preserves_original_receipt(self):
         self.assertIsNotNone(driver, 'Controlled Android driver is missing')
         self.save_request()
@@ -591,6 +624,184 @@ class AndroidDriverTests(unittest.TestCase):
                 result = self.call()
                 self.assertEqual(result['status'], 'FIXTURE_ONLY')
                 self.assertEqual(driver.verify_android_validation_stable(result)['status'], 'ANDROID_VALIDATION_STABLE')
+
+
+class AndroidSourceLinkTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(prefix='u24-source-links-')
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name).resolve()
+        self.repo = self.root / 'repo'
+        self.repo.mkdir()
+        self.git = str(Path(shutil.which('git')).resolve())
+        for args in (('init', '-q'), ('config', 'core.autocrlf', 'false'),
+                     ('config', 'core.symlinks', 'true'), ('config', 'user.name', 'fixture'),
+                     ('config', 'user.email', 'fixture@example.invalid')):
+            self.command(*args)
+        put(self.repo / '.gitignore', '*.ignored\n')
+        put(self.repo / 'external/zstd/bin/zstd', 'regular zstd fixture bytes')
+
+    def command(self, *args):
+        return subprocess.run([self.git, *args], cwd=self.repo, env=os.environ,
+                              check=True, capture_output=True).stdout
+
+    def commit(self):
+        self.command('add', '.')
+        self.command('commit', '-qm', 'source fixture')
+
+    def source(self):
+        return driver._source(self.repo, self.git, dict(os.environ))
+
+    def test_real_tracked_file_links_bind_index_target_and_regular_content(self):
+        for name in ('unzstd', 'zstdcat'):
+            (self.repo / 'external/zstd/bin' / name).symlink_to('zstd')
+        self.commit()
+        self.assertIn(b'120000 ', self.command('ls-files', '--stage'))
+        result = self.source()
+        for name in ('unzstd', 'zstdcat'):
+            key = 'external/zstd/bin/' + name
+            self.assertEqual(result['files'][key], sha(self.repo / 'external/zstd/bin/zstd'))
+            self.assertEqual(result['links'][key]['mode'], '120000')
+            self.assertEqual(result['links'][key]['target'], 'zstd')
+            self.assertEqual(result['links'][key]['resolved'], 'external/zstd/bin/zstd')
+        self.assertEqual(self.source(), result)
+        with self.assertRaises(ValueError):
+            driver._tree(self.repo, ['external'])
+        with self.assertRaises(ValueError):
+            driver.lock(self.repo / 'external/zstd/bin/unzstd')
+
+    def test_git_symlinks_false_plain_representation_is_not_accepted_as_link(self):
+        link = self.repo / 'external/zstd/bin/unzstd'
+        link.symlink_to('zstd')
+        self.commit()
+        self.command('config', 'core.symlinks', 'false')
+        link.unlink(); link.write_text('zstd', encoding='utf-8')
+        self.assertEqual(self.command('status', '--porcelain'), b'')
+        with self.assertRaises(ValueError):
+            self.source()
+
+    def test_escape_dangling_cycle_directory_and_untracked_terminal_are_rejected(self):
+        put(self.root / 'outside', 'outside source')
+        put(self.repo / 'external/zstd/bin/temporary.ignored', 'untracked terminal')
+        link = self.repo / 'external/zstd/bin/alias'
+        for target in ('../../../../outside', str(self.root / 'outside'), 'missing', 'alias', '..', 'temporary.ignored'):
+            with self.subTest(target=target):
+                link.symlink_to(target, target_is_directory=target == '..')
+                self.commit()
+                try:
+                    with self.assertRaises((ValueError, OSError)):
+                        self.source()
+                finally:
+                    link.unlink(); self.commit()
+
+    def test_tracked_link_chain_and_ignored_untracked_link_are_rejected(self):
+        base = self.repo / 'external/zstd/bin'
+        (base / 'first').symlink_to('second')
+        (base / 'second').symlink_to('zstd')
+        self.commit()
+        with self.assertRaises(ValueError):
+            self.source()
+        (base / 'first').unlink(); (base / 'second').unlink(); self.commit()
+        (base / 'untracked.ignored').symlink_to('zstd')
+        self.assertEqual(self.command('status', '--porcelain'), b'')
+        with self.assertRaisesRegex(ValueError, 'Undeclared source link'):
+            self.source()
+
+    def test_link_mutation_during_source_hashing_is_rejected(self):
+        base = self.repo / 'external/zstd/bin'
+        put(base / 'other', (base / 'zstd').read_bytes())
+        link = base / 'alias'
+        link.symlink_to('zstd')
+        self.commit()
+        original = driver.lock
+        changed = []
+        def mutate(path):
+            result = original(path)
+            if path == base / 'zstd' and not changed:
+                link.unlink(); link.symlink_to('other')
+                changed.append(True)
+            return result
+        with patch.object(driver, 'lock', side_effect=mutate):
+            with self.assertRaisesRegex(ValueError, 'Source link target differs'):
+                self.source()
+        self.assertEqual(changed, [True])
+
+    def test_plain_source_receipt_keeps_original_shape(self):
+        self.commit()
+        self.assertEqual(set(self.source()), {'source_sha', 'files'})
+
+    def dotdot_fixture(self, kind):
+        put(self.repo / 'unscanned/payload.h', 'inside locked header')
+        put(self.root / 'outside/payload.h', 'outside different header')
+        (self.root / 'outside/nest').mkdir()
+        put(self.repo / '.gitignore', '*.ignored\nunscanned/hop\n')
+        hop = self.repo / 'unscanned/hop'
+        if kind == 'symlink':
+            hop.symlink_to('../../outside/nest', target_is_directory=True)
+        elif kind == 'junction':
+            subprocess.run(['cmd', '/c', 'mklink', '/J', str(hop), str(self.root / 'outside/nest')],
+                           check=True, capture_output=True)
+            self.addCleanup(hop.rmdir)
+        elif kind == 'ordinary':
+            hop.mkdir()
+        alias = self.repo / 'src/alias.h'
+        alias.parent.mkdir()
+        alias.symlink_to('../unscanned/hop/../payload.h')
+        self.commit()
+        self.assertEqual(self.command('status', '--porcelain'), b'')
+        return alias
+
+    def test_dotdot_cannot_hide_an_ignored_intermediate_directory_link(self):
+        self.dotdot_fixture('symlink')
+        with self.assertRaises(ValueError):
+            self.source()
+
+    def test_dotdot_cannot_hide_a_missing_or_regular_file_component(self):
+        alias = self.dotdot_fixture('missing')
+        with self.assertRaises((ValueError, OSError)):
+            self.source()
+        (self.repo / 'unscanned/hop').write_text('not a directory')
+        with self.assertRaises(ValueError):
+            self.source()
+
+    if os.name == 'posix':
+        def test_dotdot_through_an_actual_ordinary_directory_binds_real_endpoint(self):
+            alias = self.dotdot_fixture('ordinary')
+            source = self.source()
+            self.assertEqual(source['links']['src/alias.h']['resolved'], 'unscanned/payload.h')
+            self.assertEqual(source['files']['src/alias.h'], hashlib.sha256(alias.read_bytes()).hexdigest())
+            self.assertEqual(alias.resolve(strict=True), self.repo / 'unscanned/payload.h')
+
+    if os.name == 'nt':
+        def test_windows_unresolvable_raw_link_is_not_accepted_by_lexical_target(self):
+            alias = self.dotdot_fixture('ordinary')
+            # This Windows raw POSIX-slash/.. link can be stored in Git but the
+            # OS cannot open it. It is not the POSIX ordinary-dir positive.
+            with self.assertRaises(OSError):
+                alias.read_bytes()
+            with self.assertRaises((ValueError, OSError)):
+                self.source()
+
+        def test_dotdot_cannot_hide_an_ignored_intermediate_junction(self):
+            self.dotdot_fixture('junction')
+            with self.assertRaises(ValueError):
+                self.source()
+
+        def test_ignored_directory_junction_is_rejected_without_recursing(self):
+            self.commit()
+            outside = self.root / 'outside'
+            put(outside / 'keep', 'do not traverse or change')
+            junction = self.repo / 'external/extra.ignored'
+            subprocess.run(['cmd', '/c', 'mklink', '/J', str(junction), str(outside)],
+                           check=True, capture_output=True)
+            try:
+                self.assertTrue(junction.is_junction())
+                self.assertEqual(self.command('status', '--porcelain'), b'')
+                with self.assertRaisesRegex(ValueError, 'junction'):
+                    self.source()
+                self.assertEqual((outside / 'keep').read_text(), 'do not traverse or change')
+            finally:
+                junction.rmdir()
 
 
 if __name__ == '__main__':

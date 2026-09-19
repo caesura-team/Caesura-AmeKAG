@@ -29,3 +29,27 @@
 新Windows构建目录最初自动选中了System32的WSL Bash launcher，实际发现记录保留于ctest-discovery-59-01.json。随后显式配置Git Bash并保存ctest-discovery-59-02.json，两个Bash入口的命令已核对。两套新增测试经真实CTest入口通过：包合同24.68秒、driver176.57秒，总201.26秒，2/2、零失败零跳过；原始JUnit及日志在u24-controlled-driver/ctest-registered-01.*，审查及增量附记在u24-controlled-driver-review/integration-review-01/02。此时七个native可执行文件尚未在新build目录生成，因此新发现记录不是完整native门禁通过证据。
 
 正在仓外独占目录准备普通文件Git镜像、完整选定工具摘要，以及单独联网获取的Gradle依赖种子。获取只使用项目声明的Maven Central与Google Maven；未进行native编译或签名，准备阶段未包含Engine JNI，产物不作为候选。生成的verification metadata须另行核对后才能用于接受路径，实际受控验收仍为offline。完整候选门禁及native/Gradle/TEST签名/最终APK-AAB验证尚待执行；初次真实执行仍需确认AGP输出位置、JNI不改写、CMake格式和单次Gradle子进程清理。任何失败均留存后再针对修复，设备安装、实际窗口/音频/生命周期和发布签名继续单独验收。
+
+## 2026-09-20 实际输入冻结与首次候选执行
+
+完整工具输入已建立并由生产validator接受，原始 `D:/caesura-u24-inputs-01/toolchain.json` 为13,495,496字节，SHA256 `49e8a5d1a76f4785cf5c81f93db88a5ec8b9caf8d90dd737031b2f9abe8ee7f7`，覆盖92,446文件、8,395,836,839选定字节。Git在新目录保留完整运行时的9,618文件/417,218,012字节，逐文件复制为普通独立文件，保留原172个硬链接路径/85组的审计身份。11项实际owned版本/路径探针均exit0、无超时/强杀、cleanup COMPLETE；前后完整工具清单相同。Python选择包含现有第三方site-packages，不称stdlib-only或hermetic；SDL/OpenSSL原编译来源和宿主OS仍未认证。证据见 `u24-controlled-driver/tool-inputs-02/`。
+
+独立依赖准备在 `D:/caesura-u24-dependency-prep-01` 执行项目原Google Maven/Maven Central入口，真实Gradle8.9/JDK17完成54项任务，5分39秒exit0，owned cleanup COMPLETE。此staging没有Engine JNI，仅有SDL JNI，其APK/AAB仍不是候选。原 `preparation.json` SHA256 `f7fbe8915ce36246418512bb87ca0c9656bec5b80b0a9685caa2fd63afd8321f` 保持历史ACQUIRED_UNREVIEWED值，后续审核不回写旧收据。
+
+401个实际制品全部重算SHA256/SHA1，来源日志恰对应235项Maven Central和166项Google Maven URL；373条verification XML记录及28个因Gradle优先module metadata而未列入XML的同坐标POM均核对。官方HTTPS校验和旁证合计389/401相符，另12项不可取得，观测到的摘要不匹配为0。两次不同算法的原旁证请求仍各自保留FAIL，不通过重试改绿；HTTPS摘要相符和Gradle生成XML不等于发布方签名认证。独审原module坐标假设失败及root最初两次审计假设错误同样保留。详见 `u24-controlled-driver/dependency-review-01.md/json`，审查JSON SHA256 `7d8d9f2be5d00f11531012e24724b726d8d28d88891f5072b328f800bbb37848`。
+
+实际选定的plain seed包含401个制品、217个module metadata文件及verification XML，共619文件/243,276,541字节，未复制daemon/transforms、项目cache、用户设置或构建产物。原XML SHA256 `6c8b8613eead6ac5be23655c710d380281a6cf381943981f00e681d4676ac6a2`；`dependencies.json` SHA256 `12718b9d61d1c1a76c3447f6beb93aadb453a5d80ae8ffde930ffd446b3d1950`。输入选择、原件/副本摘要和12项旁证缺失在 `D:/caesura-u24-inputs-01/selection-01.json` 明确记录，生产 `_dependencies` 接受该固定输入，只授权本地验证。
+
+首次真实请求绑定干净源码 `dccaf211995d642ad1e02ef2b07db272a0d20aec`，`request-dccaf211-01.json` SHA256 `7ba90d2694d6ea5bc5e200a1ea332eefb31e6ea169a4afac36e0243d35a91c4d`。执行前在scope内将21个既有ignored Python bytecode逐件摘要后移到ignored证据备份，不删除用户源码；本轮Python使用 `-B` 和 `PYTHONDONTWRITEBYTECODE=1`。
+
+第一次实际driver在inputs阶段FAIL，`commands=[]`、private_cleanup=NOT_CREATED，**尚未开始native编译、Gradle或签名**。原回执 `D:/caesura-u24-android-dccaf211-01/android-validation.json` SHA256 `891edab96ad15ab4aa202482fcd8e9d8a8eeaa4d34c03d1f75f179573a167930`。完整工具/依赖树随后只读复核一致；精确trace定位到源码中的Git120000链接 `external/zstd/tests/cli-tests/bin/unzstd`，同目录还有 `zstdcat`，两者均指向仓内tracked普通文件 `zstd`。`_source` 对所有tracked文件调用证据层的拒绝链接规则，因而拒绝合法仓库输入。原trace位于 `u24-controlled-driver/source-input-failure-path-01.log`。下一步仅修源码清单合同并建立真实链接正负回归；工具、依赖、证据路径的严格无链接合同保持。首次FAIL不会被后续运行覆盖，完整候选、最终包及设备范围仍待验收。
+
+## 源码符号链接修正与独立复核
+
+源码选择现在将Git120000记录与真实物理symlink、原始相对target、单跳仓内tracked普通终点逐项核对，并把alias内容SHA与链接关系都写入source receipt。source-only枚举不遍历目录链接，stage从重新核验的普通终点复制后再次检查alias与内容。普通工具、依赖、证据清单和最终归档的禁止链接规则保持；没有删除或展平仓库的两个zstd链接。
+
+首次实现的独立审查发现P2：对`hop/../payload.h`词法消除会漏过中间的仓外目录链接，实际读到仓外字节而锁定仓内字节。保留的真实POSIX仓库反例确认后，改成依次验证原始target的每个路径分量，先验证实际目录再消费`..`，最后要求OS严格解析到同一普通终点。原反例在未改动fixture/HEAD/index的情况下现在明确拒绝；链、目录、junction、逃逸、悬空、untracked、文本替代与变化路径负控制均保留。
+
+最终生产SHA256为35b6f4725e6eb63271ef78c99519bd55ad5f65794f04b5dddf0049df682ee912，测试为ac5df006c65773540028650f8c4d788d9c4c3d9199529d121a5e2b85d2cdf0ea。完整attempt03：Windows42/42、182.967秒，WSL40/40、68.169秒，均exit0、0跳过；平台数量差异来自显式注册的junction/Windows不可解析表示负控与POSIX普通目录正控。attempt02 Windows的两项ERROR是手工POSIX斜线target在Windows实际不可读的夹具缺陷；仅将两个正控改为同目录可读alias并先断言真实读字节，未放宽生产检查，原FAIL保留。原有29方法全部保留。
+
+证据位于u24-worktree/artifacts/validation/u24-source-links/：freeze-03.json摘要87e59b07cc10666a3f03f999a0e4329de7c924bbea62c5ca7eb569edb5efeeb6，handoff-01.md摘要a3784019b74a1b694b708d70662a0b5078aa902fda3e3d8a97065ddfdcf7817a，独审independent-review-01.md摘要a05717098a8254c6d1bb513af6663d6367377d2f98029a2f72e2cebae8058593、JSON摘要e2ca66b652d5c859cef7ae2258c9531f99fb85eec09d42a0e30ec7d336374951。独审无剩余可行动发现。这些维护测试仍不是实际Android编译、包签名或设备运行验收；下一次实际执行使用新的干净源码请求及独立work目录，原首次FAIL不覆盖。
