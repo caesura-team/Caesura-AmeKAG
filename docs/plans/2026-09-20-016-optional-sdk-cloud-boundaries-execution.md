@@ -44,3 +44,14 @@ SDK ON 输入锁固定本机已有 Steam SDK、Cubism Native-5-r.5 的真实头�
 新尝试stage02在新的两个build目录补入本机SystemDrive/ProgramData，保留相同VS、14.44.35207工具集和10.0.26100 SDK，并补锁实际amd64 MSBuild等工具。两个configure均退出0；SteamBackend.cpp实际编译并产生caesura_steam.lib，CubismFramework也编译成功。CaesuraLive2D实际编译在Live2DBackend.cpp:397报C2660：零参数GetMotionCount不存在；SDK区分GetMotionGroupCount()和GetMotionCount(groupName)。本补丁只将外层组循环改为GetMotionGroupCount，内层逐组动作计数/缓存合同不变。原失败不是被关闭SDK隐藏；新编译及可执行链接仍待随后执行，不能把静态库成功称为真实客户端/模型通过。
 
 原件均在本工作树artifacts/validation/u26-sdk-on-01：compile-stage-01/02.json、分命令stdout/stderr/owned receipts、compiler-diagnosis-01.md/json、inputs-lock-01/02.json。两轮源码与锁定输入均稳定，首轮未进入后续命令；第二轮最后一条退出1。测试模型、账户、成就/统计、云同步服务和motion/lip-sync实际运行均NOT_RUN。云冲突的typed读取与持久保全合同另有只读设计，仍未实施，不将旧显式push/pull的成功升级为冲突安全同步。
+
+
+## SDK ON 编译链接与未初始化查询完成（2026-09-20，stage03）
+
+上述编译修复提交后的 clean `106160f380d9080610db4c480e7ee4faf8d1b21c` 已完成独立 stage03：Live2DBackend.cpp 重新编译成功，CubismFramework/CaesuraLive2D 目标成功；分别启用 Steam 与 Cubism 的两个 Windows x64 Debug CaesuraTests 均实际链接成功。实际编译宏、link.command/link.read核对到steam_api64.lib和Cubism Framework/选定Debug Core库；Steam EXE导入steam_api64.dll，复制DLL与锁定SDK相同。build目录沿用-02名称，源码身份以上述提交和收据前后fingerprint为准，不能从旧目录名推断版本。
+
+随后只执行两个精确未初始化查询：Steam **1/1、2断言**；Cubism **1/1、3断言**，均通过。1424与1425其余用例是过滤未选中，未运行完整SDK ON套件。两份EXE摘要分别为`f3657d95ffaec9132e6bec458971b7e20a3060798fa6f86623d5bff8c8070137`与`e7d9d7913964c7058bea97b481da7ca443fa1a801ef27d12cfd68da6e3bbaff3`。五条owned命令全部exit0、cleanup COMPLETE，无超时/强杀/停止请求；独立复查时五个精确PID均不存在。
+
+源码与输入前后稳定；独审另重算242份选定SDK/源码/配置文件及10份工具，252/252大小与SHA匹配，并核对41份原件及实际链接产物。原`link-stage-03.json` SHA `93bf0268196f17e1438fd73370606da33c9203dca18bdb5bf299b302ac65559b`，`inputs-lock-03.json` SHA `1b99aebb54c8ed920b0f7b782501c2ad82a5919d718c71d140743836224aec31`；独审`sdk-stage03-independent-review-01.md` SHA `e4256235c27159893abf1f6ec30fe90bc8736e1e322f9e6119652b45f008b692`，JSON SHA `869f5a204b70b8204d943d337e737defb296122b553ee0e00bcde589b8a1be8d`，均位于本工作树`artifacts/validation/u26-sdk-on-01/`。
+
+该结果仅证明两个独立SDK ON配置的Debug编译链接和真实后端未初始化时正确报告不可用；不证明完整SDK ON门禁、Engine运行、Steam客户端/账户/成就/统计/云同步、模型加载/动作/lip-sync、GPU、许可证或分发权限。stage01/02原失败继续保留；SDK OFF 969a31c9完整门禁不改标为新源码或SDK ON结果，U26仍未完成。
