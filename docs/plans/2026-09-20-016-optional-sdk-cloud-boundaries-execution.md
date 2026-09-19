@@ -55,3 +55,12 @@ SDK ON 输入锁固定本机已有 Steam SDK、Cubism Native-5-r.5 的真实头�
 源码与输入前后稳定；独审另重算242份选定SDK/源码/配置文件及10份工具，252/252大小与SHA匹配，并核对41份原件及实际链接产物。原`link-stage-03.json` SHA `93bf0268196f17e1438fd73370606da33c9203dca18bdb5bf299b302ac65559b`，`inputs-lock-03.json` SHA `1b99aebb54c8ed920b0f7b782501c2ad82a5919d718c71d140743836224aec31`；独审`sdk-stage03-independent-review-01.md` SHA `e4256235c27159893abf1f6ec30fe90bc8736e1e322f9e6119652b45f008b692`，JSON SHA `869f5a204b70b8204d943d337e737defb296122b553ee0e00bcde589b8a1be8d`，均位于本工作树`artifacts/validation/u26-sdk-on-01/`。
 
 该结果仅证明两个独立SDK ON配置的Debug编译链接和真实后端未初始化时正确报告不可用；不证明完整SDK ON门禁、Engine运行、Steam客户端/账户/成就/统计/云同步、模型加载/动作/lip-sync、GPU、许可证或分发权限。stage01/02原失败继续保留；SDK OFF 969a31c9完整门禁不改标为新源码或SDK ON结果，U26仍未完成。
+
+
+## cfa46876 的 SDK OFF 完整 Debug 门禁
+
+干净cfa4687606a62842479a545294bddf461ea66b47的run d35e0064-d76d-42f3-85f3-7a24d0a2b0a8已完成全量Debug构建、C++1425/1425及427279断言、Lua147/147与56/56、CTest57发现56通过及仅1个预声明AI/Ollama不可达跳过；runner/collector/strict全部0。独立只读审计189个证据引用全部匹配，6486源码条目fingerprint 2b61f51a857336198b75f7ca628abd3021cd5caab5ab259bcff040b9e5d7d950、470夹具条目e74b366cdabae7bc68fda7c61cc6c003d1c0d2090b454e3aed5a360b4413b53a与原首末及当前clean值相同，strict错误为空。
+
+HTTP实际73/73，package-web-ok/artifacts两项仍NOT_RUN，未把它计成75；本轮SDK OFF验证不新增Web发布证明。HTTP PID17572、creation134343322564789093，受控STOPPED actualexit1、无超时强杀且cleanup COMPLETE，审计时精确PID不存在。顶层11项runner记录仅提供exitcode，不补造每个子进程PID或原件未表达的清理声明。审计位于u26-cloud-chunks/full-debug-cfa46876-01，MD摘要ac1d64d5251879c4a29fd1f33dc50bac7bc214ac32a7289d0d350a477f9ca393、JSON aa34223d1815de08b2da63745a26f82767b1d6714b63be8a2c7342b3abd6d7c4、freeze10d758cde175d9e2dea9c37a85943f5f795f7695208ca37d895fb456ef72a534。
+
+SDK ON的两个已链接测试仍仅证明未初始化适配器合同；本次OFF全量通过不提升SDK账号、模型、动作、GPU或真实服务状态。云分叉保全与typed snapshot transport继续按既有设计推进，普通HTTP PUT/Steam FileWrite没有已证明CAS，不作为安全条件发布能力。
