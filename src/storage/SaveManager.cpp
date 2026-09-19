@@ -18,6 +18,7 @@
 #include "../di/BackendRegistry.h"
 #include "../archive/api/ICryptoEngine.h"
 #include "../debug/api/DebugLog.h"
+#include "../steam/api/ISteamBackend.h"
 #include <vector>
 
 #include <cstdio>
@@ -117,16 +118,17 @@ bool SaveManager::configureCloudSync(const std::string& endpoint) {
     }
     if (endpoint == "steam" || endpoint == "steam://" || endpoint == "steamcloud") {
         auto* steam = BackendRegistry::instance().getSteamBackend();
-        if (!steam) {
-            // Fail closed. A CloudSaveProvider over a null backend answers "" to
+        if (!steam || !steam->isAvailable()) {
+            // Fail closed, including registered Null/failed-init backends. A
+            // CloudSaveProvider over an unavailable backend answers "" to
             // every readFile and false to every writeFile, so installing it here
             // would make save() fail and load()/listSaves() report the player's
             // existing saves as GONE -- a silent, total loss of visibility with
             // no diagnostic. Keep the current provider instead and say why.
             DEBUG_ERR(SubSys::Storage, ErrCode::Storage_SaveWriteFailed,
-                      "[SaveManager] configureCloudSync(\"%s\") refused: no Steam "
+                      "[SaveManager] configureCloudSync(\"%s\") refused: no available Steam "
                       "backend is registered. Keeping the current save provider; "
-                      "installing Steam Cloud without a backend would hide every "
+                      "installing Steam Cloud without an available backend would hide every "
                       "existing save.", endpoint.c_str());
             printf("[SaveManager] Cloud sync NOT configured: Steam backend unavailable\n");
             return false;

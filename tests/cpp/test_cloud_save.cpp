@@ -9,6 +9,7 @@
 #include "storage/api/ISaveProvider.h"
 #include "storage/api/ICloudSaveTransport.h"
 #include "steam/api/ISteamBackend.h"
+#include "steam/NullSteamBackend.h"
 #include "di/BackendRegistry.h"
 #include "archive/CryptoEngine.h"
 #include <httplib.h>
@@ -598,6 +599,48 @@ TEST_CASE("SaveManager::configureCloudSync steam endpoint requires a backend") {
     CHECK_FALSE(mgr.pushSlotToCloud(3));
     CHECK_FALSE(mgr.pullSlotFromCloud(3));
     CHECK(mgr.slotExists(3));  // a refused sync never touches the save
+}
+
+TEST_CASE("U26: unavailable registered Steam keeps the local save provider") {
+    const char* endpoint = "steam";
+    SUBCASE("steam") {}
+    SUBCASE("steam scheme") { endpoint = "steam://"; }
+    SUBCASE("steamcloud alias") { endpoint = "steamcloud"; }
+    CAPTURE(endpoint);
+
+    // The composition root registers a backend even when SDK initialization
+    // fails. Use the actual Null implementation, not an absent registry entry.
+    NullSteamBackend steam;
+    REQUIRE_FALSE(steam.init());
+    REQUIRE_FALSE(steam.isAvailable());
+    auto& registry = BackendRegistry::instance();
+    struct RestoreSteam {
+        ISteamBackend* previous;
+        ~RestoreSteam() { BackendRegistry::instance().setSteamBackend(previous); }
+    } restore{registry.getSteamBackend()};
+    registry.setSteamBackend(&steam);
+
+    TestPaths::ScopedTempDir dir("cloud_steam_unavailable");
+    SaveManager manager;
+    manager.init(dir.string());
+    REQUIRE(manager.configureCloudSync(""));
+    ISaveProvider* const originalProvider = manager.getSaveProvider();
+    REQUIRE(originalProvider != nullptr);
+    const nlohmann::json data = {{"hp", 7}, {"route", "local-before-steam"}};
+    REQUIRE(manager.save(3, data, "chapter_1", 11));
+    REQUIRE(manager.load(3) == data);
+    const auto slot = dir.path() / "save_3.json";
+    const std::string originalBytes = cloudFileBytes(slot);
+    REQUIRE_FALSE(originalBytes.empty());
+
+    CHECK_FALSE(manager.configureCloudSync(endpoint));
+    CHECK(manager.getSaveProvider() == originalProvider);
+    CHECK(manager.slotExists(3));
+    SaveMeta metadata;
+    CHECK(manager.load(3, &metadata) == data);
+    CHECK(metadata.sceneName == "chapter_1");
+    CHECK(metadata.tokenIndex == 11);
+    CHECK(cloudFileBytes(slot) == originalBytes);
 }
 
 // End-to-end save -> load round trip under the steam endpoint. This is the
