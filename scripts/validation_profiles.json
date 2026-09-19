@@ -167,7 +167,7 @@
           "id": "ctest",
           "parser": "ctest-junit",
           "required": true,
-          "min_discovered": 57,
+          "min_discovered": 59,
           "allowed_skips": [
             "CaesuraHeadlessAiSmoke"
           ],
@@ -339,7 +339,7 @@
           "id": "ctest",
           "parser": "ctest-junit",
           "required": true,
-          "min_discovered": 57,
+          "min_discovered": 59,
           "allowed_skips": [
             "CaesuraHeadlessAiSmoke"
           ],
@@ -511,7 +511,7 @@
           "id": "ctest",
           "parser": "ctest-junit",
           "required": true,
-          "min_discovered": 57,
+          "min_discovered": 59,
           "allowed_skips": [
             "CaesuraHeadlessAiSmoke"
           ],
@@ -683,7 +683,7 @@
           "id": "ctest",
           "parser": "ctest-junit",
           "required": true,
-          "min_discovered": 57,
+          "min_discovered": 59,
           "allowed_skips": [
             "CaesuraHeadlessAiSmoke"
           ],
@@ -855,7 +855,7 @@
           "id": "ctest",
           "parser": "ctest-junit",
           "required": true,
-          "min_discovered": 57,
+          "min_discovered": 59,
           "allowed_skips": [
             "CaesuraHeadlessAiSmoke"
           ],
@@ -1027,7 +1027,7 @@
           "id": "ctest",
           "parser": "ctest-junit",
           "required": true,
-          "min_discovered": 57,
+          "min_discovered": 59,
           "allowed_skips": [
             "CaesuraHeadlessAiSmoke"
           ],

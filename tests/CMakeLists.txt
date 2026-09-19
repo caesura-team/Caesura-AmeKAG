@@ -551,7 +551,7 @@ if(Python3_EXECUTABLE)
                               package_runtime web_package_contract package_build_metadata
                               package_validation_runner native_package_runtime
                               web_package_runtime package_containers appimage_build_contract ci_package_lane
-                              package_runtime_install)
+                              package_runtime_install android_package_contract android_validation)
         add_test(
             NAME CaesuraPackage_${_package_contract}
             COMMAND ${CMAKE_COMMAND} -E env
@@ -568,6 +568,10 @@ if(Python3_EXECUTABLE)
             WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
         )
     endforeach()
+
+    # The Android driver suite exercises many real owned Python subprocesses;
+    # it does not run a compiler, Gradle or an Android device.
+    set_tests_properties(CaesuraPackage_android_validation PROPERTIES TIMEOUT 600)
 
     # Hosted metadata, byte transfer and policy contracts do not themselves
     # authenticate a CI run; the dry-run controller performs that separately.
