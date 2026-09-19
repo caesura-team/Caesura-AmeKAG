@@ -406,7 +406,17 @@ async function probe(opt) {
       const frame = await client.send('Page.getFrameTree', {}, session)
       mainFrame = frame.frameTree?.frame?.id; previousLoader = frame.frameTree?.frame?.loaderId
       requireThat(mainFrame && previousLoader, 'Offline page has no current frame/loader identity')
-      await client.send('Network.emulateNetworkConditions', { offline: true, latency: 0, downloadThroughput: 0, uploadThroughput: 0 }, session)
+      report.offline_controls = { before: await client.read(session, '({url:location.href,online:navigator.onLine})') }
+      // Request blocking and navigator state are separate CDP controls. Either
+      // unsupported/error response fails the probe; no legacy fallback.
+      const rules = await client.send('Network.emulateNetworkConditionsByRule', { offline: true,
+        matchedNetworkConditions: [{ urlPattern: '', latency: 0, downloadThroughput: 0, uploadThroughput: 0 }] }, session)
+      report.offline_controls.rule_ids = rules.ruleIds
+      requireThat(Array.isArray(rules.ruleIds) && rules.ruleIds.length === 1 && typeof rules.ruleIds[0] === 'string' && rules.ruleIds[0].length > 0,
+        'Missing acknowledged offline transport rule')
+      await client.send('Network.overrideNetworkState', { offline: true, latency: 0, downloadThroughput: 0, uploadThroughput: 0 }, session)
+      report.offline_controls.after_override = await client.read(session, '({url:location.href,online:navigator.onLine})')
+      check('offline navigator state before reload', report.offline_controls.after_override?.online === false, report.offline_controls.after_override)
       await client.send('Network.setBypassServiceWorker', { bypass: false }, session)
       // ignoreCache:true is Shift+reload, which also bypasses service workers.
       // HTTP caching stays disabled above and the owned server is already down.
@@ -415,6 +425,7 @@ async function probe(opt) {
       await until('Fresh offline document loader', () => client.send('Page.getFrameTree', {}, session), value => value.frameTree?.frame?.loaderId && value.frameTree.frame.loaderId !== previousLoader)
     }
     const initial = await booted()
+    if (opt.phase === 'offline') report.offline_controls.after_reload = { url: initial.url, online: initial.online }
     check('default player URL remains the explicit deployment', initial.url === opt.url.href, initial.url)
     check('packaged WASM pin stays at the explicit mount', initial.wasmPin === new URL('web-assets/glue.wasm', new URL('.', opt.url)).href, initial.wasmPin)
     report.browser_runtime = 'OBSERVED'; report.initial = await readState('initial')
