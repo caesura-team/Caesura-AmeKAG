@@ -109,3 +109,12 @@ APK250项、AAB255项业务文件与原未签名包逐项字节一致，每种�
 独立审计重新读取完整receipt及request，核对505个原引用、原命令日志/身份、构建/工具/源文件、全部unsigned/final ZIP条目与staging。最终包稳定性入口只读重解析返回ANDROID_PACKAGE_STABLE，末尾再次核验原request/receipt及source HEAD/cleanliness不变。完整约8GB工具/依赖inventory在driver结束前已全量检查；独审未重复读取全部8GB，不能把12个工具可执行文件的复算冒称整套依赖二次验收。审查见本工作树 `artifacts/validation/u24-signing-01/actual05-independent-review-01.md`（SHA `dbfb36715f463c8a9a19eecdcbd747ad589ce3f79bc49c632618afc6dfe56304`）及JSON（SHA `21efb76aa352314986f718fcfaaac3ebb6b0e5cb0b627099158d9008087c4945`），无可行动发现。审阅计算中的4395个谓词不是新增产品测试数量。
 
 2026-09-19 21:45:46 UTC另以已存在的adb35.0.2执行只读version和devices -l，两项均exit0，但设备列表只有标题、无设备。原 `u24-signing-01/device-discovery-01.json` 和stdout/stderr均保留，未尝试历史IP、连接、安装、shell或输入。真机安装/升级、CJK/IME、触摸、音频焦点、前后台和重启恢复仍需连接并授权的实际Android设备。未执行商店上传、发布签名或托管attestation；本轮新Windows完整维护门禁仍独立进行。
+
+
+## Windows 完整候选门禁及 HTTP 子场景边界
+
+干净源码 `0dfc35a4597069852cae81af5558f2da04f5966c` 的 windows-debug run `0aefd085-f440-4393-a172-184405dd9ade` 完成：Debug 全量构建退出 0，C++ 1415/1415、427088 断言、0失败0跳过，Lua 147/147 与 56/56；CTest 59 项中 58 通过、0失败、仅预声明可选 AI 服务跳过。全部11项profile检查、runner、collector、strict verifier均退出0，源码与夹具首尾稳定。run.json SHA256 `090fbe57a32afde00b695b1c3cae50c14a10def290582fd61e9c3a2653b76299`，manifest `b2643e434a9753325773488eb418d62b1e1986a6d08e355104dd0adbdfeaf71b`。独审重算162个引用/清单项、94个独立文件共148471901字节均匹配，报告 u24-foundation/full-debug-0dfc35a4-01-review.md/json。
+
+实际 HTTP 为73/73通过，另外 package-web-ok 与 package-web-artifacts 两个子场景因该树缺少 web/node_modules/vite 和 web/dist/index.html 而未执行；这与 CTest 层的一个 AI 跳过分别记录，严格 verifier 通过不代表75项HTTP全部覆盖。Engine PID26928、创建身份134343299092066808、端口14780，正常受控STOPPED、实际退出1、无超时或强杀、owned cleanup COMPLETE。原始HTTP结果 SHA256 `cde5fa0f43426dd56e4c43dc4296d70ecb12bb03ac296bfcbd8ea961c36ff83d`；独审时该PID已不存在。
+
+此证据只属于本次 Windows 候选，不替代前述 Android 实际编译/签名证据，也不证明 Android 设备运行、AAB manifest语义或商店发布。两个HTTP Web子场景仍需资源具备后的实际执行；adb当前发现为空的事实与U24尚未完成状态保持。
