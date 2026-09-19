@@ -1,0 +1,555 @@
+#!/usr/bin/env python3
+"""Run one explicitly prepared native payload in a fresh external workspace.
+
+The caller locks package/source/configuration and performs static inspection.
+This lane never selects an archive, supplies missing assets, or publishes a
+release. All executable lifecycles use package_runtime's existing owned runner.
+Raw logs can contain the disposable editor token; reports contain hashes only.
+"""
+from __future__ import annotations
+
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import asdict
+import ctypes
+import hashlib
+import http.client
+import json
+import math
+import os
+from pathlib import Path
+import re
+import secrets
+import shutil
+import subprocess
+import sys
+import time
+from urllib.parse import quote
+
+from package_runtime import (ProcessIdentity, RuntimeContractError, native_env,
+                             process_identity, loopback_listeners,
+                             verify_owned_listener, run_runtime_command)
+from package_verification import inspect_inventory, _sha256_file, _reparse
+from verify_native_package import _configuration
+
+EDITOR_PORT = 9876  # The current Engine CLI has no configurable editor port.
+
+
+class _ObservationError(RuntimeContractError):
+    def __init__(self, message, observations):
+        super().__init__(message)
+        self.observations = observations
+
+
+class _LibrariesPending(RuntimeContractError):
+    """The owned process has not mapped every required image yet."""
+
+
+def _sha(path: Path) -> str:
+    return _sha256_file(path)
+
+
+def _need(condition, message):
+    if not condition:
+        raise RuntimeContractError(message)
+
+
+def _file(path: Path) -> dict:
+    resolved = path.resolve(strict=True)
+    _need(resolved.is_file() and resolved.stat().st_size > 0, f"Missing/empty file: {path}")
+    return {"path": str(path), "resolved_path": str(resolved), "sha256": _sha(resolved)}
+
+
+def _native_argv(executable: Path, *arguments: str) -> list[str]:
+    return [str(executable), *arguments]
+
+
+def _host_platform() -> str:
+    if os.name == "nt":
+        return "windows"
+    if sys.platform.startswith("linux"):
+        return "linux"
+    if sys.platform == "darwin":
+        return "macos"
+    raise RuntimeContractError(f"No native runtime lane for this host: {sys.platform}")
+
+
+def observe_loaded_modules(identity: ProcessIdentity) -> dict:
+    """Read this live process's mapped executable images, with identity checks."""
+    _need(process_identity(identity.pid) == identity, "Module owner changed before observation")
+    if os.name == "nt":
+        from ctypes import wintypes
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        psapi = ctypes.WinDLL("psapi", use_last_error=True)
+        kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel.OpenProcess.restype = wintypes.HANDLE
+        kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+        psapi.EnumProcessModulesEx.argtypes = [wintypes.HANDLE, ctypes.c_void_p, wintypes.DWORD,
+                                               ctypes.POINTER(wintypes.DWORD), wintypes.DWORD]
+        psapi.EnumProcessModulesEx.restype = wintypes.BOOL
+        psapi.GetModuleFileNameExW.argtypes = [wintypes.HANDLE, wintypes.HMODULE, wintypes.LPWSTR, wintypes.DWORD]
+        psapi.GetModuleFileNameExW.restype = wintypes.DWORD
+        handle = kernel.OpenProcess(0x0410, False, identity.pid)  # QUERY_INFORMATION | VM_READ
+        _need(handle, "Cannot open the recorded process for module inspection")
+        try:
+            count = 256
+            while True:
+                modules = (wintypes.HMODULE * count)()
+                needed = wintypes.DWORD()
+                _need(psapi.EnumProcessModulesEx(handle, modules, ctypes.sizeof(modules),
+                                                ctypes.byref(needed), 3), "Cannot enumerate loaded modules")
+                if needed.value <= ctypes.sizeof(modules):
+                    break
+                count = (needed.value + ctypes.sizeof(wintypes.HMODULE) - 1) // ctypes.sizeof(wintypes.HMODULE)
+                _need(count <= 65536, "Unbounded loaded module enumeration")
+            paths = []
+            for module in modules[:needed.value // ctypes.sizeof(wintypes.HMODULE)]:
+                buffer = ctypes.create_unicode_buffer(32768)
+                size = psapi.GetModuleFileNameExW(handle, module, buffer, len(buffer))
+                _need(0 < size < len(buffer) - 1, "Cannot read an exact loaded module path")
+                paths.append(buffer.value)
+        finally:
+            kernel.CloseHandle(handle)
+        source = "windows:EnumProcessModulesEx/GetModuleFileNameExW"
+    elif sys.platform.startswith("linux"):
+        paths = []
+        for line in Path(f"/proc/{identity.pid}/maps").read_text().splitlines():
+            fields = line.split(maxsplit=5)
+            if len(fields) == 6 and "x" in fields[1] and fields[5].startswith("/"):
+                _need(not fields[5].endswith(" (deleted)"), "An executable mapping was deleted")
+                paths.append(fields[5].replace("\\012", "\n"))
+        source = "linux:/proc/pid/maps executable mappings"
+    elif sys.platform == "darwin":
+        # txt descriptors are mapped program text, including private dylibs.
+        # Shared-cache system images may be absent; required packaged images
+        # must actually appear. Missing/denied observations fail the lane.
+        tool = Path("/usr/sbin/lsof")
+        _need(tool.is_file(), "macOS mapped-image observer /usr/sbin/lsof is unavailable")
+        result = subprocess.run([str(tool), "-a", "-p", str(identity.pid), "-d", "txt", "-Fn"],
+                                capture_output=True, text=True, timeout=10, env={"PATH":"/usr/bin:/bin:/usr/sbin"})
+        _need(result.returncode == 0, "macOS mapped-image observation failed")
+        paths = [line[1:] for line in result.stdout.splitlines() if line.startswith("n/")]
+        source = "macos:lsof txt mapped program text"
+    else:
+        raise RuntimeContractError("Loaded module observation is NOT_VERIFIED on this host")
+    _need(process_identity(identity.pid) == identity, "Module owner changed during observation")
+    _need(paths, "No executable modules were observed")
+    return {"status":"OBSERVED", "source":source, "process":asdict(identity),
+            "paths":sorted(set(str(Path(path).resolve(strict=True)) for path in paths))}
+
+
+def _inspect_libraries(identity: ProcessIdentity, package: Path, required: list[str]) -> dict:
+    if not required:
+        return {"status":"NOT_REQUIRED", "required":[], "reason":"No shared libraries required by external configuration"}
+    report = observe_loaded_modules(identity)
+    observed = {Path(path) for path in report["paths"]}
+    matched = []
+    missing = []
+    for relative in required:
+        expected = (package / relative).resolve(strict=True)
+        _need(expected.is_relative_to(package), f"Required library escapes package: {relative}")
+        _need(not any(path.name.casefold() == expected.name.casefold() and path != expected for path in observed),
+              f"A second source for required library was observed: {relative}")
+        if expected not in observed:
+            missing.append(relative)
+            continue
+        matched.append({"relative_path":relative, "resolved_path":str(expected), "sha256":_sha(expected)})
+    if missing:
+        raise _LibrariesPending("Required library not observed from this runtime package: " + ", ".join(missing))
+    return {**report, "status":"VERIFIED", "required":matched}
+
+
+def _loaded_libraries(identity: ProcessIdentity, package: Path, required: list[str], deadline=None) -> dict:
+    try:
+        while True:
+            try:
+                return _inspect_libraries(identity, package, required)
+            except _LibrariesPending:
+                if deadline is None or time.monotonic() >= deadline:
+                    raise
+                time.sleep(min(0.02, max(0, deadline - time.monotonic())))
+    except (OSError, ValueError, RuntimeContractError, subprocess.SubprocessError) as error:
+        observed = {"loaded_modules":{"status":"NOT_VERIFIED", "required":required,
+                                      "error":str(error), "process":asdict(identity)}}
+        raise _ObservationError("Required loaded-library provenance is NOT_VERIFIED", observed) from error
+
+
+def _http(identity: ProcessIdentity, path: str, token: str | None = None) -> tuple[int, bytes]:
+    verify_owned_listener(identity, EDITOR_PORT)
+    connection = http.client.HTTPConnection("127.0.0.1", EDITOR_PORT, timeout=3)
+    try:
+        headers = {"Authorization":"Bearer " + token} if token is not None else {}
+        connection.request("GET", path, headers=headers)
+        response = connection.getresponse()
+        body = response.read(4 * 1024 * 1024 + 1)
+        _need(len(body) <= 4 * 1024 * 1024, "Editor HTTP response exceeds its bounded read")
+        code = response.status
+    finally:
+        connection.close()
+    verify_owned_listener(identity, EDITOR_PORT)
+    return code, body
+
+
+def _editor_protocol(identity, package, token, deadline, libraries) -> dict:
+    token_file = package / ".caesura-editor-token"
+    generated = token is None
+    while True:
+        _need(process_identity(identity.pid) == identity, "Editor exited before readiness")
+        rows = loopback_listeners(EDITOR_PORT)
+        if rows:
+            verify_owned_listener(identity, EDITOR_PORT)  # A foreign owner fails immediately.
+        if generated and token is None and token_file.exists():
+            _need(token_file.is_file() and not token_file.is_symlink(), "Generated token must be a regular file")
+            raw = token_file.read_bytes()
+            _need(0 < len(raw) <= 4096, "Generated token has invalid size")
+            token = raw.decode("utf-8").strip()
+            _need(token and not any(ord(c) < 33 or ord(c) > 126 for c in token), "Generated token has invalid bytes")
+        if rows and token:
+            break
+        _need(time.monotonic() < deadline, "Editor did not publish owned readiness and its required token")
+        time.sleep(0.02)
+    expected = (package / "web-editor/dist/index.html").read_bytes()
+    code, body = _http(identity, "/", token)
+    _need(code == 200 and body == expected and b"Caesura Web Editor" in body, "Authenticated editor HTML differs from this package")
+    plain_code, plain = _http(identity, "/")
+    browser_mode = "public"
+    if plain_code != 200 or plain != expected:
+        plain_code, plain = _http(identity, "/?token=" + quote(token, safe=""))
+        browser_mode = "query_token"
+    _need(plain_code == 200 and plain == expected, "Ordinary browser navigation cannot obtain packaged editor HTML")
+    ping_code, ping = _http(identity, "/api/ping", token)
+    _need(ping_code == 200 and json.loads(ping).get("status") == "ok", "Authenticated ping is not ok")
+    denied, _ = _http(identity, "/api/ping")
+    _need(denied == 401, "Unauthenticated editor API did not return 401")
+    modules = _loaded_libraries(identity, package, libraries, deadline)
+    return {"html_status":code, "html_sha256":hashlib.sha256(body).hexdigest(),
+            "browser_status":plain_code, "browser_mode":browser_mode,
+            "ping_status":ping_code, "unauthenticated_status":denied,
+            "token_source":"generated_file" if generated else "explicit_environment",
+            "token_sha256":hashlib.sha256(token.encode()).hexdigest(), "loaded_modules":modules}
+
+
+def _execute(attempt, name, argv, cwd, env, timeout, readiness_timeout, *, monitor=None, controlled=False,
+             expected_final_executable=None) -> dict:
+    directory = attempt / "commands" / name
+    directory.mkdir(parents=True)
+    control = directory / "control"
+    record = {"name":name, "argv":argv, "cwd":str(cwd), "executable":_file(Path(argv[0])),
+              "passed":False, "errors":[], "run":None}
+    options = {"stop_request":control / "stop" if controlled else None}
+    if expected_final_executable is not None:
+        record["expected_final_executable"] = _file(Path(expected_final_executable))
+        options.update(expected_final_executable=str(expected_final_executable),
+                       exec_observation_timeout=readiness_timeout)
+    with (directory / "stdout.log").open("xb") as out, (directory / "stderr.log").open("xb") as err:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(run_runtime_command, argv, cwd, env, control, out, err, timeout,
+                                     **options)
+            identity = None
+            try:
+                if monitor:
+                    deadline = time.monotonic() + readiness_timeout
+                    identity_file = control / "process.json"
+                    while not identity_file.is_file():
+                        _need(not future.done(), "Command exited before an observable process identity")
+                        _need(time.monotonic() < deadline, "No owned process identity before readiness deadline")
+                        time.sleep(0.02)
+                    identity = ProcessIdentity(**json.loads(identity_file.read_text(encoding="utf-8")))
+                    record["observations"] = monitor(identity, deadline)
+            except Exception as error:
+                record["errors"].append(f"{type(error).__name__}: {error}")
+                if isinstance(error, _ObservationError):
+                    record["observations"] = error.observations
+            finally:
+                if controlled and control.is_dir() and not future.done():
+                    try:
+                        with (control / "stop").open("x", encoding="utf-8") as stream:
+                            stream.write("stop this owned editor\n")
+                    except OSError as error:
+                        # Still join the owned runner and bind its failure/
+                        # completion receipt if publishing stop itself fails.
+                        record["errors"].append(f"Cannot publish controlled stop: {error}")
+                try:
+                    record["run"] = future.result()
+                except Exception as error:
+                    record["errors"].append(f"{type(error).__name__}: {error}")
+                    if (control / "run.json").is_file():
+                        record["run"] = json.loads((control / "run.json").read_text(encoding="utf-8"))
+                if controlled:
+                    try:
+                        _need(not loopback_listeners(EDITOR_PORT), "Editor port remains occupied after owned shutdown")
+                        if identity:
+                            try:
+                                current = process_identity(identity.pid)
+                            except RuntimeContractError:
+                                current = None
+                            _need(current != identity, "Owned editor is still alive after command return")
+                    except RuntimeContractError as error:
+                        record["errors"].append(str(error))
+    for channel in ("stdout", "stderr"):
+        path = directory / (channel + ".log")
+        record[channel] = {"path":path.relative_to(attempt).as_posix(), "sha256":_sha(path), "size":path.stat().st_size}
+    if (control / "run.json").is_file():
+        record["receipt"] = {"path":(control / "run.json").relative_to(attempt).as_posix(),
+                             "sha256":_sha(control / "run.json")}
+    result = record["run"] or {}
+    if result.get("owned_tree_cleanup") != "COMPLETE":
+        record["errors"].append("Owned process tree cleanup was not confirmed")
+    if expected_final_executable is not None:
+        transition = result.get("exec_transition", {})
+        if transition.get("status") != "VERIFIED" or transition.get("inputs_stable") is not True:
+            record["errors"].append("Package launcher did not preserve and enter the declared final Engine")
+        if (result.get("process") or {}).get("executable") != record["expected_final_executable"]["resolved_path"]:
+            record["errors"].append("Observed launch child is not the expected Engine in this payload")
+    if controlled:
+        if result.get("status") != "STOPPED" or not result.get("stop_requested") or result.get("forced_kill"):
+            record["errors"].append("Editor did not complete its requested controlled stop")
+    elif result.get("status") != "EXITED" or result.get("actual_exit_code") != 0:
+        record["errors"].append("Command did not exit normally with code 0")
+    record["passed"] = not record["errors"]
+    return record
+
+
+def _log(attempt, command) -> str:
+    return "\n".join((attempt / command[channel]["path"]).read_text(encoding="utf-8", errors="replace")
+                     for channel in ("stdout", "stderr"))
+
+
+def _verify_evidence(attempt, stages) -> list[str]:
+    """Recheck the original bindings after all later commands have finished."""
+    errors = []
+    bindings = []
+    for stage in stages:
+        for command in stage["commands"]:
+            for key in ("stdout", "stderr", "receipt"):
+                if key in command:
+                    bindings.append(command[key])
+                else:
+                    errors.append(f"Missing bound {key} evidence for command {command['name']}")
+        if "build_info" in stage:
+            bindings.append(stage["build_info"])
+    for item in bindings:
+        try:
+            path = attempt / item["path"]
+            _need(not Path(item["path"]).is_absolute() and path.resolve(strict=True).is_relative_to(attempt),
+                  "Bound evidence escapes its runtime attempt")
+            _need(_sha(path) == item["sha256"], "Bound evidence changed after its command completed")
+        except Exception as error:
+            errors.append(f"Evidence {item['path']}: {type(error).__name__}: {error}")
+    return errors
+
+
+def _copy_changes(before: dict, after: dict) -> dict:
+    original = {item["path"]:item for item in before["entries"]}
+    current = {item["path"]:item for item in after["entries"]}
+    changed = [path for path, item in original.items() if current.get(path) != item]
+    additions = [item for path, item in current.items() if path not in original]
+    def allowed(item):
+        path = item["path"]
+        if item["type"] not in ("file", "directory"):
+            return False
+        if path == ".caesura-editor-token":
+            return item["type"] == "file"
+        return path.split("/", 1)[0] in {"logs", "cache", "saves", "settings"}
+    unexpected = [item["path"] for item in additions if not allowed(item)]
+    return {"passed":not changed and not unexpected, "changed_original_paths":changed,
+            "unexpected_new_paths":unexpected, "allowed_additions":[item for item in additions if allowed(item)]}
+
+
+def run_native_package(package_root, required_configuration, attempt_dir, *, python_executable,
+                       command_timeout=120, readiness_timeout=45, launch_relative_path=None) -> dict:
+    report = {"schema":"caesura.native-package-runtime.v1", "status":"RUNTIME_FAIL",
+              "runtime":"NOT_RUN", "source_stable":False, "runtime_copy_stable":False,
+              "evidence_stable":False, "cleanup":"NOT_STARTED", "stages":[], "errors":[]}
+    attempt = package = copy = before = copied = game = game_before = None
+    try:
+        for value in (command_timeout, readiness_timeout):
+            _need(not isinstance(value, bool) and math.isfinite(value) and value > 0, "Timeouts must be positive finite numbers")
+        platform = _host_platform()
+        _need(launch_relative_path in (None, "AppRun"), "Only an explicit packaged AppRun launcher is supported")
+        _need(launch_relative_path is None or platform in ("linux", "macos"), "AppRun requires an actual POSIX host")
+        configuration, libraries = _configuration(platform, required_configuration)
+        report.update(platform=platform, required_configuration=configuration)
+        package = Path(package_root).absolute()
+        before = inspect_inventory(package)
+        package = package.resolve(strict=True)
+        report["input"] = {"path":str(package), "inventory_sha256":before["sha256"]}
+        tool = Path(python_executable)
+        _need(tool.is_absolute(), "Host Python must be an explicit absolute executable")
+        tool = tool.resolve(strict=True)
+        report["host_tools"] = {"author_python":_file(tool), "controller_python":_file(Path(sys.executable))}
+        requested = Path(attempt_dir).absolute()
+        parent = requested.parent.resolve(strict=True)
+        _need(not any((p / ".git").exists() for p in (parent, *parent.parents)), "Runtime attempt must be outside repositories")
+        candidate = parent / requested.name
+        _need(not candidate.exists() and not candidate.is_symlink(), "Runtime attempt must be new")
+        _need(not candidate.is_relative_to(package) and not package.is_relative_to(candidate), "Runtime attempt and input must be separate")
+        _need(not (package / ".caesura-editor-token").exists(), "Input package already contains an editor token")
+        candidate.mkdir(mode=0o700)
+        attempt = candidate
+        report["attempt_dir"] = str(attempt)
+        copy = attempt / "runtime-package"
+        shutil.copytree(package, copy, symlinks=True)
+        copied = inspect_inventory(copy)
+        _need(copied["sha256"] == before["sha256"], "Runtime copy differs from the explicit payload")
+        for directory in ("home", "temp", "work"):
+            (attempt / directory).mkdir()
+        name = "CaesuraAmeKAG.exe" if platform == "windows" else "CaesuraAmeKAG"
+        engine = copy / name
+        lua = copy / ("external/lua/lua.exe" if platform == "windows" else "external/lua/lua")
+        report["binaries"] = {"engine":_file(engine), "lua":_file(lua)}
+        _need(all(Path(item["resolved_path"]).is_relative_to(copy) for item in report["binaries"].values()), "Runtime executable escapes package")
+        env = native_env(copy, engine=engine, lua=lua, work=copy, home=attempt / "home", temp=attempt / "temp")
+        launcher, launch_cwd, launch_options = engine, copy, {}
+        if launch_relative_path is not None:
+            launcher = copy / launch_relative_path
+            _need(not launcher.is_symlink() and not _reparse(launcher) and launcher.is_file(),
+                  "AppRun must be a plain file in the prepared package")
+            _need(os.access(launcher, os.X_OK), "Packaged AppRun must be executable")
+            report["binaries"]["launcher"] = _file(launcher)
+            launch_cwd = attempt / "work"  # AppRun itself must change to its package root.
+            launch_options["expected_final_executable"] = engine.resolve(strict=True)
+            report["launch_scope"] = {"scope":"prepared_AppRun_and_Engine",
+                "container_identity":"BOUND_BY_CALLER", "fuse_mount_runtime":"NOT_RUN",
+                "apprun_stages":["editor_explicit_token", "editor_generated_token", "engine_frames"],
+                "author_cli":"PACKAGED_CLI_COMMAND", "created_game":"ACTUAL_CLI_OUTPUT_ENGINE"}
+        _need(not loopback_listeners(EDITOR_PORT), "Editor port 9876 is already owned; refusing to start a command")
+        report.update(runtime="RUNNING", cleanup="COMPLETE")
+
+        def stage(title):
+            value = {"name":title, "status":"RUNNING", "commands":[]}
+            report["stages"].append(value)
+            return value
+
+        def command(current, label, argv, cwd, environment, **kwargs):
+            value = _execute(attempt, label, argv, cwd, environment, command_timeout, readiness_timeout, **kwargs)
+            current["commands"].append(value)
+            _need(value["passed"], f"Command {label} failed; inspect bound command receipt and logs")
+            return value
+
+        for generated in (False, True):
+            current = stage("editor_generated_token" if generated else "editor_explicit_token")
+            _need(not loopback_listeners(EDITOR_PORT), "Editor port is occupied before a new session")
+            token = None if generated else secrets.token_hex(32)
+            editor_env = dict(env)
+            if token is not None:
+                editor_env["CAESURA_EDITOR_TOKEN"] = token
+            else:
+                _need(not (copy / ".caesura-editor-token").exists(), "Generated-token session requires a fresh token file")
+            editor_env["PWD"] = str(launch_cwd)
+            value = command(current, current["name"], _native_argv(launcher, "--editor"), launch_cwd, editor_env,
+                            controlled=True, monitor=lambda identity, deadline: _editor_protocol(identity, copy, token, deadline, libraries),
+                            **launch_options)
+            if generated:
+                _need("Generated editor token" in _log(attempt, value), "Generated-token startup marker was not logged")
+            _need("web-editor/dist not found" not in _log(attempt, value), "Editor reported a missing web root")
+            current["status"] = "PASS"
+
+        current = stage("engine_frames")
+        value = command(current, "engine_frames", _native_argv(launcher, "--frames", "60"), launch_cwd, dict(env, PWD=str(launch_cwd)),
+                        monitor=(lambda identity, deadline: {"loaded_modules":_loaded_libraries(identity, copy, libraries, deadline)}) if libraries else None,
+                        **launch_options)
+        text = _log(attempt, value)
+        _need("rendering disabled (BGFX_DEBUG_IFH)" not in text and "[caesura] FATAL" not in text,
+              "Ordinary engine reported a fatal boot or disabled rendering")
+        current["status"] = "PASS"
+
+        current = stage("author_create_build")
+        project = attempt / "作品 中文 项目"
+        game = attempt / "作品 输出"
+        probe = command(current, "packaged_lua", _native_argv(lua, "-v"), copy, env)
+        _need("Lua 5." in _log(attempt, probe), "Packaged Lua did not report its version")
+        cli = copy / "scripts/caesura.py"
+        current["cli"] = _file(cli)
+        current["authoritative_lua"] = report["binaries"]["lua"]
+        created = command(current, "author_create", [str(tool), "-B", "-X", "utf8", str(cli), "create", project.name,
+                                                     "--template", "basic", "--out", str(project)], attempt / "work", env)
+        source = copy / "tools/project_templates/basic"
+        _need(f"(template from: {source})" in _log(attempt, created), "Create did not identify this package's basic template")
+        for path in source.rglob("*"):
+            if path.is_file() and path.name != "caesura.project.json":
+                relative = path.relative_to(source)
+                _need((project / relative).is_file() and _sha(project / relative) == _sha(path), f"Created project differs from packaged template: {relative}")
+        metadata = json.loads((project / "caesura.project.json").read_text(encoding="utf-8"))
+        _need(metadata.get("name") == project.name and metadata.get("template") == "basic", "Created project metadata does not identify basic project")
+        built = command(current, "author_build", [str(tool), "-B", "-X", "utf8", str(cli), "build", str(project),
+                                                  "--engine", str(copy), "--out", str(game)], attempt / "work", env)
+        info_path = game / "BUILD-INFO.json"
+        info = json.loads(info_path.read_text(encoding="utf-8"))
+        _need(info.get("kind") == "caesura-game-only" and info.get("schema") == 1, "Build did not produce game-only provenance")
+        _need(info.get("precompile", {}).get("status") == "ok" and info["precompile"].get("scene_count", 0) > 0
+              and not info.get("precompile_failures") and not info.get("assets_missing"), "Build did not verify all scenes and required assets")
+        text = _log(attempt, built)
+        _need(re.search(r"\[build\] ks_check: [1-9][0-9]* scene\(s\) pass contracts", text)
+              and re.search(r"\[build\] precompile: [1-9][0-9]*/[1-9][0-9]* scene\(s\) cached into cache/ksc", text), "Required packaged-Lua checks were not reported")
+        _need(info.get("capabilities", {}).get("profile", {}).get("binary_sha256") == report["binaries"]["engine"]["sha256"], "Build capability profile refers to another engine")
+        _need(_sha(game / name) == report["binaries"]["engine"]["sha256"], "Built game engine bytes differ from this package")
+        for key in ("entry_scene", "boot_script"):
+            entry = (game / info[key]).resolve(strict=True)
+            _need(entry.is_relative_to(game) and entry.is_file(), f"Invalid generated {key}")
+        current.update(status="PASS", build_info={"path":info_path.relative_to(attempt).as_posix(), "sha256":_sha(info_path)},
+                       project_path=str(project), game_path=str(game))
+        game_before = inspect_inventory(game)
+        report["created_game_input_sha256"] = game_before["sha256"]
+
+        current = stage("created_game_frames")
+        game_env = dict(env, PWD=str(game))
+        # The game must not find missing runtime libraries in the source package
+        # via PATH. It has embedded Lua; the standalone CLI interpreter is unused.
+        game_env.pop("CAESURA_LUA", None)
+        game_env["PATH"] = os.pathsep.join([str(game)] + [part for part in env["PATH"].split(os.pathsep)
+                                                       if not Path(part).is_relative_to(copy)])
+        game_libraries = []
+        for relative in libraries:
+            target = game / Path(relative).name
+            _need(target.is_file() and _sha(target) == _sha(copy / relative), f"Created game lacks its own required library: {relative}")
+            game_libraries.append(target.name)
+        value = command(current, "created_game_frames", _native_argv(game / name, "--frames", "60"), game, game_env,
+                        monitor=(lambda identity, deadline: {"loaded_modules":_loaded_libraries(identity, game, game_libraries, deadline)}) if game_libraries else None)
+        text = _log(attempt, value)
+        _need("KAG Runner] Started" in text and "[caesura] FATAL" not in text
+              and "rendering disabled (BGFX_DEBUG_IFH)" not in text, "Created game did not start its KAG runner with rendering enabled")
+        current["status"] = "PASS"
+    except Exception as error:
+        report["errors"].append(f"{type(error).__name__}: {error}")
+        if report["stages"] and report["stages"][-1]["status"] == "RUNNING":
+            report["stages"][-1]["status"] = "FAIL"
+    finally:
+        if package is not None and before is not None:
+            try:
+                final = inspect_inventory(package)
+                report["source_stable"] = final["sha256"] == before["sha256"]
+                report["input_after_sha256"] = final["sha256"]
+                _need(report["source_stable"], "Original payload changed during runtime validation")
+            except Exception as error:
+                report["errors"].append(str(error))
+        if copy is not None and copied is not None:
+            try:
+                changes = _copy_changes(copied, inspect_inventory(copy))
+                report["runtime_copy_changes"] = changes
+                report["runtime_copy_stable"] = changes["passed"]
+                _need(changes["passed"], "Runtime copy changed existing inputs or added unapproved paths")
+            except Exception as error:
+                report["errors"].append(str(error))
+        if game is not None and game_before is not None:
+            try:
+                changes = _copy_changes(game_before, inspect_inventory(game))
+                report["created_game_copy_changes"] = changes
+                report["created_game_copy_stable"] = changes["passed"]
+                _need(changes["passed"], "Created game changed existing build files or added unapproved paths")
+            except Exception as error:
+                report["errors"].append(str(error))
+        commands = [command for stage in report["stages"] for command in stage["commands"]]
+        if commands:
+            report["cleanup"] = "COMPLETE" if all((command.get("run") or {}).get("owned_tree_cleanup") == "COMPLETE" for command in commands) else "FAILED"
+            evidence_errors = _verify_evidence(attempt, report["stages"])
+            report["errors"].extend(evidence_errors)
+            report["evidence_stable"] = not evidence_errors
+        if not report["errors"] and len(report["stages"]) == 5 and all(stage["status"] == "PASS" for stage in report["stages"]):
+            report.update(status="RUNTIME_PASS", runtime="PASS")
+        elif report["runtime"] != "NOT_RUN":
+            report["runtime"] = "FAIL"
+        if attempt is not None:
+            with (attempt / "native-runtime.json").open("x", encoding="utf-8") as stream:
+                json.dump(report, stream, ensure_ascii=False, indent=2)
+                stream.write("\n")
+    return report

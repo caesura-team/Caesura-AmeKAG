@@ -673,6 +673,7 @@ if(CAESURA_FFMPEG_FOUND AND WIN32)
         DESTINATION . OPTIONAL)
 endif()
 
+include(cmake/CaesuraPackageRequirements.cmake)
 include(CPack)
 
 # -- Tools ----------------------------------------------------------------

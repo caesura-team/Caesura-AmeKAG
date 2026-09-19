@@ -8,7 +8,9 @@
 
 2026-09-12：[U16实际图像回归](2026-09-09-007-native-render-effects-execution.md)已通过两后端18场景、82张图、完整原生门禁和候选CI，PR #19已合并074f5f7c。[U17输入/音频生命周期](2026-09-12-008-input-audio-lifecycle-execution.md)完整原生门禁与最终CI通过后，PR #20已合并0c7e2e86；设备未测与本地Web性能边界保留。当前继续[U18运行错误与RPC退出/超时](2026-09-12-009-runtime-errors-rpc-execution.md)；U19–U29及其他未验收项保留。
 
-2026-09-13：U18 PR #21已合并9b269ab7，[U19目标能力](2026-09-12-010-target-capabilities-execution.md) PR #22已合并98aa63c0；U19合并后Windows性能失败另有记录。[U20 Web音频](2026-09-13-011-web-audio-execution.md)已在PR #23合并c7471141，master CI34724868950十项全部成功。[U21作者路径](2026-09-13-012-cli-author-journey-execution.md)两模板真实原生/Web冷恢复、根/子路径与离线、CLI107/107、严格原生门禁（1404 C++、Lua147/56、CTest32通过/1可选跳过）及完整Web608/608通过；候选CI的Android产物上传DNS失败已保留，PR #24待最终文档CI与合并。U22最终包隔离在独立工作区推进，U21–U29和其他未完成项继续保留。
+2026-09-13：U18 PR #21已合并9b269ab7，[U19目标能力](2026-09-12-010-target-capabilities-execution.md) PR #22已合并98aa63c0；U19合并后Windows性能失败另有记录。[U20 Web音频](2026-09-13-011-web-audio-execution.md)已在PR #23合并c7471141，master CI34724868950十项全部成功。[U21作者路径](2026-09-13-012-cli-author-journey-execution.md)两模板真实原生/Web冷恢复、根/子路径与离线、CLI107/107、严格原生门禁（1404 C++、Lua147/56、CTest32通过/1可选跳过）及完整Web608/608通过；最终候选CI七项执行成功，PR #24已合并65e5b425，合并后CI34734686509十项全部成功，早期Android产物上传DNS失败保留。[U22最终包隔离](2026-09-13-013-final-package-isolation-execution.md)在独立工作区推进，已取得Windows最终ZIP的诊断性实际运行结果；U22–U29和其他未完成项继续保留。
+
+2026-09-19：U22 两模板最终 Web ZIP 已通过真实 Chrome 根/子路径、UI 存读档与首次安装后的离线重载；CI 最终包接线与独立审查已完成局部验证，完整 Web 首轮失败及 AppImage 工具格式缺口均保留证据并继续修复/复验。U22 尚未提交或合并，U23–U29 与其他未验收项不变。
 
 2026-09-05 用户要求重新制定后续计划，抛弃原有排期，仅保留两项方向约束：**底层优先、Studio 暂停**。
 

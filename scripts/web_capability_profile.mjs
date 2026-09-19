@@ -12,7 +12,7 @@ const sorted = value => Object.fromEntries(Object.entries(value).sort(([a], [b])
 const verifiedProfiles = new WeakSet()
 const excludedWebDirectories = new Set(['dist', 'node_modules', 'test', 'tests', 'test-support',
   'test-results', 'playwright-report', 'coverage', 'artifacts', '__pycache__'])
-const buildHelpers = ['scripts/copy_tree.mjs', 'scripts/web_capability_profile.mjs', 'config/runtime-capabilities.json']
+const buildHelpers = ['scripts/copy_tree.mjs', 'scripts/offline_manifest.mjs', 'scripts/web_capability_profile.mjs', 'config/runtime-capabilities.json']
 const requiredSources = ['web/index.html', 'web/vite.config.js', 'web/gen-index.mjs', 'web/package.json',
   'scripts/capability_catalog.lua', 'scripts/target_capabilities.lua', 'scripts/capability_runtime.lua',
   'scripts/backend.lua', ...buildHelpers]

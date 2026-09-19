@@ -520,6 +520,43 @@ if(Python3_EXECUTABLE)
         TIMEOUT 240
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
     )
+    # Filesystem/protocol contract tests are separate from final package
+    # runtime acceptance. Host Lua and generator are explicitly this build's.
+    foreach(_package_contract release_package_contract native_package_contract
+                              package_runtime web_package_contract package_build_metadata
+                              package_validation_runner native_package_runtime
+                              web_package_runtime package_containers appimage_build_contract ci_package_lane)
+        add_test(
+            NAME CaesuraPackage_${_package_contract}
+            COMMAND ${CMAKE_COMMAND} -E env
+                    "CAESURA_TEST_LUA=$<TARGET_FILE:lua_cli>"
+                    "CAESURA_TEST_CMAKE_GENERATOR=${CMAKE_GENERATOR}"
+                    "CAESURA_TEST_CMAKE_INSTANCE=${CMAKE_GENERATOR_INSTANCE}"
+                    "CAESURA_TEST_CMAKE_MAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}"
+                    ${Python3_EXECUTABLE}
+                    ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_${_package_contract}.py
+        )
+        set_tests_properties(CaesuraPackage_${_package_contract} PROPERTIES
+            LABELS "qa;package;validation"
+            TIMEOUT 240
+            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+        )
+    endforeach()
+
+    find_program(CAESURA_NODE_PROGRAM node)
+    if(CAESURA_REQUIRE_TEST_PREREQUISITES AND NOT CAESURA_NODE_PROGRAM)
+        message(FATAL_ERROR "Complete validation requires Node 22+ for package probe contracts")
+    endif()
+    if(CAESURA_NODE_PROGRAM)
+        add_test(NAME CaesuraPackage_web_probe
+            COMMAND ${CAESURA_NODE_PROGRAM} --test
+                    ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_web_package_probe.mjs)
+        set_tests_properties(CaesuraPackage_web_probe PROPERTIES
+            LABELS "qa;package;validation;web"
+            TIMEOUT 240
+            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    endif()
+
     # Web package gate (t144 design A): contract tests for
     # scripts/verify_web_package.sh against a synthetic dist/<game>/ tree.
     # SKIP_RETURN_CODE 77 when bash or node is missing from the host.

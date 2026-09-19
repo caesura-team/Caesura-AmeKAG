@@ -4,6 +4,7 @@ import { resolve } from 'node:path'
 import { buildIndex, serialize } from './gen-index.mjs'
 import { readFileSync, existsSync } from 'node:fs'
 import { copyDirectorySync } from '../scripts/copy_tree.mjs'
+import { writeOfflineManifest } from '../scripts/offline_manifest.mjs'
 import { collectWebSourceFiles, createWebCapabilityProfile, verifyWebSourceFiles,
   verifyWebSourceModules } from '../scripts/web_capability_profile.mjs'
 
@@ -68,6 +69,7 @@ function copyRuntimeDirs() {
         console.error('[vite] WARN: dist scripts/index.json generation failed:', String(e))
       }
       const dist = resolve(process.cwd(), 'dist')
+      writeOfflineManifest(dist)
       writeFileSync(resolve(dist, 'capabilities-build.json'),
         JSON.stringify(createWebCapabilityProfile(dist, { sourceFiles, sourceRoot: REPO_ROOT }), null, 2) + '\n')
     },
@@ -84,6 +86,26 @@ function w7WasmPin() {
     transformIndexHtml(html) {
       const pin = '<script>self.__CAESURA_WASM_FILE__ = new URL("web-assets/glue.wasm", document.baseURI || location.href).href</' + 'script>'
       return html.includes('__CAESURA_WASM_FILE__') ? html : html.replace('</head>', pin + String.fromCharCode(10) + '</head>')
+    },
+  }
+}
+
+// Keep the manifest beside index.html, matching the runtime copy above.
+// Vite's ordinary HTML asset transform moves a source <link> into web-assets
+// without rebasing the manifest's start_url/icons, breaking installed launches.
+// Inject after that transform in both dev and build; relative URLs then work
+// identically at the site root and at any deployment subpath.
+function pwaManifestLink() {
+  return {
+    name: 'caesura-pwa-manifest-link',
+    transformIndexHtml: {
+      order: 'post',
+      handler() {
+        return [
+          { tag: 'link', attrs: { rel: 'manifest', href: './manifest.webmanifest' }, injectTo: 'head' },
+          { tag: 'link', attrs: { rel: 'icon', type: 'image/png', href: './assets/icon-192.png' }, injectTo: 'head' },
+        ]
+      },
     },
   }
 }
@@ -123,5 +145,5 @@ export default defineConfig({
     target: 'es2022',
     assetsDir: 'web-assets',
   },
-  plugins: [copyRuntimeDirs(), devScriptsIndex(), w7WasmPin()],
+  plugins: [copyRuntimeDirs(), devScriptsIndex(), w7WasmPin(), pwaManifestLink()],
 })

@@ -6,6 +6,19 @@ on:
   pull_request:
     branches: [master, main]
   workflow_dispatch:
+  workflow_call:
+    outputs:
+      windows_manifest_sha256:
+        value: ${{ jobs.release.outputs.manifest_sha256 }}
+      linux_manifest_sha256:
+        value: ${{ jobs.release-linux.outputs.manifest_sha256 }}
+      macos_manifest_sha256:
+        value: ${{ jobs.release-macos.outputs.manifest_sha256 }}
+      web_manifest_sha256:
+        value: ${{ jobs.release-web.outputs.manifest_sha256 }}
+
+permissions:
+  contents: read
 
 env:
   BUILD_TYPE: Debug
@@ -369,25 +382,8 @@ jobs:
             artifacts/validation/asset-dependencies-ci/
           if-no-files-found: warn
 
-      - name: Web package real-browser boot smoke (t199 A gate)
-        run: |
-          # Headless Chrome boots the packaged dist/ first_vn and asserts the
-          # web player (12 checks incl. boot/text; --unlock for Chrome
-          # autoplay-gesture). CHROME_BIN drives the runner's preinstalled
-          # chrome; falls back to the portable CHROME_PATHS table.
-          # Retry once: headless Chrome CDP startup is intermittently flaky
-          # on hosted runners (CDP endpoint absent, no chrome error -- a
-          # spawn-side race, not a package/assertion regression). A second
-          # run exercises the same checks; a real break still fails the gate.
-          for attempt in 1 2; do
-            echo "=== web-smoke attempt $attempt ==="
-            if node scripts/web_browser_smoke.mjs --root dist/first_vn --unlock; then
-              echo "web-smoke attempt $attempt PASSED"
-              exit 0
-            fi
-            echo "web-smoke attempt $attempt failed; retrying"
-          done
-          exit 1
+      # The release-web job validates its final package at root and subpath,
+      # including server-offline reload. Its first failed attempt is retained.
 
       - name: Web Audio real PCM and lifecycle checks
         run: node scripts/web_audio_smoke.mjs --out artifacts/validation/web-audio-ci --browser chrome
@@ -505,14 +501,20 @@ jobs:
           if-no-files-found: warn
 
   # ============================================================
-  # Release Package (Windows only)
+  # Final Windows ZIP (PR, branch and reusable release gate)
   # ============================================================
   release:
     name: "Release · Package"
-    if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
     runs-on: windows-2022
     needs: build-windows
+    outputs:
+      manifest_sha256: ${{ steps.package.outputs.manifest_sha256 }}
+    env:
+      SOURCE_SHA: ${{ github.sha }}
     steps:
+      - name: Select a new package work path outside the checkout
+        shell: pwsh
+        run: '"PACKAGE_WORK=$env:RUNNER_TEMP/caesura-u22-windows-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT" >> $env:GITHUB_ENV'
       - uses: actions/checkout@v4
         with:
           submodules: recursive
@@ -520,6 +522,14 @@ jobs:
           # HEAD via git log over history; a depth-1 checkout loses the
           # parent diff and would misreport the tip as the evidence HEAD.
           fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.2'
 
       - name: Install SDL3 (vcpkg)
         shell: pwsh
@@ -545,38 +555,57 @@ jobs:
           npm ci --no-audit --no-fund
           npm run build
 
-      - name: Package (CPack)
-        shell: pwsh
-        run: cd build; cpack -C Release -G ZIP
-
-      - name: Collect Artifacts
+      - name: Validate final Windows ZIP outside the checkout
+        id: package
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path release-artifacts
-          $zip = Get-ChildItem -Filter "*.zip" -Path build | Select-Object -First 1
-          if ($zip) { Copy-Item $zip.FullName release-artifacts/ }
-          Copy-Item build/Release/CaesuraAmeKAG.exe release-artifacts/ -ErrorAction SilentlyContinue
-          Copy-Item build/Release/SDL3.dll release-artifacts/ -ErrorAction SilentlyContinue
+          $python = (Get-Command python -CommandType Application).Source
+          $cpack = (Get-Command cpack -CommandType Application).Source
+          & $python scripts/ci_package_lane.py native --platform windows --source-sha $env:SOURCE_SHA --work $env:PACKAGE_WORK --build "$pwd/build" --requirements "$pwd/build/package-requirements-Release.json" --python $python --cpack $cpack --github-output $env:GITHUB_OUTPUT
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Upload Artifacts
+      - name: Recheck accepted bytes immediately before upload
+        env:
+          RECEIPT: ${{ steps.package.outputs.receipt }}
+          RECEIPT_SHA256: ${{ steps.package.outputs.receipt_sha256 }}
+        shell: pwsh
+        run: |
+          python scripts/ci_package_lane.py verify --receipt $env:RECEIPT --sha256 $env:RECEIPT_SHA256
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload only accepted final packages and their manifest
         uses: actions/upload-artifact@v4
         with:
           name: caesura-amekag-windows-x64
-          path: release-artifacts/
+          path: ${{ steps.package.outputs.upload_files }}
+          if-no-files-found: error
+
+      - name: Preserve first package attempt evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: u22-windows-package-evidence
+          path: |
+            ${{ env.PACKAGE_WORK }}/**/*.json
+            ${{ env.PACKAGE_WORK }}/**/*.log
+            ${{ env.PACKAGE_WORK }}/**/*.png
+          if-no-files-found: warn
 
   # ============================================================
-  # Release Package (Linux TGZ) -- Sprint6-L1. Same gate semantics as the
-  # Windows release job: master/tags only, needs the Linux test job green.
-  # The TGZ carries libSDL3.so.0 beside the executable ($ORIGIN RPATH); the
-  # 29-assertion verifier runs against the packed artifact under Xvfb.
+  # Final Linux TGZ and transformed AppImage, both independently executed.
   # ============================================================
   release-linux:
     name: "Linux · Package"
-    if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     needs: build-linux
+    outputs:
+      manifest_sha256: ${{ steps.package.outputs.manifest_sha256 }}
+    env:
+      SOURCE_SHA: ${{ github.sha }}
     steps:
+      - name: Select a new package work path outside the checkout
+        run: echo "PACKAGE_WORK=$RUNNER_TEMP/caesura-u22-linux-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
         with:
           submodules: recursive
@@ -584,6 +613,14 @@ jobs:
           # HEAD via git log over history; a depth-1 checkout loses the
           # parent diff and would misreport the tip as the evidence HEAD.
           fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.2'
 
       - name: Install Dependencies
         run: |
@@ -612,8 +649,8 @@ jobs:
       - name: Build Release
         run: |
           set -o pipefail
-          cmake --build build --parallel $(nproc) > build.log 2>&1 || { echo '=== build errors ==='; grep -iE 'error:|fatal error|undefined' build.log | head -30; tail -40 build.log; exit 1; }
-          tail -3 build.log
+          cmake --build build --parallel $(nproc) > build/release-build.log 2>&1 || { echo '=== build errors ==='; grep -iE 'error:|fatal error|undefined' build/release-build.log | head -30; tail -40 build/release-build.log; exit 1; }
+          tail -3 build/release-build.log
 
       - name: Build editor IDE (editor/dist ships in the package)
         run: |
@@ -621,57 +658,71 @@ jobs:
           npm ci --no-audit --no-fund
           npm run build
 
-      - name: Package (CPack TGZ)
-        run: cd build && cpack -G TGZ
-
-      - name: Build AppImage (release lane; t210 script, CI wiring)
+      - name: Download and verify pinned AppImage builder and runtime
+        env:
+          APPIMAGETOOL_SHA256: ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0
+          APPIMAGE_RUNTIME_SHA256: 1cc49bcf1e2ccd593c379adb17c9f85a36d619088296504de95b1d06215aebbf
         run: |
           set -euo pipefail
-          appimagetool=build/appimagetool-x86_64
-          wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage -O "$appimagetool"
-          chmod +x "$appimagetool"
-          TGZ=$(ls build/CaesuraAmeKAG-*-Linux-*.tar.gz | head -1)
-          echo "appimage from: $TGZ"
-          APPIMAGETOOL="$PWD/$appimagetool" bash scripts/build_appimage.sh --tgz "$TGZ"
-          APP=$(ls build/CaesuraAmeKAG-*-Linux-*.AppImage | head -1)
-          test -f "$APP" || { echo "AppImage not produced"; exit 1; }
-          ls -la "$APP" build/CaesuraAmeKAG-*-Linux-*.sha256
+          mkdir "$RUNNER_TEMP/u22-appimage-tools"
+          curl --fail --location --output "$RUNNER_TEMP/u22-appimage-tools/appimagetool" https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
+          curl --fail --location --output "$RUNNER_TEMP/u22-appimage-tools/runtime" https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64
+          printf '%s  %s\n' "$APPIMAGETOOL_SHA256" "$RUNNER_TEMP/u22-appimage-tools/appimagetool" "$APPIMAGE_RUNTIME_SHA256" "$RUNNER_TEMP/u22-appimage-tools/runtime" | sha256sum --check --strict
+          chmod +x "$RUNNER_TEMP/u22-appimage-tools/appimagetool"
 
-      - name: Verify release package (32 assertions, serial)
+      - name: Validate final Linux TGZ and AppImage outside the checkout
+        id: package
         run: |
-          TGZ=$(ls build/CaesuraAmeKAG-*-Linux-*.tar.gz | head -1)
-          echo "verifying: $TGZ"
-          xvfb-run -a -s "-screen 0 1280x720x24" bash scripts/verify_release_package.sh "$TGZ"
+          xvfb-run -a -s "-screen 0 1280x720x24" python3 scripts/ci_package_lane.py native \
+            --platform linux --source-sha "$SOURCE_SHA" --work "$PACKAGE_WORK" \
+            --build "$PWD/build" --requirements "$PWD/build/package-requirements-Release.json" \
+            --python "$(command -v python3)" --cpack "$(command -v cpack)" \
+            --appimagetool "$RUNNER_TEMP/u22-appimage-tools/appimagetool" \
+            --appimagetool-sha256 ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0 \
+            --runtime "$RUNNER_TEMP/u22-appimage-tools/runtime" \
+            --runtime-sha256 1cc49bcf1e2ccd593c379adb17c9f85a36d619088296504de95b1d06215aebbf \
+            --github-output "$GITHUB_OUTPUT"
 
-      - name: Upload Artifacts
+      - name: Recheck accepted bytes immediately before upload
+        env:
+          RECEIPT: ${{ steps.package.outputs.receipt }}
+          RECEIPT_SHA256: ${{ steps.package.outputs.receipt_sha256 }}
+        run: python3 scripts/ci_package_lane.py verify --receipt "$RECEIPT" --sha256 "$RECEIPT_SHA256"
+
+      - name: Upload only accepted final packages and their manifest
         uses: actions/upload-artifact@v4
         with:
           name: caesura-amekag-linux-x64
+          path: ${{ steps.package.outputs.upload_files }}
+          if-no-files-found: error
+
+      - name: Preserve first package attempt evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: u22-linux-package-evidence
           path: |
-            build/CaesuraAmeKAG-*-Linux-*.tar.gz
-            build/CaesuraAmeKAG-*-Linux-*.tar.gz.sha256
-            build/CaesuraAmeKAG-*-Linux-*.AppImage
-            build/CaesuraAmeKAG-*-Linux-*.sha256
-            build/CaesuraAmeKAG-*-Linux-*.AppImage
-            build/CaesuraAmeKAG-*-Linux-*.sha256
+            build/release-build.log
+            ${{ env.PACKAGE_WORK }}/**/*.json
+            ${{ env.PACKAGE_WORK }}/**/*.log
+            ${{ env.PACKAGE_WORK }}/**/*.png
+          if-no-files-found: warn
 
   # ============================================================
-  # Release Package (macOS TGZ) -- Sprint6-L2, mirrors release-linux.
-  # The verify step is a HARD GATE (round-9+). Round-7's red was a
-  # verify-script false positive: ps -args returned empty for a live,
-  # serving engine on this runner, so a live process was judged dead.
-  # Fixed by launcher-recorded pid/rc files (0422c17c, sections 3-4);
-  # the fixed script then ran 30/30 green as a probe on round-8
-  # (run 33248475888; editor ready in 3s, token in 1s -- 45s cap ok).
-  # Headless --editor is PROVEN to serve on macos-latest.
+  # Final macOS TGZ and read-only mounted DMG, both independently executed.
   # ============================================================
   release-macos:
     name: "macOS · Package"
-    if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
     runs-on: macos-latest
     timeout-minutes: 40
     needs: build-macos
+    outputs:
+      manifest_sha256: ${{ steps.package.outputs.manifest_sha256 }}
+    env:
+      SOURCE_SHA: ${{ github.sha }}
     steps:
+      - name: Select a new package work path outside the checkout
+        run: echo "PACKAGE_WORK=$RUNNER_TEMP/caesura-u22-macos-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
         with:
           submodules: recursive
@@ -679,6 +730,14 @@ jobs:
           # HEAD via git log over history; a depth-1 checkout loses the
           # parent diff and would misreport the tip as the evidence HEAD.
           fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.2'
 
       - name: Install Dependencies
         run: brew install cmake freetype zstd openssl@3 pkg-config
@@ -705,8 +764,8 @@ jobs:
       - name: Build Release
         run: |
           set -o pipefail
-          cmake --build build --parallel $(sysctl -n hw.logicalcpu) > build.log 2>&1 || { echo '=== build errors ==='; grep -iE 'error:|fatal error|undefined' build.log | head -30; tail -40 build.log; exit 1; }
-          tail -3 build.log
+          cmake --build build --parallel $(sysctl -n hw.logicalcpu) > build/release-build.log 2>&1 || { echo '=== build errors ==='; grep -iE 'error:|fatal error|undefined' build/release-build.log | head -30; tail -40 build/release-build.log; exit 1; }
+          tail -3 build/release-build.log
 
       - name: SDL3 link evidence (otool)
         run: otool -L build/CaesuraAmeKAG | grep -i sdl3 || true
@@ -717,51 +776,98 @@ jobs:
           npm ci --no-audit --no-fund
           npm run build
 
-      - name: Package (CPack TGZ)
-        run: cd build && cpack -G TGZ
-
-      - name: Verify release package (32 assertions, hard gate)
-        timeout-minutes: 20
+      - name: Validate final macOS TGZ and DMG outside the checkout
+        id: package
         run: |
-          TGZ=$(ls build/CaesuraAmeKAG-*-Darwin-*.tar.gz | head -1)
-          echo "verifying: $TGZ"
-          bash scripts/verify_release_package.sh "$TGZ"
+          python3 scripts/ci_package_lane.py native \
+            --platform macos --source-sha "$SOURCE_SHA" --work "$PACKAGE_WORK" \
+            --build "$PWD/build" --requirements "$PWD/build/package-requirements-Release.json" \
+            --python "$(command -v python3)" --cpack "$(command -v cpack)" --hdiutil /usr/bin/hdiutil \
+            --github-output "$GITHUB_OUTPUT"
 
-      # 035 D4: DMG is the macOS storefront artifact. CPack's DMG generator
-      # bundles the same install tree as the TGZ (hdiutil, runner-native);
-      # signing/notarization stay account-gated (ad-hoc unsigned DMG today).
-      - name: Package (CPack DMG)
-        # CPack's macOS disk-image generator is named DragNDrop (the "DMG"
-        # alias is not registered on every CMake version -- observed 3.25+).
-        run: cd build && cpack -G DragNDrop
+      - name: Recheck accepted bytes immediately before upload
+        env:
+          RECEIPT: ${{ steps.package.outputs.receipt }}
+          RECEIPT_SHA256: ${{ steps.package.outputs.receipt_sha256 }}
+        run: python3 scripts/ci_package_lane.py verify --receipt "$RECEIPT" --sha256 "$RECEIPT_SHA256"
 
-      - name: Verify DMG exists and mounts/contains the payload
-        run: |
-          set -e
-          DMG=$(ls build/CaesuraAmeKAG-*-Darwin-*.dmg | head -1)
-          test -n "$DMG" && test -s "$DMG" || { echo "no DMG produced"; exit 1; }
-          echo "dmg: $DMG ($(du -h "$DMG" | cut -f1))"
-          # Mount read-only and confirm the payload: bare executable (the
-          # macOS build is NOT a .app bundle -- MACOSX_BUNDLE is iOS-only in
-          # CMakeLists; the DMG is a bare-dir layout mirroring the TGZ) plus
-          # the payload dirs (scripts/demo/assets) inside the image.
-          MNT=$(mktemp -d /tmp/caesura-dmg.XXXXXX)
-          hdiutil attach -readonly -nobrowse -mountpoint "$MNT" "$DMG" >/dev/null
-          test -x "$MNT/CaesuraAmeKAG" || { echo "no bare executable in DMG"; hdiutil detach "$MNT" >/dev/null || true; exit 1; }
-          echo "exe: $MNT/CaesuraAmeKAG"
-          test -d "$MNT/scripts"
-          test -d "$MNT/demo"
-          test -d "$MNT/assets"
-          hdiutil detach "$MNT" >/dev/null
-
-      - name: Upload Artifacts
+      - name: Upload only accepted final packages and their manifest
         uses: actions/upload-artifact@v4
         with:
           name: caesura-amekag-macos-arm64
+          path: ${{ steps.package.outputs.upload_files }}
+          if-no-files-found: error
+
+      - name: Preserve first package attempt evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: u22-macos-package-evidence
           path: |
-            build/CaesuraAmeKAG-*-Darwin-*.tar.gz
-            build/CaesuraAmeKAG-*-Darwin-*.tar.gz.sha256
-            build/CaesuraAmeKAG-*-Darwin-*.dmg
+            build/release-build.log
+            ${{ env.PACKAGE_WORK }}/**/*.json
+            ${{ env.PACKAGE_WORK }}/**/*.log
+            ${{ env.PACKAGE_WORK }}/**/*.png
+          if-no-files-found: warn
+
+  release-web:
+    name: "Web · Final Package"
+    runs-on: ubuntu-24.04
+    needs: build-linux
+    timeout-minutes: 20
+    outputs:
+      manifest_sha256: ${{ steps.package.outputs.manifest_sha256 }}
+    env:
+      SOURCE_SHA: ${{ github.sha }}
+    steps:
+      - name: Select a new package work path outside the checkout
+        run: echo "PACKAGE_WORK=$RUNNER_TEMP/caesura-u22-web-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.2'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install Web dependencies and Lua
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y lua5.4
+          npm ci --prefix web --no-audit --no-fund
+      - name: Require current tracked script index
+        run: node web/gen-index.mjs --check
+      - name: Build chosen game and validate final directory and ZIP
+        id: package
+        run: |
+          python3 scripts/ci_package_lane.py web --source-sha "$SOURCE_SHA" --work "$PACKAGE_WORK" \
+            --game tests/projects/first_vn --zip-name caesura-first-vn-web.zip \
+            --node "$(command -v node)" --lua "$(command -v lua5.4)" \
+            --browser /opt/google/chrome/chrome --github-output "$GITHUB_OUTPUT"
+      - name: Recheck accepted bytes immediately before upload
+        env:
+          RECEIPT: ${{ steps.package.outputs.receipt }}
+          RECEIPT_SHA256: ${{ steps.package.outputs.receipt_sha256 }}
+        run: python3 scripts/ci_package_lane.py verify --receipt "$RECEIPT" --sha256 "$RECEIPT_SHA256"
+      - name: Upload only accepted final Web ZIP and its manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: caesura-amekag-web
+          path: ${{ steps.package.outputs.upload_files }}
+          if-no-files-found: error
+      - name: Preserve first Web package attempt evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: u22-web-package-evidence
+          path: |
+            ${{ env.PACKAGE_WORK }}/**/*.json
+            ${{ env.PACKAGE_WORK }}/**/*.log
+            ${{ env.PACKAGE_WORK }}/**/*.png
+          if-no-files-found: warn
 
   # ============================================================
   # iOS compile (Track I I1) - HARD GATE since 2026-09-04 (035 D batch).
