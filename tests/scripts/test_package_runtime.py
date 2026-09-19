@@ -25,6 +25,14 @@ from package_runtime import (ProcessIdentity, RuntimeContractError, native_env,
 import package_runtime as runtime
 
 
+def _publish_json_code(path, expression):
+    """Child-side fixture publication; the reader never sees partial JSON."""
+    return (f"_ready=Path({str(path)!r}); "
+            "_writing=_ready.with_name('.'+_ready.name+'.writing'); "
+            f"_writing.write_text(json.dumps({expression}), encoding='utf-8'); "
+            "os.replace(_writing,_ready); ")
+
+
 class PythonFrameworkIdentityTests(unittest.TestCase):
     """OS-boundary fixtures exercise the real contract and launcher, not macOS."""
 
@@ -302,8 +310,8 @@ class PackageRuntimeTests(unittest.TestCase):
         code = ("import socket,json,time,os; from pathlib import Path; "
                 f"s=socket.socket({family},socket.SOCK_STREAM); "
                 f"s.bind(({address!r},{port})); s.listen(); "
-                f"Path({str(ready)!r}).write_text(json.dumps({{'pid':os.getpid(),"
-                "'port':s.getsockname()[1]})); time.sleep(30)")
+                + _publish_json_code(ready, "{'pid':os.getpid(),'port':s.getsockname()[1]}")
+                + "time.sleep(30)")
         options = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
         process = subprocess.Popen([sys.executable, "-I", "-c", code], **options)
         def cleanup():
@@ -417,6 +425,50 @@ class PackageRuntimeTests(unittest.TestCase):
                 verify_owned_listener(forged, ready["port"])
         self.assertIsNone(process.poll())
 
+    def test_listener_publication_never_exposes_a_partial_json_file(self):
+        blocked = self.root / "publication-write-blocked"
+        release = self.root / "release-publication-write"
+        actual_popen = subprocess.Popen
+        # Hold a real child's write after one byte. The final readiness path
+        # must stay absent until the complete temporary file is renamed.
+        prefix = ("import time; from pathlib import Path\n"
+                  "_original_write_text = Path.write_text\n"
+                  "def _held_write_text(path, text, *args, **kwargs):\n"
+                  "    with path.open('w', encoding='utf-8') as stream:\n"
+                  "        stream.write(text[:1]); stream.flush()\n"
+                  f"    Path({str(blocked)!r}).write_bytes(b'blocked')\n"
+                  f"    while not Path({str(release)!r}).exists(): time.sleep(0.01)\n"
+                  "    return _original_write_text(path, text, *args, **kwargs)\n"
+                  "Path.write_text = _held_write_text\n")
+
+        def launch(argv, **kwargs):
+            argv = list(argv)
+            argv[-1] = prefix + argv[-1]
+            return actual_popen(argv, **kwargs)
+
+        with mock.patch.object(subprocess, "Popen", side_effect=launch), \
+                ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(self.launch_listener)
+            try:
+                deadline = time.monotonic() + 6
+                while not blocked.exists() and not future.done() and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                self.assertTrue(blocked.exists(), "actual child never reached the publication barrier")
+                self.assertEqual(list(self.root.glob("listener-*.json")), [],
+                                 "reader can observe the half-written readiness file")
+                self.assertFalse(future.done(), "reader returned before atomic publication")
+            finally:
+                release.write_bytes(b'release')
+            process, ready = future.result(timeout=6)
+        self.assertEqual(process_identity(process.pid).pid, ready["pid"])
+        self.assertTrue(verify_owned_listener(process_identity(process.pid), ready["port"]))
+
+    def test_malformed_published_json_is_rejected_without_retry(self):
+        malformed = self.root / "malformed-ready.json"
+        malformed.write_text("{", encoding="utf-8")
+        with self.assertRaises(json.JSONDecodeError):
+            self.await_json(malformed)
+
     def test_early_exit_and_missing_listener_cannot_report_readiness(self):
         process, ready = self.launch_listener()
         identity = process_identity(process.pid)
@@ -438,7 +490,7 @@ class PackageRuntimeTests(unittest.TestCase):
     def test_controlled_stop_records_identity_and_real_exit(self):
         ready = self.root / "running.json"
         code = ("import os,json,time; from pathlib import Path; "
-                f"Path({str(ready)!r}).write_text(json.dumps({{'pid':os.getpid()}})); time.sleep(30)")
+                + _publish_json_code(ready, "{'pid':os.getpid()}") + "time.sleep(30)")
         with ThreadPoolExecutor(max_workers=1) as executor:
             future = executor.submit(self.invoke, code, stop=True)
             child = self.await_json(ready)
@@ -455,10 +507,45 @@ class PackageRuntimeTests(unittest.TestCase):
         with self.assertRaises(RuntimeContractError):
             process_identity(child["pid"])
 
+    def test_cleanup_reclaims_started_descendant_before_application_publication(self):
+        started = self.root / "descendant-started.json"
+        release = self.root / "release-descendant-publication"
+        published = self.root / "descendant-application.json"
+        child = ("import os,json,time; from pathlib import Path; "
+                 + _publish_json_code(started, "{'pid':os.getpid(),'ppid':os.getppid()}")
+                 + f"release=Path({str(release)!r})\n"
+                 "while not release.exists(): time.sleep(0.01)\n"
+                 + _publish_json_code(published, "{'pid':os.getpid()}") + "time.sleep(30)")
+        parent = ("import subprocess,sys,time; "
+                  f"subprocess.Popen([sys.executable,'-I','-c',{child!r}]); time.sleep(30)")
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(self.invoke, parent, stop=True)
+            try:
+                descendant = self.await_json(started)
+                owner = ProcessIdentity(**self.await_json(self.root / "control/process.json"))
+                identity = process_identity(descendant["pid"])
+                self.assertEqual(descendant["ppid"], owner.pid)
+                self.assertEqual(Path(identity.executable), Path(self.python_image))
+                self.assertNotEqual(identity.pid, owner.pid)
+                self.assertFalse(published.exists())
+            finally:
+                if (self.root / "control").is_dir():
+                    (self.root / "control/stop").write_text("stop", encoding="utf-8")
+            report = future.result(timeout=8)
+        self.assertEqual(report["status"], "STOPPED")
+        self.assertEqual(report["owned_tree_cleanup"], "COMPLETE")
+        self.assertFalse(report["timed_out"])
+        self.assertFalse(report["forced_kill"])
+        self.assertFalse(release.exists(), "application publication barrier was never released")
+        self.assertFalse(published.exists(), "cleanup need not wait for application publication")
+        for identity in (owner, identity):
+            with self.assertRaises(RuntimeContractError):
+                process_identity(identity.pid)
+
     def test_timeout_reclaims_actual_descendants_and_never_claims_stop(self):
         ready = self.root / "descendant.json"
         child = ("import os,json,time; from pathlib import Path; "
-                 f"Path({str(ready)!r}).write_text(json.dumps({{'pid':os.getpid()}})); time.sleep(30)")
+                 + _publish_json_code(ready, "{'pid':os.getpid()}") + "time.sleep(30)")
         parent = ("import subprocess,sys,time; "
                   f"subprocess.Popen([sys.executable,'-I','-c',{child!r}]); time.sleep(30)")
         with self.assertRaises(subprocess.TimeoutExpired) as caught:
@@ -475,7 +562,7 @@ class PackageRuntimeTests(unittest.TestCase):
     def test_normal_parent_exit_also_reclaims_actual_descendants(self):
         ready = self.root / "descendant.json"
         child = ("import os,json,time; from pathlib import Path; "
-                 f"Path({str(ready)!r}).write_text(json.dumps({{'pid':os.getpid()}})); time.sleep(30)")
+                 + _publish_json_code(ready, "{'pid':os.getpid()}") + "time.sleep(30)")
         parent = ("from pathlib import Path; import subprocess,sys,time; "
                   f"subprocess.Popen([sys.executable,'-I','-c',{child!r}]); "
                   f"ready=Path({str(ready)!r}); deadline=time.monotonic()+4\n"
@@ -561,8 +648,11 @@ class PackageRuntimeTests(unittest.TestCase):
         def test_wrong_exec_spawn_without_exec_early_exit_and_interpreter_timeout_fail(self):
             python = shlex.quote(self.python_image)
             child_pid = self.root / "spawned-child.json"
+            publish_release = self.root / "release-spawned-publication"
             child = ("import json,os,time; from pathlib import Path; "
-                     f"Path({str(child_pid)!r}).write_text(json.dumps({{'pid':os.getpid()}})); time.sleep(20)")
+                     f"release=Path({str(publish_release)!r})\n"
+                     "while not release.exists(): time.sleep(0.01)\n"
+                     + _publish_json_code(child_pid, "{'pid':os.getpid()}") + "time.sleep(20)")
             bodies = ("exec /bin/sleep 20", python + " -I -c " + shlex.quote(child) + " &\nwait",
                       "exit 0", "sleep 20")
             for index, body in enumerate(bodies):
@@ -573,13 +663,18 @@ class PackageRuntimeTests(unittest.TestCase):
                     report = self.await_json(self.root / name / "run.json")
                     self.assertEqual(report["status"], "LAUNCH_FAILED")
                     self.assertEqual(report["owned_tree_cleanup"], "COMPLETE")
+                    self.assertIsNone(report["process"])
+                    self.assertNotEqual(report["exec_transition"]["status"], "VERIFIED")
                     self.assertFalse((self.root / name / "process.json").exists())
                     with self.assertRaises(RuntimeContractError):
                         process_identity(report["exec_transition"]["child_pid"])
+                    # Exec rejection may reap the descendant before Python
+                    # publishes anything. Started-child cleanup is checked by
+                    # the separate handshake/barrier test above, not by waiting
+                    # for a file which a correctly killed process cannot write.
                     if index == 1:
-                        descendant = self.await_json(child_pid)
-                        with self.assertRaises(RuntimeContractError):
-                            process_identity(descendant["pid"])
+                        self.assertFalse(publish_release.exists())
+                        self.assertFalse(child_pid.exists())
 
         def test_launch_script_change_after_exec_is_not_accepted(self):
             release = self.root / "release"
