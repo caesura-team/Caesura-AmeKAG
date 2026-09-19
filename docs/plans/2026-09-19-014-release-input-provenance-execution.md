@@ -74,3 +74,15 @@ CMake实际重新配置发现54个CTest入口，六profile的最低发现数由�
 真实候选完整Debug/C++/Lua/CTest、最终tar的实际Web浏览器验收、11个托管artifact与job名称/outputs读回、非注入dry-run及AE7托管取消/调包负控仍待执行。U22新候选0785b697本地严格windows-debug通过，但run35451773753的Mac最终TGZ验收失败正在诊断；不得把本地或维护夹具通过改写成U22、U23或整个U1–U29计划完成。Pages服务接受及真正部署不在本次dry-run内。
 
 Gate Pages独审随后完成，无可行动发现：45字段与workflow精确一致，47项缺字段/额外字段/重复ID负控均拒绝；新增真实wire晚增空目录在preupload拒绝（27GET），最终Pages digest改变在hosted-final拒绝（26GET），均无Pages plan或upload_files。作者测试与独审源码hash一致，证据u23-pages-gate-review/review-01.md。
+
+## 2026-09-20 首次托管结果与包修复集成
+
+干净候选79e8b439的本地完整windows-debug通过：C++1408/1408、403021条断言、Lua147/147与56/56，CTest54项中53通过、1项预声明AI服务跳过，runner/collector/strict verifier均退出0。原始run为5f92871a-17a1-41b2-87bf-0a87cc7fb5ad，run.json摘要6a16ac97aeb69bd86b3f5a2d82ffbf9d697b8a7431fcd8567de6cf5185a6ba85。该候选的本地真实Web producer在Node打包输出路径检查失败，未生成最终Pages tar，也未启动Chrome；失败目录和日志保留，不能将此前夹具通过当作实际tar验收。
+
+首次托管run35452996878/attempt1已失败结束。执行源码为79e8b439，caller/callee workflow为5016925176d01a90ae4a6ce4d898081afd14aacf。九项required jobs实际4成功、3失败、2跳过：Linux Web性能625/626（比例2.5302350980073647超过固定2.5阈值）；macOS最终TGZ因已消失的系统plist-cache映射观察失败；Windows最终ZIP的60帧阶段在SoLoud初始化错误后超时。macOS/Windows的原始静态、运行、进程与日志摘要已逐层核对，不将同类旧失败中的具体Lua错误文本套用到本次。
+
+实际aggregate名称为Verify release inputs / Verify exact release inputs，job105930144140、GitHub Actions App15368。下载的producer-outputs.json共45字段，25个非空、20个为空，2731字节、SHA256为10887f33a2e45fbb829d58d87696fb47540c8a58b05abea4dcdfce6144e6501d。gate在inputs阶段拒绝首个空artifact ID，尚未执行required-job来源认证、下载或聚合。此结果只证明缺输入被真实入口拒绝，不关闭AE7的托管取消/调包负控。原始gate artifact10588092016的传输摘要36fa7c62dafd3a6ccc0e029bedd03f2a07e17c2449ff0d24d1434efc400dbdde；完整审计见artifacts/validation/u23-hosted-79e8b439/audit-handoff-03.md。服务端仍未改动。
+
+merge699f1951整合U22候选effc6b2a的macOS映射观察、Web源内独占暂存/仓外逐字节复制和显式SoLoud软件混音。U23的caller、v2收据、Pages最终tar及上传闭包保留。Windows lane50/50、WSL51/51、release gate21/21通过，五workflow actionlint通过；两边测试方法37与34的并集恰为50，无丢失或重名覆盖。独立merge审查无发现，见u23-package-fix-integration/review-01.md。实际CMake discovery为55，六profile据此从54增至55，C++最低发现数各增加6。
+
+被整合的U22干净effc6b2a已有完整Debug、C++1414/1414与427080条断言、Lua147/56、CTest45通过/1预声明跳过，run0c1f2b69-e122-4579-8c23-716ef7e9e3fa及严格收集/验证均通过。该证据只属于U22原候选，不能替代新U23候选的完整55项验证。U22托管run35455884122仍有macOS最终包新失败待诊断。新U23完整门禁、真实目录/ZIP/Pages tar Chrome、全部托管输入和非注入dry-run仍未完成；物理音频、设备及部署不由软件混音证明。平台YAML仅同步review anchor，逐项历史执行证据不提升。
