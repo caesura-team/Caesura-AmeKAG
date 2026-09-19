@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import socket
 import subprocess
 import sys
@@ -480,6 +481,149 @@ class WebPackageRuntimeTests(unittest.TestCase):
         self.assertEqual(inspect_inventory(self.package), before)
         self.assertEqual(report['tools']['lua']['usage'], 'declared_for_static_stage_not_executed_by_runtime')
         self.assertTrue((self.root / 'runtime-attempt' / 'report.json').is_file())
+
+    if os.name == 'posix':
+        def test_chrome_temp_is_unique_canonical_and_does_not_follow_cleanup_links(self):
+            first, second = runtime._ChromeTemporaryDirectory(), runtime._ChromeTemporaryDirectory()
+            try:
+                self.assertNotEqual(first.path, second.path)
+                self.assertEqual(first.path, first.path.resolve(strict=True))
+                self.assertEqual(first.path.parent, Path('/tmp').resolve(strict=True))
+                self.assertEqual(first.record['identity']['uid'], os.geteuid())
+                self.assertEqual(first.record['identity']['mode'], 0o700)
+                outside = self.root / 'keep.txt'
+                outside.write_text('keep outside bytes')
+                (first.path / 'outside-link').symlink_to(self.root, target_is_directory=True)
+                (first.path / 'nested').mkdir()
+                (first.path / 'nested/file').write_text('owned bytes')
+                with socket.socket(socket.AF_UNIX) as sock:
+                    sock.bind(str(first.path / 'socket'))
+                result = first.cleanup(process_exited=True)
+                self.assertEqual(result['status'], 'CLEANUP_PASS', result)
+                self.assertEqual(outside.read_text(), 'keep outside bytes')
+                self.assertFalse(first.path.exists())
+                self.assertTrue(second.path.is_dir())
+            finally:
+                for lease in (first, second):
+                    if lease.root_fd is not None:
+                        self.assertEqual(lease.cleanup(process_exited=True)['status'], 'CLEANUP_PASS')
+
+        def test_chrome_temp_replacement_is_retained_without_deleting_either_tree(self):
+            for kind in ('directory', 'symlink'):
+                with self.subTest(kind=kind):
+                    lease = runtime._ChromeTemporaryDirectory()
+                    moved = lease.path.with_name(lease.path.name + '-retained-original')
+                    (lease.path / 'original').write_text('keep owned original')
+                    lease.path.rename(moved)
+                    replacement = self.root / ('replacement-' + kind)
+                    replacement.mkdir()
+                    (replacement / 'foreign').write_text('keep replacement')
+                    if kind == 'directory':
+                        replacement.rename(lease.path)
+                    else:
+                        lease.path.symlink_to(replacement, target_is_directory=True)
+                    try:
+                        result = lease.cleanup(process_exited=True)
+                        self.assertEqual(result['status'], 'CLEANUP_FAIL')
+                        self.assertFalse(result['removed'])
+                        self.assertEqual((lease.path / 'foreign').read_text(), 'keep replacement')
+                        self.assertEqual((moved / 'original').read_text(), 'keep owned original')
+                    finally:
+                        # Restore/remove only the exact roots this fixture made.
+                        if kind == 'symlink':
+                            lease.path.unlink()
+                        else:
+                            lease.path.rename(replacement)
+                        moved.rename(lease.path)
+                        shutil.rmtree(lease.path)
+
+        def test_chrome_temp_retains_directory_without_process_cleanup_or_with_wrong_owner(self):
+            for reason in ('process-live', 'owner-changed'):
+                with self.subTest(reason=reason):
+                    lease = runtime._ChromeTemporaryDirectory()
+                    marker = lease.path / 'retained'
+                    marker.write_text('keep')
+                    if reason == 'owner-changed':
+                        # The OS ownership boundary is injected; no chown privilege needed.
+                        lease.record['identity']['uid'] += 1
+                    try:
+                        result = lease.cleanup(process_exited=reason != 'process-live')
+                        self.assertEqual(result['status'], 'CLEANUP_FAIL')
+                        self.assertFalse(result['removed'])
+                        self.assertEqual(marker.read_text(), 'keep')
+                    finally:
+                        shutil.rmtree(lease.path)
+
+        def test_long_attempt_uses_short_owned_chrome_socket_temp(self):
+            # Actual AF_UNIX bind in an owned child; only the Chrome/CDP host
+            # boundary is substituted. This never claims browser acceptance.
+            attempt = self.root / ('long-attempt-' + 'x' * 100)
+            attempt.mkdir()
+            observation = attempt / 'socket-observation.json'
+            child = attempt / 'socket-child.py'
+            child.write_text(
+                'import json, os, socket, tempfile, time\nfrom pathlib import Path\n'
+                'directory = Path(tempfile.mkdtemp(prefix="com.google.Chrome."))\n'
+                'path = directory / "SingletonSocket"\n'
+                'result = dict(path=str(path), bytes=len(os.fsencode(path)), '
+                'home=os.environ["HOME"], temp=os.environ["TMPDIR"])\n'
+                'sock = socket.socket(socket.AF_UNIX)\n'
+                'try:\n    sock.bind(str(path))\n    result["status"] = "BOUND"\n'
+                'except OSError as error:\n    result.update(status="BIND_FAIL", error=str(error))\n'
+                f'Path({str(observation)!r}).write_text(json.dumps(result))\n'
+                'while True: time.sleep(0.01)\n', encoding='utf-8')
+            real_owned = runtime._OwnedCommand
+            def launch(argv, cwd, env, directory, **kwargs):
+                if directory.name == 'browser':
+                    argv = [sys.executable, '-I', '-S', str(child)]
+                return real_owned(argv, cwd, env, directory, **kwargs)
+            def socket_observed(*args, **kwargs):
+                if observation.exists():
+                    raise RuntimeContractError('Socket fixture finished; no Chrome/CDP acceptance')
+                return None
+            with mock.patch.object(runtime, '_OwnedCommand', side_effect=launch), \
+                    mock.patch.object(runtime, '_chrome_ready', side_effect=socket_observed):
+                result = runtime._scenario(self.package, attempt, 'root', '/',
+                    dict(browser=dict(path=sys.executable), node=dict(path=sys.executable)), 'headless=new')
+            observed = json.loads(observation.read_text())
+            self.assertEqual(result['status'], 'SCENARIO_FAIL')
+            self.assertEqual(result['cleanup']['browser']['status'], 'CLEANUP_PASS')
+            self.assertEqual(result['cleanup']['server']['status'], 'CLEANUP_PASS')
+            self.assertEqual(observed['status'], 'BOUND', observed)
+            self.assertLess(len(os.fsencode(observed['path'])), 104)
+            self.assertEqual(observed['home'], str(attempt / 'root/home'))
+            self.assertFalse(Path(observed['temp']).is_relative_to(attempt))
+            self.assertFalse(Path(observed['temp']).exists())
+            self.assertEqual(result['cleanup']['chrome_temp']['status'], 'CLEANUP_PASS')
+            request = json.loads((attempt / 'root/browser/control/request.json').read_text())
+            self.assertEqual(request['env']['TMPDIR'], observed['temp'])
+            self.assertTrue((attempt / 'root/profile').is_dir())
+            self.assertTrue((attempt / 'root/browser/stderr.log').is_file())
+
+    def test_probe_uses_attempt_environment_instead_of_chrome_transient_temp(self):
+        command = mock.Mock()
+        command.wait_result.side_effect = RuntimeContractError('controlled probe boundary')
+        command.stop.return_value = dict(status='CLEANUP_PASS')
+        browser = mock.Mock(env=dict(TMPDIR='/must-not-leak-chrome-temp'), identity=mock.Mock(pid=123))
+        with mock.patch.object(runtime, '_OwnedCommand', return_value=command) as launch:
+            with self.assertRaisesRegex(RuntimeContractError, 'controlled probe boundary'):
+                runtime._probe('boot', self.root, mock.Mock(url='http://127.0.0.1:1234/'), browser,
+                               dict(cdp_url='http://127.0.0.1:4321'), sys.executable, env=self.env)
+        self.assertEqual(launch.call_args.args[2], self.env)
+        command.stop.assert_called_once()
+
+    if sys.platform == 'linux':
+        def test_actual_linux_unix_socket_boundary_is_108_bytes(self):
+            with tempfile.TemporaryDirectory(prefix='cs-', dir='/tmp') as directory:
+                for size in (107, 108):
+                    path = directory + '/' + 's' * (size - len(os.fsencode(directory)) - 1)
+                    self.assertEqual(len(os.fsencode(path)), size)
+                    with socket.socket(socket.AF_UNIX) as sock:
+                        if size == 107:
+                            sock.bind(path)
+                        else:
+                            with self.assertRaisesRegex(OSError, 'AF_UNIX path too long'):
+                                sock.bind(path)
 
     def test_existing_attempt_or_repository_attempt_is_refused_before_launch(self):
         kwargs = dict(node_executable=sys.executable, browser_executable=sys.executable,
