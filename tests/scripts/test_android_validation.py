@@ -653,6 +653,83 @@ class AndroidDriverTests(unittest.TestCase):
         self.assertEqual(report['commands'][-1]['process']['actual_exit_code'], 9)
         self.assertFalse((self.work / 'verify').exists())
 
+    def password_file_signer(self, mutation=None):
+        """Real child/file reads at the signer boundary, not real APK signing.
+
+        Selected apksigner help specifies one shared cursor per password file.
+        Exercise that consumption rule with the production-generated argv.
+        No credential bytes are sent to argv, stdout, stderr, or receipts.
+        """
+        child = put(self.root / 'password-consumer.py', '''import contextlib, shutil, sys
+from pathlib import Path
+args = sys.argv[1:]
+with contextlib.ExitStack() as stack:
+    streams = {}
+    values = []
+    for option in ('--ks-pass', '--key-pass'):
+        spec = args[args.index(option) + 1]
+        if not spec.startswith('file:'):
+            raise SystemExit('fixture requires private password file input')
+        path = Path(spec[5:]).resolve()
+        if path not in streams:
+            streams[path] = stack.enter_context(path.open('rb'))
+        line = streams[path].readline()
+        if not line:
+            print('password read EOF at ' + option, file=sys.stderr)
+            raise SystemExit(2)
+        values.append(line.rstrip(b'\\r\\n'))
+    if not values[0] or values[0] != values[1]:
+        print('private key password differs from generated keystore password', file=sys.stderr)
+        raise SystemExit(3)
+shutil.copyfile(args[-1], args[args.index('--out') + 1])
+print('both password reads completed; fixture artifact copied')
+''')
+        original = self.runner
+        def runner(argv, **kw):
+            if Path(kw['control_dir']).parent.name != 'sign-apk':
+                return original(argv, **kw)
+            self.calls.append(('sign-apk', argv, kw['env']))
+            if mutation:
+                mutation(argv)
+            return run_runtime_command([str(Path(sys.executable).resolve()), '-I', str(child), *argv], **kw)
+        self.runner = runner
+
+    def test_apksigner_password_files_supply_both_sequential_reads(self):
+        self.password_file_signer()
+        result = self.call()
+        self.assertEqual(result['status'], 'FIXTURE_ONLY')
+        self.assertEqual(result['private_cleanup'], 'COMPLETE')
+        self.assertFalse((self.work / 'private-signing').exists())
+        signer = next(c for c in result['commands'] if c['name'] == 'sign-apk')
+        self.assertEqual(signer['process']['actual_exit_code'], 0)
+        self.assertIn('both password reads completed', Path(signer['stdout']['path']).read_text(encoding='utf-8'))
+
+    def test_apksigner_password_files_eof_or_wrong_key_stop_and_clean(self):
+        original = self.runner
+        for mode, exit_code in (('eof', 2), ('wrong-key', 3)):
+            self.runner = original
+            def mutation(argv):
+                store = Path(argv[argv.index('--ks-pass') + 1][len('file:'):])
+                key = Path(argv[argv.index('--key-pass') + 1][len('file:'):])
+                first = store.read_bytes().splitlines()[0] + b'\n'
+                other = b'' if mode == 'eof' else b'deliberately-wrong-fixture-key\n'
+                if store == key:
+                    store.write_bytes(first + other)
+                else:
+                    key.write_bytes(other)
+            self.password_file_signer(mutation)
+            with self.subTest(mode=mode), self.assertRaisesRegex(ValueError, 'Owned command failed: sign-apk'):
+                self.call()
+            result = json.loads((self.work / 'android-validation.json').read_text(encoding='utf-8'))
+            self.assertEqual(result['status'], 'FAIL')
+            self.assertEqual(result['private_cleanup'], 'COMPLETE')
+            self.assertFalse((self.work / 'private-signing').exists())
+            self.assertEqual(result['commands'][-1]['process']['actual_exit_code'], exit_code)
+            self.assertEqual(result['commands'][-1]['process']['owned_tree_cleanup'], 'COMPLETE')
+            self.assertFalse(any(c['name'] == 'sign-aab' for c in result['commands']))
+            self.assertFalse((self.work / 'verify').exists())
+            self.assertEqual([p.name for p in (self.work / 'outputs').iterdir()], ['test-certificate.der'])
+
     def test_sdl_unstaged_transitive_native_dependency_refuses(self):
         original = self.produce
         def producer(name, args):

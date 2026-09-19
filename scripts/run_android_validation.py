@@ -624,7 +624,10 @@ def _sign(value, tc, unsigned, command, work, report):
     password = private / 'password.txt'; key = private / 'test.p12'
     with password.open('xb') as stream:
         os.chmod(password, 0o600)
-        stream.write(secrets.token_urlsafe(48).encode('ascii') + b'\n')
+        # apksigner consumes this shared file once for each password option.
+        # keytool/jarsigner independently open it and consume the first line.
+        line = secrets.token_urlsafe(48).encode('ascii') + b'\n'
+        stream.write(line + line)
     tool = lambda n: tc['tools'][n]['path']
     flags = [*package.JAVA_FLAGS, '-J-Duser.home=' + str(work / 'home')]
     timeout = value['timeouts']['sign']

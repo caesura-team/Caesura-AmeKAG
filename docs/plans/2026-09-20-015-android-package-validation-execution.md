@@ -1,6 +1,6 @@
 # U24 Android 构建与包验证执行记录
 
-本记录属于当前唯一运行时可靠性计划的U24。当前交付是受控构建驱动和APK/AAB验证合同；本轮真实NDK Release编译已成功，但首次到达编译的整体运行在CMake缓存校验失败，**Gradle构建、签名、安装与设备运行尚未验收**。不能以编译或维护夹具通过关闭U24或提升发布状态。
+本记录属于当前唯一运行时可靠性计划的U24。当前交付是受控构建驱动和APK/AAB验证合同；第四次真实执行已完成NDK Release编译、ELF检查、Gradle打包和zipalign，但在APK测试签名失败，**签名后的最终包、安装与设备运行尚未验收**。不能以编译或维护夹具通过关闭U24或提升发布状态。
 
 ## 已实现的合同
 
@@ -78,3 +78,11 @@
 File API修复已完成：预先锁定codemodel-v2/toolchains-v1查询，要求唯一完成index与objects/reply引用相等、版本为严格整数、JSON安全basename及CMake/Ninja/source/build身份一致。唯一C/CXX普通编译器文件须在选定NDK中且SHA匹配原清单；cache若显式提供则同一路径。query/index/响应均进入最终稳定性检查，原配置、目标、ELF及依赖合同保持。真实小型configure与冻结解析器读取原响应通过；生产源码摘要e2b1da1e6c0ac76853d9f0be356c6d717dc405a3de131662a890d30d299bb3a1，测试摘要3ae25b0e09bc601af6d45a32a24bc6e8b91bf54ec7e90fd7452bcaf28d32f6f5。
 
 有效旧实现RED02为3方法、23失败子例及正控1错误，最终GREEN02为3/3、27负控。首次GBK夹具错误、布尔版本误接受和中间异常类断言错误分别保留；未用这些代替有效回归。完整Windows47/47、250.904秒，WSL45/45、73.998秒，均0失败0跳过；45个旧方法定义全部保留，新增3个。证据u24-compiler-evidence-01/handoff-01.md及freeze-02.json（最终35项锁）可复核，freeze01自输出摘要错误保留为历史。独审逐项核对原件、5份FileAPI响应和完整终态日志，无可行动发现；independent-review-01.md摘要6d32a00c023f43a14b895d56bbb474bc8766d7f04c49f7975d5012478963dc16，JSON摘要a905e46e770da5e413ee25a766420f4d6a495992b703fdf2540aba341fe55071。下一步仍是新干净源码的完整实际Android执行，以上不构成Gradle/签名/设备或发布通过。
+
+## 第四次实际执行与签名口令消费修复
+
+干净源码0a7d03084aebe498fbd889ddc7a6ef88925fa770使用新请求request-0a7d0308-04（SHA ce3ce5869c87b25b9fc849ee80fddd619e493064f9bb31c8308f1fd4006077f6），在D:/caesura-u24-android-0a7d0308-04完整执行至sign-apk。原收据SHA905824d59cb29e60a29f85c079e7fc071c6b76236fe989318a8593db113ad246保持FAIL：15条实际命令前14条退出0，包括configure、compile、ELF、offline Gradle、测试密钥/证书和zipalign；apksigner退出2。所有owned进程cleanup COMPLETE，无超时/强杀；私有签名目录已清，outputs只有测试证书，没有签名APK/AAB。sign-aab、最终包验证与最终稳定性检查尚未执行。
+
+原stderr明确为第二次从password.txt读取私钥口令时EOF。生产只写一行，却给apksigner的两个密码参数相同file路径。选定工具原JAR内置帮助和实际PasswordRetriever探针确认同文件按行顺序消费；两行相同口令及两个独立文件各一行的正控均成功，一行的第二次读取负控触发EOF。此真实Java探针PID9020退出0、owned/private cleanup COMPLETE，只检验口令读取，没有生成密钥或签名。另核对选定JDK src.zip：keytool/jarsigner各自重新打开文件并读取首行，因此保留原参数并写两行同一随机值即可修复；秘密不进入argv、环境或证据。
+
+两项维护回归先在未修生产取得RED（正常路径ERROR，EOF/不同key负控通过），修复后定向2/2、19.467秒；完整Windows49/49、242.078秒，WSL47/47、80.118秒，均0失败0跳过。原测试方法保留，工具边界模型始终FIXTURE_ONLY，不冒称真实签名。最终生产SHAfc0fa3a23ba6b204796531042d476a1bfd1f4823a521b33ed579697a69500316，测试SHA2c14f7247fb6f6e917a5f93b4d30460110916fda38a6c5253d7bb4fb5272f0e2。u24-signing-01/fix-freeze-01.json锁定27份证据，SHA3644261d0fd607071975de535cc2e4dc9e2162e33dc0b8796598086fb8efff9c；root独立审查核对原RED、真实探针、源码差异及所有摘要，没有可行动发现。下一次实际执行必须使用新干净提交、新请求和新工作目录，不能重写本次失败。
