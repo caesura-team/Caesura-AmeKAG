@@ -91,5 +91,6 @@ jobs:
           path: |
             ${{ runner.temp }}/release-gate-inputs/*.json
             ${{ runner.temp }}/release-input-gate/**/*.json
+            ${{ runner.temp }}/release-input-gate/**/*.body
             ${{ runner.temp }}/release-input-gate/**/*.log
           if-no-files-found: warn
