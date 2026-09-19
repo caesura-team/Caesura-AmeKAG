@@ -131,3 +131,16 @@ Linux HTTP smoke的75条路由均通过，之后受控停止失败。Engine的ed
 macOS该run的package_runtime实际30/30通过；native/Web在真实Python映像身份确认后、HTTPServer就绪前失败，历史失败artifact缺少原始子进程栈，不能断言DNS就是旧故障根因。受控真实子进程证明固定127.0.0.1服务仍受HTTPServer反向DNS阻塞：释放resolver屏障后真实HTTP正常，而预期无DNS断言在旧实现失败。现在专用回环服务直接使用TCPServer.server_bind，保留数字地址、实际端口及全部PID/监听归属规则。启动第5秒保留faulthandler栈，原15秒期限不变；失败异常携入原stderr末8192字节，避免临时目录清理后诊断丢失。三项真实child RED→GREEN、Windows Web26/26及Native29/29、WSL Web24/24及Native27/27全部通过，零失败零跳过，见u22-http-startup-audit。没有运行Chrome/Engine，原macOS归因和实际平台通过仍待新CI。
 
 CI新增三平台失败HTTP目录和LastTest上传；独审指出Windows必须含Debug/Release层，已修为build/${{ matrix.config }}/artifacts/validation/http-smoke-*/，Linux/macOS单配置路径不变，原证据上传保留。actionlint1.7.7通过。第二候选四份原始job日志保留u22-foundation/ci-35444473803-*-job.log；三个Android/iOS probe成功，四个最终包job均因前置失败未执行。PR25与U22整体继续未通过，未合并、未发布。
+
+
+## 第三候选原始结果与后续修复
+
+本地干净提交0278910e的windows-debug严格验证12183991-ef9b-4bbf-b814-66da967a9f24通过：完整Debug构建0，C++1408/1408、403021断言、0失败0跳过，Lua147/56两入口均0；CTest45项中44通过、0失败，仅预声明CaesuraHeadlessAiSmoke跳过，真实HTTP检查通过。runner、collector、strict verifier均退出0，原始run.json摘要0a8e93bef540e755495f13502f9f112e3fca126ee438079d4fa6fdd554a4bb32。原件及outcome位于u22-foundation/candidate-0278910e-01，收集件位于主工作区u22-evidence/0278910e0ff735fda4458a1ffd4386e846ad37ea/12183991-ef9b-4bbf-b814-66da967a9f24/windows-debug。
+
+托管run35446845025的PR head为0278910e，三个原始job日志的git log证明实际执行的是PR merge69e0777810ced7c47aa2378b551b9fee69a3e87c，不能以head替代执行身份。Windows Debug105907137963和Release105907137911通过。Linux105907138086完整45项CTest无失败、仅AI跳过，实际HTTP通过，随后平台文档旧anchor使job失败。macOS105907138155的实际HTTP、native/Web runtime通过，但一个合成Framework切换测试因使用真实调度时钟失败。Windows最终包105910356512完成构建后在ci_package_lane.py的参数解析阶段拒绝多余cpack.exe路径，未开始最终包生成；其余最终包job被依赖失败跳过。该run总体失败，全部首次日志保留。
+
+测试提交28575a16只隔离了合成Framework fixture的时钟：原fixture完全替换Popen/OS身份观察却使用真实0.2秒截止时间，受控调度延迟真实复现身份观察次数不足。现该fixture使用可控单调时钟，保留两次最终身份观察及0.2秒合同，并新增未达到终态/仅一次终态仍拒绝的负控。Windows完整29/29、WSL33/33、0跳过，独审见u22-offline-review/framework-clock-review-01.md；实际子进程、AppRun、listener及生产deadline代码未改变。它不构成新的macOS托管通过。后续候选仍需干净源码完整本地门禁与托管最终包验收。
+
+固定Mac诊断artifact10585526480已下载原始141983字节，API与ZIP摘要均为b0bae68a033453ace1f283b8419bd713b0491f50b3f47011caafd467e68dc71a。原HTTP收据证明PID33095、创建身份1789826169:501546、本轮OS分配127.0.0.1:49345，stop_requested=true、自然退出0、forced_kill=false、timed_out=false、cleanup COMPLETE，stdout记录真实清理退出。HTTP实际73/73，另两项Web打包检查因该Mac job无Web工具链跳过；这不等于75项全跑。Native runtime实际25项与Web runtime24项通过；整个Mac job仍因合成Framework测试失败。Linux仅读取原job日志，没有下载189510770字节诊断包，故不额外声称其PID/停止/清理收据已核验。原件、摘要与身份边界见u22-hosted-runtime-027/。
+
+Windows CLI失败根因由真实PowerShell复现：PATH含两份cpack.exe时Get-Command的.Source返回数组，第二完整路径作为多余参数进入argparse；同样的双Python候选会使调用表达式失败。提交46490236仅令两项命令发现按PATH顺序选择首个Application，并让不存在的命令立即失败。旧片段双工具候选RED，新片段正确分派；单个带空格路径通过，缺工具与显式多余参数继续拒绝，actionlint通过，见u22-package-cli-audit/。验证在生产CLI解析后由capture worker故意返回失败，未调用CPack或Engine，不作为最终包通过。平台数据仅同步新代码审阅anchor；实际本地0278910e及托管merge69e07778的执行证据身份分别保留。

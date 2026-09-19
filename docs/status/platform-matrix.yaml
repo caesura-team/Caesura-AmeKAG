@@ -1,7 +1,9 @@
 version: 1
 schema_version: "1.0.0"
 generated_document: "docs/status/platform-status.md"
-evidence_head_commit: c637216fb3c350ac9b1f0e2d524f2fc50fb7dedc
+# Review synchronization anchor only; execution commits and dates remain per capability.
+# A docs-only sync does not revalidate packages, devices, releases, or the code anchor.
+evidence_head_commit: 46490236cb22fac069c8956ed7b69e7f0ad8de45
 
 allowed_status_enums:
   - verified
@@ -23,23 +25,25 @@ platforms:
       graphics_api: "Direct3D 11 / OpenGL 4.3 (bgfx)"
       audio_backend: "SoLoud (WASAPI / WinMM)"
       toolchain: "CMake 3.25+ / vcpkg"
+    gates:
+      evidence_scope: "Reviewed at code anchor 46490236; new build/runtime evidence is only clean 0278910e local Windows Debug. Hosted run 35446845025 executed PR merge 69e07778 (head 0278910e); Windows Debug job 105907137963 and Release job 105907137911 succeeded; Release Package job 105910356512 failed at CLI argument parsing before final-package generation. First-VN, packaging and release rows retain their separately dated historical evidence; no final-package or release acceptance is added. The generated footer remains a historical summary, not a current all-platform gate."
     capabilities:
       build:
         status: verified
         evidence:
-          commit: "3cc9bfb8"
-          document: "README.md"
-          test: "cmake --build build --config Debug --parallel"
-          verified_at: "2026-09-03T17:42:42Z"
-          notes: "CI run 33783878872 (Windows MSVC Debug + Release jobs) green at 3cc9bfb8; local Debug+Release builds remain the prior 62132e78 evidence."
+          commit: "0278910e0ff735fda4458a1ffd4386e846ad37ea"
+          document: "scripts/validation_profiles.json"
+          test: "cmake --build build/presets/windows-foundation --config Debug --parallel 4"
+          verified_at: "2026-09-19T13:48:38.861656Z"
+          notes: "Clean local windows-debug run 12183991-ef9b-4bbf-b814-66da967a9f24 at 0278910e: actual build exit 0. Raw receipt: artifacts/validation/u22-foundation/candidate-0278910e-01/run.json, SHA256 0a8e93bef540e755495f13502f9f112e3fca126ee438079d4fa6fdd554a4bb32. This is local Debug only; prior Release evidence remains historical at 3cc9bfb8 (CI33783878872)."
       runtime:
         status: verified
         evidence:
-          commit: "3cc9bfb8"
-          document: "docs/plans/2026-08-24-027-antigravity-handoff.md"
-          test: "(cd build/tests/Debug && ./CaesuraTests.exe) && build/lua/Debug/lua.exe tests/scripts/run_lua_tests.lua && build/lua/Debug/lua.exe tests/scripts/run_orphan_tests.lua"
-          verified_at: "2026-09-03T17:42:42Z"
-          notes: "CI run 33783878872 (Windows MSVC Debug + Release: full test surfaces, ctest, coupling) green at 3cc9bfb8. Local re-measurement on 7935dffb: 1120 doctest cases / 385790 assertions (0 failed, 0 skipped), 143 main Lua suites (0 failed), 25 orphan suites (0 failed; +select->cross-scene [jump] regression as of 2026-08-29), coupling gate PASS, 15/15 ctest targets (CaesuraBuildCli + CaesuraGoldenVn; ctest --test-dir build -N at HEAD b7e1e7ce, 2026-08-29)"
+          commit: "0278910e0ff735fda4458a1ffd4386e846ad37ea"
+          document: "scripts/validation_profiles.json"
+          test: "scripts/run_validation.py windows-debug profile, collect_validation_evidence.py and strict verify_release_candidate.py"
+          verified_at: "2026-09-19T14:00:53.410554Z"
+          notes: "Clean local windows-debug run 12183991-ef9b-4bbf-b814-66da967a9f24 at 0278910e: runner, collector and strict verifier exit 0; 45 CTest entries, 44 passed, zero failed, only predeclared CaesuraHeadlessAiSmoke skipped. HTTP smoke actually passed. Outcome: artifacts/validation/u22-foundation/candidate-0278910e-01-outcome.json. Not hosted Windows, final-package, First-VN revalidation or release approval; those older rows retain their own commits."
       first_vn:
         status: verified
         evidence:
@@ -76,23 +80,25 @@ platforms:
       graphics_api: "OpenGL 4.3 (bgfx / Mesa GLX)"
       audio_backend: "SoLoud (ALSA / PulseAudio / Null device in CI)"
       toolchain: "CMake 3.25+ / Ninja"
+    gates:
+      evidence_scope: "Reviewed at code anchor 46490236; run 35446845025 job 105907138086 at PR merge 69e07778 (head 0278910e) passed Debug build and 45 CTest entries with only the declared AI skip. The job then failed the platform-document drift gate. Package jobs are not accepted and old First-VN/package evidence stays historical. The fixed generated footer count 11/11 is historical and does not describe this run."
     capabilities:
       build:
         status: verified
         evidence:
-          commit: "3cc9bfb8"
-          document: "docs/plans/2026-08-22-025-delivery-handoff.md"
-          test: "cmake -B build -S . -DCMAKE_BUILD_TYPE=Debug && cmake --build build -j$(nproc)"
-          verified_at: "2026-09-03T17:42:42Z"
-          notes: "CI run 33783878872 (Linux GCC job) green at 3cc9bfb8; earlier WSL/local evidence at 806275cf."
+          commit: "69e0777810ced7c47aa2378b551b9fee69a3e87c"
+          document: ".github/workflows/ci.yml"
+          test: "cmake -B build -S . -DCMAKE_BUILD_TYPE=Debug -DCAESURA_ENABLE_FFMPEG=OFF -DBX_CONFIG_DEBUG=1 -DCAESURA_REQUIRE_TEST_PREREQUISITES=ON && cmake --build build --config Debug --parallel"
+          verified_at: "2026-09-19T13:52:24.6899727Z"
+          notes: "Actual Linux Debug build passed in CI run 35446845025, job 105907138086 at PR merge 69e07778 (head 0278910e). The overall job later failed only at the platform-document drift check; this row records build execution, not an accepted final package or all-green CI. Raw log: artifacts/validation/u22-foundation/ci-35446845025-linux-job.log."
       runtime:
         status: verified
         evidence:
-          commit: "3cc9bfb8"
-          document: "docs/plans/2026-08-22-025-delivery-handoff.md"
-          test: "ctest --test-dir build --output-on-failure"
-          verified_at: "2026-09-03T17:42:42Z"
-          notes: "CI run 33783878872 (Linux GCC job: ctest + coupling) green at 3cc9bfb8; earlier 11/11 CTest targets on WSL and GitHub Actions Linux CI at 806275cf."
+          commit: "69e0777810ced7c47aa2378b551b9fee69a3e87c"
+          document: ".github/workflows/ci.yml"
+          test: "xvfb-run -a -s '-screen 0 1280x720x24' ctest --test-dir build --output-on-failure"
+          verified_at: "2026-09-19T14:04:07.7345235Z"
+          notes: "CI run 35446845025 job 105907138086 at PR merge 69e07778 (head 0278910e): 45 CTest entries, 44 passed, zero failed, only CaesuraHeadlessAiSmoke skipped. HTTP smoke passed in 8.86 s; native/Web package runtime tests passed. Coupling and test registration gates passed, then generate_platform_status --check failed on the old anchor. Raw log: artifacts/validation/u22-foundation/ci-35446845025-linux-job.log. This does not accept separate final-package jobs or new device/release evidence."
       first_vn:
         status: verified
         evidence:
@@ -128,6 +134,8 @@ platforms:
       audio: "WebAudio API (gain, crossfade, unlock gesture)"
       storage: "localStorage (JSON envelope)"
       tested_browsers: "Google Chrome 128+ / Microsoft Edge 128+ (Headless-new CDP)"
+    gates:
+      evidence_scope: "Review anchor refresh only. Capability commits/dates below remain historical. No new Web final-package, browser/device or release acceptance is inferred from native CTest or the anchor. The fixed generated footer count 368 is historical, not a current suite total."
     capabilities:
       build:
         status: verified
@@ -189,6 +197,8 @@ platforms:
       ndk: "NDK r27.3.13750724"
       graphics_api: "OpenGL ES 3.2 (bgfx GLES)"
       audio_backend: "SoLoud (OpenSLES, 3 buses)"
+    gates:
+      evidence_scope: "Review anchor refresh only. Device, signing, AAB and build evidence below retain their original commits/dates. No Android device or store validation was performed in this update."
     capabilities:
       build:
         status: verified
@@ -257,6 +267,7 @@ platforms:
       audio_backend: "SoLoud (CoreAudio)"
       toolchain: "CMake 3.25+ / Homebrew"
     gates:
+      evidence_scope: "Run 35446845025 job 105907138155 at PR merge 69e07778 (head 0278910e) passed actual HTTP smoke (9.43 s), native runtime tests (34.63 s) and Web runtime tests (26.95 s), but CTest failed one synthetic Framework clock test (30 Python tests, one failure). Test-only fix 28575a16 has local Windows/WSL fixture evidence, not new hosted macOS acceptance. Runtime/release remain pending; no package/device promotion."
       hardware: "Physical Apple Silicon Mac is not present in local dev loop; CI covers compilation and unit tests."
     capabilities:
       build:
@@ -308,6 +319,7 @@ platforms:
       audio_backend: "SoLoud (CoreAudio / AVAudioSession)"
       toolchain: "CMake 3.25+ / Xcode 15+ (ios-compile probe)"
     gates:
+      evidence_scope: "Review anchor refresh only. Compile/shader probes and device/credential gates below retain their original commits/dates; no iOS device, TestFlight or release validation was performed."
       hardware: "Physical iPhone/iPad or local Xcode simulator hardware gated."
       credential: "Apple Developer Program signing certificate and provisioning profile required for device install / TestFlight."
     capabilities:
