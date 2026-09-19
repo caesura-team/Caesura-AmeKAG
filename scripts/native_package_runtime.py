@@ -191,7 +191,7 @@ def observe_loaded_modules(identity: ProcessIdentity) -> dict:
     elif sys.platform == "darwin":
         # txt descriptors are mapped program text, including private dylibs.
         # Shared-cache system images may be absent; required packaged images
-        # must actually appear. Missing/denied observations fail the lane.
+        # must actually appear. Required-image and observer errors fail the lane.
         tool = Path("/usr/sbin/lsof")
         _need(tool.is_file(), "macOS mapped-image observer /usr/sbin/lsof is unavailable")
         result = subprocess.run([str(tool), "-a", "-p", str(identity.pid), "-d", "txt", "-Fn"],
@@ -203,23 +203,25 @@ def observe_loaded_modules(identity: ProcessIdentity) -> dict:
         raise RuntimeContractError("Loaded module observation is NOT_VERIFIED on this host")
     _need(process_identity(identity.pid) == identity, "Module owner changed during observation")
     _need(paths, "No executable modules were observed")
-    resolved, missing = set(), []
+    resolved, missing, inaccessible = set(), [], []
     for path in paths:
         try:
             normalized = str(Path(path).resolve(strict=True))
-        except FileNotFoundError as error:
+        except (FileNotFoundError, PermissionError) as error:
             if sys.platform != "darwin":
                 raise
             # lsof txt also includes non-library mappings such as macOS's
-            # transient logging plist cache. Keep disappeared paths visible:
-            # a missing required image or foreign same-name image must still
-            # fail below, while an unrelated cache must not hide the SDL map.
+            # transient logging cache or protected analytics files. Retain
+            # unresolved paths and the original error. Required or foreign
+            # same-name images remain fatal below; unrelated system mappings
+            # must not hide the actually observed packaged SDL image.
             normalized = str(Path(path).resolve(strict=False))
-            missing.append({"path":normalized, "reported_path":path,
-                            "error":f"{type(error).__name__}: {error}"})
+            affected = inaccessible if isinstance(error, PermissionError) else missing
+            affected.append({"path":normalized, "reported_path":path,
+                             "error":f"{type(error).__name__}: {error}"})
         resolved.add(normalized)
     return {"status":"OBSERVED", "source":source, "process":asdict(identity),
-            "paths":sorted(resolved), "missing_paths":missing}
+            "paths":sorted(resolved), "missing_paths":missing, "inaccessible_paths":inaccessible}
 
 
 def _inspect_libraries(identity: ProcessIdentity, package: Path, required: list[str]) -> dict:
@@ -227,14 +229,21 @@ def _inspect_libraries(identity: ProcessIdentity, package: Path, required: list[
         return {"status":"NOT_REQUIRED", "required":[], "reason":"No shared libraries required by external configuration"}
     report = observe_loaded_modules(identity)
     observed = {Path(path) for path in report["paths"]}
-    disappeared = {Path(item["path"]) for item in report.get("missing_paths", [])}
+    disappeared = {Path(item[key]) for item in report.get("missing_paths", [])
+                   for key in ("path", "reported_path")}
+    inaccessible = {Path(item[key]) for item in report.get("inaccessible_paths", [])
+                    for key in ("path", "reported_path")}
     matched = []
     missing = []
     for relative in required:
-        expected = (package / relative).resolve(strict=True)
+        declared = package / relative
+        expected = declared.resolve(strict=True)
         _need(expected.is_relative_to(package), f"Required library escapes package: {relative}")
-        _need(expected not in disappeared, f"Required library mapping disappeared: {relative}")
-        _need(not any(path.name.casefold() == expected.name.casefold() and path != expected for path in observed),
+        _need(not {expected, declared} & disappeared, f"Required library mapping disappeared: {relative}")
+        _need(not {expected, declared} & inaccessible, f"Required library mapping inaccessible: {relative}")
+        names = {declared.name.casefold(), expected.name.casefold()}
+        _need(not any(path.name.casefold() in names and path not in {expected, declared}
+                      for path in observed | disappeared | inaccessible),
               f"A second source for required library was observed: {relative}")
         if expected not in observed:
             missing.append(relative)

@@ -160,3 +160,20 @@ Windows 最终 ZIP 的固定诊断 artifact10587806605（11110474B，SHA256 4f37
 本机真实 dirty Debug 诊断启动 D3D11 默认 demo，正常达到60帧并 exit0，无超时/强杀、owned cleanup COMPLETE。Engine SHA256 45551eb6c9389eab67c1efdaeecdf80e5753ba332ba152fd5069d74bcd22e713，实际26256混音帧、52512样本、6011非零、0非有限；原日志明确记录 daily.wav BGM 与清理完成。见 u22-software-audio/debug-demo-driver-02.log 及其绑定的Temp原件。这不是最终发行包验收，也不证明物理输出；首次辅助脚本路径错误日志同样保留。
 
 Web 真正 producer 还复现了仓外 --out 被原打包器拒绝。修复在新建、Git实际忽略的仓内唯一暂存目录运行原 Node/Lua 打包，再完整复制到仓外新目标并核对目录身份、全部文件摘要及前后稳定性；原打包器仓内输出限制不变。首次真实RED、Windows/WSL32项回归、实际已有播放器正控、禁止读取原web/dist的自含夹具均保留在 u22-web-lane-output/，主代理独审无发现。加入音频接线后helper为34项。完整新候选、实际仓外目录/ZIP/Pages tar及托管包验收继续待执行，U22/U23均未因此完成。
+
+## 四平台最终包缺口与第二轮针对性修复（2026-09-20）
+
+干净候选 effc6b2adbe8de3a2aec1bfc587d8e29de634212 的完整 windows-debug 门禁通过：run0c1f2b69-e122-4579-8c23-716ef7e9e3fa，原始 run.json SHA256 a636b75c681619c85f6badd94be8991c224d8aa01516bf9c08fa5099bb53754b；Debug 全量构建、C++1414/1414（427080断言，0失败0跳过）、Lua147/147与56/56、CTest46项中45通过和一个预声明AI服务跳过，runner/collector/strict verifier均0。源码在全程保持干净且不变；此结果不能迁移给后续修改。
+
+托管 run35455884122 已终止为7个job成功、4个最终包job失败。API head为effc6b2a，但checkout及包收据的真实执行身份是PR merge0d2db03c458b1bcfeeb7c3636fc2ee616d21c301。Windows Debug/Release、Linux/macOS构建测试和三个移动probe成功；四包失败分开保留，未合并或发布。
+
+- macOS TGZ静态通过，editor映像观察遭遇无关 `/private/var/db/analyticsd/events.allowlist` 的PermissionError。原artifact10588562773（11136562B，SHA256 7d1c4c0c43c34ea1b94a8304fe2afba1f4b2eda4d89224d6c6ff2189a044ed6f）绑定收据与原日志；PID31441受控exit0、无超时/强杀、cleanup COMPLETE，但runtime仍FAIL，DMG未到。新实现仅对Darwin记录不可读取的映像路径；所需包内库仍须真实观察和哈希验证。独审再发现声明SONAME与真实文件名不同的alias漏检，已新增真实symlink正负回归并修复：原路径与规范路径均参与必需/外部同名判定。最终Windows44/44、WSL44/44、独立7/7控制通过；见u22-macos-permission-audit/review-02.md。没有新的真实Mac通过证据。
+- Linux TGZ准备阶段正确拒绝 `libSDL3.so.0 -> libSDL3.so.0.2.0` 的缺失目标。artifact10587939892 SHA256 bcb8536aa15644c12f26b9d047454ca138b1a444bfa0b375d9954ee4da712dd5；原TGZ摘要8bca1d1cb089894e8a4a53ded171959723f25c4927f083cdc6b6d14fa693cd2b来自绑定收据，未下载原TGZ字节。生产安装规则原来复制SONAME符号链接而未带入真实文件。新增CMake helper在安装时解析所选配置的shared target真实文件，再按DLL/SONAME文件名复制实际字节，保留RPATH与iOS排除。真实小型CPack复现原错误，最终Windows6/6与WSL9/9通过，零跳过；这些明确的库字节夹具不证明SDL ABI/Engine。证据u22-runtime-install/含原RED、最终CPack与STABLE检查。
+- Web目录静态检查发现缺失 `web/node_modules/wasmoon/dist/glue.wasm`，runtime尚未启动。artifact10588199108 SHA256 15ed3a050a11213ee7378e97da084e25ff064b180049279481359d831d1c2e4e；原包内vendored WASM存在，诊断artifact不含原JS/WASM payload。实际Vite对照复现：普通npm ci目录位于publicDir内时，被视为公共资源的URL不随copyPublicDir=false复制；本地依赖junction恰好掩盖该问题。修复仅在build模式关闭publicDir，dev继续提供仓库资源。真实Vite回归从1失败1通过到2/2通过；另实际完整生产插件构建及原HTML/JS/CSS引用检查通过。前两次fixture的Node cpSync Unicode崩溃记录保留，改用既有copyDirectorySync后才取得有效RED。见u22-hosted-effc6b2a/web-fix-handoff-01.md；不宣称本轮完整Web或浏览器已通过。
+- Windows ZIP静态、两次editor、默认Demo及作者create/build全部通过。原artifact10588820674（14678148B，SHA256 d60530e4bdfb1ac1c360e04b6c3b8f8e1ce1cc953c0975f86eb7f2e1565e3e2d）的50个原始条目及21个命令日志/收据绑定已核验，见u22-macos-permission-audit/windows-bindings-01.json。默认Demo真实software PCM为44688帧/89376样本、48002非零、0非有限，物理输出NOT_RUN。随后同引擎摘要db7691ab…在中文作品目录的created_game_frames以3221226505（0xC0000409）退出，仅37B首条启动日志；SDL来源VERIFIED，无超时/强杀，cleanup COMPLETE。诊断artifact不含原exe/DLL/ZIP字节，未借此声称实际重放原二进制。
+
+Windows路径回归使用实际Engine和新建目录：仓外ASCII控制通过，包含补充平面字符的CWD与父目录搜索案例在旧Debug引擎上均超时。首修仅将成功chdir后的path.string日志替换为已有安全UTF-8 helper，真实重建后日志正确，但两案例继续在DebugProtocol初始化失败；green-cli-01名称不代表通过，实际仍1/3。新增直接C++回归真实捕获 `No mapping for the Unicode character exists in the target multi-byte code page.`，定位其工作目录generic_string转换。修复改为generic_u8string，绝对断点测试输入也明确使用UTF-8；原断点和非阻塞协程断言保持。最终新C++回归1/1、8断言，全部DebugProtocol定向15/15、243断言；真实Engine CLI3/3，源目录、UTF-8日志、实际Lua config、ping及正常退出同时成立。Engine摘要24567ecf86a8daa61cb6313080e95ab53d4cbc108134a85542225fcf91b9d8a8。此前Debug超时和托管Release fastfail分别记录，不以退出类别相似冒充相同堆栈。
+
+独审又以真实WSL目录symlink证明新增C++夹具的原TMPDIR别名与current_path物理路径不一致。仅将夹具绝对断点从chdir后的current_path构造，保留生产lexical路径合同及原断言；重建后15/15、243断言继续通过。该反例不冒充真实macOS运行。
+
+以上路径定向是headless最小资源夹具，不是完整游戏/GPU/PCM验收。CMake已实际重新配置并发现48项CTest；新增CaesuraResourceCwdCli和CaesuraPackage_package_runtime_install，后者经CTest真实执行通过。六配置CTest门槛46→48，新增一个实际C++用例后各平台C++最低数同步加一。独审、原RED/中间失败与原始摘要保留；新干净候选完整构建、C++/Lua/CTest、完整Web以及托管最终包仍须继续，U22–U29未完成项不变。

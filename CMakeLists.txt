@@ -619,24 +619,20 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/LICENSE")
     set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_SOURCE_DIR}/LICENSE")
 endif()
 
-# Bundle the SDL3 runtime DLL on Windows only (the release artifact and CI
-# release job are Windows-targeted). On Linux/macOS TARGET_FILE resolves to a
-# platform native shared lib (libSDL3.so / .dylib); gate this to WIN32 to keep
-# the ZIP content uniform, mirroring the FFmpeg DLL gate below.
+# Bundle the SDL3 runtime DLL or native SONAME as real, self-contained bytes.
+# Imported TARGET_FILE and SONAME paths can both be versioned symlink chains.
+include(cmake/CaesuraRuntimeInstall.cmake)
 if(WIN32 AND TARGET SDL3::SDL3)
-    install(FILES "$<TARGET_FILE:SDL3::SDL3>" DESTINATION . OPTIONAL)
+    caesura_install_shared_runtime(SDL3::SDL3)
 endif()
 # Sprint6-L1: the Linux artifact must carry its own SDL3 -- CI builds SDL3
 # from source into /usr/local, and a stranger's distro has no libSDL3
 # package to fall back on (Ubuntu 24.04 ships none). Install the SONAME
-# file: that is the exact name the loader requests (install(FILES)
-# dereferences the symlink, so the package carries a real libSDL3.so.0),
+# file: that is the exact name the loader requests. Copy its resolved payload,
+# rather than installing an isolated symlink to an absent versioned file,
 # and the engine finds it beside the executable through $ORIGIN below.
 if(UNIX AND NOT APPLE AND TARGET SDL3::SDL3)
-    get_target_property(_caesura_sdl3_type SDL3::SDL3 TYPE)
-    if(_caesura_sdl3_type STREQUAL "SHARED_LIBRARY")
-        install(FILES "$<TARGET_SONAME_FILE:SDL3::SDL3>" DESTINATION . OPTIONAL)
-    endif()
+    caesura_install_shared_runtime(SDL3::SDL3)
     set_target_properties(${PROJECT_NAME} PROPERTIES INSTALL_RPATH "$ORIGIN")
 endif()
 # Sprint6-L2: macOS mirrors the Linux self-carry rule. CI builds SDL3 from
@@ -648,10 +644,7 @@ endif()
 # CMAKE_SYSTEM_NAME guard (repo convention; version-independent, unlike the
 # CMake>=3.14 builtin IOS variable).
 if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS" AND TARGET SDL3::SDL3)
-    get_target_property(_caesura_sdl3_type_mac SDL3::SDL3 TYPE)
-    if(_caesura_sdl3_type_mac STREQUAL "SHARED_LIBRARY")
-        install(FILES "$<TARGET_SONAME_FILE:SDL3::SDL3>" DESTINATION . OPTIONAL)
-    endif()
+    caesura_install_shared_runtime(SDL3::SDL3)
     set_target_properties(${PROJECT_NAME} PROPERTIES INSTALL_RPATH "@loader_path")
 endif()
 # Without the Steam runtime DLL beside the executable the process cannot even

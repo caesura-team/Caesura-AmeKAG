@@ -260,6 +260,81 @@ class MacMappedLibraryTests(unittest.TestCase):
         with patch.object(Path, "resolve", deny_cache), self.assertRaises(PermissionError):
             self.inspect([self.engine, self.cache, self.library])
 
+    def test_inaccessible_unrelated_txt_preserves_error_and_required_library(self):
+        resolve = Path.resolve
+        def deny_strict_cache(path, *args, **kwargs):
+            if path == self.cache and kwargs.get("strict"):
+                raise PermissionError(13, "Permission denied", str(path))
+            return resolve(path, *args, **kwargs)
+        with patch.object(Path, "resolve", deny_strict_cache):
+            report = self.inspect([self.engine, self.cache, self.library])
+        self.assertEqual(report["status"], "VERIFIED")
+        self.assertEqual(report["required"][0]["sha256"], hashlib.sha256(self.library.read_bytes()).hexdigest())
+        self.assertEqual(report["missing_paths"], [])
+        self.assertIn(str(self.cache), report["paths"])
+        self.assertEqual(report["inaccessible_paths"][0]["path"], str(self.cache))
+        self.assertIn("PermissionError", report["inaccessible_paths"][0]["error"])
+        self.assertIn("[Errno 13]", report["inaccessible_paths"][0]["error"])
+
+    def test_required_mapping_resolution_denial_remains_fatal_after_access_returns(self):
+        resolve = Path.resolve
+        denied = False
+        def deny_once(path, *args, **kwargs):
+            nonlocal denied
+            if path == self.library and kwargs.get("strict") and not denied:
+                denied = True
+                raise PermissionError(13, "Permission denied", str(path))
+            return resolve(path, *args, **kwargs)
+        with patch.object(Path, "resolve", deny_once):
+            with self.assertRaisesRegex(runtime.RuntimeContractError, "Required library mapping inaccessible"):
+                self.inspect([self.engine, self.library])
+
+    def test_inaccessible_foreign_same_name_mapping_remains_fatal(self):
+        foreign = self.root / self.library.name
+        foreign.write_bytes(self.library.read_bytes())
+        resolve = Path.resolve
+        def deny_foreign(path, *args, **kwargs):
+            if path == foreign and kwargs.get("strict"):
+                raise PermissionError(13, "Permission denied", str(path))
+            return resolve(path, *args, **kwargs)
+        with patch.object(Path, "resolve", deny_foreign):
+            with self.assertRaisesRegex(runtime.RuntimeContractError, "second source for required library"):
+                self.inspect([self.engine, foreign, self.library])
+
+    if os.name != "nt":
+        def test_inaccessible_foreign_declared_name_with_required_symlink_is_rejected(self):
+            actual = self.package / "libSDL3.actual.dylib"
+            self.library.rename(actual)
+            self.library.symlink_to(actual.name)
+            self.assertEqual(self.inspect([self.engine, self.library])["status"], "VERIFIED")
+            foreign = self.root / self.library.name
+            foreign.write_bytes(actual.read_bytes())
+            resolve = Path.resolve
+            def deny_foreign(path, *args, **kwargs):
+                if path == foreign and kwargs.get("strict"):
+                    raise PermissionError(13, "Permission denied", str(path))
+                return resolve(path, *args, **kwargs)
+            with patch.object(Path, "resolve", deny_foreign):
+                with self.assertRaisesRegex(runtime.RuntimeContractError, "second source for required library"):
+                    self.inspect([self.engine, foreign, self.library])
+
+        def test_inaccessible_foreign_alias_cannot_hide_behind_different_target_name(self):
+            actual = self.package / "libSDL3.actual.dylib"
+            self.library.rename(actual)
+            self.library.symlink_to(actual.name)
+            foreign_target = self.root / "foreign-image.bin"
+            foreign_target.write_bytes(actual.read_bytes())
+            foreign = self.root / self.library.name
+            foreign.symlink_to(foreign_target.name)
+            resolve = Path.resolve
+            def deny_foreign(path, *args, **kwargs):
+                if path == foreign and kwargs.get("strict"):
+                    raise PermissionError(13, "Permission denied", str(path))
+                return resolve(path, *args, **kwargs)
+            with patch.object(Path, "resolve", deny_foreign):
+                with self.assertRaisesRegex(runtime.RuntimeContractError, "second source for required library"):
+                    self.inspect([self.engine, foreign, self.library])
+
     def test_failed_observer_and_changed_owner_remain_fatal(self):
         with self.assertRaisesRegex(runtime.RuntimeContractError, "observation failed"):
             self.inspect([self.engine, self.library], exit_code=1)

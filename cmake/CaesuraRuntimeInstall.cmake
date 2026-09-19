@@ -1,0 +1,47 @@
+# Install the bytes behind a shared target under the name its loader requests.
+# install(FILES <SONAME symlink>) preserves that link without installing its
+# versioned target. Resolve TARGET_FILE at install time, including imported
+# target aliases/chains and the selected install configuration.
+function(caesura_install_shared_runtime target)
+    if(NOT TARGET "${target}")
+        return()
+    endif()
+    get_target_property(runtime_type "${target}" TYPE)
+    if(NOT runtime_type STREQUAL "SHARED_LIBRARY")
+        return()
+    endif()
+    if(WIN32)
+        set(runtime_name "$<TARGET_FILE_NAME:${target}>")
+    else()
+        set(runtime_name "$<TARGET_SONAME_FILE_NAME:${target}>")
+    endif()
+    set(runtime_install [=[
+        set(_caesura_runtime_source "$<TARGET_FILE:@target@>")
+        set(_caesura_runtime_name "@runtime_name@")
+        if(NOT EXISTS "${_caesura_runtime_source}" OR IS_DIRECTORY "${_caesura_runtime_source}")
+            message(FATAL_ERROR "Required shared runtime is missing: ${_caesura_runtime_source}")
+        endif()
+        if(_caesura_runtime_name STREQUAL "" OR _caesura_runtime_name MATCHES "[/\\]")
+            message(FATAL_ERROR "Shared runtime requires a plain loader filename")
+        endif()
+        file(REAL_PATH "${_caesura_runtime_source}" _caesura_runtime_real)
+        # Honor ordinary install prefix/DESTDIR behavior, but never let the
+        # caller's install mode replace these required bytes with an SDK link.
+        if(DEFINED ENV{CMAKE_INSTALL_MODE})
+            set(_caesura_had_install_mode TRUE)
+            set(_caesura_saved_install_mode "$ENV{CMAKE_INSTALL_MODE}")
+        else()
+            set(_caesura_had_install_mode FALSE)
+        endif()
+        set(ENV{CMAKE_INSTALL_MODE} COPY)
+        file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}/."
+             TYPE FILE FILES "${_caesura_runtime_real}" RENAME "${_caesura_runtime_name}")
+        if(_caesura_had_install_mode)
+            set(ENV{CMAKE_INSTALL_MODE} "${_caesura_saved_install_mode}")
+        else()
+            unset(ENV{CMAKE_INSTALL_MODE})
+        endif()
+    ]=])
+    string(CONFIGURE "${runtime_install}" runtime_install @ONLY)
+    install(CODE "${runtime_install}")
+endfunction()
