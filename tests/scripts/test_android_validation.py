@@ -433,6 +433,30 @@ class AndroidDriverTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'CMake selection'):
             self.call()
 
+    def test_actual_cmake_comment_and_blank_line_layout_preserves_selections(self):
+        def hook(name, args):
+            if name == 'configure':
+                path = self.work / 'native/CMakeCache.txt'
+                entries = path.read_text(encoding='utf-8').splitlines()
+                # Layout observed in the original real Android Release cache.
+                put(path, '# This is the CMakeCache file.\r\n\r\n'
+                    + ''.join('//No help, variable specified on the command line.\r\n'
+                              + entry + '\r\n\r\n' for entry in entries))
+        self.hook = hook
+        report = self.call()
+        self.assertEqual(report['status'], 'FIXTURE_ONLY')
+        self.assertFalse(report['release_ready'])
+
+    def test_duplicate_cache_selection_is_rejected_even_when_last_value_matches(self):
+        def hook(name, args):
+            if name == 'configure':
+                path = self.work / 'native/CMakeCache.txt'
+                put(path, 'CMAKE_BUILD_TYPE:STRING=Debug\n' + path.read_text(encoding='utf-8'))
+        self.hook = hook
+        with self.assertRaisesRegex(ValueError, 'Duplicate CMake cache'):
+            self.call()
+        self.assertFalse(any(name == 'gradle' for name, _, _ in self.calls))
+
     def test_extra_or_changed_component_files_during_build_fail(self):
         self.hook = lambda name, args: put(self.root / 'tools/jdk/lib/late.jar', 'changed') if name == 'gradle' else None
         with self.assertRaisesRegex(ValueError, 'Inventory changed'):

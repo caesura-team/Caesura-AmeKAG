@@ -363,6 +363,21 @@ def _copy(source, target, digest):
     file_lock(source, digest); file_lock(target, digest)
 
 
+def _cmake_cache(path):
+    # CMake inserts blank lines and // comments between entries. Parse one
+    # physical line at a time so character classes cannot consume newlines.
+    data = {}
+    for line in path.read_text(encoding='utf-8').splitlines():
+        if not line.strip() or line.startswith(('#', '//')):
+            continue
+        entry = re.fullmatch(r'([^#/:=\r\n][^:=\r\n]*):[^=\r\n]+=(.*)', line)
+        need(entry is not None, 'Malformed CMake cache entry')
+        key, value = entry.groups()
+        need(key not in data, 'Duplicate CMake cache entry: ' + key)
+        data[key] = value
+    return data
+
+
 def _build_native(value, tc, command, work):
     tool = lambda n: tc['tools'][n]['path']
     root = lambda n: Path(tc['components'][n]['root'])
@@ -381,7 +396,7 @@ def _build_native(value, tc, command, work):
     command.run('configure', argv, value['timeouts']['configure'])
     command.run('compile', [tool('cmake'), '--build', str(native), '--target', 'CaesuraAmeKAG', '--parallel', str(value['jobs']), '--verbose'], value['timeouts']['compile'])
     cache = native / 'CMakeCache.txt'
-    data = dict(re.findall(r'^([^#/:][^:=]*):[^=]+=(.*)$', cache.read_text(encoding='utf-8'), re.M))
+    data = _cmake_cache(cache)
     exact = dict(CMAKE_BUILD_TYPE='Release', CMAKE_GENERATOR='Ninja', ANDROID_ABI='arm64-v8a',
                  ANDROID_PLATFORM='android-24', ANDROID_STL='c++_static', CAESURA_LIVE2D='OFF',
                  CAESURA_ENABLE_FFMPEG='OFF', SOLOUD_BACKEND_OPENSLES='ON')
