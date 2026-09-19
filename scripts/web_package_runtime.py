@@ -28,6 +28,7 @@ from socketserver import TCPServer
 import stat
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from urllib.parse import unquote_to_bytes, urlsplit
@@ -610,7 +611,87 @@ def _verify_response_bytes(report, package, base_url):
                 scope='binary_bytes_and_decoded_utf8_text; dynamic_completeness_and_text_wire_bytes_not_proven')
 
 
-def _probe(phase, scenario, server, browser, endpoint, node, *, previous=None, actions=None):
+class _ChromeTemporaryDirectory:
+    """Own a short POSIX socket root; persistent profile/logs stay in the attempt."""
+
+    @staticmethod
+    def _identity(info):
+        if not stat.S_ISDIR(info.st_mode):
+            raise RuntimeContractError('Chrome temporary path is not a plain directory')
+        return dict(device=info.st_dev, inode=info.st_ino, uid=info.st_uid,
+                    mode=stat.S_IMODE(info.st_mode))
+
+    def __init__(self):
+        # macOS /tmp is normally an alias for /private/tmp. Resolve that known
+        # OS root once; the allocated path and every subsequent use are plain.
+        base = Path('/tmp').resolve(strict=True)
+        self.parents = {path: self._identity(path.lstat()) for path in (base, *base.parents)}
+        self.path = Path(tempfile.mkdtemp(prefix='caesura-chrome-', dir=base))
+        self.parent_fd = self.root_fd = None
+        try:
+            flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+            self.parent_fd = os.open(base, flags)
+            self.root_fd = os.open(self.path.name, flags, dir_fd=self.parent_fd)
+            identity = self._identity(os.fstat(self.root_fd))
+            if identity['uid'] != os.geteuid() or identity['mode'] != 0o700:
+                raise RuntimeContractError('Chrome temporary root must be owned by this user with mode 0700')
+            # Leave room for Chrome's random subdirectory and SingletonSocket;
+            # 103 bytes also fits Darwin's smaller sockaddr_un.sun_path.
+            socket_bytes = len(os.fsencode(self.path / 'com.google.Chrome.XXXXXXXX' / 'SingletonSocket'))
+            if socket_bytes > 103:
+                raise RuntimeContractError('Canonical Chrome temporary root exceeds the POSIX socket budget')
+            self.record = dict(path=str(self.path), requested_base='/tmp', canonical_base=str(base),
+                               identity=identity, socket_path_budget_bytes=socket_bytes,
+                               scope='Chrome transient TMP/TEMP/TMPDIR only')
+            self._check()
+        except BaseException as error:
+            self._close()
+            # Retain any allocated directory on uncertain ownership.
+            raise RuntimeContractError(f'Chrome temporary allocation failed at {self.path}: {error}') from error
+
+    def _check(self):
+        if any(self._identity(path.lstat()) != identity for path, identity in self.parents.items()):
+            raise RuntimeContractError('Chrome temporary parent identity changed')
+        if (self._identity(os.fstat(self.parent_fd)) != self.parents[self.path.parent]
+                or self._identity(self.path.lstat()) != self.record['identity']
+                or self._identity(os.fstat(self.root_fd)) != self.record['identity']):
+            raise RuntimeContractError('Chrome temporary root identity changed')
+
+    def _close(self):
+        for name in ('root_fd', 'parent_fd'):
+            descriptor = getattr(self, name)
+            if descriptor is not None:
+                os.close(descriptor)
+                setattr(self, name, None)
+
+    def cleanup(self, *, process_exited):
+        result = dict(self.record, status='CLEANUP_FAIL', removed=False,
+                      process_cleanup_confirmed=process_exited, errors=[])
+        try:
+            if not process_exited:
+                raise RuntimeContractError('Retaining Chrome temporary root without complete process cleanup')
+            self._check()
+            if not shutil.rmtree.avoids_symlink_attacks:
+                raise RuntimeContractError('Descriptor-relative safe directory cleanup is unavailable')
+            # Recurse only through the retained owned directory descriptor;
+            # symlinks and socket leaves are unlinked without following them.
+            for name in os.listdir(self.root_fd):
+                info = os.stat(name, dir_fd=self.root_fd, follow_symlinks=False)
+                if stat.S_ISDIR(info.st_mode):
+                    shutil.rmtree(name, dir_fd=self.root_fd)
+                else:
+                    os.unlink(name, dir_fd=self.root_fd)
+            self._check()
+            os.rmdir(self.path.name, dir_fd=self.parent_fd)
+            result.update(status='CLEANUP_PASS', removed=True)
+        except BaseException as error:
+            result['errors'].append(f'{type(error).__name__}: {error}')
+        finally:
+            self._close()
+        return result
+
+
+def _probe(phase, scenario, server, browser, endpoint, node, *, env, previous=None, actions=None):
     output = scenario / phase
     argv = [node, str(PROBE), '--phase', phase, '--url', server.url,
             '--cdp-url', endpoint['cdp_url'], '--browser-pid', str(browser.identity.pid),
@@ -624,7 +705,7 @@ def _probe(phase, scenario, server, browser, endpoint, node, *, previous=None, a
                 or record.get('cdp_url') != endpoint['cdp_url'] or not record.get('target_id')):
             raise RuntimeContractError('Boot session provenance changed before offline probe')
         argv.extend(('--target-id', record['target_id'], '--previous', str(previous)))
-    command = _OwnedCommand(argv, scenario, browser.env, scenario / (phase + '-command'), timeout=120)
+    command = _OwnedCommand(argv, scenario, env, scenario / (phase + '-command'), timeout=120)
     result = None
     try:
         run = command.wait_result()
@@ -661,7 +742,7 @@ def _scenario(package, attempt, name, prefix, tools, mode, actions=None):
             (directory / 'home/AppData' / child).mkdir(parents=True)
     env = isolated_web_env(directory / 'home', directory / 'temp', directory)
     result = dict(name=name, prefix=prefix, status='SCENARIO_FAIL', stages={}, cleanup={}, errors=[])
-    server = browser = None
+    server = browser = chrome_temp = None
     try:
         server = start_package_server(package, directory, env, prefix=prefix)
         result['server'] = dict(server.ready, url=server.url, identity=asdict(server.identity))
@@ -685,18 +766,24 @@ def _scenario(package, attempt, name, prefix, tools, mode, actions=None):
             argv.append('--headless=new')
         argv.append('about:blank')
         result['browser_argv'], result['browser_mode'] = argv, mode
-        browser = _OwnedCommand(argv, directory, env, directory / 'browser', timeout=300)
+        browser_env = dict(env)
+        if os.name == 'posix':
+            chrome_temp = _ChromeTemporaryDirectory()
+            result['chrome_temp'] = chrome_temp.record
+            _json_new(directory / 'chrome-temp.json', chrome_temp.record)
+            browser_env.update(TMP=str(chrome_temp.path), TEMP=str(chrome_temp.path), TMPDIR=str(chrome_temp.path))
+        browser = _OwnedCommand(argv, directory, browser_env, directory / 'browser', timeout=300)
         browser.wait_identity(timeout=30)
         endpoint = browser.wait_for(lambda: _chrome_ready(browser, directory / 'profile', expected_port=debugger_port),
                                     timeout=45, description='owned private-profile Chrome debugger')
         result['browser'] = endpoint
-        result['stages']['boot'] = _probe('boot', directory, server, browser, endpoint, tools['node']['path'], actions=actions)
+        result['stages']['boot'] = _probe('boot', directory, server, browser, endpoint, tools['node']['path'], env=env, actions=actions)
         result['cleanup']['server'] = server.stop()
         if result['cleanup']['server']['status'] != 'CLEANUP_PASS':
             raise RuntimeContractError('HTTP service did not close before offline verification')
         verify_owned_listener(browser.identity, endpoint['port'])
         result['stages']['offline'] = _probe('offline', directory, server, browser, endpoint,
-                                            tools['node']['path'], previous=directory / 'boot/session.json', actions=actions)
+                                            tools['node']['path'], env=env, previous=directory / 'boot/session.json', actions=actions)
         result['status'] = 'SCENARIO_PASS'
     except BaseException as error:
         result['errors'].append(f'{type(error).__name__}: {error}')
@@ -709,6 +796,13 @@ def _scenario(package, attempt, name, prefix, tools, mode, actions=None):
             except BaseException as error:
                 result['cleanup'][label] = dict(status='CLEANUP_FAIL', error=f'{type(error).__name__}: {error}')
             if result['cleanup'][label]['status'] != 'CLEANUP_PASS':
+                result['status'] = 'SCENARIO_FAIL'
+        if chrome_temp is not None:
+            browser_cleanup = result['cleanup'].get('browser', {})
+            complete = browser is None or (browser_cleanup.get('status') == 'CLEANUP_PASS'
+                                           and browser_cleanup.get('process_exited') is True)
+            result['cleanup']['chrome_temp'] = chrome_temp.cleanup(process_exited=complete)
+            if result['cleanup']['chrome_temp']['status'] != 'CLEANUP_PASS':
                 result['status'] = 'SCENARIO_FAIL'
         _json_new(directory / 'scenario.json', result)
     return result
