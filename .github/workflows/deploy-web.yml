@@ -1,97 +1,103 @@
-name: Deploy Web Player (GitHub Pages)
-
-on:
+# U23 dry-run only. No release upload, Pages upload or deployment is authorized by this workflow.
+name: Web Pages input dry-run
+'on':
   workflow_dispatch:
     inputs:
       game:
-        description: 'Source game directory or .ks file to package; only this game story bundle ships'
+        description: Source game directory or .ks file to validate for Pages
         required: false
         default: demo/galgame_demo.ks
         type: string
       actions:
-        description: 'Optional repository-relative UI actions JSON for reaching a save point'
+        description: Optional repository-relative UI actions JSON for a save point
         required: false
         type: string
       actions_sha256:
-        description: 'Required SHA256 when actions is supplied; locked before browser execution'
+        description: Required SHA256 when actions is supplied
         required: false
         type: string
-
 permissions:
   contents: read
-  pages: write
-  id-token: write
-
-concurrency:
-  group: github-pages
-  cancel-in-progress: true
-
+  actions: read
 jobs:
-  build-and-deploy:
-    name: Validate the chosen final Web package and deploy Pages
+  prepare:
+    name: Lock source and candidate policy
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    env:
-      SOURCE_SHA: ${{ github.sha }}
+    outputs:
+      policy_json: ${{ steps.policy.outputs.policy_json }}
+      policy_sha256: ${{ steps.policy.outputs.policy_sha256 }}
+      profile_sha256: ${{ steps.policy.outputs.profile_sha256 }}
+      version: ${{ steps.policy.outputs.version }}
+      source_sha: ${{ steps.identity.outputs.source_sha }}
+      expected_json: ${{ steps.identity.outputs.expected_json }}
     steps:
-      - name: Select a new package work path outside the checkout
-        run: echo "PACKAGE_WORK=$RUNNER_TEMP/caesura-pages-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22.23.2'
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-      - name: Install web dependencies and Lua
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y lua5.4
-          npm ci --prefix web --no-audit --no-fund
-      - name: Require current tracked script index
-        run: node web/gen-index.mjs --check
-      - name: Build explicit game and validate root, subpath and offline reload
-        id: package
-        env:
-          GAME_INPUT: ${{ inputs.game }}
-          ACTIONS_INPUT: ${{ inputs.actions }}
-          ACTIONS_SHA256: ${{ inputs.actions_sha256 }}
-        run: |
-          args=()
-          if [ -n "$ACTIONS_INPUT" ] || [ -n "$ACTIONS_SHA256" ]; then
-            args=(--actions "$ACTIONS_INPUT" --actions-sha256 "$ACTIONS_SHA256")
-          fi
-          python3 scripts/ci_package_lane.py web --source-sha "$SOURCE_SHA" --work "$PACKAGE_WORK" \
-            --game "$GAME_INPUT" --node "$(command -v node)" --lua "$(command -v lua5.4)" \
-            --browser /opt/google/chrome/chrome "${args[@]}" --github-output "$GITHUB_OUTPUT"
-      - name: Setup Pages
-        uses: actions/configure-pages@v5
-      - name: Recheck accepted directory immediately before upload
-        env:
-          RECEIPT: ${{ steps.package.outputs.receipt }}
-          RECEIPT_SHA256: ${{ steps.package.outputs.receipt_sha256 }}
-        run: python3 scripts/ci_package_lane.py verify --receipt "$RECEIPT" --sha256 "$RECEIPT_SHA256"
-      - name: Upload exact accepted Pages directory
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: ${{ steps.package.outputs.site }}
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
-      - name: Preserve first package attempt evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: pages-final-package-evidence
-          path: |
-            ${{ env.PACKAGE_WORK }}/**/*.json
-            ${{ env.PACKAGE_WORK }}/**/*.log
-            ${{ env.PACKAGE_WORK }}/**/*.png
-          if-no-files-found: warn
+    - uses: actions/checkout@v4
+      with:
+        ref: ${{ github.sha }}
+        fetch-depth: 0
+        persist-credentials: false
+        submodules: recursive
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+    - name: Verify the explicit execution head
+      id: identity
+      env:
+        SOURCE_SHA: ${{ github.sha }}
+      run: |
+        python - <<'PY'
+        import json, os, re, subprocess
+        from pathlib import Path
+        assert Path('.git').exists(), 'Missing Git checkout'
+        source = os.environ['SOURCE_SHA']
+        assert re.fullmatch('[0-9a-f]{40}', source), 'Full source SHA required'
+        assert subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip() == source, 'Wrong checkout'
+        expected = dict(schema_version=1, repository=os.environ['GITHUB_REPOSITORY'],
+            repository_id=int(os.environ['GITHUB_REPOSITORY_ID']), source_sha=source, trigger_head_sha=source,
+            run_id=int(os.environ['GITHUB_RUN_ID']), run_attempt=int(os.environ['GITHUB_RUN_ATTEMPT']),
+            source_mode='head', workflow_path='.github/workflows/deploy-web.yml',
+            workflow_ref=os.environ['GITHUB_WORKFLOW_REF'], workflow_sha=os.environ['GITHUB_WORKFLOW_SHA'],
+            called_workflow_path='.github/workflows/validate-engine.yml', called_workflow_sha=os.environ['GITHUB_WORKFLOW_SHA'])
+        with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
+            output.write('source_sha=' + source + '\n')
+            output.write('expected_json=' + json.dumps(expected, separators=(',', ':')) + '\n')
+        PY
+    - name: Freeze the source policy before producer fanout
+      id: policy
+      env:
+        SOURCE_SHA: ${{ steps.identity.outputs.source_sha }}
+      run: python scripts/prepare_release_policy.py --repo . --output "$RUNNER_TEMP/release-policy.json" --github-output "$GITHUB_OUTPUT"
+  validate:
+    name: Validate engine
+    needs:
+    - prepare
+    uses: ./.github/workflows/validate-engine.yml
+    with:
+      source_sha: ${{ needs.prepare.outputs.source_sha }}
+      trigger_head_sha: ${{ needs.prepare.outputs.source_sha }}
+      source_mode: head
+      workflow_path: .github/workflows/deploy-web.yml
+      workflow_ref: ${{ github.workflow_ref }}
+      workflow_sha: ${{ github.workflow_sha }}
+      called_workflow_sha: ${{ github.workflow_sha }}
+      called_workflow_path: .github/workflows/validate-engine.yml
+      pull_request_number: ''
+      policy_sha256: ${{ needs.prepare.outputs.policy_sha256 }}
+      profile_sha256: ${{ needs.prepare.outputs.profile_sha256 }}
+      engine_version: ${{ needs.prepare.outputs.version }}
+      web_game: ${{ inputs.game }}
+      web_actions: ${{ inputs.actions }}
+      web_actions_sha256: ${{ inputs.actions_sha256 }}
+  aggregate:
+    name: Verify release inputs
+    if: ${{ always() }}
+    needs:
+    - prepare
+    - validate
+    uses: ./.github/workflows/verify-release-inputs.yml
+    with:
+      source_sha: ${{ needs.prepare.outputs.source_sha }}
+      expected_json: ${{ needs.prepare.outputs.expected_json }}
+      policy_json: ${{ needs.prepare.outputs.policy_json }}
+      policy_sha256: ${{ needs.prepare.outputs.policy_sha256 }}
+      producer_outputs_json: ${{ toJSON(needs.validate.outputs) }}

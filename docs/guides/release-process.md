@@ -1,15 +1,46 @@
 # Caesura (AmeKAG) — Release Process
 
-This guide walks through a Windows desktop release: building, running the
-release gates, generating the changelog, packaging with CPack, verifying the
-ZIP, and publishing a GitHub release. The workflow mirrors the CI `release`
-job in `.github/workflows/ci.yml` (CPack ZIP, Windows only).
+The current CI, release-tag and Web Pages entry points share
+`.github/workflows/validate-engine.yml`, then call
+`.github/workflows/verify-release-inputs.yml`. Their current scope is an input
+**dry-run**. They do not create a release, upload Pages content, or deploy.
+The older Windows manual commands below remain an operational reference;
+they cannot replace this candidate verification or grant publication approval.
+
+Before producer fanout, `scripts/prepare_release_policy.py` freezes the clean
+execution source, engine version, complete validation profile bytes and the
+tracked `scripts/release_input_policy.json` selection. The policy requires
+Debug and Release evidence for Windows, Linux and macOS, four final package
+roles, the iOS configuration gate and the Android static gate. Android compile
+keeps its separately declared audit status. PR execution uses the explicit head
+SHA; the caller/reusable workflow commit is recorded separately.
+
+The aggregate uses exact job names and fixed artifact IDs from controlled
+workflow outputs. It authenticates every required attempt through GitHub,
+downloads the original Actions ZIP and checks its digest, applies strict U1
+execution verification and U22 package receipt checks, then reauthenticates
+hosted state and rechecks the exact local bytes. A failure, skip, cancellation,
+missing output, changed policy/source, version mismatch or substituted byte
+prevents the dry-run from passing. An old failed attempt is not erased by a
+green retry. All original attempt evidence remains available.
+
+`DRY_RUN_INPUTS_VERIFIED` does not authorize publishing. The release entry point
+requires an existing numeric `v<engine-version>` tag resolving to this source;
+it never creates or moves one. The Pages entry point retains the selected game
+and optional externally hashed UI actions. Pages-specific tar wrapping,
+deployment identity, signing and any other post-validation transform still
+need their own byte binding and applicable verification before a later,
+explicitly authorized publication. Current job names and package names must
+also be confirmed by actual hosted readback; policy text alone is not evidence.
+
+Candidate execution and remaining gaps are recorded in
+[`2026-09-19-014-release-input-provenance-execution.md`](../plans/2026-09-19-014-release-input-provenance-execution.md).
 
 ## 0. Prerequisites
 
 - **Git**: with `git` on `PATH`.
 - **CMake 3.25+** and a Visual Studio 2022 toolchain.
-- **Python 3.8+** (stdlib only — no extra packages).
+- **Python 3.12+** for the current validation and package controllers (stdlib only).
 - **gh** (GitHub CLI, `gh --version`) — authenticated (`gh auth login`).
 - **SDL3**: optional on Windows — the repo ships a prebuilt package at
   `external/SDL3/SDL3-3.2.0/cmake` and `CMakeLists.txt:33-42` selects it whenever
@@ -28,7 +59,10 @@ job in `.github/workflows/ci.yml` (CPack ZIP, Windows only).
 
 ---
 
-## 0.5 发布流程总览（文本流程图）
+## 0.5 历史 Windows 手工步骤参考
+
+以下图示保留构建及手工命令的操作顺序，不是当前 CI 的完整门禁清单。
+执行到发布前必须另外完成上文的同一候选来源与最终字节检查，并取得该次发布授权。
 
 ```
 [master 分支] 所有改动先合入 master（门禁全绿）

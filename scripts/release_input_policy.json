@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "required_jobs": {
+    "windows-debug": "Validate engine / Windows · MSVC · Debug",
+    "windows-release": "Validate engine / Windows · MSVC · Release and Package",
+    "linux-debug": "Validate engine / Linux · GCC · Debug",
+    "linux-release": "Validate engine / Linux · GCC · Release and Package",
+    "macos-debug": "Validate engine / macOS · Clang · Debug",
+    "macos-release": "Validate engine / macOS · Clang · Release and Package",
+    "web-package": "Validate engine / Web · Final Package",
+    "ios-compile": "Validate engine / iOS CMake probe (gate)",
+    "android-static": "Validate engine / Android static contract (no NDK)"
+  },
+  "artifact_roles": {
+    "windows-debug-execution": "windows-debug",
+    "windows-release-execution": "windows-release",
+    "linux-debug-execution": "linux-debug",
+    "linux-release-execution": "linux-release",
+    "macos-debug-execution": "macos-debug",
+    "macos-release-execution": "macos-release",
+    "windows-package": "windows-release",
+    "linux-package": "linux-release",
+    "macos-package": "macos-release",
+    "web-package": "web-package"
+  },
+  "output_prefixes": {
+    "windows-debug-execution": "windows_debug",
+    "windows-release-execution": "windows_release",
+    "linux-debug-execution": "linux_debug",
+    "linux-release-execution": "linux_release",
+    "macos-debug-execution": "macos_debug",
+    "macos-release-execution": "macos_release",
+    "windows-package": "windows",
+    "linux-package": "linux",
+    "macos-package": "macos",
+    "web-package": "web"
+  },
+  "execution_inputs": {
+    "windows-debug-execution": {"profile_name": "windows-debug", "platform": "windows", "configuration": "Debug"},
+    "windows-release-execution": {"profile_name": "windows-release", "platform": "windows", "configuration": "Release"},
+    "linux-debug-execution": {"profile_name": "linux-debug", "platform": "linux", "configuration": "Debug"},
+    "linux-release-execution": {"profile_name": "linux-release", "platform": "linux", "configuration": "Release"},
+    "macos-debug-execution": {"profile_name": "macos-debug", "platform": "macos", "configuration": "Debug"},
+    "macos-release-execution": {"profile_name": "macos-release", "platform": "macos", "configuration": "Release"}
+  },
+  "package_inputs": {
+    "windows-package": {"platform": "windows", "configuration": "Release", "job_key": "release", "required_files": {"CaesuraAmeKAG-{version}-Windows-AMD64.zip": "file"}},
+    "linux-package": {"platform": "linux", "configuration": "Release", "job_key": "release-linux", "required_files": {"CaesuraAmeKAG-{version}-Linux-x86_64.tar.gz": "file", "CaesuraAmeKAG-{version}-Linux-x86_64.AppImage": "file"}},
+    "macos-package": {"platform": "macos", "configuration": "Release", "job_key": "release-macos", "required_files": {"CaesuraAmeKAG-{version}-Darwin-arm64.tar.gz": "file", "CaesuraAmeKAG-{version}-Darwin-arm64.dmg": "file"}},
+    "web-package": {"platform": "web", "configuration": "Release", "job_key": "release-web", "required_files": {"CaesuraAmeKAG-{version}-Web.zip": "file"}}
+  }
+}

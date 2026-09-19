@@ -5,9 +5,11 @@ acceptance evidence. Production delegates to the actual package validator.
 """
 from __future__ import annotations
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
+import shutil
 import sys
 import tempfile
 import unittest
@@ -29,6 +31,7 @@ class PackageLaneTests(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.base = Path(self.temporary.name).resolve()
         self.repo = self.base / 'repo'; self.repo.mkdir(); (self.repo / '.git').mkdir()
+        (self.repo / 'CMakeLists.txt').write_text('project(CaesuraAmeKAG VERSION 1.2.3 LANGUAGES C CXX)\n', encoding='utf-8')
         self.build = self.repo / 'build'; self.build.mkdir()
         (self.build / 'CPackConfig.cmake').write_text('fixture build config', encoding='utf-8')
         (self.repo / 'scripts').mkdir()
@@ -48,7 +51,7 @@ class PackageLaneTests(unittest.TestCase):
         value = patch.start(); self.addCleanup(patch.stop); return value
 
     def metadata(self, platform='windows'):
-        value = {'schema': 'caesura.package-build.v1', 'platform': platform, 'configuration': 'Release',
+        value = {'schema': 'caesura.package-build.v1', 'platform': platform, 'configuration': 'Release', 'version': '1.2.3',
                  'archive_basename': 'ExactlyNamed', 'artifacts': {'zip': 'ExactlyNamed.zip', 'tgz': 'ExactlyNamed.tar.gz',
                  'dmg': 'ExactlyNamed.dmg', 'appimage': 'ExactlyNamed.AppImage'}, 'required_configuration': {'schema': 1}}
         self.requirements.write_text(json.dumps(value), encoding='utf-8')
@@ -103,6 +106,105 @@ class PackageLaneTests(unittest.TestCase):
         self.assertEqual(argv[argv.index('--requirements-sha256') + 1], digest(self.requirements))
         self.assertFalse(Path(argv[argv.index('--attempt') + 1]).is_relative_to(self.repo))
         self.assertEqual(lane.verify_lane(self.work / 'lane.json', digest(self.work / 'lane.json'))['status'], 'UPLOAD_READY')
+
+    def test_portable_manifest_binds_version_and_exact_validation_receipt_bytes(self):
+        self.metadata()
+        report = self.native()
+        self.assertEqual(report['status'], 'PASS')
+        manifest = json.loads((self.work / 'outputs/upload-manifest.json').read_text())
+        self.assertEqual(manifest.get('version'), '1.2.3')
+        self.assertEqual(manifest.get('configuration'), 'Release')
+        self.assertEqual(len(manifest['validations']), 1)
+        validation = manifest['validations'][0]
+        self.assertEqual(validation['input'], manifest['files'][0])
+        receipt = self.work / 'outputs' / validation['receipt']['name']
+        self.assertEqual(receipt.read_bytes(), (self.work / 'validate-zip/package-run.json').read_bytes())
+        self.assertEqual(digest(receipt), validation['receipt']['sha256'])
+        self.assertEqual(manifest['requirements']['sha256'], digest(self.requirements))
+        self.assertEqual((self.work / 'outputs' / manifest['requirements']['name']).read_bytes(), self.requirements.read_bytes())
+        self.assertEqual(manifest['provenance']['authentication'], 'NOT_VERIFIED')
+
+    def test_cmake_and_native_requirements_version_must_agree_before_packaging(self):
+        metadata = self.metadata(); metadata['version'] = '1.2.4'
+        self.requirements.write_text(json.dumps(metadata))
+        report = self.native()
+        self.assertEqual(report['status'], 'FAIL')
+        self.assertFalse(self.commands)
+        self.assertTrue(any('version' in message.lower() for message in report['errors']))
+
+    def test_web_portable_receipt_binds_final_archive_after_directory_validation(self):
+        report = self.web(zip_name='explicit-web.zip')
+        self.assertEqual(report['status'], 'PASS')
+        manifest = json.loads((self.work / 'outputs/upload-manifest.json').read_text())
+        self.assertEqual(manifest.get('version'), '1.2.3')
+        self.assertEqual(manifest.get('requirements'), None)
+        self.assertEqual(len(manifest['validations']), 1)
+        self.assertEqual(manifest['validations'][0]['input'], manifest['files'][0])
+        self.assertEqual(manifest['validations'][0]['name'], 'validate-web-zip')
+
+    def test_copied_portable_receipt_mutation_is_refused_before_upload(self):
+        self.metadata()
+        report = self.native()
+        manifest = json.loads((self.work / 'outputs/upload-manifest.json').read_text())
+        self.assertTrue(manifest.get('validations'))
+        receipt = self.work / 'outputs' / manifest['validations'][0]['receipt']['name']
+        receipt.write_bytes(receipt.read_bytes() + b'changed')
+        with self.assertRaisesRegex(ValueError, 'changed'):
+            lane.verify_lane(self.work / 'lane.json', digest(self.work / 'lane.json'))
+
+    def test_hosted_producer_context_is_recorded_without_claiming_authentication(self):
+        self.metadata()
+        values = {'GITHUB_ACTIONS': 'true', 'GITHUB_REPOSITORY': 'owner/repo', 'GITHUB_REPOSITORY_ID': '123',
+                  'GITHUB_RUN_ID': '456', 'GITHUB_RUN_ATTEMPT': '2', 'GITHUB_JOB': 'release',
+                  'GITHUB_WORKFLOW_REF': 'owner/repo/.github/workflows/ci.yml@refs/heads/master',
+                  'GITHUB_WORKFLOW_SHA': SHA}
+        with mock.patch.dict(os.environ, values):
+            report = self.native()
+        self.assertEqual(report['status'], 'PASS', report['errors'])
+        context = json.loads((self.work / 'outputs/upload-manifest.json').read_text())['provenance']
+        self.assertEqual(context, {'authentication': 'NOT_VERIFIED', 'provider': 'github-actions',
+                         'repository': 'owner/repo', 'repository_id': 123, 'run_id': 456, 'run_attempt': 2,
+                         'job_key': 'release', 'workflow_ref': values['GITHUB_WORKFLOW_REF'], 'workflow_sha': SHA})
+
+    def test_incomplete_hosted_producer_context_cannot_be_labeled_as_local(self):
+        self.metadata()
+        with mock.patch.dict(os.environ, {'GITHUB_ACTIONS': 'true'}, clear=True):
+            report = self.native()
+        self.assertEqual(report['status'], 'FAIL')
+        self.assertFalse(self.commands)
+        self.assertTrue(any('context' in message.lower() for message in report['errors']))
+
+    def test_cli_upload_list_transfers_every_portable_manifest_dependency(self):
+        self.metadata()
+        for kind in ('native', 'web'):
+            with self.subTest(kind=kind):
+                work = self.base / ('cli-' + kind)
+                output = self.base / (kind + '.github-output')
+                common = ['--source-sha', SHA, '--work', str(work), '--github-output', str(output)]
+                if kind == 'native':
+                    args = ['native', '--build', str(self.build), '--requirements', str(self.requirements),
+                            '--platform', 'windows', '--cpack', str(self.python), '--python', str(self.python)]
+                else:
+                    args = ['web', '--game', str(self.game), '--node', str(self.python), '--lua', str(self.python),
+                            '--browser', str(self.python), '--zip-name', 'final-web.zip']
+                with mock.patch('sys.stdout', new=io.StringIO()):
+                    self.assertEqual(lane.main(args + common), 0)
+                lines = output.read_text(encoding='utf-8').splitlines()
+                start = next(index for index, line in enumerate(lines) if line.startswith('upload_files<<'))
+                delimiter = lines[start].split('<<', 1)[1]
+                paths = lines[start + 1:lines.index(delimiter, start + 1)]
+                self.assertEqual(len(paths), len(set(paths)))
+                downloaded = self.base / ('download-' + kind); downloaded.mkdir()
+                for path in paths:
+                    shutil.copyfile(path, downloaded / Path(path).name)
+                manifest = json.loads((downloaded / 'upload-manifest.json').read_text())
+                references = manifest['files'] + [v['receipt'] for v in manifest['validations']]
+                if manifest['requirements']:
+                    references.append(manifest['requirements'])
+                for reference in references:
+                    transferred = downloaded / reference['name']
+                    self.assertTrue(transferred.is_file(), 'upload_files omitted ' + reference['name'])
+                    self.assertEqual(digest(transferred), reference['sha256'])
 
     def test_other_repository_and_existing_work_are_refused_before_commands(self):
         self.metadata()

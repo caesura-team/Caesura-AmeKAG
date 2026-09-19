@@ -542,6 +542,20 @@ if(Python3_EXECUTABLE)
         )
     endforeach()
 
+    # Hosted metadata, byte transfer and policy contracts do not themselves
+    # authenticate a CI run; the dry-run controller performs that separately.
+    foreach(_release_contract release_inputs package_bundle execution_bundle
+                              release_artifact_download release_aggregate release_policy
+                              ci_execution_lane ci_release_gate)
+        add_test(NAME CaesuraRelease_${_release_contract}
+            COMMAND ${Python3_EXECUTABLE}
+                    ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_${_release_contract}.py)
+        set_tests_properties(CaesuraRelease_${_release_contract} PROPERTIES
+            LABELS "qa;release;validation"
+            TIMEOUT 240
+            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    endforeach()
+
     find_program(CAESURA_NODE_PROGRAM node)
     if(CAESURA_REQUIRE_TEST_PREREQUISITES AND NOT CAESURA_NODE_PROGRAM)
         message(FATAL_ERROR "Complete validation requires Node 22+ for package probe contracts")

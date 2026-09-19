@@ -26,7 +26,7 @@ from validation_process import run_owned_command
 
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA = "caesura.ci-package-lane.v1"
-UPLOAD_SCHEMA = "caesura.package-upload.v1"
+UPLOAD_SCHEMA = "caesura.package-upload.v2"
 
 
 def _require(condition, message):
@@ -78,6 +78,33 @@ def _source_start(report):
     report["source_before"] = _identity()
     _require(report["source_before"]["source_sha"] == report["source_sha"], "Source SHA mismatch")
     _require(not report["source_before"]["dirty"], "CI acceptance requires clean source")
+    cmake = _lock(report, ROOT / "CMakeLists.txt")
+    source = Path(cmake["path"]).read_text(encoding="utf-8-sig")
+    versions = re.findall(r"(?im)^\s*project\(\s*CaesuraAmeKAG\s+VERSION\s+(\d+\.\d+\.\d+(?:\.\d+)?)\s+LANGUAGES\b", source)
+    _require(len(versions) == 1, "Expected one explicit engine project version in CMakeLists.txt")
+    report["version"] = versions[0]
+    report["provenance"] = _producer_context()
+
+
+def _producer_context():
+    # These are recorded claims from the controlled producer. U23 authenticates
+    # them against GitHub separately; environment values alone prove no origin.
+    context = {"authentication": "NOT_VERIFIED", "provider": "local"}
+    if os.environ.get("GITHUB_ACTIONS") != "true":
+        return context
+    context["provider"] = "github-actions"
+    for key, variable in (("repository", "GITHUB_REPOSITORY"), ("workflow_ref", "GITHUB_WORKFLOW_REF"),
+                          ("workflow_sha", "GITHUB_WORKFLOW_SHA"), ("job_key", "GITHUB_JOB")):
+        value = os.environ.get(variable, "")
+        _require(value and len(value) <= 1024 and not any(c in value for c in "\r\n\x00"), "Missing/invalid producer context: " + variable)
+        context[key] = value
+    _require(re.fullmatch(r"[0-9a-f]{40}", context["workflow_sha"]), "Invalid producer workflow SHA")
+    for key, variable in (("repository_id", "GITHUB_REPOSITORY_ID"), ("run_id", "GITHUB_RUN_ID"),
+                          ("run_attempt", "GITHUB_RUN_ATTEMPT")):
+        value = os.environ.get(variable, "")
+        _require(re.fullmatch(r"[1-9][0-9]{0,19}", value), "Missing/invalid producer context: " + variable)
+        context[key] = int(value)
+    return context
 
 
 def _lock(report, value, *, expected=None, executable=False):
@@ -176,15 +203,41 @@ def _validate(report, name, artifact, python, extra):
     report["validations"].append({"name": name, "input": artifact, "receipt": receipt})
 
 
+def _portable_file(report, original, name):
+    _check_lock(original)
+    path = Path(report["work"]) / "outputs" / _name(name)
+    with Path(original["path"]).open("rb") as src, path.open("xb") as dst:
+        shutil.copyfileobj(src, dst)
+    copied = _lock(report, path, expected=original["sha256"])
+    _check_lock(original)
+    return {"name": path.name, "sha256": copied["sha256"]}
+
+
 def _finish(report, artifacts):
     _stable(report)
     manifest = {"schema": UPLOAD_SCHEMA, "source_sha": report["source_sha"], "platform": report["platform"],
+                "configuration": report["configuration"], "version": report["version"],
+                "provenance": report["provenance"], "requirements": None, "validations": [],
                 "files": [{"name": Path(item["path"]).name, "kind": item["kind"], "sha256": item["sha256"]}
                           for item in artifacts]}
+    if report.get("requirements"):
+        manifest["requirements"] = _portable_file(report, report["requirements"], "package-requirements.json")
+    for artifact, declared in zip(artifacts, manifest["files"]):
+        matches = [value for value in report["validations"] if value["input"] == artifact]
+        _require(len(matches) == 1, "Each final file requires exactly one matching package validation")
+        validation = matches[0]
+        receipt = _portable_file(report, validation["receipt"], "receipt-" + validation["name"] + ".json")
+        manifest["validations"].append({"name": validation["name"], "input": declared, "receipt": receipt})
+    _stable(report)
     path = Path(report["work"]) / "outputs/upload-manifest.json"
     _save(path, manifest)
     report["manifest"] = _lock(report, path)
     report["artifacts"] = artifacts
+    portable = [entry["receipt"] for entry in manifest["validations"]]
+    if manifest["requirements"] is not None:
+        portable.append(manifest["requirements"])
+    report["upload_files"] = ([item["path"] for item in artifacts] + [str(path)]
+        + [str(path.parent / item["name"]) for item in portable])
     report.update(status="PASS", accepted=True)
 
 
@@ -201,6 +254,8 @@ def run_native_lane(*, build_dir, requirements_path, platform, source_sha, work_
         metadata = _read(requirements["path"])
         _require(metadata.get("schema") == "caesura.package-build.v1" and metadata.get("platform") == platform
                  and metadata.get("configuration") == "Release", "CPack requirements context mismatch")
+        _require(metadata.get("version") == report["version"], "CPack requirements version differs from engine CMake version")
+        report["requirements"] = requirements
         names = {fmt: _name(metadata["artifacts"][fmt]) for fmt in ("zip", "tgz", "dmg", "appimage")}
         _name(metadata["archive_basename"])
         _require(len(set(names.values())) == 4, "Artifact names must be distinct")
@@ -399,7 +454,7 @@ def main(argv=None):
                 receipt = Path(result["work"]) / "lane.json"
                 _outputs(args.github_output, {"receipt": str(receipt), "receipt_sha256": _sha256_file(receipt),
                     "manifest_sha256": result["manifest"]["sha256"], "site": result.get("site", ""),
-                    "upload_files": "\n".join([item["path"] for item in result["artifacts"]] + [result["manifest"]["path"]])})
+                    "upload_files": "\n".join(result["upload_files"])})
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0 if result["status"] in ("PASS", "UPLOAD_READY", "COLLECTED") else 1
     except Exception as error:
