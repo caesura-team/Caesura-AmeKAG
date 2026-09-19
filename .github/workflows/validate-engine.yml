@@ -1265,6 +1265,7 @@ jobs:
         name: u22-web-package-evidence
         path: |
           ${{ env.PACKAGE_WORK }}/**/*.json
+          ${{ env.PACKAGE_WORK }}/**/*.jsonl
           ${{ env.PACKAGE_WORK }}/**/*.log
           ${{ env.PACKAGE_WORK }}/**/*.png
         if-no-files-found: warn

@@ -1,9 +1,10 @@
 """Actual child/environment/socket ownership checks; no Engine or fixed port."""
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import FrozenInstanceError, replace
 import json
+import hashlib
 import os
 from pathlib import Path
 import shlex
@@ -297,13 +298,78 @@ class PackageRuntimeTests(unittest.TestCase):
                 directory, out, err, timeout,
                 stop_request=directory / "stop" if stop else None)
 
-    def await_json(self, path, timeout=6):
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            if path.exists():
-                return json.loads(path.read_text(encoding="utf-8"))
-            time.sleep(0.01)
-        self.fail("actual child did not publish " + str(path))
+    def retain_wait_diagnostics(self, path, future):
+        # Never retain request.json: it contains the complete effective env.
+        # These exact fixture receipts/logs contain only this owned test run.
+        base = getattr(self, "diagnostics_root", ROOT / "artifacts/validation/package-runtime-fixture-failures")
+        base.mkdir(parents=True, exist_ok=True)
+        destination = Path(tempfile.mkdtemp(prefix=self._testMethodName + "-", dir=base))
+        self.last_wait_diagnostics = destination
+        control = path.parent
+        sources = {name: control / name for name in ("run.json", "result.json", "process.json")}
+        sources.update({control.name + suffix: self.root / (control.name + suffix)
+                        for suffix in (".log", "-out.log", "-err.log")})
+
+        def snapshot(phase):
+            folder = destination / phase
+            folder.mkdir()
+            state = {"state": "PENDING"}
+            if future.cancelled():
+                state = {"state": "CANCELLED"}
+            elif future.done():
+                error = future.exception()
+                state = ({"state": "FAILED", "error_type": type(error).__name__, "error": str(error)}
+                         if error is not None else {"state": "COMPLETED"})
+            record = {"test": self.id(), "awaited": str(path), "future": state, "files": {}}
+            for name, source in sources.items():
+                if not source.exists():
+                    record["files"][name] = {"status": "MISSING"}
+                    continue
+                if source.is_symlink() or not source.is_file():
+                    record["files"][name] = {"status": "NOT_REGULAR"}
+                    continue
+                with source.open("rb") as stream:
+                    raw = stream.read(65537)
+                kept = raw[:65536]
+                (folder / name).write_bytes(kept)
+                record["files"][name] = {"status": "RETAINED", "bytes": len(kept),
+                    "sha256": hashlib.sha256(kept).hexdigest(), "truncated": len(raw) > 65536,
+                    "tail": kept[-4096:].decode("utf-8", errors="replace")}
+            (folder / "diagnostics.json").write_text(json.dumps(record, indent=2), encoding="utf-8")
+            return record
+
+        initial = snapshot("wait")
+        if initial["future"]["state"] == "PENDING":
+            # A failed wait unwinds the test's release barrier and executor
+            # first. Capture the final owned cleanup before TemporaryDirectory
+            # runs, and emit bounded data into CTest's retained LastTest.log.
+            def after_owned_cleanup():
+                try:
+                    final = snapshot("cleanup")
+                except Exception as error:
+                    final = {"diagnostic_capture_error": str(error)}
+                print("runtime fixture final diagnostics: " + json.dumps(final), file=sys.stderr)
+            self.addCleanup(after_owned_cleanup)
+        return "runtime fixture diagnostics: " + json.dumps(initial) + "\nretained at " + str(destination)
+
+    def await_json(self, path, timeout=6, *, future=None):
+        try:
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline:
+                if future is not None and future.done():
+                    future.result()  # Propagate the real owned launcher failure, including its traceback.
+                    self.fail("owned command completed before live publication was observed: " + str(path))
+                if path.exists():
+                    return json.loads(path.read_text(encoding="utf-8"))
+                time.sleep(0.01)
+            self.fail("actual child did not publish " + str(path))
+        except BaseException as error:
+            if future is not None:
+                try:
+                    error.add_note(self.retain_wait_diagnostics(path, future))
+                except Exception as diagnostic_error:
+                    error.add_note("runtime fixture diagnostic capture failed: " + str(diagnostic_error))
+            raise
 
     def launch_listener(self, *, family=socket.AF_INET, address="127.0.0.1", port=0):
         ready = self.root / ("listener-%s-%s.json" % (family, time.monotonic_ns()))
@@ -469,6 +535,77 @@ class PackageRuntimeTests(unittest.TestCase):
         with self.assertRaises(json.JSONDecodeError):
             self.await_json(malformed)
 
+    def test_completed_owned_child_without_publication_cannot_report_readiness(self):
+        self.diagnostics_root = self.root / "retained-diagnostics"
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(self.invoke, "print('owned child finished without readiness')",
+                                     control="unpublished")
+            report = future.result(timeout=10)
+            with self.assertRaisesRegex(AssertionError, "completed before live publication") as caught:
+                self.await_json(self.root / "unpublished/never-published.json", future=future)
+        self.assertEqual(report["status"], "EXITED")
+        self.assertEqual(report["actual_exit_code"], 0)
+        saved = json.loads((self.last_wait_diagnostics / "wait/diagnostics.json").read_text())
+        self.assertEqual(saved["future"]["state"], "COMPLETED")
+        self.assertIn("owned child finished without readiness", saved["files"]["unpublished-out.log"]["tail"])
+        self.assertIn("runtime fixture diagnostics", str(caught.exception.__notes__))
+        self.assertFalse((self.root / "unpublished/never-published.json").exists())
+
+    def test_wait_failure_diagnostics_are_bounded_and_never_copy_request_environment(self):
+        self.diagnostics_root = self.root / "retained-diagnostics"
+        control = self.root / "diagnostic"
+        control.mkdir()
+        (control / "request.json").write_text(json.dumps({"env": {"TEST_SECRET": "do-not-retain-this-sentinel"}}))
+        (control / "result.json").write_text(json.dumps({"status": "LAUNCH_FAILED"}))
+        raw = b"bounded-child-log\xff\n" * 5000
+        (self.root / "diagnostic.log").write_bytes(raw)
+        future = Future()
+        original = RuntimeContractError("original controlled fixture failure")
+        future.set_exception(original)
+        with self.assertRaises(RuntimeContractError) as caught:
+            self.await_json(control / "process.json", future=future)
+        self.assertIs(caught.exception, original)
+        saved = json.loads((self.last_wait_diagnostics / "wait/diagnostics.json").read_text())
+        self.assertNotIn("request.json", saved["files"])
+        self.assertNotIn("do-not-retain-this-sentinel", json.dumps(saved) + str(caught.exception.__notes__))
+        entry = saved["files"]["diagnostic.log"]
+        kept = (self.last_wait_diagnostics / "wait/diagnostic.log").read_bytes()
+        self.assertEqual(kept, raw[:65536])
+        self.assertTrue(entry["truncated"])
+        self.assertEqual(entry["sha256"], hashlib.sha256(kept).hexdigest())
+        self.assertLessEqual(len(entry["tail"]), 4096)
+
+    def test_pending_wait_failure_retains_final_owned_receipt_before_temp_cleanup(self):
+        with tempfile.TemporaryDirectory(prefix="caesura-retained-wait-") as evidence:
+            self.diagnostics_root = Path(evidence)
+            ready, release = self.root / "diagnostic-started.json", self.root / "release-diagnostic-child"
+            code = ("import os,json,time; from pathlib import Path; "
+                    + _publish_json_code(ready, "{'pid':os.getpid()}")
+                    + f"release=Path({str(release)!r})\n"
+                    "while not release.exists(): time.sleep(0.01)\n"
+                    "print('released owned diagnostic child')")
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(self.invoke, code, control="pending")
+                try:
+                    child = self.await_json(ready)
+                    with self.assertRaisesRegex(AssertionError, "did not publish"):
+                        self.await_json(self.root / "pending/never-published.json", timeout=0.03, future=future)
+                    diagnostic = self.last_wait_diagnostics
+                    initial = json.loads((diagnostic / "wait/diagnostics.json").read_text())
+                    self.assertEqual(initial["future"]["state"], "PENDING")
+                finally:
+                    release.write_bytes(b"release")
+                self.assertEqual(future.result(timeout=10)["owned_tree_cleanup"], "COMPLETE")
+            self.doCleanups()  # Run the retained diagnostic before the original fixture directory cleanup.
+            final = json.loads((diagnostic / "cleanup/diagnostics.json").read_text())
+            self.assertEqual(final["future"]["state"], "COMPLETED")
+            saved_run = json.loads((diagnostic / "cleanup/run.json").read_text())
+            self.assertEqual(saved_run["actual_exit_code"], 0)
+            self.assertEqual(saved_run["owned_tree_cleanup"], "COMPLETE")
+            self.assertIn("released owned diagnostic child", final["files"]["pending-out.log"]["tail"])
+            with self.assertRaises(RuntimeContractError):
+                process_identity(child["pid"])
+
     def test_early_exit_and_missing_listener_cannot_report_readiness(self):
         process, ready = self.launch_listener()
         identity = process_identity(process.pid)
@@ -623,6 +760,26 @@ class PackageRuntimeTests(unittest.TestCase):
                     expected_final_executable=expected or self.python_image,
                     exec_observation_timeout=observe)
 
+        def test_actual_exec_refusal_surfaces_original_future_error_and_raw_receipts(self):
+            self.diagnostics_root = self.root / "retained-diagnostics"
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(self.exec_script, "echo controlled-wrong-image >&2\nexec /bin/sleep 20")
+                with self.assertRaises(RuntimeContractError) as caught:
+                    self.await_json(self.root / "mapping/process.json", future=future)
+            self.assertIs(caught.exception, future.exception())
+            saved = json.loads((self.last_wait_diagnostics / "wait/diagnostics.json").read_text())
+            self.assertEqual(saved["future"]["error"], str(caught.exception))
+            report = json.loads((self.last_wait_diagnostics / "wait/run.json").read_text())
+            self.assertEqual(report["status"], "LAUNCH_FAILED")
+            self.assertEqual(report["owned_tree_cleanup"], "COMPLETE")
+            self.assertIsNone(report["process"])
+            self.assertFalse((self.root / "mapping/process.json").exists())
+            for name in ("run.json", "result.json"):
+                self.assertEqual((self.last_wait_diagnostics / "wait" / name).read_bytes(),
+                                 (self.root / "mapping" / name).read_bytes())
+            self.assertEqual((self.last_wait_diagnostics / "wait/mapping.log").read_bytes(),
+                             (self.root / "mapping.log").read_bytes())
+
         def test_actual_same_pid_exec_publishes_only_final_engine_identity(self):
             release = self.root / "release"
             code = ("from pathlib import Path; import time; "
@@ -632,7 +789,7 @@ class PackageRuntimeTests(unittest.TestCase):
             with ThreadPoolExecutor(max_workers=1) as executor:
                 future = executor.submit(self.exec_script, "exec " + shlex.quote(self.python_image) + " -I -c " + shlex.quote(code))
                 try:
-                    observed = self.await_json(self.root / "mapping/process.json")
+                    observed = self.await_json(self.root / "mapping/process.json", future=future)
                     self.assertEqual(Path(observed["executable"]), Path(self.python_image))
                 finally:
                     release.write_text("release", encoding="utf-8")
@@ -684,7 +841,7 @@ class PackageRuntimeTests(unittest.TestCase):
             with ThreadPoolExecutor(max_workers=1) as executor:
                 future = executor.submit(self.exec_script, "exec " + shlex.quote(self.python_image) + " -I -c " + shlex.quote(code))
                 try:
-                    self.await_json(self.root / "mapping/process.json")
+                    self.await_json(self.root / "mapping/process.json", future=future)
                     (self.root / "mapping-AppRun").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
                 finally:
                     release.write_text("release", encoding="utf-8")
@@ -717,7 +874,7 @@ class PackageRuntimeTests(unittest.TestCase):
                     future = executor.submit(self.exec_script,
                         "exec " + shlex.quote(str(engine)) + " -I -c " + shlex.quote(code), expected=str(engine))
                     try:
-                        self.await_json(self.root / "mapping/process.json")
+                        self.await_json(self.root / "mapping/process.json", future=future)
                         replacement = self.root / "changed-engine"
                         replacement.write_bytes(b"different final executable bytes")
                         replacement.replace(engine)

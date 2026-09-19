@@ -126,13 +126,18 @@ test('offline requires the exact target and prior successful boot record', async
 test('offline reload disables network and HTTP cache while preserving service worker handling', async t => {
   const base = directory(t), out = join(base, 'offline-controls'), target = 'owned-player'
   const url = argumentsFor(out)[1]
-  let reloaded = false
+  let reloaded = false, online = true
   const f = await protocolFixture(t, call => {
     if (call.method === 'SystemInfo.getProcessInfo') return { result: { processInfo: [{ type: 'browser', id: 4242 }] } }
     if (call.method === 'Target.getTargetInfo') return { result: { targetInfo: { targetId: target, type: 'page', url } } }
     if (call.method === 'Target.attachToTarget') return { result: { sessionId: 'owned-session' } }
     if (call.method === 'Page.getFrameTree') return { result: { frameTree: { frame: { id: 'frame', loaderId: reloaded ? 'after' : 'before' } } } }
     if (call.method === 'Page.reload') { reloaded = true; return { result: {} } }
+    if (call.method === 'Network.emulateNetworkConditionsByRule') return { result: { ruleIds: ['offline-rule'] } }
+    if (call.method === 'Network.overrideNetworkState') { online = false; return { result: {} } }
+    if (call.method === 'Runtime.evaluate' && call.params.expression === '({url:location.href,online:navigator.onLine})') {
+      return { result: { result: { value: { url, online } } } }
+    }
     if (call.method === 'Runtime.evaluate') return { error: { message: 'fixture stops after reload; no game acceptance' } }
     return { result: {} }
   })
@@ -148,7 +153,56 @@ test('offline reload disables network and HTTP cache while preserving service wo
   assert.equal(reload.params.loaderId, 'before')
   assert.equal(f.commands.find(x => x.method === 'Network.setCacheDisabled').params.cacheDisabled, true)
   assert.equal(f.commands.find(x => x.method === 'Network.setBypassServiceWorker').params.bypass, false)
-  assert.equal(f.commands.find(x => x.method === 'Network.emulateNetworkConditions').params.offline, true)
+  const transport = f.commands.findIndex(x => x.method === 'Network.emulateNetworkConditionsByRule')
+  const navigator = f.commands.findIndex(x => x.method === 'Network.overrideNetworkState')
+  const reloadIndex = f.commands.indexOf(reload)
+  assert.ok(transport >= 0 && navigator > transport && reloadIndex > navigator, 'transport and navigator controls must both precede reload')
+  assert.deepEqual(f.commands[transport].params, { offline: true,
+    matchedNetworkConditions: [{ urlPattern: '', latency: 0, downloadThroughput: 0, uploadThroughput: 0 }] })
+  assert.deepEqual(f.commands[navigator].params, { offline: true, latency: 0, downloadThroughput: 0, uploadThroughput: 0 })
+  assert.deepEqual([f.commands[transport].sessionId, f.commands[navigator].sessionId, reload.sessionId], ['owned-session', 'owned-session', 'owned-session'])
+  assert.equal(f.commands.some(x => x.method === 'Network.emulateNetworkConditions'), false)
+  const report = readReport(out, result)
+  assert.equal(report.offline_controls.before.online, true)
+  assert.equal(report.offline_controls.after_override.online, false)
+  assert.deepEqual(report.offline_controls.rule_ids, ['offline-rule'])
+})
+
+for (const [name, failedMethod, code] of [
+  ['transport unsupported', 'Network.emulateNetworkConditionsByRule', -32601],
+  ['transport error', 'Network.emulateNetworkConditionsByRule', -32000],
+  ['navigator unsupported', 'Network.overrideNetworkState', -32601],
+  ['navigator error', 'Network.overrideNetworkState', -32000],
+  ['navigator unchanged', null, null],
+  ['missing transport rule', null, null],
+]) test('offline controls fail closed before reload: ' + name, async t => {
+  const base = directory(t), out = join(base, 'offline-controls'), target = 'owned-player'
+  const url = argumentsFor(out)[1]
+  const f = await protocolFixture(t, call => {
+    if (call.method === failedMethod) return { error: { code, message: name } }
+    if (call.method === 'SystemInfo.getProcessInfo') return { result: { processInfo: [{ type: 'browser', id: 4242 }] } }
+    if (call.method === 'Target.getTargetInfo') return { result: { targetInfo: { targetId: target, type: 'page', url } } }
+    if (call.method === 'Target.attachToTarget') return { result: { sessionId: 'owned-session' } }
+    if (call.method === 'Page.getFrameTree') return { result: { frameTree: { frame: { id: 'frame', loaderId: 'before' } } } }
+    if (call.method === 'Page.reload') return { error: { message: 'fixture observed forbidden reload without established offline controls' } }
+    if (call.method === 'Network.emulateNetworkConditionsByRule') return { result: { ruleIds: name === 'missing transport rule' ? [] : ['offline-rule'] } }
+    if (call.method === 'Runtime.evaluate') return { result: { result: { value: { url, online: true } } } }
+    return { result: {} }
+  })
+  const prior = join(base, 'prior.json')
+  writeFileSync(prior, JSON.stringify({ schema: 'caesura.web-package-probe.v1', status: 'BOOT_READY', phase: 'boot',
+    target_id: target, browser_pid: 4242, browser_pid_verified: true, url, cdp_url: f.cdp,
+    browser_ws_url: f.cdp.replace('http:', 'ws:') + '/devtools/browser/fixture', slot: { sha256: 'a'.repeat(64) } }))
+  const result = await invoke([...fixtureArgs(out, f), '--phase', 'offline', '--target-id', target, '--previous', prior])
+  const report = readReport(out, result)
+  assert.notEqual(result.code, 0); assert.equal(report.status, 'PROBE_FAIL')
+  assert.equal(f.commands.some(x => x.method === 'Page.reload'), false, 'an unestablished offline condition must not navigate')
+  assert.equal(f.commands.some(x => x.method === 'Network.emulateNetworkConditions'), false, 'no deprecated fallback')
+  assert.equal(report.probe_session_detached, true)
+  assert.match(JSON.stringify(report.errors), failedMethod ? new RegExp(name) : name === 'navigator unchanged' ? /offline navigator state before reload/ : /offline transport rule/)
+  if (failedMethod === 'Network.emulateNetworkConditionsByRule' || name === 'missing transport rule') {
+    assert.equal(f.commands.some(x => x.method === 'Network.overrideNetworkState'), false)
+  }
 })
 test('returned remote browser websocket cannot redirect the explicit endpoint', async t => {
   const base = directory(t), out = join(base, 'endpoint')
@@ -387,7 +441,7 @@ test('actions keep a failed final receipt when the real locked input is deleted 
   assert.match(JSON.stringify(report.errors), /actions final identity.*ENOENT/)
 })
 
-test('actions offline validates the same locked file without replaying its boot UI sequence', async t => {
+for (const onlineAfterReload of [false, true]) test('actions offline validates the same locked file without replaying its boot UI sequence' + (onlineAfterReload ? ' and rejects restored online state' : ''), async t => {
   const base = directory(t), out = join(base, 'offline-actions'), action = actionsFile(base), previous = join(base, 'boot-session.json')
   const slot = JSON.stringify({ scene: 'story', token: 1 }), clicks = []
   let selected = null, frames = 0
@@ -396,15 +450,17 @@ test('actions offline validates the same locked file without replaying its boot 
     if (call.method === 'Target.getTargetInfo') return { result: { targetInfo: { targetId: 'owned-target', type: 'page', url: 'http://127.0.0.1:12345/games/example/' } } }
     if (call.method === 'Target.attachToTarget') return { result: { sessionId: 'owned-session' } }
     if (call.method === 'Page.getFrameTree') return { result: { frameTree: { frame: { id: 'frame', loaderId: ++frames === 1 ? 'old' : 'fresh' } } } }
+    if (call.method === 'Network.emulateNetworkConditionsByRule') return { result: { ruleIds: ['offline-rule'] } }
     if (call.method === 'DOM.getDocument') return { result: { root: { nodeId: 1 } } }
     if (call.method === 'DOM.querySelector') { selected = call.params.selector; return { result: { nodeId: 2 } } }
     if (call.method === 'Input.dispatchMouseEvent' && call.params.type === 'mouseReleased') clicks.push(selected)
     if (call.method === 'Runtime.evaluate') {
       const expression = call.params.expression
+      if (expression === '({url:location.href,online:navigator.onLine})') return { result: { result: { value: { url: 'http://127.0.0.1:12345/games/example/', online: false } } } }
       if (expression.includes('navigator.serviceWorker.ready')) return { error: { message: 'fixture ends after offline slot verification' } }
       if (expression.includes('document.elementFromPoint')) return { result: { result: { value: { x: 50, y: 50, w: 20, h: 20, visible: true, inside: true, matches: 1, vw: 1280, vh: 900 } } } }
       return { result: { result: { value: { url: 'http://127.0.0.1:12345/games/example/', ready: 'complete', status: 'parked: l', scene: 'story',
-        errors: [], coreErrors: [], log: '', slot, slotInput: '1', online: false, wasmPin: 'http://127.0.0.1:12345/games/example/web-assets/glue.wasm',
+        errors: [], coreErrors: [], log: '', slot, slotInput: '1', online: onlineAfterReload, wasmPin: 'http://127.0.0.1:12345/games/example/web-assets/glue.wasm',
         audio: { hook: true, state: 'running' }, viewport: { width: 1280, height: 900 },
         presentation: [{ tag: 'DIV', text: 'Visible fixture', rect: { x: 0, y: 0, width: 100, height: 50, display: 'block', visibility: 'visible', opacity: '1' } }] } } } }
     }
@@ -416,7 +472,9 @@ test('actions offline validates the same locked file without replaying its boot 
   const result = await invoke([...fixtureArgs(out, f), '--phase', 'offline', '--target-id', 'owned-target', '--previous', previous, ...action.args])
   const report = readReport(out, result)
   assert.notEqual(result.code, 0, 'fixture does not simulate service worker/game acceptance')
-  assert.match(JSON.stringify(report.errors), /fixture ends after offline slot verification/)
+  assert.match(JSON.stringify(report.errors), onlineAfterReload ? /offline document reports network disabled/ : /fixture ends after offline slot verification/)
+  assert.equal(report.offline_controls.after_override.online, false)
+  assert.equal(report.offline_controls.after_reload.online, onlineAfterReload)
   assert.deepEqual(clicks, ['#refresh-slots'])
   assert.equal(report.actions.status, 'NOT_RUN'); assert.deepEqual(report.actions.steps, [])
   assert.equal(report.actions.input_stable, true); assert.equal(report.actions.sha256, action.sha256)
