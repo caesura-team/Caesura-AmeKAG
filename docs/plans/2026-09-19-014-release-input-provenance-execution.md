@@ -140,3 +140,6 @@ U22 前轮 run35471198493 已结束为 8 成功、2 失败、1 跳过，Web 实�
 
 
 整合U22后续候选fab91a127bef3004f63d8c6f51f707ac7785fdf5：Mac真实观察字段已支持严格ftxt/name记录对，并精确引入U27已独审的异步播放计时修复。冲突仅两个平台文档anchor；U23薄caller、reusable workflow、9/11/45来源合同均无改动。原U22 Python Windows62/WSL63与完整Web638通过是对应原冻结快照的局部证据；新U23完整候选和托管聚合仍待执行。旧run35473344618的Mac与Linux失败保留，后者导致Web最终包尚未执行新sandbox；不因整合代码将旧失败改标为通过。
+
+
+2026-09-20对GitHub服务端进行了实际只读回读：master为protected，但required_status_checks enforcement为off、contexts/checks为空；现有branch protection要求一个PR批准，enforce_admins=false，禁止force-push与删除。仓库ruleset17369886处于disabled，effective rules/branches/master返回空数组。原始响应保留u23-next-gate-01/server-readback-01/*.body，未修改任何服务端设置。该事实说明当前并未强制U23拟定检查，不能用workflow文件存在代替服务端门禁。待新候选实际check身份与聚合证明成立后，再绑定确切检查、保留现有审查/禁止强推删除规则并独立回读；此只读结果不完成AE7或发布验收。
