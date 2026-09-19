@@ -4,7 +4,7 @@ generated_document: "docs/status/platform-status.md"
 # Review synchronization anchor only; execution commits and dates remain per capability.
 # U27 completed-scene benchmark timing is under candidate validation.
 # A docs-only sync does not revalidate packages, devices, releases, or the code anchor.
-evidence_head_commit: da9d833aad97b9440b7d5b3121439f18973b7439
+evidence_head_commit: e5dd83a19ceadf8c0f34e668c85c65e904fc6050
 
 allowed_status_enums:
   - verified

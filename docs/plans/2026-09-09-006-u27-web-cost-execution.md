@@ -54,3 +54,11 @@ Web 协程恢复仅对第一 yield 值为 nil 增加本地短路；所有非 nil
 在独占本地资源窗口对修复后的真实Wasmoon入口执行一次，3/3通过、0失败0跳过，test29.93秒、Vitest30.39秒，owned Node正常exit0、无timeout/force、cleanup COMPLETE。tiny源/compiled-token bundle中位数6.4/7.0ms；story为965.8/908.5ms、bundle/source吞吐比1.063；synthetic为1288.5/963.7ms、比例1.337，两个比例均满足原>=0.8。原JSON摘要a6b4de6cea7ba0db2bfb80aca3bb7cb610328e688d3b49afc9f894c7fdd33d87，real-perf-01-outcome.json绑定ce5基线上的三文件dirty补丁，运行前后fingerprint一致；不能改称干净候选或正式3×10验收。
 
 独审指出原日志将tokens/ms误标为tok/s；之后仅修正两个输出标签及显示小数，计时和断言未变，代码提交da9d833aad97b9440b7d5b3121439f18973b7439。原短测文件SHA和旧日志保留，完整新Web套件尚待执行。这些是Lua compiled-token bundle对source的短测，不是Vite生产包、浏览器、真实GPU/音频或soak结果，也不建立跨版本改善结论。
+
+## 2026-09-20 完整 Web 维护验证与后续整合
+
+在干净源码a1575ec760a8d13729c70d830dd9bcdb1acd8827上执行完整Web套件，首次attempt01为605通过、34跳过、无测试失败，验证驱动明确返回FAIL。新工作树缺少cache/story与web/dist，导致相关用例未执行；该次outcome摘要23ab4cbeb260c8a4647e15f8706a896d11c0fd8d222ca4964e987b2c6f6e4ccb保留，没有以Vitest自身exit0覆盖维护门禁失败。
+
+之后用已锁定的实际Lua工具执行ks_bake（24场景、6资产），用该工作树Vite构建Web分发资源；两个受控命令均exit0、cleanup COMPLETE。工具只承担生成夹具职责，不将U23的Lua工具二进制标为U27新构建。生成目录和工具身份在第二次运行前后核验。独占资源窗口内attempt02完整结果为638/638、0失败、0跳过，实际Node exit0，无timeout或forced kill，owned tree cleanup COMPLETE；起止1789846077.9407818至1789846250.6753986，源码dirty=false，前后fingerprint均为b5d432d4d2f9c7ff724fb2f5354b5ce731a9f0f7015b048e0bb1363f18f9e007。原Vitest JSON摘要c80211b2415af92042b439c8cd47a4de2d01a24b2edbb8dd350e8803a9155925，outcome摘要1788aeb24cca603259b1000a696d971285fa6c66bdd87b4e71c93df1da05f636；原件位于u27-worktree/artifacts/validation/u27-bundle-timing/full-web-a1575ec-02.*。资源存在后原缺资源提示占位用例不再注册，因此639变为638；未降低发现门槛或修改跳过规则、性能阈值。
+
+该结果只验收冻结源码的完整Web维护套件。随后merge e5dd83a19ceadf8c0f34e668c85c65e904fc6050整合U23 c0045049及U22 d418845d的进程与临时目录验证修正，冲突仅为文档同步锚点，Web三文件保持；不将a157运行改标成新merge的完整验证。正式Release多进程采样、配对版本比较和至少一小时真实后端长跑仍未完成。
