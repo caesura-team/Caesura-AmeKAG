@@ -118,3 +118,12 @@ APK250项、AAB255项业务文件与原未签名包逐项字节一致，每种�
 实际 HTTP 为73/73通过，另外 package-web-ok 与 package-web-artifacts 两个子场景因该树缺少 web/node_modules/vite 和 web/dist/index.html 而未执行；这与 CTest 层的一个 AI 跳过分别记录，严格 verifier 通过不代表75项HTTP全部覆盖。Engine PID26928、创建身份134343299092066808、端口14780，正常受控STOPPED、实际退出1、无超时或强杀、owned cleanup COMPLETE。原始HTTP结果 SHA256 `cde5fa0f43426dd56e4c43dc4296d70ecb12bb03ac296bfcbd8ea961c36ff83d`；独审时该PID已不存在。
 
 此证据只属于本次 Windows 候选，不替代前述 Android 实际编译/签名证据，也不证明 Android 设备运行、AAB manifest语义或商店发布。两个HTTP Web子场景仍需资源具备后的实际执行；adb当前发现为空的事实与U24尚未完成状态保持。
+
+
+## 独立 HTTP/Web 补验证
+
+在干净40bf5ae79d5d365040860626844aec545fc49a18上执行一次固定请求的HTTP补验证，复用0dfc35a4构建的同字节Engine/Lua；两提交实际仅执行文档差异，未称重新编译。固定Node22.23.2/npm10.9.8、独占npm配置/cache，依次版本核对、精确CTest发现、npm ci、bake、story校验、Vite构建及HTTP CTest共8个owned命令全部exit0/cleanup COMPLETE。选中HTTP入口及其资源fixture均通过。
+
+新http-smoke-c4618dc5ad2a4e5db284e0c91c96942c实际75个不同检查全部true，含package-web-ok及package-web-artifacts，两项均执行、无NOT_RUN。原结果SHA256 fa0be71d058da0a0d48800715fe27693c1f4f3984a0e3f102b6b7e08912416dc；Engine PID28484、creation134343328197490203、端口11955，受控STOPPED实际exit1、无强杀超时且cleanup COMPLETE，外层CTest/driver均0。两Web检查证明当前HTTP端点成功与本轮产物存在，不构成保留最终发布包字节或浏览器离线验收。
+
+独立只读审计59项全部通过，291引用、15份完整目录inventory、13823个物理文件724399802字节重哈希一致；source/inputs首末稳定。原fullgate 0aefd085及80个预锁历史文件字节不变：其旧HTTP仍为73检查，本次单独75检查不得改写旧结果。审计http-web-completion-01/independent-audit-01.md SHA256 dca79c98700bedc95066e7a9fcb0962fc205286e4e11a074347cb0d7c08fb3f0，JSON 222e8c751b58916cbaca9ef92b17269502e19c717ffabe496f769a6a9e0a5252；请求97e3553bfc951669e1da3ef4227a0d808d1e3a8d1310ae0d5b0f52399b0b0fde和驱动748b98a0d77e0f8ddcfcaa7da02ca090198441888651a2ab2ea494317147bf63保持。Android设备/安装/运行、正式签名/商店及最终发布状态未提升。
