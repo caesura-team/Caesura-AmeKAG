@@ -1218,6 +1218,46 @@ jobs:
         npm ci --prefix web --no-audit --no-fund
     - name: Require current tracked script index
       run: node web/gen-index.mjs --check
+    - name: Install the pinned browser for offline package validation
+      # Chrome 152 loses the navigator network override on renderer reload.
+      # Keep the strict offline assertions and select a reproducible stable
+      # browser with the persisted override, instead of the runner image copy.
+      run: |
+        chrome_root="$RUNNER_TEMP/u22-chrome-153.0.8010.52"
+        mkdir "$chrome_root"
+        curl --fail --location --max-time 180 \
+          https://storage.googleapis.com/chrome-for-testing-public/153.0.8010.52/linux64/chrome-linux64.zip \
+          --output "$chrome_root/chrome.zip"
+        printf '%s  %s\n' e66f66d4802a46d4a022667e668aa950e277cadbfbed4b3777915b47413a0ef9 "$chrome_root/chrome.zip" | sha256sum --check --strict
+        unzip -q "$chrome_root/chrome.zip" -d "$chrome_root"
+        export CHROME_BINARY="$chrome_root/chrome-linux64/chrome"
+        python3 - <<'PY'
+        import hashlib, json, os, pathlib, subprocess, sys
+        binary = pathlib.Path(os.environ['CHROME_BINARY'])
+        try:
+            result = subprocess.run([str(binary), '--version'], capture_output=True, timeout=20)
+            code, stdout, stderr = result.returncode, result.stdout, result.stderr
+        except subprocess.TimeoutExpired as error:
+            code, stdout, stderr = None, error.stdout or b'', error.stderr or b''
+            stderr += b'\nBrowser version command exceeded 20 seconds.\n'
+        except OSError as error:
+            code, stdout, stderr = None, b'', str(error).encode('utf-8')
+        root = binary.parents[1]
+        root.joinpath('version.stdout.log').write_bytes(stdout)
+        root.joinpath('version.stderr.log').write_bytes(stderr)
+        version = stdout.decode('utf-8', errors='replace').strip()
+        accepted = code == 0 and version.split()[-1:] == ['153.0.8010.52']
+        evidence = {'status': 'PASS' if accepted else 'FAIL', 'exit_code': code,
+                    'version': version, 'path': str(binary),
+                    'sha256': hashlib.sha256(binary.read_bytes()).hexdigest(),
+                    'archive_sha256': 'e66f66d4802a46d4a022667e668aa950e277cadbfbed4b3777915b47413a0ef9'}
+        root.joinpath('selection.json').write_text(json.dumps(evidence, indent=2) + '\n', encoding='utf-8')
+        print(json.dumps(evidence))
+        sys.stderr.write(stderr.decode('utf-8', errors='replace'))
+        if not accepted:
+            raise SystemExit(1)
+        PY
+        echo "CHROME_BINARY=$CHROME_BINARY" >> "$GITHUB_ENV"
     - name: Build chosen game and validate final directory, ZIP and Pages tar
       id: package
       run: |
@@ -1226,7 +1266,7 @@ jobs:
         python scripts/ci_package_lane.py web --source-sha "$SOURCE_SHA" --work "$PACKAGE_WORK" \
           --game "$WEB_GAME" --zip-name "CaesuraAmeKAG-${ENGINE_VERSION}-Web.zip" --pages-tar \
           --node "$(command -v node)" --lua "$(command -v lua5.4)" \
-          --browser /opt/google/chrome/chrome "${args[@]}" --github-output "$GITHUB_OUTPUT"
+          --browser "$CHROME_BINARY" "${args[@]}" --github-output "$GITHUB_OUTPUT"
       env:
         WEB_GAME: ${{ inputs.web_game }}
         WEB_ACTIONS: ${{ inputs.web_actions }}
@@ -1264,6 +1304,8 @@ jobs:
       with:
         name: u22-web-package-evidence
         path: |
+          ${{ runner.temp }}/u22-chrome-153.0.8010.52/selection.json
+          ${{ runner.temp }}/u22-chrome-153.0.8010.52/version.*.log
           ${{ env.PACKAGE_WORK }}/**/*.json
           ${{ env.PACKAGE_WORK }}/**/*.jsonl
           ${{ env.PACKAGE_WORK }}/**/*.log

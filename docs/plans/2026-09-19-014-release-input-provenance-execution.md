@@ -119,3 +119,14 @@ U22前一托管run35460659971的Linux最终TGZ/AppImage原件及69项原始证�
 只读审核发现verify_release_inputs.py保存原API响应为.body，而诊断上传仅含json/log；提交5e00d65e补充固定runner.temp/release-input-gate根下的.body原件，保持无凭据的响应体，未改变认证判定。随后整合U22候选016f77f7的同session CDP离线控制和exec异常保留；原ci.yml的jsonl上传增量移到U23 validate-engine.yml的对应Web job，保留现有复用工作流及输出合同。原托管失败、缺输出及本地旧候选证据不改标为新整合源码通过。
 
 下一正式gate须来自新的完整候选run，固定run/attempt、实际head与workflow身份、9个required jobs、11个独立artifact IDs及原始ZIP摘要、6份U1原收据和最终包字节。AE7真实取消状态拒绝、下载后实际包字节篡改拒绝与服务端required-check有效配置仍待独立验证；既有fixture控制和旧inputs阶段拒绝不能代替这些路径。签名/发布/商店及Pages部署没有新增授权。
+
+
+## 2026-09-20 后续完整本地门禁与 U22 固定浏览器整合
+
+干净8950b4f0116f6fc79470a7de8687f67d7380f81d的完整Windows Debug运行 `0d52f604-fd4b-4ce3-a6ab-dc50dda0fe25` 已通过：C++1415/1415、427088断言、0失败0跳过；Lua147/147及56/56；CTest发现57项，56通过、0失败、仅1个预声明可选AI跳过；实际HTTP75/75、正常受控停止并清理。全部11个profile检查、collector和strict verifier均exit0，source/fixtures前后稳定。原run.json摘要 `3f0764bbdb65c0dbbd8ae805703a8ab57282944318ce73b8e9f8d4470fe6f4e5`；证据与只读审查保留于u23-next-gate-01/full-debug-8950b4f0-01。该结果继续只绑定原8950b4f0，不改标为后续整合提交。
+
+随后整合U22 `0a651bfdd29555152246f44ce626602f5a7764be`，实际冲突为ci.yml及两个platform anchor文档。保留U23薄caller，将精确的Chrome153固定归档安装/版本检查/失败诊断移入validate-engine.yml release-web；原game/actions、版本化ZIP、Pages TAR、两次上传前复核和精确上传列表保持。9个required producer jobs、11个artifact roles、45个callee outputs、source/execution/workflow身份合同与profile未变。Native lsof生产/测试按incoming原blob整合。
+
+实际现有ci_execution维护suite16/16、0失败0跳过，11.365秒；actionlint1.7.7检查五个workflows exit0、0.406秒。独立重算19个冻结原件及两workflow一致，未改测试或放宽断言。证据u23-next-gate-01/u22-0a651bfd-integration-02/handoff-01.md摘要 `acffbe553111601ab75d2435482d2c23c9009d9c0d165e42d658ab614b86f9a3`；freeze-01.json摘要 `fa56dd88f1337cc59c33556f91dc6fca36c5473433e81c278ce80f0f56252e7c`。
+
+此时U22新run35471198493仍运行中，Mac Clang已因真实lsof输出出现未知字段而失败，Mac package跳过；原字段尚未显示在失败日志，不能猜测具体内容或把本次整合宣称Mac修复验收。U23暂不推送新的正式聚合候选，继续等待有依据的诊断增量及适用完整门禁。AE7、11个真实下载artifact、服务端required-check和dry-run发布验收仍未完成，发布与Pages部署未执行。
