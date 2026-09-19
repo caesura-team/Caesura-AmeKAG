@@ -4,8 +4,8 @@
 # Caesura (AmeKAG) — Unified Platform Status Matrix
 
 > **Single Source of Truth**: [`docs/status/platform-matrix.yaml`](platform-matrix.yaml)<br>
-> **Evidence HEAD Commit**: `46490236cb22fac069c8956ed7b69e7f0ad8de45`<br>
-> **Generated At**: `2026-09-19T15:24:04.092237+00:00`<br>
+> **Evidence HEAD Commit**: `59718416b00c42ecbff67cea4777bbd8cdbc3ba2`<br>
+> **Generated At**: `2026-09-19T15:47:44.825788+00:00`<br>
 > **Verification Status**: 100% Evidence-Backed (Zero Undocumented Claims)
 
 ---
@@ -49,7 +49,7 @@
 
 #### Gating Boundaries
 
-- **Evidence Scope Gate**: Reviewed at code anchor 46490236; new build/runtime evidence is only clean 0278910e local Windows Debug. Hosted run 35446845025 executed PR merge 69e07778 (head 0278910e); Windows Debug job 105907137963 and Release job 105907137911 succeeded; Release Package job 105910356512 failed at CLI argument parsing before final-package generation. First-VN, packaging and release rows retain their separately dated historical evidence; no final-package or release acceptance is added. The generated footer remains a historical summary, not a current all-platform gate.
+- **Evidence Scope Gate**: Historical execution scope retained at U23 code anchor 59718416; new build/runtime evidence is only clean 0278910e local Windows Debug. Hosted run 35446845025 executed PR merge 69e07778 (head 0278910e); Windows Debug job 105907137963 and Release job 105907137911 succeeded; Release Package job 105910356512 failed at CLI argument parsing before final-package generation. First-VN, packaging and release rows retain their separately dated historical evidence; no final-package or release acceptance is added. The generated footer remains a historical summary, not a current all-platform gate.
 
 #### Capability Matrix & Evidence
 
@@ -73,7 +73,7 @@
 
 #### Gating Boundaries
 
-- **Evidence Scope Gate**: Reviewed at code anchor 46490236; run 35446845025 job 105907138086 at PR merge 69e07778 (head 0278910e) passed Debug build and 45 CTest entries with only the declared AI skip. The job then failed the platform-document drift gate. Package jobs are not accepted and old First-VN/package evidence stays historical. The fixed generated footer count 11/11 is historical and does not describe this run.
+- **Evidence Scope Gate**: Historical execution scope retained at U23 code anchor 59718416; run 35446845025 job 105907138086 at PR merge 69e07778 (head 0278910e) passed Debug build and 45 CTest entries with only the declared AI skip. The job then failed the platform-document drift gate. Package jobs are not accepted and old First-VN/package evidence stays historical. The fixed generated footer count 11/11 is historical and does not describe this run.
 
 #### Capability Matrix & Evidence
 
