@@ -2,9 +2,9 @@ version: 1
 schema_version: "1.0.0"
 generated_document: "docs/status/platform-status.md"
 # Review synchronization anchor only; execution commits and dates remain per capability.
-# U23 workflow and Pages byte-binding changes are under candidate validation.
+# U27 completed-scene benchmark timing is under candidate validation.
 # A docs-only sync does not revalidate packages, devices, releases, or the code anchor.
-evidence_head_commit: 7c1e37f3e92a769575d662a5ba9a9f9e8b279e40
+evidence_head_commit: da9d833aad97b9440b7d5b3121439f18973b7439
 
 allowed_status_enums:
   - verified

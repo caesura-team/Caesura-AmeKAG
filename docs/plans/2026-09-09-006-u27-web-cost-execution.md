@@ -44,3 +44,13 @@ Web 协程恢复仅对第一 yield 值为 nil 增加本地短路；所有非 nil
 - 原内存、工作量、统计负控制全部通过，源码与夹具前后稳定、dirty=false；collector 与严格 verifier 均 PASS。
 
 原始记录在隔离工作树 `artifacts/validation/u15-web-final-02/`；证据 manifest 位于 `artifacts/validation/u15-web-final-evidence/a699bc5cceb6db4393cc3a24024d6dd592392122/ad5180f9-f78b-4e2e-897b-371bd93c38f8/windows-web-u15/`。此前 `u15-web-final-01` 的完整失败继续保留。此次 PASS 不证明固定改善百分比、所有主机性能或 Release 三进程结果；CI 和最新原生完整候选继续独立验证。U27 原计划的至少 10 样本、3 个独立进程及至少一小时长跑仍是明确未完成项。
+
+## 2026-09-20 测量入口修复与真实短测
+
+主工作区u27-current-performance-audit/formal-readiness-01.md/json重新核对后确认：上述a699收据的configuration实际为Debug，历史Web完整套件不构成正式Release多进程基线。d447的生产Web ZIP/TAR原件及摘要仍可核对，但没有正式性能样本；当前compare_benchmarks.py、run_engine_soak.py与长跑fixture尚未实现。三进程/每进程十样本的版本交错比较及一小时真实后端长跑继续未完成。
+
+既有perf-bundle计时器同步调用async播放函数，回调丢弃Promise，因而没有测到场景完成。以原函数机械抽取后先做确定性回归，10项中9失败：首个barrier释放前已启动8项，最大并发8，完成时钟应为5/6ms却得到0/0ms；错误未传播且资源未dispose。修复将warmup与各样本串行await、所有调用者返回Promise、三个入口等待计时器，并注册await dispose。回归10/10通过；原次数10/6/6、各路径一次warmup、偶数样本上中位数、数值阈值和超时保持。源码/原RED/GREEN/独审保存在u27-worktree/artifacts/validation/u27-bundle-timing/，独审无可行动发现。
+
+在独占本地资源窗口对修复后的真实Wasmoon入口执行一次，3/3通过、0失败0跳过，test29.93秒、Vitest30.39秒，owned Node正常exit0、无timeout/force、cleanup COMPLETE。tiny源/compiled-token bundle中位数6.4/7.0ms；story为965.8/908.5ms、bundle/source吞吐比1.063；synthetic为1288.5/963.7ms、比例1.337，两个比例均满足原>=0.8。原JSON摘要a6b4de6cea7ba0db2bfb80aca3bb7cb610328e688d3b49afc9f894c7fdd33d87，real-perf-01-outcome.json绑定ce5基线上的三文件dirty补丁，运行前后fingerprint一致；不能改称干净候选或正式3×10验收。
+
+独审指出原日志将tokens/ms误标为tok/s；之后仅修正两个输出标签及显示小数，计时和断言未变，代码提交da9d833aad97b9440b7d5b3121439f18973b7439。原短测文件SHA和旧日志保留，完整新Web套件尚待执行。这些是Lua compiled-token bundle对source的短测，不是Vite生产包、浏览器、真实GPU/音频或soak结果，也不建立跨版本改善结论。
