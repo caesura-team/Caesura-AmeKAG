@@ -3,7 +3,7 @@ schema_version: "1.0.0"
 generated_document: "docs/status/platform-status.md"
 # Review synchronization anchor only; execution commits and dates remain per capability.
 # A docs-only sync does not revalidate packages, devices, releases, or the code anchor.
-evidence_head_commit: a4a6a0d1bcec65247b1b436d7e73e8828c385875
+evidence_head_commit: f779cc5d24da600ca3cd7356e7d79b879e93561f
 
 allowed_status_enums:
   - verified
