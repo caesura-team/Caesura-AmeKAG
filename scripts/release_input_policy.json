@@ -21,7 +21,8 @@
     "windows-package": "windows-release",
     "linux-package": "linux-release",
     "macos-package": "macos-release",
-    "web-package": "web-package"
+    "web-package": "web-package",
+    "pages-artifact": "web-package"
   },
   "output_prefixes": {
     "windows-debug-execution": "windows_debug",
@@ -33,20 +34,82 @@
     "windows-package": "windows",
     "linux-package": "linux",
     "macos-package": "macos",
-    "web-package": "web"
+    "web-package": "web",
+    "pages-artifact": "pages"
   },
   "execution_inputs": {
-    "windows-debug-execution": {"profile_name": "windows-debug", "platform": "windows", "configuration": "Debug"},
-    "windows-release-execution": {"profile_name": "windows-release", "platform": "windows", "configuration": "Release"},
-    "linux-debug-execution": {"profile_name": "linux-debug", "platform": "linux", "configuration": "Debug"},
-    "linux-release-execution": {"profile_name": "linux-release", "platform": "linux", "configuration": "Release"},
-    "macos-debug-execution": {"profile_name": "macos-debug", "platform": "macos", "configuration": "Debug"},
-    "macos-release-execution": {"profile_name": "macos-release", "platform": "macos", "configuration": "Release"}
+    "windows-debug-execution": {
+      "profile_name": "windows-debug",
+      "platform": "windows",
+      "configuration": "Debug"
+    },
+    "windows-release-execution": {
+      "profile_name": "windows-release",
+      "platform": "windows",
+      "configuration": "Release"
+    },
+    "linux-debug-execution": {
+      "profile_name": "linux-debug",
+      "platform": "linux",
+      "configuration": "Debug"
+    },
+    "linux-release-execution": {
+      "profile_name": "linux-release",
+      "platform": "linux",
+      "configuration": "Release"
+    },
+    "macos-debug-execution": {
+      "profile_name": "macos-debug",
+      "platform": "macos",
+      "configuration": "Debug"
+    },
+    "macos-release-execution": {
+      "profile_name": "macos-release",
+      "platform": "macos",
+      "configuration": "Release"
+    }
   },
   "package_inputs": {
-    "windows-package": {"platform": "windows", "configuration": "Release", "job_key": "release", "required_files": {"CaesuraAmeKAG-{version}-Windows-AMD64.zip": "file"}},
-    "linux-package": {"platform": "linux", "configuration": "Release", "job_key": "release-linux", "required_files": {"CaesuraAmeKAG-{version}-Linux-x86_64.tar.gz": "file", "CaesuraAmeKAG-{version}-Linux-x86_64.AppImage": "file"}},
-    "macos-package": {"platform": "macos", "configuration": "Release", "job_key": "release-macos", "required_files": {"CaesuraAmeKAG-{version}-Darwin-arm64.tar.gz": "file", "CaesuraAmeKAG-{version}-Darwin-arm64.dmg": "file"}},
-    "web-package": {"platform": "web", "configuration": "Release", "job_key": "release-web", "required_files": {"CaesuraAmeKAG-{version}-Web.zip": "file"}}
+    "windows-package": {
+      "platform": "windows",
+      "configuration": "Release",
+      "job_key": "release",
+      "required_files": {
+        "CaesuraAmeKAG-{version}-Windows-AMD64.zip": "file"
+      }
+    },
+    "linux-package": {
+      "platform": "linux",
+      "configuration": "Release",
+      "job_key": "release-linux",
+      "required_files": {
+        "CaesuraAmeKAG-{version}-Linux-x86_64.tar.gz": "file",
+        "CaesuraAmeKAG-{version}-Linux-x86_64.AppImage": "file"
+      }
+    },
+    "macos-package": {
+      "platform": "macos",
+      "configuration": "Release",
+      "job_key": "release-macos",
+      "required_files": {
+        "CaesuraAmeKAG-{version}-Darwin-arm64.tar.gz": "file",
+        "CaesuraAmeKAG-{version}-Darwin-arm64.dmg": "file"
+      }
+    },
+    "web-package": {
+      "platform": "web",
+      "configuration": "Release",
+      "job_key": "release-web",
+      "required_files": {
+        "CaesuraAmeKAG-{version}-Web.zip": "file",
+        "artifact.tar": "file"
+      }
+    }
+  },
+  "pages_inputs": {
+    "pages-artifact": {
+      "package_role": "web-package",
+      "file": "artifact.tar"
+    }
   }
 }

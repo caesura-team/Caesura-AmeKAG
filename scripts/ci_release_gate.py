@@ -66,9 +66,19 @@ def _read(path):
 def _outputs(expected,policy,outputs):
     _need(policy.get('source_sha')==expected.get('source_sha'),'Policy source differs from expected source')
     roles=policy.get('artifact_roles');prefixes=policy.get('output_prefixes')
-    executions=policy.get('execution_inputs');packages=policy.get('package_inputs')
+    executions=policy.get('execution_inputs');packages=policy.get('package_inputs');pages=policy.get('pages_inputs',{})
     _need(isinstance(roles,dict) and roles and isinstance(prefixes,dict) and set(prefixes)==set(roles),'Policy output roles differ')
-    _need(isinstance(executions,dict) and executions and isinstance(packages,dict) and packages and not set(executions)&set(packages) and set(executions)|set(packages)==set(roles),'Policy input roles must form an exact partition')
+    _need(isinstance(executions,dict) and executions and isinstance(packages,dict) and packages and isinstance(pages,dict),'Policy input roles must be mappings')
+    groups=(set(executions),set(packages),set(pages))
+    _need(not any(groups[i]&groups[j] for i in range(3) for j in range(i+1,3)) and set.union(*groups)==set(roles),'Policy input roles must form an exact partition')
+    for role,spec in pages.items():
+        _need(isinstance(spec,dict) and set(spec)=={'package_role','file'} and spec.get('file')=='artifact.tar','Pages must select the final artifact.tar')
+        package_role=spec.get('package_role')
+        package=packages.get(package_role) if isinstance(package_role,str) else None
+        _need(isinstance(package,dict) and package.get('platform')=='web'
+              and isinstance(package.get('required_files'),dict)
+              and package['required_files'].get('artifact.tar')=='file','Pages needs an independently accepted Web tar')
+        _need(roles[role]==roles[package_role],'Pages and accepted package must share the same producer job role')
     _need(all(isinstance(p,str) and re.fullmatch('[a-z][a-z0-9_]{0,99}',p) for p in prefixes.values()) and len(set(prefixes.values()))==len(prefixes),'Output prefixes must be distinct')
     producers={'schema_version':1,'artifacts':{}};claims={};keys=set()
     for role,prefix in prefixes.items():
@@ -88,8 +98,30 @@ def _outputs(expected,policy,outputs):
             _need(str(uuid.UUID(identifier))==identifier,'Noncanonical execution UUID')
             claims[role]=dict(receipt_sha256=values['receipt_sha256'],run_id=identifier)
     _need(set(outputs)==keys,'Missing or extra producer output keys')
+    for role,spec in pages.items():
+        _need(producers['artifacts'][role]['manifest_sha256']==producers['artifacts'][spec['package_role']]['manifest_sha256'],'Pages manifest output differs from the accepted package producer')
     _validate_inputs(expected,policy,producers)
     return producers,claims
+
+
+def _pages_artifacts(expected,policy,hosted,combined):
+    """Describe authenticated IDs and accepted tar bytes without publishing."""
+    specs=policy.get('pages_inputs',{});results=combined['pages']
+    _need(set(results)==set(specs) and combined['pages_specs']==specs,'Pages selections differ from controlled policy')
+    plans={}
+    for role,spec in specs.items():
+        result=results[role];entry=hosted['artifacts'][role]
+        _need(result.get('status')=='PAGES_ARTIFACT_VERIFIED' and result.get('release_ready') is False
+              and result.get('tar_name')==spec['file'] and _digest(result.get('tar_sha256'))
+              and result.get('manifest_sha256')==entry['manifest_sha256']
+              and result.get('source_sha')==expected['source_sha'] and result.get('version')==policy['version'],
+              'Pages result differs from authenticated inputs')
+        plans[role]=dict(artifact_id=entry['artifact_id'],artifact_digest=entry['artifact_digest'],
+            manifest_sha256=entry['manifest_sha256'],tar_sha256=result['tar_sha256'],
+            repository=expected['repository'],run_id=expected['run_id'],run_attempt=expected['run_attempt'],
+            job_id=entry['job_id'],source_sha=expected['source_sha'],version=policy['version'],
+            package_role=spec['package_role'],file=spec['file'],deployment='NOT_RUN',release_ready=False)
+    return plans
 
 
 def _inputs_stable(locks):
@@ -187,7 +219,8 @@ def run_release_gate(*,repo_root,expected_path,policy_path,policy_sha256,
         else:upload_files=aggregate.verify_preupload(aggregate_path,aggregate_sha)['upload_files']
         _inputs_stable(report['input_locks'])
         _need(_sha256_file(aggregate_path)==aggregate_sha,'Aggregate receipt changed during recheck')
-        report.update(status='FIXTURE_INPUTS_VERIFIED' if fixture else 'DRY_RUN_INPUTS_VERIFIED',upload_files=upload_files,stage='complete')
+        pages_artifacts=_pages_artifacts(expected,policy,latest,combined)
+        report.update(status='FIXTURE_INPUTS_VERIFIED' if fixture else 'DRY_RUN_INPUTS_VERIFIED',upload_files=upload_files,pages_artifacts=pages_artifacts,stage='complete')
     except Exception as error:
         report['errors'].append(_safe(error,token))
         raise GateError(report['errors'][-1]) from None

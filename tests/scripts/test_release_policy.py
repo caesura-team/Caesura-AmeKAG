@@ -49,11 +49,34 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(result["policy_sha256"],hashlib.sha256(raw).hexdigest())
         self.assertEqual(json.loads(result["policy_json"]),value)
         self.assertEqual(value["source_sha"],"a"*40)
-        self.assertEqual(len(value["artifact_roles"]),10)
+        self.assertEqual(len(value["artifact_roles"]),11)
         self.assertEqual(value["version"],"1.2.3")
         self.assertIn("CaesuraAmeKAG-1.2.3-Web.zip",value["package_inputs"]["web-package"]["required_files"])
         self.assertEqual(value["source_files"]["CMakeLists.txt"],hashlib.sha256(self.cmake.read_bytes()).hexdigest())
         self.assertFalse(result["release_ready"])
+
+    def test_pages_transport_is_bound_to_the_same_web_package_producer(self):
+        result=self.call()
+        value=json.loads(result["policy_json"])
+        self.assertEqual(value["pages_inputs"],{"pages-artifact":{"package_role":"web-package","file":"artifact.tar"}})
+        self.assertEqual(value["package_inputs"]["web-package"]["required_files"]["artifact.tar"],"file")
+        self.assertEqual(value["artifact_roles"]["pages-artifact"],value["artifact_roles"]["web-package"])
+
+    def test_pages_scope_cannot_omit_tar_change_its_name_or_switch_producer(self):
+        import copy
+        baseline=copy.deepcopy(self.template)
+        for kind in ("missing", "filename", "package", "producer", "tar"):
+            with self.subTest(kind=kind):
+                self.template=copy.deepcopy(baseline)
+                if kind=="missing":self.template["pages_inputs"]={}
+                elif kind=="filename":self.template["pages_inputs"]["pages-artifact"]["file"]="other.tar"
+                elif kind=="package":self.template["pages_inputs"]["pages-artifact"]["package_role"]="windows-package"
+                elif kind=="producer":self.template["artifact_roles"]["pages-artifact"]="windows-release"
+                else:self.template["package_inputs"]["web-package"]["required_files"].pop("artifact.tar")
+                self.write()
+                with self.assertRaisesRegex(ValueError,"Pages"):
+                    self.call()
+                self.assertFalse(self.output.exists())
 
     def test_failed_or_existing_output_is_not_overwritten(self):
         self.output.write_bytes(b"first failure evidence")

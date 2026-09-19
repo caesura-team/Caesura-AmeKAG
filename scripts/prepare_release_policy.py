@@ -23,8 +23,9 @@ from verify_execution_bundle import _no_links, _snapshot
 PLATFORMS=("windows","linux","macos")
 EXECUTION_ROLES={f"{platform}-{configuration}-execution" for platform in PLATFORMS for configuration in ("debug","release")}
 PACKAGE_ROLES={platform+"-package" for platform in (*PLATFORMS,"web")}
+PAGES_ROLES={"pages-artifact"}
 JOB_ROLES={role.removesuffix("-execution") for role in EXECUTION_ROLES}|{"web-package","ios-compile","android-static"}
-TEMPLATE_KEYS={"schema_version","required_jobs","artifact_roles","output_prefixes","execution_inputs","package_inputs"}
+TEMPLATE_KEYS={"schema_version","required_jobs","artifact_roles","output_prefixes","execution_inputs","package_inputs","pages_inputs"}
 
 
 def _need(condition,message):
@@ -78,7 +79,7 @@ def prepare_policy(*,repo,output,source_sha,release_tag=None):
           "Invalid exact required job name")
     _need(len(set(jobs.values()))==len(jobs),"Required job names must be distinct")
     roles=policy["artifact_roles"]
-    _need(isinstance(roles,dict) and set(roles)==EXECUTION_ROLES|PACKAGE_ROLES,"Policy required artifact roles differ")
+    _need(isinstance(roles,dict) and set(roles)==EXECUTION_ROLES|PACKAGE_ROLES|PAGES_ROLES,"Policy required artifact roles differ")
     _need(all(isinstance(job,str) and job in jobs for job in roles.values()),"Unknown required producer role")
     prefixes=policy["output_prefixes"]
     _need(isinstance(prefixes,dict) and set(prefixes)==set(roles),"Missing output prefix role")
@@ -124,6 +125,14 @@ def prepare_policy(*,repo,output,source_sha,release_tag=None):
             _need(name.casefold() not in names,"Duplicate final package filename")
             names.add(name.casefold());selected[name]=kind
         spec["required_files"]=selected
+    pages=policy["pages_inputs"]
+    _need(isinstance(pages,dict) and set(pages)==PAGES_ROLES,"Required Pages transport role differs")
+    for role,spec in pages.items():
+        _need(isinstance(spec,dict) and spec=={"package_role":"web-package","file":"artifact.tar"},
+              "Pages must select the accepted Web artifact.tar")
+        _need(roles[role]==roles["web-package"],"Pages and Web package must share the same producer")
+        _need(packages["web-package"]["required_files"].get("artifact.tar")=="file",
+              "Pages tar must have its own final-package acceptance")
     for path,digest in ((template_path,template_sha),(profile_path,profile_sha),(cmake_path,cmake_sha)):
         _need(_sha256_file(path)==digest,"Source input changed during policy preparation")
     _need(_source_identity(repo)==before,"Source checkout changed during policy preparation")

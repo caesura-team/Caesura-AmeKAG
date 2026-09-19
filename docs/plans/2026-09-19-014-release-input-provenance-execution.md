@@ -57,3 +57,20 @@ ci_release_gate.py已接通受控输入、固定ID下载、真实聚合及最终
 ## 初次集成冻结
 
 U23 的 windows-foundation 预热全量 Debug 构建退出 0，日志为 artifacts/validation/u23-foundation/warm-build-01.log。该构建仍基于 d7de1b95 且工作区含未提交实现，只用于提前发现编译问题，不作为干净候选验收。六个原生配置的 HTTP 诊断上传路径已接入共享 workflow，Windows 为 build/Debug 或 build/Release 下的实际目录，Linux/macOS 为 build 下目录，保留现有 RPC/stdio/CTest 诊断及非空工作目录守卫。首次实现提交之后仍须整合 U22 新修复，冻结新提交并执行完整候选验证；本记录中的已通过局部测试不提升托管或最终包状态。
+
+
+## Pages 最终 tar 身份闭合实现
+
+主体实现先本地提交d43bf605，随后整合U22至0785b697并保留共享workflow的HTTP诊断与Windows单一工具路径选择，得到c9ab5858；这不是U23验收提交。新增Pages策略总共9个required jobs、11个artifact roles和45个明确outputs：六份严格执行证据、四个平台包证明以及同Web producer的独立Pages传输。预先指定的artifact.tar必须同时在Web proof bundle中具有自己的一份原accepted收据；Pages专用artifact只传这个已经验收的tar，不能在验收后再调用会重新tar的upload-pages-artifact。通用Release附件列表明确排除Pages tar，单独pages_artifacts计划绑定固定ID、外层ZIP摘要、内层tar摘要及repo/run/attempt/job/source/version，deployment仍NOT_RUN。
+
+plain tar准备层只扩展ZIP/TGZ为ZIP/TGZ/plain TAR，不启用tarfile自动探测其他压缩；沿用路径、链接、重复、限额、digest和失败清理合同。旧实现25方法21失败断言+2错误，修改后Windows/WSL各25/25，0跳过。Pages producer使用冻结site清单逐文件写入一次plain tar，复制时计算实际流SHA，禁止任何链接、硬链接、特殊项，调用同一run_package_validation入口验收最终tar，然后锁定原收据。API/CLI缺Pages的RED保留，最终Windows37/37、WSL38/38（另含POSIX链接/FIFO），0跳过。主代理独审两层增量无发现；这些编排夹具的浏览器边界有替身，不能声称真实Chrome已跑。
+
+独立接收器verify_pages_artifact将实际单tar payload与受控verify_bundle结果、外部manifest SHA匹配，拒绝额外文件/目录、物理或tar内链接/特殊成员、压缩tar与不安全路径。Pages物理tar与声明内容均严格小于10,000,000,000字节；官方1GiB警告不提升成拒绝规则。两份tar、proof原收据、解包内容和布局在后续稳定性检查重新打开。原缺模块13项RED，最终Windows/WSL各15/15、0跳过；主代理独审并联调实际aggregate通过，托管身份仍由上层认证。
+
+策略14/14、聚合17/17通过，Pages三分区/同job与清单/最终字节回归先RED后GREEN。独立审查另执行10项实际文件正负控，确认None/string/bool job ID、三分区缺失/重叠、已刷新传输摘要的调包/额外文件及晚将tar混入Release列表仍拒绝。Pages gate原21方法6失败+2错误，最终Windows/WSL各21/21；实际本地HTTP/Git/ZIP/tar正控与晚改原receipt负控各27次GET、77份原始文件，只有最低U1 verdict被替换；取消替换仍准确拒绝test-fixture。Pages plan仅在最后再次托管查询与全部字节重核后输出，fixture始终为FIXTURE_INPUTS_VERIFIED、CLI77、release_ready=false。
+
+CMake实际重新配置发现54个CTest入口，六profile的最低发现数由此从53更新为54；九个新增release维护入口已由真实CTest/Python3.12.9执行，9/9通过、0跳过、64.16秒，见u23-pages-integration/ctest-nine-01.log与XML。这不是全量54项验收。五workflow actionlint通过（未启用shellcheck/pyflakes）。独立审查与原始失败分别保存在u23-pages-tar、u23-pages-producer、u23-pages-receiver、u23-pages-integration-review和u23-gate-pages等目录，测试通过数不代表覆盖率。
+
+真实候选完整Debug/C++/Lua/CTest、最终tar的实际Web浏览器验收、11个托管artifact与job名称/outputs读回、非注入dry-run及AE7托管取消/调包负控仍待执行。U22新候选0785b697本地严格windows-debug通过，但run35451773753的Mac最终TGZ验收失败正在诊断；不得把本地或维护夹具通过改写成U22、U23或整个U1–U29计划完成。Pages服务接受及真正部署不在本次dry-run内。
+
+Gate Pages独审随后完成，无可行动发现：45字段与workflow精确一致，47项缺字段/额外字段/重复ID负控均拒绝；新增真实wire晚增空目录在preupload拒绝（27GET），最终Pages digest改变在hosted-final拒绝（26GET），均无Pages plan或upload_files。作者测试与独审源码hash一致，证据u23-pages-gate-review/review-01.md。

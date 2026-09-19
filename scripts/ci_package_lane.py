@@ -10,12 +10,15 @@ from __future__ import annotations
 
 import argparse
 from contextlib import contextmanager
+import hashlib
 import json
 import os
 from pathlib import Path
 import re
 import shutil
+import stat
 import sys
+import tarfile
 import time
 import uuid
 import zipfile
@@ -304,10 +307,53 @@ def run_native_lane(*, build_dir, requirements_path, platform, source_sha, work_
     return report
 
 
+def _pages_source(site, entry):
+    path = site / entry["path"]
+    info = path.lstat()
+    _require(entry["type"] in ("directory", "file")
+             and not getattr(info, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400),
+             "Pages tar requires plain directories and regular files")
+    _require((entry["type"] == "directory" and stat.S_ISDIR(info.st_mode))
+             or (entry["type"] == "file" and stat.S_ISREG(info.st_mode) and info.st_nlink == 1),
+             "Pages tar does not support links, hardlinks or special files")
+    return path, info
+
+
+def _write_pages_tar(site, inventory, output):
+    class HashedReader:
+        def __init__(self, stream):
+            self.stream, self.digest = stream, hashlib.sha256()
+        def read(self, size=-1):
+            data = self.stream.read(size)
+            self.digest.update(data)
+            return data
+
+    # Every member comes from the same frozen inventory used for the ZIP. Never
+    # recursively discover extra paths, dereference links or overwrite a tar.
+    with tarfile.open(output, "x", format=tarfile.PAX_FORMAT) as archive:
+        for entry in inventory["entries"]:
+            path, info = _pages_source(site, entry)
+            member = archive.gettarinfo(str(path), arcname=entry["path"])
+            _require((entry["type"] == "directory" and member.isdir())
+                     or (entry["type"] == "file" and member.isfile()), "Pages member changed type")
+            if member.isdir():
+                archive.addfile(member)
+            else:
+                with path.open("rb") as stream:
+                    opened = os.fstat(stream.fileno())
+                    _require((opened.st_dev, opened.st_ino, opened.st_size, opened.st_nlink)
+                             == (info.st_dev, info.st_ino, entry["size"], 1), "Pages input changed while opening")
+                    reader = HashedReader(stream)
+                    archive.addfile(member, reader)
+                    _require(reader.digest.hexdigest() == entry["sha256"], "Pages member differs from the locked site inventory")
+
+
 def run_web_lane(*, game, source_sha, work_dir, node_executable, lua_executable, browser_executable,
-                 zip_name=None, actions_path=None, actions_sha256=None):
+                 zip_name=None, actions_path=None, actions_sha256=None, pages_tar=False):
     report = _start(work_dir, "web", source_sha)
     try:
+        _require(isinstance(pages_tar, bool), "Pages tar selection must be a boolean")
+        _require(not pages_tar or zip_name, "Pages tar requires an explicit final ZIP name")
         _source_start(report)
         chosen = Path(game) if Path(game).is_absolute() else ROOT / game
         chosen = chosen.resolve(strict=True)
@@ -345,6 +391,17 @@ def run_web_lane(*, game, source_sha, work_dir, node_executable, lua_executable,
             artifact = _lock(report, output)
             _validate(report, "validate-web-zip", artifact, python, extra)
             artifacts = [artifact]
+            if pages_tar:
+                _check_lock(directory)
+                output = site.parent / "artifact.tar"
+                _write_pages_tar(site, inventory, output)
+                _check_lock(directory)
+                artifact = _lock(report, output)
+                _validate(report, "validate-pages-tar", artifact, python, extra)
+                for entry in inventory["entries"]:
+                    _pages_source(site, entry)
+                artifacts.append(artifact)
+                report["pages_file"] = str(output)
         _finish(report, artifacts)
     except Exception as error:
         report["errors"].append(f"{type(error).__name__}: {error}")
@@ -424,6 +481,7 @@ def main(argv=None):
             for argument in ("node", "lua", "browser"):
                 part.add_argument("--" + argument, type=Path, required=True)
             part.add_argument("--zip-name")
+            part.add_argument("--pages-tar", action="store_true")
             part.add_argument("--actions", type=Path)
             part.add_argument("--actions-sha256")
     verify = commands.add_parser("verify")
@@ -449,11 +507,13 @@ def main(argv=None):
                     appimagetool_sha256=args.appimagetool_sha256, runtime_path=args.runtime, runtime_sha256=args.runtime_sha256)
             else:
                 result = run_web_lane(**common, game=args.game, node_executable=args.node, lua_executable=args.lua,
-                    browser_executable=args.browser, zip_name=args.zip_name, actions_path=args.actions, actions_sha256=args.actions_sha256)
+                    browser_executable=args.browser, zip_name=args.zip_name, actions_path=args.actions,
+                    actions_sha256=args.actions_sha256, pages_tar=args.pages_tar)
             if result["status"] == "PASS":
                 receipt = Path(result["work"]) / "lane.json"
                 _outputs(args.github_output, {"receipt": str(receipt), "receipt_sha256": _sha256_file(receipt),
                     "manifest_sha256": result["manifest"]["sha256"], "site": result.get("site", ""),
+                    "pages_file": result.get("pages_file", ""),
                     "upload_files": "\n".join(result["upload_files"])})
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0 if result["status"] in ("PASS", "UPLOAD_READY", "COLLECTED") else 1

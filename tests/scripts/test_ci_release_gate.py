@@ -2,7 +2,7 @@
 from __future__ import annotations
 import contextlib, copy, hashlib, http.client, http.server, importlib.util, io, json, os
 from pathlib import Path
-import subprocess, sys, tempfile, threading, unittest, uuid, zipfile
+import subprocess, sys, tarfile, tempfile, threading, unittest, uuid, zipfile
 from unittest.mock import patch
 from urllib.parse import urlsplit, parse_qs
 from urllib.request import Request, urlopen
@@ -74,6 +74,34 @@ class GateTests(unittest.TestCase):
     def write_inputs(self):
         for path,value in ((self.expected_path,self.expected),(self.policy_path,self.policy),(self.outputs_path,self.outputs)):path.write_text(json.dumps(value),encoding='utf-8')
 
+    def pages_archive(self,role,files):
+        identifier=102 if role=='pages' else 100
+        archive=self.root/(role+'-pages.zip')
+        with zipfile.ZipFile(archive,'w') as stream:
+            for path in files:stream.write(path,path.name)
+        self.archives[identifier]=archive
+        prefix=self.policy['output_prefixes'][role]
+        self.outputs.update({prefix+'_artifact_id':str(identifier),prefix+'_artifact_digest':sha(archive),
+                             prefix+'_manifest_sha256':self.p.manifest_sha})
+        self.artifacts[identifier]=dict(copy.deepcopy(self.artifacts[100]),id=identifier,
+                                       name='untrusted-name-'+role,digest='sha256:'+sha(archive))
+
+    def with_pages(self):
+        from test_release_aggregate import add_pages_bundle_files
+        # This changes fixture data only; source authentication uses actual Git.
+        with patch.object(package_fixture,'SOURCE',self.source):tar=add_pages_bundle_files(self.p)
+        self.policy['package_inputs']['package'].update(platform='web',required_files=self.p.required)
+        self.policy['artifact_roles']['pages']='native';self.policy['output_prefixes']['pages']='pages'
+        self.policy['pages_inputs']={'pages':dict(package_role='package',file='artifact.tar')}
+        self.pages_archive('package',list(self.p.root.iterdir()));self.pages_archive('pages',[tar])
+        self.write_inputs()
+
+    def failure(self,stage):
+        result=json.loads((self.work/'gate.json').read_text())
+        self.assertEqual(result['status'],'FAIL');self.assertFalse(result['release_ready'])
+        self.assertEqual(result['stage'],stage);self.assertNotIn('pages_artifacts',result)
+        return result
+
     def api_data(self,parsed):
         route=parsed.path.removeprefix('/repos/'+self.expected['repository']);e=self.expected
         run=dict(id=e['run_id'],run_attempt=e['run_attempt'],head_sha=self.source,workflow_id=9,path=e['workflow_path'],status='in_progress',conclusion=None,event='push',repository=dict(id=e['repository_id'],full_name=e['repository']),head_repository=dict(id=e['repository_id']),referenced_workflows=[dict(path=e['repository']+'/'+e['called_workflow_path']+'@main',sha=e['called_workflow_sha'])],pull_requests=[])
@@ -112,6 +140,124 @@ class GateTests(unittest.TestCase):
         self.assertEqual([f['name'] for f in result['upload_files']],[self.p.name])
         for path in self.work.rglob('*'):
             if path.is_file() and path.suffix in ('.json','.body'):self.assertNotIn(self.token,path.read_text(errors='replace'));self.assertNotIn('private-signed-query',path.read_text(errors='replace'))
+
+    def test_pages_wire_binds_fixed_id_and_tar_in_separate_deployment_plan(self):
+        self.with_pages();result=self.call()
+        self.assertEqual(result['status'],'FIXTURE_INPUTS_VERIFIED');self.assertFalse(result['release_ready'])
+        self.assertEqual(self.api_count,3)
+        combined=json.loads(Path(result['aggregate_receipt']).read_text())
+        self.assertEqual(combined['pages']['pages']['status'],'PAGES_ARTIFACT_VERIFIED')
+        self.assertEqual(len(combined['executions']['execution']['locks']),4)
+        self.assertEqual([item['name'] for item in result['upload_files']],[self.p.name])
+        plan=result['pages_artifacts']['pages']
+        for key,value in dict(artifact_id=102,artifact_digest='sha256:'+self.outputs['pages_artifact_digest'],
+                              manifest_sha256=self.p.manifest_sha,tar_sha256=sha(self.p.root/'artifact.tar'),
+                              repository=self.expected['repository'],run_id=self.expected['run_id'],
+                              run_attempt=2,job_id=42,source_sha=self.source,version='1.2.3',
+                              package_role='package',file='artifact.tar',deployment='NOT_RUN',release_ready=False).items():
+            self.assertEqual(plan[key],value,key)
+        self.assertEqual(set(result['pages_artifacts']),{'pages'})
+        downloads=[path for path,_ in self.calls if path.endswith('/zip')]
+        self.assertEqual(sorted(downloads),[f'/repos/owner/repo/actions/artifacts/{i}/zip' for i in (100,101,102)])
+        self.assertEqual(sha(result['gate_receipt']),result['gate_receipt_sha256'])
+        self.assertEqual(sha(result['aggregate_receipt']),result['aggregate_receipt_sha256'])
+
+    def test_pages_partition_outputs_job_and_manifest_are_preflight_locked(self):
+        self.with_pages();baseline=copy.deepcopy((self.policy,self.outputs))
+        mutations=(
+            lambda:self.policy.update(pages_inputs=[]),
+            lambda:self.policy['execution_inputs'].update(pages=copy.deepcopy(self.policy['execution_inputs']['execution'])),
+            lambda:self.policy['pages_inputs']['pages'].update(package_role='execution'),
+            lambda:self.policy['pages_inputs']['pages'].update(file='replacement.tar'),
+            lambda:self.policy['pages_inputs']['pages'].update(extra='value'),
+            lambda:self.policy['package_inputs']['package'].update(platform='windows'),
+            lambda:self.policy['package_inputs']['package']['required_files'].pop('artifact.tar'),
+            lambda:self.policy['artifact_roles'].update(pages='other-job'),
+            lambda:self.outputs.update(pages_manifest_sha256='f'*64),
+            lambda:self.outputs.update(pages_artifact_id=True),
+            lambda:self.outputs.update(pages_artifact_digest='bad'),
+            lambda:self.outputs.pop('pages_artifact_id'),
+            lambda:self.outputs.update(pages_receipt_sha256='f'*64),
+        )
+        for i,mutate in enumerate(mutations):
+            self.policy,self.outputs=copy.deepcopy(baseline);mutate();self.write_inputs()
+            with self.subTest(case=i),self.assertRaises(ValueError):self.call()
+            self.failure('inputs')
+        self.assertFalse(self.calls)
+
+    def test_pages_wrong_hosted_source_prevents_fixed_id_download(self):
+        self.with_pages();self.artifacts[102]['workflow_run']['head_sha']='f'*40
+        with self.assertRaises(ValueError):self.call()
+        self.failure('hosted-initial');self.assertFalse(any(path.endswith('/zip') for path,_ in self.calls))
+
+    def test_pages_replaced_tar_and_original_receipt_are_refused(self):
+        self.with_pages();tar=self.p.root/'artifact.tar';original=tar.read_bytes()
+        with tarfile.open(tar,'w') as stream:
+            body=b'<!doctype html>substituted Pages payload';entry=tarfile.TarInfo('index.html');entry.size=len(body)
+            stream.addfile(entry,io.BytesIO(body))
+        self.pages_archive('pages',[tar]);self.write_inputs()
+        with self.assertRaisesRegex(ValueError,'tar bytes/digest'):self.call()
+        first=self.work/'gate.json';first_bytes=first.read_bytes();self.failure('aggregate')
+        tar.write_bytes(original);self.pages_archive('pages',[tar])
+        receipt_path=self.p.root/'receipt-pages.json';receipt=json.loads(receipt_path.read_text())
+        receipt['accepted']=False
+        self.p.manifest['validations'][-1]['receipt']['sha256']=self.p.save('receipt-pages.json',receipt)
+        self.p.rewrite();self.pages_archive('package',list(self.p.root.iterdir()));self.pages_archive('pages',[tar]);self.write_inputs()
+        self.api_count=0
+        with self.assertRaises(ValueError):self.call()
+        self.failure('aggregate');self.assertEqual(first.read_bytes(),first_bytes)
+
+    def test_pages_second_hosted_verification_reauthenticates_fixed_artifact(self):
+        self.with_pages();original=copy.deepcopy(self.artifacts[102])
+        for kind in ('expired','source'):
+            self.api_count=0;self.artifacts[102]=copy.deepcopy(original)
+            def mutate(count):
+                if count==3:
+                    if kind=='expired':self.artifacts[102]['expired']=True
+                    else:self.artifacts[102]['workflow_run']['head_sha']='f'*40
+            self.api_hook=mutate
+            before=sum(path.endswith('/artifacts/102/zip') for path,_ in self.calls)
+            with self.subTest(kind=kind),self.assertRaises(ValueError):self.call()
+            self.failure('hosted-final')
+            self.assertEqual(sum(path.endswith('/artifacts/102/zip') for path,_ in self.calls),before+1)
+
+    def test_pages_preupload_reopens_transport_tar_receipt_and_source(self):
+        self.with_pages();prior=[]
+        for kind in ('archive','payload','proof-tar','proof-receipt','source'):
+            changed=[]
+            def mutate(count):
+                if count!=3:return
+                combined=json.loads((self.work/'aggregate/aggregate.json').read_text())
+                target={
+                    'archive':self.work/'download-pages/artifact.zip',
+                    'payload':Path(combined['pages']['pages']['payload_root'])/'artifact.tar',
+                    'proof-tar':Path(combined['packages']['package']['bundle_root'])/'artifact.tar',
+                    'proof-receipt':Path(combined['packages']['package']['bundle_root'])/'receipt-pages.json',
+                    'source':self.repo/'CMakeLists.txt',
+                }[kind]
+                changed.append((target,target.read_bytes()));target.write_bytes(b'changed after aggregation')
+            self.api_count=0;self.api_hook=mutate
+            with self.subTest(kind=kind),self.assertRaises(ValueError):self.call()
+            self.failure('preupload');self.assertEqual(len(changed),1)
+            prior.append((self.work/'gate.json',(self.work/'gate.json').read_bytes()))
+            for target,original in changed:target.write_bytes(original)
+        for path,original in prior:self.assertEqual(path.read_bytes(),original)
+
+    def test_pages_real_execution_fixture_still_cannot_claim_u1_pass(self):
+        self.with_pages()
+        with self.assertRaisesRegex(ValueError,'test-fixture'):self.call(fake_u1=False)
+        self.failure('aggregate')
+
+    def test_production_policy_has_exact_45_outputs_and_11_artifact_roles(self):
+        policy=json.loads((Path(__file__).resolve().parents[2]/'scripts/release_input_policy.json').read_text())
+        policy['source_sha']=self.source;outputs={}
+        for i,(role,prefix) in enumerate(policy['output_prefixes'].items(),100):
+            outputs.update({prefix+'_artifact_id':str(i),prefix+'_artifact_digest':'a'*64,prefix+'_manifest_sha256':'b'*64})
+            if role in policy['execution_inputs']:
+                outputs.update({prefix+'_receipt_sha256':'c'*64,prefix+'_run_uuid':str(uuid.uuid4())})
+        self.assertEqual(len(outputs),45)
+        producers,claims=gate._outputs(self.expected,policy,outputs)
+        self.assertEqual(len(producers['artifacts']),11);self.assertEqual(len(claims),6)
 
     def test_strict_flat_outputs_before_any_api(self):
         for key,value in (('native_artifact_id',True),('native_artifact_id',100),('native_artifact_id','00100'),('native_artifact_digest','X'*64),('native_debug_run_uuid','fixture-001'),('native_debug_receipt_sha256','bad')):
@@ -177,11 +323,13 @@ class GateTests(unittest.TestCase):
         self.assertEqual(alias.read_bytes(),self.outputs_path.read_bytes())
 
     def test_cli_fixture_returns_77_and_no_permission(self):
-        self.assertIsNotNone(gate)
+        self.assertIsNotNone(gate);self.with_pages()
         output=io.StringIO()
         argv=['--repo',str(self.repo),'--expected',str(self.expected_path),'--policy',str(self.policy_path),'--policy-sha256',sha(self.policy_path),'--producer-outputs',str(self.outputs_path),'--work',str(self.root/'cli-work')]
         with patch.dict(os.environ,{'GITHUB_TOKEN':self.token}),patch.object(execution,'verify_evidence',return_value=[]),contextlib.redirect_stdout(output):
             code=gate.main(argv,api_factory=self.api_factory,downloader=self.downloader)
-        self.assertEqual(code,77);self.assertEqual(json.loads(output.getvalue())['status'],'FIXTURE_INPUTS_VERIFIED');self.assertNotIn(self.token,output.getvalue())
+        result=json.loads(output.getvalue())
+        self.assertEqual(code,77);self.assertEqual(result['status'],'FIXTURE_INPUTS_VERIFIED');self.assertNotIn(self.token,output.getvalue())
+        self.assertEqual(result['pages_artifacts']['pages']['artifact_id'],102);self.assertFalse(result['release_ready'])
 
 if __name__=='__main__':unittest.main(verbosity=2)

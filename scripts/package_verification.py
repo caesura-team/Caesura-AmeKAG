@@ -2,7 +2,7 @@
 """U22 final-package identity and isolated extraction, using only the stdlib.
 
 PREPARED/STABLE describe filesystem contracts, never platform/runtime acceptance.
-The caller supplies an independently locked archive SHA256 (ZIP/TGZ) or directory
+The caller supplies an independently locked archive SHA256 (ZIP/TGZ/TAR) or directory
 inventory SHA256. No discovery, self-authorizing package manifest, or runtime is
 used. A new attempt contains package/ and an exclusive preparation.json; failed
 attempts retain the receipt and remove only their partial package.
@@ -332,19 +332,23 @@ def _archive_plan(source: Path, expected_sha256: str):
                 yield _plan(entries), archive.open
         else:
             stream.seek(0)
-            with tarfile.open(fileobj=stream, mode="r:gz") as archive:
+            # Select only the two supported tar encodings. Auto-detection with
+            # r:* would silently add bzip2/xz support to the package contract.
+            tar_mode = "r:gz" if stream.read(2) == b"\x1f\x8b" else "r:"
+            stream.seek(0)
+            with tarfile.open(fileobj=stream, mode=tar_mode) as archive:
                 entries = []
                 for info in archive:
                     if info.isdir(): kind = "directory"
                     elif info.isfile(): kind = "file"
                     elif info.issym(): kind = "symlink"
                     elif info.islnk(): kind = "hardlink"
-                    else: _fail(f"Unsupported TGZ entry type: {info.name}")
+                    else: _fail(f"Unsupported TAR entry type: {info.name}")
                     entries.append(_Entry(info.name, kind, info.size,
                                           info.linkname if kind in ("symlink", "hardlink") else None,
                                           stat.S_IMODE(info.mode), info))
                     if len(entries) > MAX_ENTRIES:
-                        _fail("TGZ exceeds entry limit")
+                        _fail("TAR exceeds entry limit")
                 yield _plan(entries), archive.extractfile
         stream.seek(0)
         after_digest = hashlib.file_digest(stream, "sha256").hexdigest()

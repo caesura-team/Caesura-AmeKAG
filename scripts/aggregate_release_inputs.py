@@ -18,6 +18,7 @@ from run_validation import _source_identity
 from verify_execution_bundle import (_no_links, _snapshot, verify_execution_bundle,
                                      verify_execution_bundle_stable)
 from verify_package_bundle import verify_bundle, verify_bundle_stable
+from verify_pages_artifact import verify_pages_artifact, verify_pages_artifact_stable
 
 SCHEMA = "caesura.release-inputs.v1"
 HOSTED_POLICY_KEYS = ("schema_version", "required_jobs", "artifact_roles")
@@ -53,9 +54,13 @@ def _stable(report):
         verify_bundle_stable(package)
     for execution in report["executions"].values():
         verify_execution_bundle_stable(execution)
+    for pages in report["pages"].values():
+        verify_pages_artifact_stable(pages)
     # The upload list is separately locked even though package rechecks cover
     # the same paths. No late glob or filename selection is permitted.
-    selected = [item for package in report["packages"].values() for item in package["files"]]
+    excluded = {(spec["package_role"], spec["file"]) for spec in report["pages_specs"].values()}
+    selected = [item for role, package in report["packages"].items() for item in package["files"]
+                if (role, item["name"]) not in excluded]
     _need(report["upload_files"] == selected, "Explicit upload list changed")
     _need(_source_identity(_no_links(report["source_root"])) == report["source_before"],
           "Source checkout changed during byte recheck")
@@ -75,7 +80,7 @@ def verify_downloaded_inputs(*, hosted, policy_path, policy_sha256, archives,
     receipt_path = work / "aggregate.json"
     report = {"schema":SCHEMA, "status":"FAIL", "release_ready":False,
         "receipt_path":str(receipt_path), "transport":hosted.get("transport"),
-        "source_locks":[], "transports":{}, "packages":{}, "executions":{}, "upload_files":[], "errors":[]}
+        "source_locks":[], "transports":{}, "packages":{}, "executions":{}, "pages":{}, "pages_specs":{}, "upload_files":[], "errors":[]}
     try:
         _need(hosted.get("kind") == "caesura.hosted-inputs.v1"
               and hosted.get("status") == "HOSTED_INPUTS_VERIFIED" and hosted.get("errors") == []
@@ -88,9 +93,28 @@ def verify_downloaded_inputs(*, hosted, policy_path, policy_sha256, archives,
         package_specs, execution_specs = policy.get("package_inputs"), policy.get("execution_inputs")
         _need(isinstance(package_specs, dict) and package_specs and isinstance(execution_specs, dict) and execution_specs,
               "Policy must preselect package and execution inputs")
+        pages_specs = policy.get("pages_inputs", {})
+        _need(isinstance(pages_specs, dict), "Pages policy must be a mapping")
         roles = set(policy["artifact_roles"])
-        _need(not set(package_specs) & set(execution_specs)
-              and set(package_specs) | set(execution_specs) == roles, "Policy input roles do not exactly cover artifacts")
+        groups = (set(package_specs), set(execution_specs), set(pages_specs))
+        _need(not any(groups[i] & groups[j] for i in range(3) for j in range(i+1,3))
+              and set.union(*groups) == roles, "Policy input roles do not exactly cover artifacts")
+        for role, spec in pages_specs.items():
+            _need(isinstance(spec, dict) and set(spec) == {"package_role", "file"}
+                  and spec.get("file") == "artifact.tar", "Pages must select the final artifact.tar")
+            package_role = spec.get("package_role")
+            _need(isinstance(package_role, str) and package_role in package_specs
+                  and package_specs[package_role].get("platform") == "web"
+                  and package_specs[package_role].get("required_files", {}).get("artifact.tar") == "file",
+                  "Pages needs an independently accepted Web tar")
+            _need(policy["artifact_roles"][role] == policy["artifact_roles"][package_role],
+                  "Pages and accepted package must share the same producer job role")
+            _need(hosted["artifacts"][role].get("job_id") == hosted["artifacts"][package_role].get("job_id")
+                  and type(hosted["artifacts"][role].get("job_id")) is int,
+                  "Pages and accepted package must share the same authenticated job ID")
+            _need(hosted["artifacts"][role]["manifest_sha256"] == hosted["artifacts"][package_role]["manifest_sha256"],
+                  "Pages manifest output differs from the accepted package producer")
+        report["pages_specs"] = pages_specs
         _need(isinstance(archives, dict) and set(archives) == roles and set(hosted["artifacts"]) == roles,
               "Downloaded archive roles must exactly match policy")
         _need(isinstance(execution_claims, dict) and set(execution_claims) == set(execution_specs),
@@ -142,7 +166,7 @@ def verify_downloaded_inputs(*, hosted, policy_path, policy_sha256, archives,
                     names.add(item["name"].casefold())
                 report["packages"][role] = value
                 report["upload_files"].extend(value["files"])
-            else:
+            elif role in execution_specs:
                 spec, claim = execution_specs[role], execution_claims[role]
                 _need(isinstance(claim, dict) and set(claim) == {"receipt_sha256", "run_id"}, "Invalid independent execution claim")
                 context = {"run_id":claim["run_id"], "run_attempt":expected["run_attempt"],
@@ -153,6 +177,16 @@ def verify_downloaded_inputs(*, hosted, policy_path, policy_sha256, archives,
                     profile_path=repo / "scripts/validation_profiles.json", profile_sha256=sources["scripts/validation_profiles.json"],
                     profile_name=spec["profile_name"], source_sha=expected["source_sha"], expected_context=context,
                     trusted_dir=work / ("execution-" + role))
+        for role, spec in pages_specs.items():
+            report["pages"][role] = verify_pages_artifact(
+                Path(report["transports"][role]["package_path"]),
+                package_result=report["packages"][spec["package_role"]],
+                manifest_sha256=hosted["artifacts"][role]["manifest_sha256"],
+                tar_name=spec["file"], work_dir=work / ("pages-" + role))
+        # Pages tar has a separate deployment channel; it is not a Release asset.
+        excluded = {(spec["package_role"], spec["file"]) for spec in pages_specs.values()}
+        report["upload_files"] = [item for role, package in report["packages"].items()
+            for item in package["files"] if (role, item["name"]) not in excluded]
         report["stability"] = _stable(report)
         report["source_after"] = _source_identity(repo)
         _need(report["source_after"] == before, "Source checkout changed during aggregation")

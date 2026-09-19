@@ -150,15 +150,19 @@ class ReleasePackageContract(unittest.TestCase):
             [("parent", b"a"), ("parent/child", b"b")],
             [("./same", b"a"), ("same", b"b")],
         ]
-        for index, members in enumerate(cases):
-            with self.subTest(members=members):
-                source = self.archive(members, f"unsafe-{index}.zip")
-                self.failed(source, f"unsafe-{index}")
+        for kind in ("zip", "tar"):
+            for index, members in enumerate(cases):
+                with self.subTest(kind=kind, members=members):
+                    source = (self.archive(members, f"unsafe-{index}.zip") if kind == "zip"
+                              else self.tar(f"unsafe-{index}.tar", [("file", path, data)
+                                            for path, data in members], mode="w"))
+                    report = self.failed(source, f"unsafe-{kind}-{index}")
+                    self.assertNotIn("not a gzip file", report["error"])
         self.assertFalse((self.root / "escape").exists())
 
-    def tar(self, name, members):
+    def tar(self, name, members, *, mode="w:gz"):
         source = self.root / name
-        with tarfile.open(source, "w:gz") as archive:
+        with tarfile.open(source, mode) as archive:
             for kind, path, value in members:
                 member = tarfile.TarInfo(path)
                 member.mode = 0o755 if kind == "dir" else 0o644
@@ -171,6 +175,55 @@ class ReleasePackageContract(unittest.TestCase):
                     member.linkname = value
                     archive.addfile(member)
         return source
+
+    def test_plain_tar_root_and_exact_archive_identity(self):
+        members = [("dir", ".", ""), ("file", "./index.html", b"<p>fixture</p>"),
+                   ("dir", "empty", ""), ("file", ".nojekyll", b""),
+                   ("file", "assets/中文 文件.txt", b"asset")]
+        source = self.tar("artifact.tar", members, mode="w")
+        report = self.prepare(source)
+        self.assertEqual(report["status"], "PREPARED")
+        self.assertEqual(report["runtime"], "NOT_RUN")
+        self.assertEqual(report["input"]["archive_sha256"], self.digest(source))
+        payload = Path(report["package_path"])
+        self.assertEqual((payload / "assets/中文 文件.txt").read_bytes(), b"asset")
+        self.assertEqual((payload / "index.html").read_bytes(), b"<p>fixture</p>")
+        self.assertTrue((payload / "empty").is_dir())
+        self.assertTrue((payload / ".nojekyll").is_file())
+        self.assertEqual(pv.verify_stable(report)["status"], "STABLE")
+        # Change only a real tar header, retaining the same payload inventory.
+        with tarfile.open(source, "w") as archive:
+            for kind, name, data in members:
+                entry = tarfile.TarInfo(name)
+                entry.mtime = 1
+                entry.mode = 0o755 if kind == "dir" else 0o644
+                entry.type = tarfile.DIRTYPE if kind == "dir" else tarfile.REGTYPE
+                entry.size = len(data) if kind == "file" else 0
+                archive.addfile(entry, io.BytesIO(data) if kind == "file" else None)
+        with self.assertRaises(pv.PackageVerificationError):
+            pv.verify_stable(report)
+        self.failed(source, "old tar identity", expected_sha256=report["input"]["archive_sha256"])
+        changed = self.prepare(source, "new tar identity")
+        self.assertEqual(report["inventory"]["sha256"], changed["inventory"]["sha256"])
+        self.assertNotEqual(report["input"]["archive_sha256"], changed["input"]["archive_sha256"])
+
+    def test_tar_formats_keep_entry_and_byte_limits(self):
+        for mode in ("w:gz", "w"):
+            for limit, maximum, members in (
+                    ("MAX_BYTES", 2, [("file", "large", b"123")]),
+                    ("MAX_ENTRIES", 1, [("file", "a", b"x"), ("file", "b", b"y")])):
+                name = mode.replace(":", "-") + limit
+                with self.subTest(mode=mode, limit=limit), mock.patch.object(pv, limit, maximum):
+                    source = self.tar(name + ".tar", members, mode=mode)
+                    report = self.failed(source, "limited-" + name)
+                    self.assertIn("limit", report["error"])
+
+    def test_other_tar_compression_is_not_implicitly_enabled(self):
+        for mode in ("w:bz2", "w:xz"):
+            with self.subTest(mode=mode):
+                name = mode.replace(":", "-")
+                source = self.tar(name + ".tar", [("file", "index.html", b"fixture")], mode=mode)
+                self.failed(source, "unsupported-" + name)
 
     def test_tgz_linux_and_framework_relative_links(self):
         source = self.tar("CPack Linux Mac.tgz", [
@@ -201,9 +254,24 @@ class ReleasePackageContract(unittest.TestCase):
             [("hardlink", "pkg/link", "../escape")],
             [("fifo", "pkg/pipe", "")],
         ]
-        for index, members in enumerate(cases):
-            with self.subTest(members=members):
-                self.failed(self.tar(f"links-{index}.tgz", base + members), f"links-{index}")
+        for mode in ("w:gz", "w"):
+            for index, members in enumerate(cases):
+                with self.subTest(mode=mode, members=members):
+                    name = mode.replace(":", "-") + str(index)
+                    report = self.failed(self.tar(f"links-{name}.tar", base + members, mode=mode),
+                                         f"links-{name}")
+                    self.assertNotIn("not a gzip file", report["error"])
+
+    def test_plain_tar_preserves_safe_internal_links(self):
+        source = self.tar("internal-links.tar", [("file", "pkg/real", b"same"),
+                          ("symlink", "pkg/link", "real"),
+                          ("hardlink", "pkg/hard", "pkg/real")], mode="w")
+        report = self.prepare(source)
+        payload = Path(report["package_path"]) / "pkg"
+        self.assertTrue((payload / "link").is_symlink())
+        self.assertEqual((payload / "link").read_bytes(), b"same")
+        self.assertEqual((payload / "hard").read_bytes(), b"same")
+        self.assertEqual(pv.verify_stable(report)["status"], "STABLE")
 
     def test_zip_symlinks_preserved_and_target_changes_detected(self):
         source = self.archive([("pkg/real", b"one"), ("pkg/other", b"two")])
@@ -248,6 +316,23 @@ class ReleasePackageContract(unittest.TestCase):
             return result
         with mock.patch.object(pv, "_copy_stream", side_effect=change_after_copy):
             report = self.failed(source)
+        self.assertFalse(report["input_stable"])
+        self.assertEqual(report["cleanup"]["status"], "REMOVED_PARTIAL_PACKAGE")
+
+    def test_plain_tar_mutation_after_payload_copy_preserves_failure(self):
+        source = self.tar("mutable.tar", [("file", "index.html", b"fixture")], mode="w")
+        copy_stream = pv._copy_stream
+        copied = False
+        def mutate(*args, **kwargs):
+            nonlocal copied
+            result = copy_stream(*args, **kwargs)
+            copied = True
+            with source.open("ab") as stream:
+                stream.write(b"changed final archive")
+            return result
+        with mock.patch.object(pv, "_copy_stream", side_effect=mutate):
+            report = self.failed(source, "tar mutation")
+        self.assertTrue(copied)
         self.assertFalse(report["input_stable"])
         self.assertEqual(report["cleanup"]["status"], "REMOVED_PARTIAL_PACKAGE")
 
@@ -318,23 +403,25 @@ class ReleasePackageContract(unittest.TestCase):
         self.assertEqual(report["inventory"]["sha256"], changed["inventory"]["sha256"])
 
     def test_cli_prepare_and_stability_have_no_runtime_acceptance(self):
-        source = self.archive()
-        attempt = self.root / "cli attempt"
-        process = subprocess.run([sys.executable, "-X", "utf8", str(MODULE_PATH), "prepare",
-                                  "--input", str(source), "--attempt", str(attempt),
-                                  "--expected-sha256", self.digest(source)],
-                                 capture_output=True, text=True, encoding="utf-8", check=False)
-        self.assertEqual(process.returncode, 0, process.stderr + process.stdout)
-        self.assertEqual(json.loads(process.stdout)["runtime"], "NOT_RUN")
-        receipt = attempt / "preparation.json"
-        before = receipt.read_bytes()
-        process = subprocess.run([sys.executable, "-X", "utf8", str(MODULE_PATH), "verify-stable",
-                                  "--receipt", str(receipt)],
-                                 capture_output=True, text=True, encoding="utf-8", check=False)
-        self.assertEqual(process.returncode, 0, process.stderr + process.stdout)
-        self.assertEqual(json.loads(process.stdout)["status"], "STABLE")
-        self.assertEqual(json.loads(process.stdout)["runtime"], "NOT_RUN")
-        self.assertEqual(receipt.read_bytes(), before)
+        for kind, source in (("zip", self.archive()),
+                             ("tar", self.tar("cli.tar", [("file", "index.html", b"fixture")], mode="w"))):
+            with self.subTest(kind=kind):
+                attempt = self.root / ("cli attempt " + kind)
+                process = subprocess.run([sys.executable, "-X", "utf8", str(MODULE_PATH), "prepare",
+                                          "--input", str(source), "--attempt", str(attempt),
+                                          "--expected-sha256", self.digest(source)],
+                                         capture_output=True, text=True, encoding="utf-8", check=False)
+                self.assertEqual(process.returncode, 0, process.stderr + process.stdout)
+                self.assertEqual(json.loads(process.stdout)["runtime"], "NOT_RUN")
+                receipt = attempt / "preparation.json"
+                before = receipt.read_bytes()
+                process = subprocess.run([sys.executable, "-X", "utf8", str(MODULE_PATH), "verify-stable",
+                                          "--receipt", str(receipt)],
+                                         capture_output=True, text=True, encoding="utf-8", check=False)
+                self.assertEqual(process.returncode, 0, process.stderr + process.stdout)
+                self.assertEqual(json.loads(process.stdout)["status"], "STABLE")
+                self.assertEqual(json.loads(process.stdout)["runtime"], "NOT_RUN")
+                self.assertEqual(receipt.read_bytes(), before)
 
     def test_stability_rejects_same_size_edit_to_previously_hashed_file(self):
         source = self.archive([("a.bin", b"GOOD"), ("z.bin", b"KEEP")])

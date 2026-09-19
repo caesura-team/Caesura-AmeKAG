@@ -11,14 +11,16 @@ import os
 from pathlib import Path
 import shutil
 import sys
+import tarfile
 import tempfile
 import unittest
 from unittest import mock
+import zipfile
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'scripts'))
 import ci_package_lane as lane
-from package_verification import inspect_inventory
+from package_verification import inspect_inventory, prepare_package, verify_stable
 
 SHA = '1' * 40
 SOURCE = {'source_sha': SHA, 'dirty': False, 'worktree_fingerprint': 'fixed-source'}
@@ -332,6 +334,194 @@ class PackageLaneTests(unittest.TestCase):
         self.assertEqual(final[final.index('--sha256') + 1], digest(package))
         manifest = json.loads((self.work / 'outputs/upload-manifest.json').read_text())
         self.assertEqual([entry['name'] for entry in manifest['files']], ['chosen-game.zip'])
+
+    def test_pages_tar_and_zip_share_final_site_and_have_separate_original_receipts(self):
+        action = self.repo / 'actions.json'
+        action.write_text('{"schema":1,"steps":[]}', encoding='utf-8')
+        def nested(report, name, argv, cwd, **kwargs):
+            result = self.command(report, name, argv, cwd, **kwargs)
+            if name == 'web-package':
+                site = Path(argv[argv.index('--out') + 1])
+                (site / 'assets/空目录').mkdir(parents=True)
+                (site / 'assets/场景.txt').write_text('实际归档内容', encoding='utf-8')
+            return result
+        with mock.patch.object(lane, '_execute', side_effect=nested):
+            report = self.web(zip_name='chosen-game.zip', pages_tar=True,
+                              actions_path=action, actions_sha256=digest(action))
+        self.assertEqual(report['status'], 'PASS', report['errors'])
+        pages = self.work / 'outputs/artifact.tar'
+        self.assertEqual(report['pages_file'], str(pages))
+        site = self.work / 'outputs/site'
+        with tarfile.open(pages, 'r:') as archive, zipfile.ZipFile(self.work / 'outputs/chosen-game.zip') as zipped:
+            members = archive.getmembers()
+            self.assertEqual({m.name for m in members}, {'index.html', 'story.lua', 'assets', 'assets/空目录', 'assets/场景.txt'})
+            self.assertTrue(all(member.isfile() or member.isdir() for member in members))
+            for member in members:
+                if member.isfile():
+                    self.assertEqual(archive.extractfile(member).read(), (site / member.name).read_bytes())
+                    self.assertEqual(zipped.read(member.name), (site / member.name).read_bytes())
+        prepared = prepare_package(pages, self.base / 'prepared-pages', expected_sha256=digest(pages),
+                                   expected_inventory_sha256=inspect_inventory(site)['sha256'])
+        self.assertEqual(prepared['status'], 'PREPARED')
+        self.assertEqual(verify_stable(prepared)['status'], 'STABLE')
+        manifest = json.loads((self.work / 'outputs/upload-manifest.json').read_text())
+        self.assertEqual([item['name'] for item in manifest['files']], ['chosen-game.zip', 'artifact.tar'])
+        self.assertEqual([item['name'] for item in manifest['validations']], ['validate-web-zip', 'validate-pages-tar'])
+        for validation in manifest['validations']:
+            portable = self.work / 'outputs' / validation['receipt']['name']
+            original = self.work / validation['name'] / 'package-run.json'
+            self.assertEqual(portable.read_bytes(), original.read_bytes())
+            self.assertEqual(validation['receipt']['sha256'], digest(original))
+        argv = next(argv for name, argv in self.commands if name == 'validate-pages-tar')
+        self.assertEqual(Path(argv[1]), self.repo / 'scripts/run_package_validation.py')
+        self.assertEqual(argv[argv.index('--input') + 1], str(pages))
+        self.assertEqual(argv[argv.index('--sha256') + 1], digest(pages))
+        for tool in ('--node', '--lua', '--browser'):
+            self.assertEqual(argv[argv.index(tool) + 1], str(self.python))
+        self.assertEqual(argv[argv.index('--actions') + 1], str(action))
+        self.assertEqual(argv[argv.index('--actions-sha256') + 1], digest(action))
+        self.assertIn(str(pages), report['upload_files'])
+
+    def test_cli_pages_tar_exports_one_exact_tar_path_and_complete_bundle(self):
+        output = self.base / 'pages.github-output'
+        args = ['web', '--game', str(self.game), '--node', str(self.python), '--lua', str(self.python),
+                '--browser', str(self.python), '--zip-name', 'chosen-game.zip', '--pages-tar',
+                '--source-sha', SHA, '--work', str(self.work), '--github-output', str(output)]
+        with mock.patch('sys.stdout', new=io.StringIO()):
+            self.assertEqual(lane.main(args), 0)
+        lines = output.read_text(encoding='utf-8').splitlines()
+        start = next(index for index, line in enumerate(lines) if line.startswith('pages_file<<'))
+        self.assertEqual(lines[start + 1], str(self.work / 'outputs/artifact.tar'))
+        self.assertEqual(lines[start + 2], lines[start].split('<<', 1)[1])
+        start = next(index for index, line in enumerate(lines) if line.startswith('upload_files<<'))
+        delimiter = lines[start].split('<<', 1)[1]
+        paths = lines[start + 1:lines.index(delimiter, start + 1)]
+        self.assertEqual({Path(path).name for path in paths}, {'chosen-game.zip', 'artifact.tar',
+            'upload-manifest.json', 'receipt-validate-web-zip.json', 'receipt-validate-pages-tar.json'})
+        self.assertEqual(len(paths), 5)
+
+    def test_pages_requires_zip_and_explicit_boolean_before_any_command(self):
+        for index, options in enumerate(({'pages_tar': True}, {'pages_tar': 'yes', 'zip_name': 'web.zip'})):
+            with self.subTest(options=options):
+                self.work = self.base / ('invalid-pages-' + str(index))
+                report = self.web(**options)
+                self.assertEqual(report['status'], 'FAIL')
+                self.assertFalse(self.commands)
+                self.assertFalse((self.work / 'outputs/artifact.tar').exists())
+
+    def test_unselected_pages_never_creates_tar_or_pages_validation(self):
+        for index, options in enumerate(({}, {'zip_name': 'web.zip', 'pages_tar': False})):
+            with self.subTest(options=options):
+                self.work = self.base / ('without-pages-' + str(index))
+                report = self.web(**options)
+                self.assertEqual(report['status'], 'PASS', report['errors'])
+                self.assertNotIn('pages_file', report)
+                self.assertFalse((self.work / 'outputs/artifact.tar').exists())
+                self.assertFalse(any(name == 'validate-pages-tar' for name, _ in self.commands))
+
+    def test_pages_missing_failed_or_unbound_validation_never_publishes(self):
+        for scenario in ('missing', 'failed', 'not-accepted', 'wrong-digest'):
+            with self.subTest(scenario=scenario):
+                self.work = self.base / ('pages-validation-' + scenario)
+                self.commands = []
+                def reject(report, name, argv, cwd, **kwargs):
+                    if name == 'validate-pages-tar' and scenario == 'missing':
+                        self.commands.append((name, list(argv)))
+                        return 0
+                    result = self.command(report, name, argv, cwd, **kwargs)
+                    if name == 'validate-pages-tar':
+                        receipt = Path(argv[argv.index('--attempt') + 1]) / 'package-run.json'
+                        value = json.loads(receipt.read_text())
+                        if scenario == 'failed':
+                            value['status'] = 'FAIL'
+                        elif scenario == 'not-accepted':
+                            value['accepted'] = False
+                        else:
+                            value['preparation']['expected']['archive_sha256'] = '0' * 64
+                        receipt.write_text(json.dumps(value), encoding='utf-8')
+                    return result
+                with mock.patch.object(lane, '_execute', side_effect=reject):
+                    report = self.web(zip_name='web.zip', pages_tar=True)
+                self.assertEqual(report['status'], 'FAIL')
+                self.assertEqual(sum(name == 'validate-pages-tar' for name, _ in self.commands), 1)
+                self.assertFalse((self.work / 'outputs/upload-manifest.json').exists())
+
+    def test_pages_changed_tar_and_source_after_transform_are_rejected(self):
+        for scenario in ('tar', 'site'):
+            with self.subTest(scenario=scenario):
+                self.work = self.base / ('pages-mutation-' + scenario)
+                def mutate(report, name, argv, cwd, **kwargs):
+                    result = self.command(report, name, argv, cwd, **kwargs)
+                    if name == 'validate-pages-tar':
+                        target = (Path(argv[argv.index('--input') + 1]) if scenario == 'tar'
+                                  else self.work / 'outputs/site/index.html')
+                        target.write_bytes(target.read_bytes() + b'changed during validation')
+                    return result
+                with mock.patch.object(lane, '_execute', side_effect=mutate):
+                    report = self.web(zip_name='web.zip', pages_tar=True)
+                self.assertEqual(report['status'], 'FAIL')
+                self.assertFalse((self.work / 'outputs/upload-manifest.json').exists())
+
+    def test_pages_actual_tar_copy_binds_bytes_even_if_source_is_restored(self):
+        actual_addfile = tarfile.TarFile.addfile
+        def transient_change(archive, member, stream=None):
+            if member.isfile():
+                path = self.work / 'outputs/site' / member.name
+                original = path.read_bytes()
+                path.write_bytes(b'X' * len(original))
+                try:
+                    return actual_addfile(archive, member, stream)
+                finally:
+                    path.write_bytes(original)
+            return actual_addfile(archive, member, stream)
+        with mock.patch.object(tarfile.TarFile, 'addfile', new=transient_change):
+            report = self.web(zip_name='web.zip', pages_tar=True)
+        self.assertEqual(report['status'], 'FAIL')
+        self.assertTrue(any('locked site inventory' in error for error in report['errors']), report['errors'])
+        self.assertFalse(any(name == 'validate-pages-tar' for name, _ in self.commands))
+
+    def test_pages_existing_tar_is_preserved_and_never_overwritten(self):
+        def occupy(report, name, argv, cwd, **kwargs):
+            result = self.command(report, name, argv, cwd, **kwargs)
+            if name == 'validate-web-zip':
+                (self.work / 'outputs/artifact.tar').write_bytes(b'preserve prior bytes')
+            return result
+        with mock.patch.object(lane, '_execute', side_effect=occupy):
+            report = self.web(zip_name='web.zip', pages_tar=True)
+        self.assertEqual(report['status'], 'FAIL')
+        self.assertEqual((self.work / 'outputs/artifact.tar').read_bytes(), b'preserve prior bytes')
+
+    def test_pages_hardlink_input_is_rejected(self):
+        def link(report, name, argv, cwd, **kwargs):
+            result = self.command(report, name, argv, cwd, **kwargs)
+            if name == 'web-package':
+                site = Path(argv[argv.index('--out') + 1])
+                os.link(site / 'index.html', site / 'alias.html')
+            return result
+        with mock.patch.object(lane, '_execute', side_effect=link):
+            report = self.web(zip_name='web.zip', pages_tar=True)
+        self.assertEqual(report['status'], 'FAIL')
+        self.assertTrue(any('hardlink' in error for error in report['errors']), report['errors'])
+        self.assertFalse(any(name == 'validate-pages-tar' for name, _ in self.commands))
+
+    if os.name != 'nt':
+        def test_pages_real_symlink_and_fifo_inputs_are_rejected(self):
+            for kind in ('symlink', 'fifo'):
+                with self.subTest(kind=kind):
+                    self.work = self.base / ('pages-link-' + kind)
+                    def link(report, name, argv, cwd, **kwargs):
+                        result = self.command(report, name, argv, cwd, **kwargs)
+                        if name == 'web-package':
+                            site = Path(argv[argv.index('--out') + 1])
+                            if kind == 'symlink':
+                                (site / 'alias.html').symlink_to('index.html')
+                            else:
+                                os.mkfifo(site / 'fifo')
+                        return result
+                    with mock.patch.object(lane, '_execute', side_effect=link):
+                        report = self.web(zip_name='web.zip', pages_tar=True)
+                    self.assertEqual(report['status'], 'FAIL')
+                    self.assertFalse((self.work / 'outputs/upload-manifest.json').exists())
 
     def test_web_build_failure_stops_without_packaging_or_retries(self):
         def fail_build(report, name, argv, cwd, **kwargs):

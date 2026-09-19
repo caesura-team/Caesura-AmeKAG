@@ -138,6 +138,12 @@ name: Validate engine producers
         value: ${{ jobs.release-web.outputs.package_artifact_digest }}
       web_manifest_sha256:
         value: ${{ jobs.release-web.outputs.manifest_sha256 }}
+      pages_artifact_id:
+        value: ${{ jobs.release-web.outputs.pages_artifact_id }}
+      pages_artifact_digest:
+        value: ${{ jobs.release-web.outputs.pages_artifact_digest }}
+      pages_manifest_sha256:
+        value: ${{ jobs.release-web.outputs.manifest_sha256 }}
 permissions:
   contents: read
   actions: read
@@ -1174,6 +1180,8 @@ jobs:
       manifest_sha256: ${{ steps.package.outputs.manifest_sha256 }}
       package_artifact_id: ${{ steps.package_upload.outputs.artifact-id }}
       package_artifact_digest: ${{ steps.package_upload.outputs.artifact-digest }}
+      pages_artifact_id: ${{ steps.pages_upload.outputs.artifact-id }}
+      pages_artifact_digest: ${{ steps.pages_upload.outputs.artifact-digest }}
     steps:
     - uses: actions/checkout@v4
       with:
@@ -1210,13 +1218,13 @@ jobs:
         npm ci --prefix web --no-audit --no-fund
     - name: Require current tracked script index
       run: node web/gen-index.mjs --check
-    - name: Build chosen game and validate final directory and ZIP
+    - name: Build chosen game and validate final directory, ZIP and Pages tar
       id: package
       run: |
         args=()
         if [ -n "$WEB_ACTIONS" ]; then args+=(--actions "$WEB_ACTIONS" --actions-sha256 "$WEB_ACTIONS_SHA256"); fi
         python scripts/ci_package_lane.py web --source-sha "$SOURCE_SHA" --work "$PACKAGE_WORK" \
-          --game "$WEB_GAME" --zip-name "CaesuraAmeKAG-${ENGINE_VERSION}-Web.zip" \
+          --game "$WEB_GAME" --zip-name "CaesuraAmeKAG-${ENGINE_VERSION}-Web.zip" --pages-tar \
           --node "$(command -v node)" --lua "$(command -v lua5.4)" \
           --browser /opt/google/chrome/chrome "${args[@]}" --github-output "$GITHUB_OUTPUT"
       env:
@@ -1228,13 +1236,28 @@ jobs:
         RECEIPT: ${{ steps.package.outputs.receipt }}
         RECEIPT_SHA256: ${{ steps.package.outputs.receipt_sha256 }}
       run: python3 scripts/ci_package_lane.py verify --receipt "$RECEIPT" --sha256 "$RECEIPT_SHA256"
-    - name: Upload only accepted final Web ZIP and its manifest
+    - name: Upload accepted Web and Pages proof bundle
       uses: actions/upload-artifact@v4
       with:
         name: caesura-amekag-web-${{ github.run_id }}-${{ github.run_attempt }}
         path: ${{ steps.package.outputs.upload_files }}
         if-no-files-found: error
       id: package_upload
+    - name: Recheck the original final tar immediately before Pages artifact upload
+      env:
+        RECEIPT: ${{ steps.package.outputs.receipt }}
+        RECEIPT_SHA256: ${{ steps.package.outputs.receipt_sha256 }}
+      run: python3 scripts/ci_package_lane.py verify --receipt "$RECEIPT" --sha256 "$RECEIPT_SHA256"
+    # upload-pages-artifact would rebuild the tar after acceptance. Transfer
+    # this exact single tar with upload-artifact and retain its independent ID.
+    - name: Upload the exact accepted Pages tar without rebuilding it
+      id: pages_upload
+      uses: actions/upload-artifact@v4
+      with:
+        name: caesura-pages-${{ github.run_id }}-${{ github.run_attempt }}
+        path: ${{ steps.package.outputs.pages_file }}
+        if-no-files-found: error
+        compression-level: 0
     - name: Preserve first Web package attempt evidence
       if: always() && env.PACKAGE_WORK != ''
       uses: actions/upload-artifact@v4

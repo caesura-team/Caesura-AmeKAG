@@ -10,6 +10,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 import zipfile
+import tarfile
+import io
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 import test_package_bundle as package_fixture
@@ -22,6 +24,25 @@ from package_verification import PackageVerificationError
 
 def sha(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def add_pages_bundle_files(package):
+    """Real tar and original-format receipts; no runtime pass is claimed."""
+    package.root=package.base/"web-bundle";package.root.mkdir()
+    package.platform="web";package.name="fixture-Web.zip";package.make_bundle()
+    tar=package.root/"artifact.tar"
+    with tarfile.open(tar,"w") as stream:
+        body=b"<!doctype html>Pages binding fixture"
+        info=tarfile.TarInfo("index.html");info.size=len(body);stream.addfile(info,io.BytesIO(body))
+    item=dict(name="artifact.tar",kind="file",sha256=sha(tar))
+    receipt=copy.deepcopy(package.receipt)
+    receipt["preparation"]["input"].update(path="/producer/outputs/artifact.tar",archive_sha256=item["sha256"])
+    receipt["preparation"]["expected"]["archive_sha256"]=item["sha256"]
+    package.manifest["files"].append(item)
+    package.manifest["validations"].append(dict(name="validate-pages-tar",input=copy.deepcopy(item),
+        receipt=dict(name="receipt-pages.json",sha256=package.save("receipt-pages.json",receipt))))
+    package.required["artifact.tar"]="file";package.rewrite()
+    return tar
 
 
 class AggregateTests(unittest.TestCase):
@@ -87,6 +108,50 @@ class AggregateTests(unittest.TestCase):
                 with patch.object(execution_bundle,"verify_evidence",return_value=[]):
                     return aggregate.verify_downloaded_inputs(**args)
             return aggregate.verify_downloaded_inputs(**args)
+
+    def with_pages(self):
+        tar=add_pages_bundle_files(self.p)
+        self.policy["package_inputs"]["package"].update(platform="web",required_files=self.p.required)
+        self.policy["artifact_roles"]["pages"]="native"
+        self.policy["pages_inputs"]={"pages":{"package_role":"package","file":"artifact.tar"}}
+        self.hosted["policy"]["artifact_roles"]["pages"]="native"
+        for role,files in (("package",list(self.p.root.iterdir())),("pages",[tar])):
+            archive=self.base/(role+"-pages.zip")
+            with zipfile.ZipFile(archive,"w") as stream:
+                for path in files:stream.write(path,path.name)
+            self.archives[role]=archive
+            self.hosted["artifacts"][role]=dict(artifact_id=103 if role=="pages" else 100,
+                artifact_digest="sha256:"+sha(archive),manifest_sha256=self.p.manifest_sha,job_id=10)
+        self.write_policy()
+
+    def test_pages_exact_tar_is_bound_and_separate_from_release_assets(self):
+        self.with_pages();result=self.call()
+        self.assertEqual(result["pages"]["pages"]["status"],"PAGES_ARTIFACT_VERIFIED")
+        self.assertEqual([v["name"] for v in result["upload_files"]],[self.p.name])
+        self.assertEqual(result["pages"]["pages"]["tar_sha256"],sha(self.p.root/"artifact.tar"))
+
+    def test_pages_cannot_reassign_producer_manifest_or_accepted_package(self):
+        import copy
+        self.with_pages();baseline=copy.deepcopy((self.policy,self.hosted))
+        for kind in ("job_role","job_id","manifest","file"):
+            with self.subTest(kind=kind):
+                self.policy,self.hosted=copy.deepcopy(baseline)
+                if kind=="job_role":
+                    self.policy["artifact_roles"]["pages"]="other"
+                    self.hosted["policy"]["artifact_roles"]["pages"]="other"
+                elif kind=="job_id":self.hosted["artifacts"]["pages"]["job_id"]=99
+                elif kind=="manifest":self.hosted["artifacts"]["pages"]["manifest_sha256"]="f"*64
+                else:self.policy["pages_inputs"]["pages"]["file"]="other.tar"
+                self.write_policy()
+                with self.assertRaisesRegex(ValueError,"Pages"):
+                    self.call()
+
+    def test_pages_late_transport_and_accepted_tar_changes_fail_stability(self):
+        self.with_pages();result=self.call()
+        tar=Path(result["pages"]["pages"]["payload_root"])/"artifact.tar"
+        tar.write_bytes(b"changed tar")
+        with patch.object(aggregate,"_source_identity",return_value=self.identity),self.assertRaises((ValueError,PackageVerificationError)):
+            aggregate._stable(result)
 
     def test_exact_artifacts_assemble_fixture_only_result_and_explicit_upload_list(self):
         result=self.call()

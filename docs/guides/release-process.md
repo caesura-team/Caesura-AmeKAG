@@ -3,7 +3,8 @@
 The current CI, release-tag and Web Pages entry points share
 `.github/workflows/validate-engine.yml`, then call
 `.github/workflows/verify-release-inputs.yml`. Their current scope is an input
-**dry-run**. They do not create a release, upload Pages content, or deploy.
+**dry-run**. They upload verification artifacts, including the exact Pages tar,
+but do not create a release or deploy a site.
 The older Windows manual commands below remain an operational reference;
 they cannot replace this candidate verification or grant publication approval.
 
@@ -11,7 +12,8 @@ Before producer fanout, `scripts/prepare_release_policy.py` freezes the clean
 execution source, engine version, complete validation profile bytes and the
 tracked `scripts/release_input_policy.json` selection. The policy requires
 Debug and Release evidence for Windows, Linux and macOS, four final package
-roles, the iOS configuration gate and the Android static gate. Android compile
+roles, a separate Pages artifact role, the iOS configuration gate and the
+Android static gate. Android compile
 keeps its separately declared audit status. PR execution uses the explicit head
 SHA; the caller/reusable workflow commit is recorded separately.
 
@@ -27,11 +29,22 @@ green retry. All original attempt evidence remains available.
 `DRY_RUN_INPUTS_VERIFIED` does not authorize publishing. The release entry point
 requires an existing numeric `v<engine-version>` tag resolving to this source;
 it never creates or moves one. The Pages entry point retains the selected game
-and optional externally hashed UI actions. Pages-specific tar wrapping,
-deployment identity, signing and any other post-validation transform still
-need their own byte binding and applicable verification before a later,
-explicitly authorized publication. Current job names and package names must
-also be confirmed by actual hosted readback; policy text alone is not evidence.
+and optional externally hashed UI actions. The Web producer generates a plain
+`artifact.tar` once, validates its final bytes through the same isolated Web
+runtime checks, then uploads that exact tar separately from its proof bundle.
+The gate binds this artifact's fixed ID and outer ZIP digest to the tar accepted
+in the Web bundle, its original receipt and the same authenticated producer job.
+Pages bytes are excluded from the generic Release asset list; a separate dry-run
+plan records their ID and digest without deploying. Both tar copies and all proof
+inputs are rechecked before that plan is returned.
+
+`upload-pages-artifact` cannot run after this acceptance because it rebuilds the
+tar. `deploy-pages@v4` publicly selects by name and has no `artifact_id` input;
+a future publisher needs an explicitly authorized adapter to the Pages API's
+fixed-ID deployment endpoint. Signing and any other later byte transform also
+need new final-byte verification. Current hosted job names, package names and
+actual Pages tar runtime evidence must be confirmed by candidate execution;
+policy text or local fixture tests alone are not that evidence.
 
 Candidate execution and remaining gaps are recorded in
 [`2026-09-19-014-release-input-provenance-execution.md`](../plans/2026-09-19-014-release-input-provenance-execution.md).
