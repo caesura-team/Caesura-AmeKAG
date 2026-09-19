@@ -143,3 +143,12 @@ U22 前轮 run35471198493 已结束为 8 成功、2 失败、1 跳过，Web 实�
 
 
 2026-09-20对GitHub服务端进行了实际只读回读：master为protected，但required_status_checks enforcement为off、contexts/checks为空；现有branch protection要求一个PR批准，enforce_admins=false，禁止force-push与删除。仓库ruleset17369886处于disabled，effective rules/branches/master返回空数组。原始响应保留u23-next-gate-01/server-readback-01/*.body，未修改任何服务端设置。该事实说明当前并未强制U23拟定检查，不能用workflow文件存在代替服务端门禁。待新候选实际check身份与聚合证明成立后，再绑定确切检查、保留现有审查/禁止强推删除规则并独立回读；此只读结果不完成AE7或发布验收。
+
+
+## 00de4a35 的完整 Debug 与独立回读
+
+整合 U22 24c50eba 的生成矩阵指纹修正后，干净 U23 提交 00de4a356a4f2200b7e6d7b76a7785934e42057d 完成完整 Windows Debug 运行 2243003f-54ba-4110-9fe1-ca11a9c63ddd（2026-09-19 23:21:09 至23:33:51 UTC）。全量构建和全部11 profile检查通过；C++1415/1415、427088断言、零失败零跳过，Lua147/147及56/56，CTest57发现/56通过/1个预声明可选AI服务跳过，HTTP75/75包含两项Web包装检查。runner、collector、strict verifier均exit0。
+
+独立回读重算163引用条目、94唯一文件、148375812字节；原run与收集收据逐字节相同，严格验证errors为空。源码fingerprint 233f31e93af177a30b7bbfa52f0cfd9a9c775682fe1eccfec73233e6c99351ce、fixture f2ea83917409a3c036b3d0b3ef85bdc122b944eca2f3282d91c5b488d86f6fee匹配首末锁和审查结束仍干净的源码，无历史文件覆盖。原run.json SHA256 ea9a5790172535787b9bd98226d95a0e5a5b668f2da1f025a24adce8251d26e9；manifest bbc4a0497adac5432ad3f277883a7c7865e5c840fbb967d148c6ed2d130d0187；独审independent-audit-01.json 760edcac28e12871bfd778fb3eae2e22eb0530c351e0356b1465c273f13f2ecd。
+
+HTTP实际Engine PID29708/creation134343339855401940/port8028由原控制器受控停止，真实exit1、非timeout、非forced kill、cleanup COMPLETE；后续精确PID回读不存在。没有将受控停止写成正常exit0。AI原输出明确Ollama不可达，真实AI为NOT_RUN。此本地Debug证据不提供最终包或浏览器接受；U22 Mac最终包另发现绝对Homebrew OpenSSL依赖，后续修复仍需整合及适用验证。托管11 artifact聚合、AE7和有效服务端required-check仍未闭合。
