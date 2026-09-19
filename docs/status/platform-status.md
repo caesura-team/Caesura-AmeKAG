@@ -4,8 +4,8 @@
 # Caesura (AmeKAG) — Unified Platform Status Matrix
 
 > **Single Source of Truth**: [`docs/status/platform-matrix.yaml`](platform-matrix.yaml)<br>
-> **Evidence HEAD Commit**: `46490236cb22fac069c8956ed7b69e7f0ad8de45`<br>
-> **Generated At**: `2026-09-19T15:24:04.092237+00:00`<br>
+> **Evidence HEAD Commit**: `a4a6a0d1bcec65247b1b436d7e73e8828c385875`<br>
+> **Generated At**: `2026-09-19T16:43:40.529897+00:00`<br>
 > **Verification Status**: 100% Evidence-Backed (Zero Undocumented Claims)
 
 ---
@@ -49,7 +49,7 @@
 
 #### Gating Boundaries
 
-- **Evidence Scope Gate**: Reviewed at code anchor 46490236; new build/runtime evidence is only clean 0278910e local Windows Debug. Hosted run 35446845025 executed PR merge 69e07778 (head 0278910e); Windows Debug job 105907137963 and Release job 105907137911 succeeded; Release Package job 105910356512 failed at CLI argument parsing before final-package generation. First-VN, packaging and release rows retain their separately dated historical evidence; no final-package or release acceptance is added. The generated footer remains a historical summary, not a current all-platform gate.
+- **Evidence Scope Gate**: Reviewed at code anchor a4a6a0d1; new build/runtime evidence is only clean 0278910e local Windows Debug. Hosted run 35446845025 executed PR merge 69e07778 (head 0278910e); Windows Debug job 105907137963 and Release job 105907137911 succeeded; Release Package job 105910356512 failed at CLI argument parsing before final-package generation. First-VN, packaging and release rows retain their separately dated historical evidence; no final-package or release acceptance is added. The generated footer remains a historical summary, not a current all-platform gate. U22 a4a6a0d1 adds explicit software audio and package observer/staging fixes; local dirty Debug diagnosis is recorded separately in the U22 execution document. New clean candidate and hosted final-package gates remain pending.
 
 #### Capability Matrix & Evidence
 
@@ -73,7 +73,7 @@
 
 #### Gating Boundaries
 
-- **Evidence Scope Gate**: Reviewed at code anchor 46490236; run 35446845025 job 105907138086 at PR merge 69e07778 (head 0278910e) passed Debug build and 45 CTest entries with only the declared AI skip. The job then failed the platform-document drift gate. Package jobs are not accepted and old First-VN/package evidence stays historical. The fixed generated footer count 11/11 is historical and does not describe this run.
+- **Evidence Scope Gate**: Reviewed at code anchor a4a6a0d1; run 35446845025 job 105907138086 at PR merge 69e07778 (head 0278910e) passed Debug build and 45 CTest entries with only the declared AI skip. The job then failed the platform-document drift gate. Package jobs are not accepted and old First-VN/package evidence stays historical. The fixed generated footer count 11/11 is historical and does not describe this run. U22 a4a6a0d1 adds explicit software audio and package observer/staging fixes; local dirty Debug diagnosis is recorded separately in the U22 execution document. New clean candidate and hosted final-package gates remain pending.
 
 #### Capability Matrix & Evidence
 
@@ -97,7 +97,7 @@
 
 #### Gating Boundaries
 
-- **Evidence Scope Gate**: Review anchor refresh only. Capability commits/dates below remain historical. No new Web final-package, browser/device or release acceptance is inferred from native CTest or the anchor. The fixed generated footer count 368 is historical, not a current suite total.
+- **Evidence Scope Gate**: Review anchor refresh only. Capability commits/dates below remain historical. No new Web final-package, browser/device or release acceptance is inferred from native CTest or the anchor. The fixed generated footer count 368 is historical, not a current suite total. U22 a4a6a0d1 adds explicit software audio and package observer/staging fixes; local dirty Debug diagnosis is recorded separately in the U22 execution document. New clean candidate and hosted final-package gates remain pending.
 
 #### Capability Matrix & Evidence
 
@@ -124,7 +124,7 @@
 
 #### Gating Boundaries
 
-- **Evidence Scope Gate**: Review anchor refresh only. Device, signing, AAB and build evidence below retain their original commits/dates. No Android device or store validation was performed in this update.
+- **Evidence Scope Gate**: Review anchor refresh only. Device, signing, AAB and build evidence below retain their original commits/dates. No Android device or store validation was performed in this update. U22 a4a6a0d1 adds explicit software audio and package observer/staging fixes; local dirty Debug diagnosis is recorded separately in the U22 execution document. New clean candidate and hosted final-package gates remain pending.
 
 #### Capability Matrix & Evidence
 
@@ -150,7 +150,7 @@
 
 #### Gating Boundaries
 
-- **Evidence Scope Gate**: Run 35446845025 job 105907138155 at PR merge 69e07778 (head 0278910e) passed actual HTTP smoke (9.43 s), native runtime tests (34.63 s) and Web runtime tests (26.95 s), but CTest failed one synthetic Framework clock test (30 Python tests, one failure). Test-only fix 28575a16 has local Windows/WSL fixture evidence, not new hosted macOS acceptance. Runtime/release remain pending; no package/device promotion.
+- **Evidence Scope Gate**: Run 35446845025 job 105907138155 at PR merge 69e07778 (head 0278910e) passed actual HTTP smoke (9.43 s), native runtime tests (34.63 s) and Web runtime tests (26.95 s), but CTest failed one synthetic Framework clock test (30 Python tests, one failure). Test-only fix 28575a16 has local Windows/WSL fixture evidence, not new hosted macOS acceptance. Runtime/release remain pending; no package/device promotion. U22 a4a6a0d1 adds explicit software audio and package observer/staging fixes; local dirty Debug diagnosis is recorded separately in the U22 execution document. New clean candidate and hosted final-package gates remain pending.
 - **Hardware Gate**: Physical Apple Silicon Mac is not present in local dev loop; CI covers compilation and unit tests.
 
 #### Capability Matrix & Evidence
@@ -174,7 +174,7 @@
 
 #### Gating Boundaries
 
-- **Evidence Scope Gate**: Review anchor refresh only. Compile/shader probes and device/credential gates below retain their original commits/dates; no iOS device, TestFlight or release validation was performed.
+- **Evidence Scope Gate**: Review anchor refresh only. Compile/shader probes and device/credential gates below retain their original commits/dates; no iOS device, TestFlight or release validation was performed. U22 a4a6a0d1 adds explicit software audio and package observer/staging fixes; local dirty Debug diagnosis is recorded separately in the U22 execution document. New clean candidate and hosted final-package gates remain pending.
 - **Hardware Gate**: Physical iPhone/iPad or local Xcode simulator hardware gated.
 - **Credential Gate**: Apple Developer Program signing certificate and provisioning profile required for device install / TestFlight.
 

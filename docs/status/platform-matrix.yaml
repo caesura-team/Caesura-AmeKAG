@@ -3,7 +3,7 @@ schema_version: "1.0.0"
 generated_document: "docs/status/platform-status.md"
 # Review synchronization anchor only; execution commits and dates remain per capability.
 # A docs-only sync does not revalidate packages, devices, releases, or the code anchor.
-evidence_head_commit: 46490236cb22fac069c8956ed7b69e7f0ad8de45
+evidence_head_commit: a4a6a0d1bcec65247b1b436d7e73e8828c385875
 
 allowed_status_enums:
   - verified
@@ -26,7 +26,7 @@ platforms:
       audio_backend: "SoLoud (WASAPI / WinMM)"
       toolchain: "CMake 3.25+ / vcpkg"
     gates:
-      evidence_scope: "Reviewed at code anchor 46490236; new build/runtime evidence is only clean 0278910e local Windows Debug. Hosted run 35446845025 executed PR merge 69e07778 (head 0278910e); Windows Debug job 105907137963 and Release job 105907137911 succeeded; Release Package job 105910356512 failed at CLI argument parsing before final-package generation. First-VN, packaging and release rows retain their separately dated historical evidence; no final-package or release acceptance is added. The generated footer remains a historical summary, not a current all-platform gate."
+      evidence_scope: "Reviewed at code anchor a4a6a0d1; new build/runtime evidence is only clean 0278910e local Windows Debug. Hosted run 35446845025 executed PR merge 69e07778 (head 0278910e); Windows Debug job 105907137963 and Release job 105907137911 succeeded; Release Package job 105910356512 failed at CLI argument parsing before final-package generation. First-VN, packaging and release rows retain their separately dated historical evidence; no final-package or release acceptance is added. The generated footer remains a historical summary, not a current all-platform gate. U22 a4a6a0d1 adds explicit software audio and package observer/staging fixes; local dirty Debug diagnosis is recorded separately in the U22 execution document. New clean candidate and hosted final-package gates remain pending."
     capabilities:
       build:
         status: verified
@@ -81,7 +81,7 @@ platforms:
       audio_backend: "SoLoud (ALSA / PulseAudio / Null device in CI)"
       toolchain: "CMake 3.25+ / Ninja"
     gates:
-      evidence_scope: "Reviewed at code anchor 46490236; run 35446845025 job 105907138086 at PR merge 69e07778 (head 0278910e) passed Debug build and 45 CTest entries with only the declared AI skip. The job then failed the platform-document drift gate. Package jobs are not accepted and old First-VN/package evidence stays historical. The fixed generated footer count 11/11 is historical and does not describe this run."
+      evidence_scope: "Reviewed at code anchor a4a6a0d1; run 35446845025 job 105907138086 at PR merge 69e07778 (head 0278910e) passed Debug build and 45 CTest entries with only the declared AI skip. The job then failed the platform-document drift gate. Package jobs are not accepted and old First-VN/package evidence stays historical. The fixed generated footer count 11/11 is historical and does not describe this run. U22 a4a6a0d1 adds explicit software audio and package observer/staging fixes; local dirty Debug diagnosis is recorded separately in the U22 execution document. New clean candidate and hosted final-package gates remain pending."
     capabilities:
       build:
         status: verified
@@ -135,7 +135,7 @@ platforms:
       storage: "localStorage (JSON envelope)"
       tested_browsers: "Google Chrome 128+ / Microsoft Edge 128+ (Headless-new CDP)"
     gates:
-      evidence_scope: "Review anchor refresh only. Capability commits/dates below remain historical. No new Web final-package, browser/device or release acceptance is inferred from native CTest or the anchor. The fixed generated footer count 368 is historical, not a current suite total."
+      evidence_scope: "Review anchor refresh only. Capability commits/dates below remain historical. No new Web final-package, browser/device or release acceptance is inferred from native CTest or the anchor. The fixed generated footer count 368 is historical, not a current suite total. U22 a4a6a0d1 adds explicit software audio and package observer/staging fixes; local dirty Debug diagnosis is recorded separately in the U22 execution document. New clean candidate and hosted final-package gates remain pending."
     capabilities:
       build:
         status: verified
@@ -198,7 +198,7 @@ platforms:
       graphics_api: "OpenGL ES 3.2 (bgfx GLES)"
       audio_backend: "SoLoud (OpenSLES, 3 buses)"
     gates:
-      evidence_scope: "Review anchor refresh only. Device, signing, AAB and build evidence below retain their original commits/dates. No Android device or store validation was performed in this update."
+      evidence_scope: "Review anchor refresh only. Device, signing, AAB and build evidence below retain their original commits/dates. No Android device or store validation was performed in this update. U22 a4a6a0d1 adds explicit software audio and package observer/staging fixes; local dirty Debug diagnosis is recorded separately in the U22 execution document. New clean candidate and hosted final-package gates remain pending."
     capabilities:
       build:
         status: verified
@@ -267,7 +267,7 @@ platforms:
       audio_backend: "SoLoud (CoreAudio)"
       toolchain: "CMake 3.25+ / Homebrew"
     gates:
-      evidence_scope: "Run 35446845025 job 105907138155 at PR merge 69e07778 (head 0278910e) passed actual HTTP smoke (9.43 s), native runtime tests (34.63 s) and Web runtime tests (26.95 s), but CTest failed one synthetic Framework clock test (30 Python tests, one failure). Test-only fix 28575a16 has local Windows/WSL fixture evidence, not new hosted macOS acceptance. Runtime/release remain pending; no package/device promotion."
+      evidence_scope: "Run 35446845025 job 105907138155 at PR merge 69e07778 (head 0278910e) passed actual HTTP smoke (9.43 s), native runtime tests (34.63 s) and Web runtime tests (26.95 s), but CTest failed one synthetic Framework clock test (30 Python tests, one failure). Test-only fix 28575a16 has local Windows/WSL fixture evidence, not new hosted macOS acceptance. Runtime/release remain pending; no package/device promotion. U22 a4a6a0d1 adds explicit software audio and package observer/staging fixes; local dirty Debug diagnosis is recorded separately in the U22 execution document. New clean candidate and hosted final-package gates remain pending."
       hardware: "Physical Apple Silicon Mac is not present in local dev loop; CI covers compilation and unit tests."
     capabilities:
       build:
@@ -319,7 +319,7 @@ platforms:
       audio_backend: "SoLoud (CoreAudio / AVAudioSession)"
       toolchain: "CMake 3.25+ / Xcode 15+ (ios-compile probe)"
     gates:
-      evidence_scope: "Review anchor refresh only. Compile/shader probes and device/credential gates below retain their original commits/dates; no iOS device, TestFlight or release validation was performed."
+      evidence_scope: "Review anchor refresh only. Compile/shader probes and device/credential gates below retain their original commits/dates; no iOS device, TestFlight or release validation was performed. U22 a4a6a0d1 adds explicit software audio and package observer/staging fixes; local dirty Debug diagnosis is recorded separately in the U22 execution document. New clean candidate and hosted final-package gates remain pending."
       hardware: "Physical iPhone/iPad or local Xcode simulator hardware gated."
       credential: "Apple Developer Program signing certificate and provisioning profile required for device install / TestFlight."
     capabilities:
