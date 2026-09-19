@@ -504,6 +504,32 @@ if(Python3_EXECUTABLE)
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
     )
     add_test(
+        NAME CaesuraAudioOutputCli
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_audio_output_cli.py
+                --engine $<TARGET_FILE:CaesuraAmeKAG>
+    )
+    set_tests_properties(CaesuraAudioOutputCli PROPERTIES
+        LABELS "qa;cli;audio"
+        TIMEOUT 360
+        RUN_SERIAL TRUE
+        RESOURCE_LOCK "global-singletons"
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    )
+    add_test(
+        NAME CaesuraResourceCwdCli
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_resource_cwd_cli.py
+                --engine $<TARGET_FILE:CaesuraAmeKAG>
+    )
+    set_tests_properties(CaesuraResourceCwdCli PROPERTIES
+        LABELS "qa;cli;paths"
+        TIMEOUT 120
+        RUN_SERIAL TRUE
+        RESOURCE_LOCK "global-singletons"
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    )
+    add_test(
         NAME CaesuraTargetCapabilities
         COMMAND ${CMAKE_COMMAND} -E env
                 "CAESURA_ENGINE=$<TARGET_FILE:CaesuraAmeKAG>"
@@ -524,7 +550,8 @@ if(Python3_EXECUTABLE)
     foreach(_package_contract release_package_contract native_package_contract
                               package_runtime web_package_contract package_build_metadata
                               package_validation_runner native_package_runtime
-                              web_package_runtime package_containers appimage_build_contract ci_package_lane)
+                              web_package_runtime package_containers appimage_build_contract ci_package_lane
+                              package_runtime_install)
         add_test(
             NAME CaesuraPackage_${_package_contract}
             COMMAND ${CMAKE_COMMAND} -E env

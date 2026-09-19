@@ -10,6 +10,11 @@
 #include <algorithm>
 #include <list>
 #include <limits>
+#include <array>
+#include <cmath>
+#include <iomanip>
+#include <locale>
+#include <sstream>
 namespace Caesura {
 
 
@@ -90,8 +95,16 @@ bool SoLoudAudioEngine::init(){
     CAESURA_ASSERT_MAIN_THREAD();
     if (m_initialized) return true;
     m_voiceCompletionsPending = 0;
+    m_softwareMixStats = {};
+    m_softwareFractionalFrames = 0;
+    m_softwareSuspended = false;
+    if (m_outputMode == OutputMode::Software) {
+        printf("[Audio] Output mode: software; physical_device=NOT_RUN\n");
+    } else if (m_outputMode == OutputMode::Device) {
+        printf("[Audio] Output mode: device; physical_device=NOT_VERIFIED\n");
+    }
 
-    const bool manual = m_outputMode == OutputMode::ManualMix;
+    const bool manual = m_outputMode != OutputMode::Device;
     SoLoud::result res = m_soloud.init(
         SoLoud::Soloud::CLIP_ROUNDOFF,
         manual ? SoLoud::Soloud::NULLDRIVER : SoLoud::Soloud::AUTO,
@@ -172,6 +185,22 @@ void SoLoudAudioEngine::shutdown(){
     m_voiceBusHandle = 0;
     m_seBusHandle = 0;
     releaseAudioHandles(allocatedHandles);
+    if (m_outputMode == OutputMode::Software) {
+        // JSON numbers must stay locale-independent and finite. These counters
+        // describe bytes that passed through the real mixer, not a device sink.
+        std::ostringstream stats;
+        stats.imbue(std::locale::classic());
+        stats << std::setprecision(17)
+              << "[Audio] Software mix stats: {\"frames\":" << m_softwareMixStats.frames
+              << ",\"samples\":" << m_softwareMixStats.samples
+              << ",\"nonzero_samples\":" << m_softwareMixStats.nonzeroSamples
+              << ",\"nonfinite_samples\":" << m_softwareMixStats.nonfiniteSamples
+              << ",\"peak\":" << m_softwareMixStats.peak
+              << ",\"absolute_energy\":" << m_softwareMixStats.absoluteEnergy
+              << ",\"saturated\":" << (m_softwareMixStats.saturated ? "true" : "false")
+              << ",\"sample_rate\":48000,\"channels\":2,\"physical_device\":\"NOT_RUN\"}";
+        printf("%s\n", stats.str().c_str());
+    }
     printf("[Audio] SoLoud shut down.\n");
 
     m_rawWaveCache.clear();
@@ -180,6 +209,7 @@ void SoLoudAudioEngine::shutdown(){
 void SoLoudAudioEngine::suspend(){
     CAESURA_ASSERT_MAIN_THREAD();
     if (!m_initialized) return;
+    m_softwareSuspended = true;
     m_soloud.setPauseAll(true);
 }
 
@@ -187,12 +217,57 @@ void SoLoudAudioEngine::resume(){
     CAESURA_ASSERT_MAIN_THREAD();
     if (!m_initialized) return;
     m_soloud.setPauseAll(false);
+    m_softwareSuspended = false;
 }
 
-void SoLoudAudioEngine::update(float /*deltaTime*/){
+void SoLoudAudioEngine::update(float deltaTime){
     CAESURA_ASSERT_MAIN_THREAD();
     if (!m_initialized) return;
     m_soloud.update3dAudio();
+    if (m_outputMode == OutputMode::Software && !m_softwareSuspended &&
+        std::isfinite(deltaTime) && deltaTime > 0) {
+        // Match Engine's maximum simulation step. A public update caller must
+        // not turn a large/invalid dt into an unbounded allocation or mix loop.
+        const double frames = m_softwareFractionalFrames +
+            (std::min)(static_cast<double>(deltaTime), 0.25) * 48000;
+        auto remaining = static_cast<unsigned>(frames);
+        m_softwareFractionalFrames = frames - remaining;
+        constexpr unsigned blockFrames = 1024;
+        std::array<float, blockFrames * 2> pcm{};
+        const auto addCount = [this](uint64_t& counter, uint64_t amount) {
+            const auto maximum = (std::numeric_limits<uint64_t>::max)();
+            if (amount > maximum - counter) {
+                counter = maximum;
+                m_softwareMixStats.saturated = true;
+            } else {
+                counter += amount;
+            }
+        };
+        while (remaining > 0) {
+            const auto count = (std::min)(remaining, blockFrames);
+            m_soloud.mix(pcm.data(), count);
+            addCount(m_softwareMixStats.frames, count);
+            addCount(m_softwareMixStats.samples, count * 2);
+            for (unsigned i = 0; i < count * 2; ++i) {
+                const auto sample = pcm[i];
+                if (!std::isfinite(sample)) {
+                    addCount(m_softwareMixStats.nonfiniteSamples, 1);
+                    continue;
+                }
+                if (sample != 0) addCount(m_softwareMixStats.nonzeroSamples, 1);
+                const auto magnitude = std::abs(sample);
+                m_softwareMixStats.peak = (std::max)(m_softwareMixStats.peak, magnitude);
+                const auto maximum = (std::numeric_limits<double>::max)();
+                if (magnitude > maximum - m_softwareMixStats.absoluteEnergy) {
+                    m_softwareMixStats.absoluteEnergy = maximum;
+                    m_softwareMixStats.saturated = true;
+                } else {
+                    m_softwareMixStats.absoluteEnergy += magnitude;
+                }
+            }
+            remaining -= count;
+        }
+    }
     cullFinishedHandles();
 }
 

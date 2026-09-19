@@ -89,6 +89,50 @@ def _native_argv(executable: Path, *arguments: str) -> list[str]:
     return [str(executable), *arguments]
 
 
+def _audio_evidence(text, mode, *, require_signal):
+    """Bind explicit output selection and software mixer observations to raw logs.
+
+    Device initialization is not proof of physical audibility. Software output
+    is deliberately a discard sink and must never claim a physical device test.
+    """
+    _need(mode in ('device', 'software'), 'Unknown audio output mode')
+    physical = 'NOT_RUN' if mode == 'software' else 'NOT_VERIFIED'
+    markers = re.findall(r'^\[Audio\] Output mode: (.*)$', text, re.MULTILINE)
+    _need(markers == [f'{mode}; physical_device={physical}'], 'Audio output selection mismatch')
+    _need('[Audio] SoLoud initialized: 3 buses' in text and 'Using NullAudioBackend' not in text,
+          'Selected real audio backend did not initialize')
+    result = {'mode':mode, 'physical_device':physical}
+    if mode == 'device':
+        return result
+    rows = re.findall(r'^\[Audio\] Software mix stats: (.*)$', text, re.MULTILINE)
+    _need(len(rows) == 1, 'Software audio requires one completed mixer session')
+    def unique(pairs):
+        value = {}
+        for key, item in pairs:
+            _need(key not in value, 'Duplicate software audio statistic')
+            value[key] = item
+        return value
+    stats = json.loads(rows[0], object_pairs_hook=unique)
+    _need(isinstance(stats, dict), 'Software audio statistics must be an object')
+    for key in ('frames', 'samples', 'nonzero_samples', 'nonfinite_samples'):
+        _need(type(stats.get(key)) is int and 0 <= stats[key] < 2**64, f'Invalid audio counter: {key}')
+    _need(stats['frames'] > 0 and stats['samples'] == 2 * stats['frames'], 'Software mixer did not advance stereo PCM')
+    _need(stats['nonfinite_samples'] == 0 and stats['nonzero_samples'] <= stats['samples'], 'Invalid software PCM samples')
+    for key in ('peak', 'absolute_energy'):
+        _need(type(stats.get(key)) in (int, float) and math.isfinite(stats[key]) and stats[key] >= 0,
+              f'Invalid software PCM magnitude: {key}')
+    _need(type(stats.get('sample_rate')) is int and stats['sample_rate'] == 48000
+          and type(stats.get('channels')) is int and stats['channels'] == 2
+          and stats.get('physical_device') == 'NOT_RUN' and stats.get('saturated') is False,
+          'Software mixer configuration or finite accumulation mismatch')
+    signal = stats['nonzero_samples'] > 0
+    _need((stats['peak'] > 0) == signal and (stats['absolute_energy'] > 0) == signal,
+          'Software PCM energy and signal counters disagree')
+    _need(not require_signal or signal, 'Packaged demo produced no nonzero software PCM')
+    result['statistics'] = stats
+    return result
+
+
 def _host_platform() -> str:
     if os.name == "nt":
         return "windows"
@@ -147,7 +191,7 @@ def observe_loaded_modules(identity: ProcessIdentity) -> dict:
     elif sys.platform == "darwin":
         # txt descriptors are mapped program text, including private dylibs.
         # Shared-cache system images may be absent; required packaged images
-        # must actually appear. Missing/denied observations fail the lane.
+        # must actually appear. Required-image and observer errors fail the lane.
         tool = Path("/usr/sbin/lsof")
         _need(tool.is_file(), "macOS mapped-image observer /usr/sbin/lsof is unavailable")
         result = subprocess.run([str(tool), "-a", "-p", str(identity.pid), "-d", "txt", "-Fn"],
@@ -159,8 +203,25 @@ def observe_loaded_modules(identity: ProcessIdentity) -> dict:
         raise RuntimeContractError("Loaded module observation is NOT_VERIFIED on this host")
     _need(process_identity(identity.pid) == identity, "Module owner changed during observation")
     _need(paths, "No executable modules were observed")
+    resolved, missing, inaccessible = set(), [], []
+    for path in paths:
+        try:
+            normalized = str(Path(path).resolve(strict=True))
+        except (FileNotFoundError, PermissionError) as error:
+            if sys.platform != "darwin":
+                raise
+            # lsof txt also includes non-library mappings such as macOS's
+            # transient logging cache or protected analytics files. Retain
+            # unresolved paths and the original error. Required or foreign
+            # same-name images remain fatal below; unrelated system mappings
+            # must not hide the actually observed packaged SDL image.
+            normalized = str(Path(path).resolve(strict=False))
+            affected = inaccessible if isinstance(error, PermissionError) else missing
+            affected.append({"path":normalized, "reported_path":path,
+                             "error":f"{type(error).__name__}: {error}"})
+        resolved.add(normalized)
     return {"status":"OBSERVED", "source":source, "process":asdict(identity),
-            "paths":sorted(set(str(Path(path).resolve(strict=True)) for path in paths))}
+            "paths":sorted(resolved), "missing_paths":missing, "inaccessible_paths":inaccessible}
 
 
 def _inspect_libraries(identity: ProcessIdentity, package: Path, required: list[str]) -> dict:
@@ -168,12 +229,21 @@ def _inspect_libraries(identity: ProcessIdentity, package: Path, required: list[
         return {"status":"NOT_REQUIRED", "required":[], "reason":"No shared libraries required by external configuration"}
     report = observe_loaded_modules(identity)
     observed = {Path(path) for path in report["paths"]}
+    disappeared = {Path(item[key]) for item in report.get("missing_paths", [])
+                   for key in ("path", "reported_path")}
+    inaccessible = {Path(item[key]) for item in report.get("inaccessible_paths", [])
+                    for key in ("path", "reported_path")}
     matched = []
     missing = []
     for relative in required:
-        expected = (package / relative).resolve(strict=True)
+        declared = package / relative
+        expected = declared.resolve(strict=True)
         _need(expected.is_relative_to(package), f"Required library escapes package: {relative}")
-        _need(not any(path.name.casefold() == expected.name.casefold() and path != expected for path in observed),
+        _need(not {expected, declared} & disappeared, f"Required library mapping disappeared: {relative}")
+        _need(not {expected, declared} & inaccessible, f"Required library mapping inaccessible: {relative}")
+        names = {declared.name.casefold(), expected.name.casefold()}
+        _need(not any(path.name.casefold() in names and path not in {expected, declared}
+                      for path in observed | disappeared | inaccessible),
               f"A second source for required library was observed: {relative}")
         if expected not in observed:
             missing.append(relative)
@@ -386,13 +456,16 @@ def _copy_changes(before: dict, after: dict) -> dict:
 
 def run_native_package(package_root, required_configuration, attempt_dir, *, python_executable,
                        command_timeout=120, readiness_timeout=45, launch_relative_path=None,
-                       editor_port=None) -> dict:
+                       editor_port=None, audio_output='device') -> dict:
     report = {"schema":"caesura.native-package-runtime.v1", "status":"RUNTIME_FAIL",
               "runtime":"NOT_RUN", "source_stable":False, "runtime_copy_stable":False,
               "evidence_stable":False, "cleanup":"NOT_STARTED", "stages":[], "errors":[]}
     attempt = package = copy = before = copied = game = game_before = None
     reservation = None
     try:
+        _need(audio_output in ('device', 'software'), 'Unknown audio output mode')
+        report['audio_output'] = audio_output
+        report['physical_audio_output'] = 'NOT_RUN' if audio_output == 'software' else 'NOT_VERIFIED'
         for value in (command_timeout, readiness_timeout):
             _need(not isinstance(value, bool) and math.isfinite(value) and value > 0, "Timeouts must be positive finite numbers")
         platform = _host_platform()
@@ -481,7 +554,7 @@ def run_native_package(package_root, required_configuration, attempt_dir, *, pyt
             reservation.close()
             reservation = None
             _need(not loopback_listeners(port), "Editor port is occupied before a new session")
-            value = command(current, current["name"], _native_argv(launcher, "--editor"), launch_cwd, editor_env,
+            value = command(current, current["name"], _native_argv(launcher, "--editor", "--audio-output", audio_output), launch_cwd, editor_env,
                             controlled=True, editor_port=port,
                             monitor=lambda identity, deadline: _editor_protocol(identity, port, copy, token, deadline, libraries),
                             **launch_options)
@@ -491,12 +564,13 @@ def run_native_package(package_root, required_configuration, attempt_dir, *, pyt
             current["status"] = "PASS"
 
         current = stage("engine_frames")
-        value = command(current, "engine_frames", _native_argv(launcher, "--frames", "60"), launch_cwd, dict(env, PWD=str(launch_cwd)),
+        value = command(current, "engine_frames", _native_argv(launcher, "--frames", "60", "--audio-output", audio_output), launch_cwd, dict(env, PWD=str(launch_cwd)),
                         monitor=(lambda identity, deadline: {"loaded_modules":_loaded_libraries(identity, copy, libraries, deadline)}) if libraries else None,
                         **launch_options)
         text = _log(attempt, value)
         _need("rendering disabled (BGFX_DEBUG_IFH)" not in text and "[caesura] FATAL" not in text,
               "Ordinary engine reported a fatal boot or disabled rendering")
+        current['audio'] = _audio_evidence(text, audio_output, require_signal=True)
         current["status"] = "PASS"
 
         current = stage("author_create_build")
@@ -549,11 +623,12 @@ def run_native_package(package_root, required_configuration, attempt_dir, *, pyt
             target = game / Path(relative).name
             _need(target.is_file() and _sha(target) == _sha(copy / relative), f"Created game lacks its own required library: {relative}")
             game_libraries.append(target.name)
-        value = command(current, "created_game_frames", _native_argv(game / name, "--frames", "60"), game, game_env,
+        value = command(current, "created_game_frames", _native_argv(game / name, "--frames", "60", "--audio-output", audio_output), game, game_env,
                         monitor=(lambda identity, deadline: {"loaded_modules":_loaded_libraries(identity, game, game_libraries, deadline)}) if game_libraries else None)
         text = _log(attempt, value)
         _need("KAG Runner] Started" in text and "[caesura] FATAL" not in text
               and "rendering disabled (BGFX_DEBUG_IFH)" not in text, "Created game did not start its KAG runner with rendering enabled")
+        current['audio'] = _audio_evidence(text, audio_output, require_signal=False)
         current["status"] = "PASS"
     except Exception as error:
         report["errors"].append(f"{type(error).__name__}: {error}")

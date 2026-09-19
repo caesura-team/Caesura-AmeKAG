@@ -71,6 +71,20 @@ class PackageValidationRunner(unittest.TestCase):
         receipt = json.loads((self.root / "attempt/package-run.json").read_text(encoding="utf-8"))
         self.assertEqual(receipt, result)
 
+    def test_native_audio_selection_is_external_and_reaches_runtime(self):
+        result = self.run_attempt(audio_output='software')
+        self.assertEqual(result['status'], 'DIAGNOSTIC_PASS', result['errors'])
+        self.assertEqual(result['audio_output'], 'software')
+        self.assertNotIn('audio_output', result['requirements']['value'])
+        self.assertEqual(self.runtime.call_args.args[2]['audio_output'], 'software')
+
+    def test_invalid_or_web_audio_selection_is_refused(self):
+        for index, changes in enumerate(({'audio_output':'automatic'},
+                                        {'audio_output':'software', 'platform':'web'})):
+            result = self.run_attempt(attempt_dir=self.root/str(index), **changes)
+            self.assertEqual(result['status'], 'FAIL')
+        self.runtime.assert_not_called()
+
     def test_bad_final_digest_never_enters_static_or_runtime(self):
         result = self.run_attempt(expected_sha256="0" * 64)
         self.assertEqual(result["status"], "FAIL")
