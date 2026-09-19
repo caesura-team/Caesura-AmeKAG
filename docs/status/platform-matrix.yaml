@@ -4,7 +4,7 @@ generated_document: "docs/status/platform-status.md"
 # Review synchronization anchor only; execution commits and dates remain per capability.
 # U24 Android driver and test registration are under candidate validation.
 # A docs-only sync does not revalidate packages, devices, releases, or the code anchor.
-evidence_head_commit: e8f973313ed20aab510f57c81ce5fe2043214b37
+evidence_head_commit: c48863314c979d911ce5ff58949a464e890575d5
 
 allowed_status_enums:
   - verified
