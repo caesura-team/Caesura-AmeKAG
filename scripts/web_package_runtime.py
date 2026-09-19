@@ -14,6 +14,7 @@ from concurrent.futures import Future, TimeoutError as FutureTimeout
 import ctypes
 from dataclasses import asdict
 from datetime import datetime, timezone
+import faulthandler
 import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -23,6 +24,7 @@ from pathlib import Path
 import re
 import shutil
 import socket
+from socketserver import TCPServer
 import stat
 import subprocess
 import sys
@@ -365,6 +367,15 @@ class _PackageHandler(BaseHTTPRequestHandler):
             return
 
 
+class _LoopbackHTTPServer(ThreadingHTTPServer):
+    def server_bind(self):
+        # This service advertises only the explicit numeric loopback address.
+        # HTTPServer's reverse-DNS server_name lookup adds no useful identity
+        # and can block before listen()/the owned readiness record exists.
+        TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+
+
 def _bind_http(port):
     if port and port in BROWSER_BLOCKED_PORTS:
         raise RuntimeContractError(f'Explicit HTTP port {port} is browser-blocked')
@@ -373,7 +384,7 @@ def _bind_http(port):
         # This only allocates an admissible listener. No browser or validation
         # stage has started, so rejected allocations are not runtime retries.
         for _ in range(32):
-            server = ThreadingHTTPServer(('127.0.0.1', port), _PackageHandler)
+            server = _LoopbackHTTPServer(('127.0.0.1', port), _PackageHandler)
             if server.server_address[1] not in BROWSER_BLOCKED_PORTS:
                 return server, [item.server_address[1] for item in rejected]
             rejected.append(server)
@@ -395,16 +406,25 @@ def serve_package(package_root: Path, ready_path: Path, *, prefix='/', port=0):
         raise RuntimeContractError('Ready file must stay outside the package')
     if isinstance(port, bool) or not isinstance(port, int) or not 0 <= port <= 65535:
         raise RuntimeContractError('Port must be an integer in 0..65535')
-    server, rejected_ports = _bind_http(port)
-    server.package_root, server.package_prefix = root, prefix
+    server = None
     try:
-        _json_new(ready, dict(schema='caesura.web-package-http.v1', pid=os.getpid(),
-                              root=str(root), prefix=prefix, host='127.0.0.1',
-                              port=server.server_address[1], read_only=True,
-                              rejected_browser_ports=rejected_ports))
+        # A startup hang must leave an original child stack before the owner's
+        # 15-second readiness deadline reaps the process. Cancel once ready so
+        # normal serving does not emit a spurious timeout traceback.
+        faulthandler.dump_traceback_later(5, file=sys.stderr)
+        try:
+            server, rejected_ports = _bind_http(port)
+            server.package_root, server.package_prefix = root, prefix
+            _json_new(ready, dict(schema='caesura.web-package-http.v1', pid=os.getpid(),
+                                  root=str(root), prefix=prefix, host='127.0.0.1',
+                                  port=server.server_address[1], read_only=True,
+                                  rejected_browser_ports=rejected_ports))
+        finally:
+            faulthandler.cancel_dump_traceback_later()
         server.serve_forever(poll_interval=0.05)
     finally:
-        server.server_close()
+        if server is not None:
+            server.server_close()
 
 
 def _server_ready(command, ready_path, root, prefix):
@@ -446,8 +466,20 @@ def start_package_server(package_root, scenario_dir, env, *, prefix='/', port=0)
         record = command.wait_for(lambda: _server_ready(command, ready, package_root, prefix),
                                   timeout=15, description='owned HTTP readiness')
         return _Service(command, ready, record)
-    except BaseException:
+    except BaseException as error:
         command.stop()
+        if isinstance(error, Exception):
+            # Keep the raw file and also carry its bounded tail into the error
+            # report/CTest output, which survives temporary fixture cleanup.
+            try:
+                with (command.directory / 'stderr.log').open('rb') as stream:
+                    stream.seek(0, os.SEEK_END)
+                    stream.seek(max(0, stream.tell() - 8192))
+                    stderr = stream.read().decode('utf-8', errors='replace')
+            except OSError as read_error:
+                stderr = f'Cannot read child stderr: {read_error}'
+            raise RuntimeContractError(f'{error}\nOwned HTTP startup stderr (last 8192 bytes):\n'
+                                       + (stderr or '<empty>')) from error
         raise
 
 

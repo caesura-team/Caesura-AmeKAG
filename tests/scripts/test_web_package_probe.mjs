@@ -21,7 +21,8 @@ const invoke = args => new Promise((done, reject) => {
   const timer = setTimeout(() => { child.kill(); reject(new Error('Probe CLI did not terminate')) }, 12000)
   child.on('close', code => { clearTimeout(timer); done({ code, stdout, stderr }) })
 })
-const directory = t => { const path = realpathSync(mkdtempSync(join(tmpdir(), 'caesura-web-probe-'))); t.after(() => rmSync(path, { recursive: true, force: true })); return path }
+// Use the same OS canonical spelling as the CLI, including Windows 8.3 TEMP.
+const directory = t => { const path = realpathSync.native(mkdtempSync(join(tmpdir(), 'caesura-web-probe-'))); t.after(() => rmSync(path, { recursive: true, force: true })); return path }
 const argumentsFor = out => ['--url', 'http://127.0.0.1:12345/games/example/', '--cdp-url', 'http://127.0.0.1:12346', '--browser-pid', '4242', '--output', out]
 
 function packet(value) {

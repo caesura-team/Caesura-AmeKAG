@@ -15,6 +15,7 @@ from pathlib import Path
 import shlex
 import shutil
 import socket
+from socketserver import TCPServer
 import subprocess
 import sys
 import tempfile
@@ -37,8 +38,15 @@ else:
 # hosts where sys.executable is only an exec launcher. No PATH lookup is involved.
 FIXTURE_PYTHON = runtime.process_identity(os.getpid()).executable if runtime else sys.executable
 
+
+class LoopbackHTTPServer(http.server.HTTPServer):
+    def server_bind(self):
+        TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+
 ENGINE_FIXTURE = r'''
 import http.server, json, os, secrets, sys
+from socketserver import TCPServer
 from pathlib import Path
 root = Path.cwd()
 mode = (root / 'fixture-mode.txt').read_text() if (root / 'fixture-mode.txt').exists() else ''
@@ -68,7 +76,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 code = 401
         self.send_response(code); self.send_header('Content-Length', str(len(body))); self.end_headers()
         self.wfile.write(body)
-http.server.HTTPServer(('127.0.0.1', int(os.environ['CAESURA_EDITOR_PORT'])), Handler).serve_forever()
+class LoopbackHTTPServer(http.server.HTTPServer):
+    def server_bind(self):
+        TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+LoopbackHTTPServer(('127.0.0.1', int(os.environ['CAESURA_EDITOR_PORT'])), Handler).serve_forever()
 '''
 
 CLI_FIXTURE = r'''
@@ -158,11 +170,22 @@ class NativePackageRuntimeTests(unittest.TestCase):
             for endpoint in report['editor_endpoints']:
                 self.assertNotEqual(endpoint['port'], self.port)
                 self.assertEqual(endpoint['selection'], 'os_assigned')
+
                 self.assertEqual(endpoint['race_policy'], 'FAIL_ON_FOREIGN_OWNER')
                 self.assertFalse(runtime.loopback_listeners(endpoint['port']))
             self.assertTrue(runtime.loopback_listeners(self.port))
             for stage in report['stages'][:2]:
                 self.assertEqual(stage['commands'][0]['observations']['port'], stage['editor_endpoint']['port'])
+
+    def test_literal_loopback_fixture_does_not_enter_blocked_dns_resolver(self):
+        self.engine_script.write_text(
+            'import socket, threading\n'
+            'def blocked_resolver(*args):\n'
+            '    print("blocked resolver entered", flush=True)\n'
+            '    threading.Event().wait(30)\n'
+            'socket.getfqdn = blocked_resolver\n' + ENGINE_FIXTURE, encoding='utf-8')
+        report = self.invoke()
+        self.assertEqual(report['status'], 'RUNTIME_PASS', report)
 
     def test_invalid_explicit_editor_port_fails_before_any_command(self):
         for index, port in enumerate((True, 0, -1, 65536, '9876')):
@@ -523,7 +546,7 @@ class HttpSmokeStartupTests(unittest.TestCase):
                 self.send_header('Content-Length', str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
-        with http.server.HTTPServer(('127.0.0.1', 0), Handler) as server:
+        with LoopbackHTTPServer(('127.0.0.1', 0), Handler) as server:
             worker = threading.Thread(target=server.serve_forever, daemon=True)
             worker.start()
             smoke.port = server.server_address[1]
@@ -567,8 +590,8 @@ class HttpSmokeStartupTests(unittest.TestCase):
                 self.send_header('Content-Length', str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
-        with http.server.HTTPServer(('127.0.0.1', 0), Handler) as target, \
-             http.server.HTTPServer(('127.0.0.1', 0), Handler) as origin:
+        with LoopbackHTTPServer(('127.0.0.1', 0), Handler) as target, \
+             LoopbackHTTPServer(('127.0.0.1', 0), Handler) as origin:
             workers = [threading.Thread(target=server.serve_forever, daemon=True) for server in (target, origin)]
             for worker in workers:
                 worker.start()

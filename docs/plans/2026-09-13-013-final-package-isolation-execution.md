@@ -119,3 +119,15 @@ attempt03 辅助 driver 在最后比较完整 inventory 字典时仍 FAIL，未�
 原生编辑器会话现在逐次由OS分配可用loopback端口，明确指定端口则不可回退；释放预留socket到引擎绑定之间仍有竞态，因此在发送请求前后继续检查本轮PID/创建时间与listener归属。HTTP smoke保留stdout/stderr、真实退出码和受控清理收据，启动失败直接FAIL；CTest仅移除该smoke的77跳过约定，AI的预声明可选跳过保持不变。独立真实双进程负控发现urllib自动重定向会转发测试token给外部listener，已禁止跟随重定向并保留原始3xx供断言拒绝；匿名401路径及响应关闭顺序也由实际HTTP回归覆盖。Windows原生套件28/28与自动/显式可用端口两组真实Debug HTTP各75/75通过，9876则在创建进程前明确拒绝10013；见u22-http-skip-audit/handoff-01.md与u22-offline-review/runtime-review-01/review-01.md。
 
 随后WSL原生集成26项有1项失败：AppRun已经达到正确终态映像，但子进程自然退出时/proc映像查询消失早于poll观察，造成退出0被误报启动失败。原native-wsl-final-02.log的25通过/1失败保留。确定性真实Popen屏障先红后绿，修复只在原保留子进程wait于一秒内证实退出时记录exit_observation与实际退出码；仍存活、超时或明确身份变化仍拒绝。新helper完整Windows27/27、WSL31/31通过；所需WSL原生集成重新26/26通过，真实Windows Debug HTTP再次75/75通过，受控停止实际exit1、无强杀、清理完整且无残留PID/listener。独立增量审查关闭此项；最终helper摘要f6498cb0d6b0a98809588d2ff9668d0655ac1144ee0c24e6a625bee4869c771a，证据u22-runtime-exit-race与u22-http-skip-audit/handoff-02.md。上述Windows28项结果对应旧helper，不冒称新helper全套；新候选全量门禁及真实托管Linux/macOS最终包仍待执行。
+
+## 第二候选严格门禁与托管失败修复
+
+干净候选d7de1b95eb445222acfacde9a1d105b8c36681ef的本地windows-debug执行97a10bd0-d9ba-469b-8abe-6c8e59ccd488已完成：执行器、collector及严格verify_release_candidate均为0/PASS。原始目录为u22-foundation/candidate-d7de1b95-01，收集目录为主工作区artifacts/validation/u22-evidence/<完整SHA>/<执行UUID>/windows-debug。HTTP smoke实际执行通过，不再跳过；AI仍为预声明可选跳过。该结论只绑定该干净候选，后续Engine与HTTP修改需要新的完整执行。
+
+该候选托管run35444473803的首attempt最终失败。Windows Debug/Release均在Web probe的offline actions用例失败：托管机TEMP采用RUNNER~1短路径，测试的JavaScript realpath与生产CLI的native realpath结果不同。真实GetShortPathNameW复现保留u22-short-temp/red-01，测试夹具改用realpathSync.native后同一路径green-01通过，完整26/26、0跳过；没有放宽生产端精确路径/SHA校验。
+
+Linux HTTP smoke的75条路由均通过，之后受控停止失败。Engine的editor分支原先不消费SDL事件，而SDL的POSIX信号处理将退出信号转换为QUIT事件；独立实际SDL模型复现无事件泵时强杀-9、消费QUIT后正常0退出。新增真实Engine三项回归在旧代码2失败，初修全部通过；独审随后以65535事件队列实际复现普通事件积压会阻止QUIT入队。第4项跨帧输入回归在初修失败，最终按队列数量快照分批取走所有事件，仅QUIT改变运行状态，其余丢弃且不转发游戏，纯headless保持不碰SDL队列。最终4/4、284断言，以及相关49/49、907断言通过；完整Windows发现1408项据此提高该平台门槛。独立SDL模型处理70000普通事件后队列不积压、QUIT正常，独审闭合。原RED及两轮构建日志保留u22-editor-quit和u22-offline-review/editor-quit-review-01；这些不能替代新托管Linux/macOS Engine验收。
+
+macOS该run的package_runtime实际30/30通过；native/Web在真实Python映像身份确认后、HTTPServer就绪前失败，历史失败artifact缺少原始子进程栈，不能断言DNS就是旧故障根因。受控真实子进程证明固定127.0.0.1服务仍受HTTPServer反向DNS阻塞：释放resolver屏障后真实HTTP正常，而预期无DNS断言在旧实现失败。现在专用回环服务直接使用TCPServer.server_bind，保留数字地址、实际端口及全部PID/监听归属规则。启动第5秒保留faulthandler栈，原15秒期限不变；失败异常携入原stderr末8192字节，避免临时目录清理后诊断丢失。三项真实child RED→GREEN、Windows Web26/26及Native29/29、WSL Web24/24及Native27/27全部通过，零失败零跳过，见u22-http-startup-audit。没有运行Chrome/Engine，原macOS归因和实际平台通过仍待新CI。
+
+CI新增三平台失败HTTP目录和LastTest上传；独审指出Windows必须含Debug/Release层，已修为build/${{ matrix.config }}/artifacts/validation/http-smoke-*/，Linux/macOS单配置路径不变，原证据上传保留。actionlint1.7.7通过。第二候选四份原始job日志保留u22-foundation/ci-35444473803-*-job.log；三个Android/iOS probe成功，四个最终包job均因前置失败未执行。PR25与U22整体继续未通过，未合并、未发布。

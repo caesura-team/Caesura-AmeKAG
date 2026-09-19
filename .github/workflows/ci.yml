@@ -181,6 +181,16 @@ jobs:
         shell: pwsh
         run: ctest --test-dir build -C ${{ matrix.config }} --output-on-failure
 
+      - name: Preserve Windows runtime failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-runtime-failure-evidence-${{ matrix.config }}
+          path: |
+            build/Testing/Temporary/LastTest.log
+            build/${{ matrix.config }}/artifacts/validation/http-smoke-*/
+          if-no-files-found: ignore
+
       - name: Smoke Test
         if: matrix.config == 'Debug'
         shell: pwsh
@@ -281,6 +291,7 @@ jobs:
             build/Testing/Temporary/LastTest.log
             build/artifacts/validation/rpc-timeouts-*/
             build/artifacts/validation/stdio-output-*/
+            build/artifacts/validation/http-smoke-*/
           if-no-files-found: ignore
 
   # ============================================================
@@ -435,7 +446,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: linux-ctest-log
-          path: ctest.log
+          path: |
+            ctest.log
+            build/Testing/Temporary/LastTest.log
+            build/artifacts/validation/http-smoke-*/
           if-no-files-found: ignore
 
       - name: Coupling Count

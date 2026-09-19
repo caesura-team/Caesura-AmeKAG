@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import http.client
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 import hashlib
 import json
 import os
@@ -61,6 +61,66 @@ class WebPackageRuntimeTests(unittest.TestCase):
         _, headers, body = self.get(service, '/glue.wasm')
         self.assertEqual(body, (self.package / 'glue.wasm').read_bytes())
         self.assertEqual(headers['Content-Type'], 'application/wasm')
+
+    def test_literal_loopback_readiness_does_not_enter_blocked_dns_resolver(self):
+        entered, release = self.root / 'dns-entered', self.root / 'dns-release'
+        ready = self.root / 'dns-ready.json'
+        child = self.root / 'blocked-dns.py'
+        child.write_text(
+            'import socket, sys, time\nfrom pathlib import Path\n'
+            f'sys.path.insert(0, {str(ROOT / "scripts")!r})\n'
+            'import web_package_runtime as runtime\n'
+            'def blocked_resolver(*args):\n'
+            f'    Path({str(entered)!r}).write_text(repr(args))\n'
+            f'    while not Path({str(release)!r}).exists(): time.sleep(0.01)\n'
+            '    return "resolver-released.invalid"\n'
+            'socket.getfqdn = blocked_resolver\n'
+            f'runtime.serve_package(Path({str(self.package)!r}), Path({str(ready)!r}))\n',
+            encoding='utf-8')
+        command = _OwnedCommand([sys.executable, '-I', '-S', str(child)], self.root,
+                                self.env, self.root / 'dns-command', timeout=20)
+        self.addCleanup(command.stop)
+        identity = command.wait_identity()
+        command.wait_for(lambda: True if ready.exists() or entered.exists() else None,
+                         timeout=8, description='ready or resolver barrier')
+        consulted_dns = entered.exists()
+        if consulted_dns:
+            self.assertFalse(ready.exists(), 'the blocked resolver precedes listen/readiness')
+            self.assertEqual(process_identity(identity.pid), identity)
+            release.write_text('release the actual resolver boundary', encoding='utf-8')
+        record = command.wait_for(lambda: _server_ready(command, ready, self.package, '/'),
+                                  timeout=5, description='owned readiness after resolver barrier')
+        with self.opener.open(f'http://127.0.0.1:{record["port"]}/', timeout=4) as response:
+            self.assertEqual(response.read(), (self.package / 'index.html').read_bytes())
+        self.assertFalse(consulted_dns, 'literal loopback readiness must not depend on DNS')
+
+    def test_startup_timeout_retains_child_stack_in_failure(self):
+        wrapper = self.root / 'blocked-bind.py'
+        wrapper.write_text(
+            'import sys, threading\n'
+            f'sys.path.insert(0, {str(ROOT / "scripts")!r})\n'
+            'import web_package_runtime as runtime\n'
+            'def blocked_bind(port):\n'
+            '    print("startup reached blocked_bind", file=sys.stderr, flush=True)\n'
+            '    threading.Event().wait(60)\n'
+            'runtime._bind_http = blocked_bind\n'
+            'runtime.main()\n', encoding='utf-8')
+        def owned_child(argv, *args, **kwargs):
+            argv = list(argv)
+            argv[3] = str(wrapper)
+            return _OwnedCommand(argv, *args, **kwargs)
+        scenario = self.root / 'blocked-startup'
+        scenario.mkdir()
+        with mock.patch.object(runtime, '_OwnedCommand', side_effect=owned_child):
+            with self.assertRaises(RuntimeContractError) as failed:
+                start_package_server(self.package, scenario, self.env)
+        self.assertIn('owned HTTP readiness', str(failed.exception))
+        self.assertIn('startup reached blocked_bind', str(failed.exception))
+        self.assertIn('blocked_bind', (scenario / 'server/stderr.log').read_text())
+        self.assertIn('Timeout (', (scenario / 'server/stderr.log').read_text())
+        cleanup = json.loads((scenario / 'server/cleanup.json').read_text())
+        self.assertEqual(cleanup['status'], 'CLEANUP_PASS')
+        self.assertTrue(cleanup['process_exited'])
 
     def test_utf8_lua_response_declares_charset_without_changing_wire_bytes(self):
         content = 'return {message="语言 • café"}\n'.encode('utf-8')
@@ -214,7 +274,7 @@ class WebPackageRuntimeTests(unittest.TestCase):
         self.assertEqual(process_identity(first.identity.pid), first.identity)
 
     def test_browser_blocked_explicit_port_fails_before_binding(self):
-        with mock.patch.object(runtime, 'ThreadingHTTPServer',
+        with mock.patch.object(runtime, '_LoopbackHTTPServer',
                                return_value=mock.Mock(server_address=('127.0.0.1', 6665))) as bind:
             with self.assertRaisesRegex(RuntimeContractError, 'browser-blocked'):
                 runtime.serve_package(self.package, self.root / 'ready.json', port=6665)
@@ -231,7 +291,7 @@ class WebPackageRuntimeTests(unittest.TestCase):
             blocked.server_close.assert_not_called()
             return safe
         bind.calls = 0
-        with mock.patch.object(runtime, 'ThreadingHTTPServer', side_effect=bind):
+        with mock.patch.object(runtime, '_LoopbackHTTPServer', side_effect=bind):
             runtime.serve_package(self.package, self.root / 'ready.json')
         blocked.serve_forever.assert_not_called()
         blocked.server_close.assert_called_once()
@@ -336,7 +396,7 @@ class WebPackageRuntimeTests(unittest.TestCase):
                 self.wfile.write(body)
             def log_message(self, *args):
                 pass
-        server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        server = runtime._LoopbackHTTPServer(('127.0.0.1', 0), Handler)
         worker = threading.Thread(target=server.serve_forever, kwargs={'poll_interval':0.01})
         worker.start()
         try:
