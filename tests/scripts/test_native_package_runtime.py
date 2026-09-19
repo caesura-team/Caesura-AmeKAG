@@ -7,6 +7,7 @@ copies, template provenance and mutation checks remain real.
 from __future__ import annotations
 
 import importlib.util
+import base64
 import hashlib
 import http.server
 from contextlib import ExitStack
@@ -202,7 +203,7 @@ class MacMappedLibraryTests(unittest.TestCase):
             stack.enter_context(patch.object(runtime, "Path", host_path))
             stack.enter_context(patch.object(runtime, "process_identity", side_effect=identities or [self.identity, self.identity]))
             call = stack.enter_context(patch.object(runtime.subprocess, "run",
-                return_value=SimpleNamespace(returncode=exit_code, stdout=output, stderr="")))
+                return_value=SimpleNamespace(returncode=exit_code, stdout=output.encode("utf-8"), stderr=b"")))
             result = runtime._inspect_libraries(self.identity, self.package, [self.library.name])
             self.assertEqual(call.call_args.args[0], [str(self.lsof), "-a", "-p", "1234", "-d", "txt", "-Fn"])
             return result
@@ -341,6 +342,162 @@ class MacMappedLibraryTests(unittest.TestCase):
         changed = runtime.ProcessIdentity(self.identity.pid, "different-creation", str(self.engine), "fixture")
         with self.assertRaisesRegex(runtime.RuntimeContractError, "owner changed"):
             self.inspect([self.engine, self.library], identities=[self.identity, changed])
+
+
+class MacLsofFieldProtocolTests(unittest.TestCase):
+    """Replay real lsof C-locale wire spellings through an owned command seam.
+
+    The byte vectors were observed with Linux lsof 4.99.4, both -Fn and -F0n.
+    This tests the macOS observer's parser/command contract on every host; it
+    does not represent a real macOS mapping or validate a native Engine.
+    """
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory(prefix="u22-lsof-field-")
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name).resolve()
+        self.package = self.root / "作品 输出"
+        self.package.mkdir()
+        self.library = self.package / "libSDL3.0.dylib"
+        self.library.write_bytes(b"required SDL image protocol fixture")
+        self.engine = self.package / "CaesuraAmeKAG"
+        self.engine.write_bytes(b"owned engine protocol fixture")
+        self.identity = runtime.ProcessIdentity(1234, "creation-fixture", str(self.engine), "fixture")
+        self.capture = self.root / "command.json"
+        self.tool = self.root / "lsof-command.py"
+        self.tool.write_text(
+            "import json,os,pathlib,sys\n"
+            "capture,lines,nuls,code=sys.argv[1:5]\n"
+            "args=sys.argv[5:]\n"
+            "pathlib.Path(capture).write_text(json.dumps(dict(argv=args,environment=dict(os.environ))),encoding='utf-8')\n"
+            "null_fields=any(a.startswith('-F') and '0' in a[2:] for a in args)\n"
+            "sys.stdout.buffer.write(pathlib.Path(nuls if null_fields else lines).read_bytes())\n"
+            "sys.stderr.write('controlled lsof failure' if int(code) else '')\n"
+            "raise SystemExit(int(code))\n", encoding="utf-8")
+        # Exact C-locale n-field bytes observed from the real lsof command;
+        # expected Unicode is supplied separately by the actual filesystem.
+        self.unicode_directory = br"\xe4\xbd\x9c\xe5\x93\x81 \xe8\xbe\x93\xe5\x87\xba"
+
+    def inspect(self, wire_paths, *, exit_code=0, loaded=False):
+        fields = [b"p1234"] + [b"n/lsof-fixture/" + path for path in wire_paths]
+        lines, nuls = self.root / "lines.bin", self.root / "nuls.bin"
+        lines.write_bytes(b"\n".join(fields) + b"\n")
+        nuls.write_bytes(b"\x00\n".join(fields) + b"\x00\n")
+        prefix = "/lsof-fixture/"
+        def host_path(value):
+            value = str(value)
+            if value == "/usr/sbin/lsof":
+                return self.tool
+            if value.startswith(prefix):
+                return self.root / value[len(prefix):]
+            return Path(value)
+        actual_run = subprocess.run
+        def command(argv, **kwargs):
+            self.assertEqual(argv[0], str(self.tool))
+            # Execute an actual bounded child with the production-selected
+            # environment; only the lsof executable itself is substituted.
+            return actual_run([FIXTURE_PYTHON, "-B", str(self.tool), str(self.capture),
+                               str(lines), str(nuls), str(exit_code), *argv[1:]], **kwargs)
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(runtime, "os", SimpleNamespace(name="posix")))
+            stack.enter_context(patch.object(runtime, "sys", SimpleNamespace(platform="darwin")))
+            stack.enter_context(patch.object(runtime, "Path", host_path))
+            stack.enter_context(patch.object(runtime, "process_identity", return_value=self.identity))
+            stack.enter_context(patch.object(runtime.subprocess, "run", side_effect=command))
+            inspect = runtime._loaded_libraries if loaded else runtime._inspect_libraries
+            return inspect(self.identity, self.package, [self.library.name])
+
+    def test_unicode_n_field_identifies_actual_required_image(self):
+        result = self.inspect([self.unicode_directory + b"/CaesuraAmeKAG",
+                               self.unicode_directory + b"/libSDL3.0.dylib"])
+        self.assertEqual(result["status"], "VERIFIED")
+        self.assertEqual(result["required"][0]["resolved_path"], str(self.library))
+        self.assertEqual(result["required"][0]["sha256"], hashlib.sha256(self.library.read_bytes()).hexdigest())
+
+    def test_observer_command_has_an_explicit_stable_c_locale(self):
+        self.package = self.root / "ascii"
+        self.package.mkdir()
+        self.library = self.package / "libSDL3.0.dylib"
+        self.library.write_bytes(b"ASCII positive command control")
+        result = self.inspect([b"ascii/libSDL3.0.dylib"])
+        self.assertEqual(result["status"], "VERIFIED")
+        observed = json.loads(self.capture.read_text(encoding="utf-8"))
+        self.assertEqual(observed["environment"].get("LC_ALL"), "C")
+        self.assertEqual(observed["argv"][:5], ["-a", "-p", "1234", "-d", "txt"])
+        self.assertEqual(observed["environment"]["PATH"], "/usr/bin:/bin:/usr/sbin")
+
+    def test_foreign_and_mixed_same_name_images_remain_rejected(self):
+        foreign = self.root / self.library.name
+        foreign.write_bytes(self.library.read_bytes())
+        for paths in ([b"libSDL3.0.dylib"],
+                      [self.unicode_directory + b"/libSDL3.0.dylib", b"libSDL3.0.dylib"]):
+            with self.subTest(paths=paths), self.assertRaisesRegex(runtime.RuntimeContractError, "second source"):
+                self.inspect(paths)
+
+    def test_unknown_or_malformed_path_escape_does_not_hide_beside_valid_sdl(self):
+        self.package = self.root / "ascii"
+        self.package.mkdir()
+        self.library = self.package / "libSDL3.0.dylib"
+        self.library.write_bytes(b"required image beside invalid observer field")
+        for malformed in (br"bad\q/cache", br"bad\xQ1/cache", br"bad\x1/cache", b"trailing\\"):
+            with self.subTest(malformed=malformed), self.assertRaises((ValueError, runtime.RuntimeContractError)):
+                self.inspect([b"ascii/libSDL3.0.dylib", malformed])
+
+    def test_failed_observer_still_rejects_valid_fields(self):
+        with self.assertRaisesRegex(runtime.RuntimeContractError, "observation failed"):
+            self.inspect([self.unicode_directory + b"/libSDL3.0.dylib"], exit_code=1)
+        observed = json.loads(self.capture.read_text(encoding="utf-8"))
+        self.assertEqual(observed["argv"][:5], ["-a", "-p", "1234", "-d", "txt"])
+
+    def test_failed_observation_retains_original_command_bytes_paths_and_error(self):
+        foreign = self.root / self.library.name
+        foreign.write_bytes(b"foreign library fixture")
+        cases = [([b"libSDL3.0.dylib"], 0, "second source"),
+                 ([self.unicode_directory + b"/libSDL3.0.dylib"], 1, "observation failed"),
+                 ([br"bad\q/cache"], 0, "escape")]
+        for paths, code, error in cases:
+            with self.subTest(paths=paths, code=code):
+                with self.assertRaises(runtime._ObservationError) as raised:
+                    self.inspect(paths, exit_code=code, loaded=True)
+                observed = raised.exception.observations["loaded_modules"]
+                self.assertEqual(observed["status"], "NOT_VERIFIED")
+                self.assertIn(error, observed["error"])
+                observer = observed["observer"]
+                raw = (self.root / "lines.bin").read_bytes()
+                self.assertEqual(base64.b64decode(observer["stdout"]["base64"], validate=True), raw)
+                self.assertEqual(observer["stdout"]["sha256"], hashlib.sha256(raw).hexdigest())
+                self.assertEqual(observer["returncode"], code)
+                self.assertEqual(observer["tool"]["sha256"], hashlib.sha256(self.tool.read_bytes()).hexdigest())
+                self.assertEqual(observer["environment"]["LC_ALL"], "C")
+                stderr = b"controlled lsof failure" if code else b""
+                self.assertEqual(base64.b64decode(observer["stderr"]["base64"], validate=True), stderr)
+                self.assertIn("reported_paths", observed)
+                if error == "second source":
+                    self.assertIn(str(foreign), observed["paths"])
+
+    def test_ambiguous_caret_control_spelling_is_rejected(self):
+        self.package = self.root / "ascii"
+        self.package.mkdir()
+        self.library = self.package / "libSDL3.0.dylib"
+        self.library.write_bytes(b"required image beside ambiguous observer field")
+        # Real lsof emits the same ^A for byte 0x01 and literal caret+A.
+        # Guessing either path would not prove the loaded image's source.
+        with self.assertRaises((ValueError, runtime.RuntimeContractError)):
+            self.inspect([b"ascii/libSDL3.0.dylib", b"unrelated-^A/cache"])
+
+    if os.name != "nt":
+        def test_literal_backslash_x_path_is_not_decoded_as_unicode(self):
+            literal = self.root / r"\xe4\xbd\x9c\xe5\x93\x81 \xe8\xbe\x93\xe5\x87\xba"
+            literal.mkdir()
+            (literal / self.library.name).write_bytes(b"different literal-backslash image")
+            escaped_literal = self.unicode_directory.replace(b"\\", b"\\\\")
+            # The foreign literal path must not be mistaken for the Unicode
+            # package, even though both have the same required basename.
+            with self.assertRaisesRegex(runtime.RuntimeContractError, "second source"):
+                self.inspect([escaped_literal + b"/libSDL3.0.dylib"])
+            self.package, self.library = literal, literal / self.library.name
+            result = self.inspect([escaped_literal + b"/libSDL3.0.dylib"])
+            self.assertEqual(result["status"], "VERIFIED")
+            self.assertEqual(result["required"][0]["sha256"], hashlib.sha256(self.library.read_bytes()).hexdigest())
 
 
 class NativePackageRuntimeTests(unittest.TestCase):

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
+import base64
 import ctypes
 import hashlib
 import http.client
@@ -143,8 +144,56 @@ def _host_platform() -> str:
     raise RuntimeContractError(f"No native runtime lane for this host: {sys.platform}")
 
 
+def _lsof_path(field: bytes) -> str:
+    """Decode exactly one C-locale lsof name field, never Python escapes."""
+    _need(field.startswith(b"/"), "lsof returned a non-absolute image path")
+    _need(all(32 <= char < 127 for char in field), "lsof returned a non-ASCII C-locale field")
+    # lsof emits ^A for both byte 0x01 and literal '^A'. That representation
+    # cannot prove a path identity, even with -F0; do not guess either spelling.
+    _need(not re.search(rb"\^[@-\x5f?]", field), "Ambiguous lsof caret path spelling")
+    output = bytearray()
+    escapes = {ord("\\"):92, ord("b"):8, ord("f"):12,
+               ord("r"):13, ord("n"):10, ord("t"):9}
+    index = 0
+    while index < len(field):
+        char = field[index]
+        if char != 92:
+            output.append(char)
+            index += 1
+            continue
+        _need(index + 1 < len(field), "Incomplete lsof path escape")
+        code = field[index + 1]
+        if code == ord("x"):
+            digits = field[index + 2:index + 4]
+            _need(len(digits) == 2 and re.fullmatch(rb"[0-9a-fA-F]{2}", digits),
+                  "Invalid lsof hexadecimal path escape")
+            output.append(int(digits, 16))
+            index += 4
+        else:
+            _need(code in escapes, "Unknown lsof path escape")
+            output.append(escapes[code])
+            index += 2
+    _need(0 not in output, "NUL in lsof image path")
+    return output.decode("utf-8", errors="strict")
+
+
+def _observer_bytes(data: bytes) -> dict:
+    return {"base64":base64.b64encode(data).decode("ascii"),
+            "sha256":hashlib.sha256(data).hexdigest(), "size":len(data)}
+
+
 def observe_loaded_modules(identity: ProcessIdentity) -> dict:
-    """Read this live process's mapped executable images, with identity checks."""
+    """Read this live process's mapped images; retain failures without accepting them."""
+    report = {"status":"NOT_VERIFIED", "process":asdict(identity),
+              "paths":[], "reported_paths":[]}
+    try:
+        return _observe_loaded_modules(identity, report)
+    except (OSError, ValueError, RuntimeContractError, subprocess.SubprocessError) as error:
+        error.module_observation = report
+        raise
+
+
+def _observe_loaded_modules(identity: ProcessIdentity, report: dict) -> dict:
     _need(process_identity(identity.pid) == identity, "Module owner changed before observation")
     if os.name == "nt":
         from ctypes import wintypes
@@ -194,16 +243,35 @@ def observe_loaded_modules(identity: ProcessIdentity) -> dict:
         # must actually appear. Required-image and observer errors fail the lane.
         tool = Path("/usr/sbin/lsof")
         _need(tool.is_file(), "macOS mapped-image observer /usr/sbin/lsof is unavailable")
-        result = subprocess.run([str(tool), "-a", "-p", str(identity.pid), "-d", "txt", "-Fn"],
-                                capture_output=True, text=True, timeout=10, env={"PATH":"/usr/bin:/bin:/usr/sbin"})
-        _need(result.returncode == 0, "macOS mapped-image observation failed")
-        paths = [line[1:] for line in result.stdout.splitlines() if line.startswith("n/")]
         source = "macos:lsof txt mapped program text"
+        argv = [str(tool), "-a", "-p", str(identity.pid), "-d", "txt", "-Fn"]
+        environment = {"PATH":"/usr/bin:/bin:/usr/sbin", "LC_ALL":"C"}
+        observer = {"tool":_file(tool), "argv":argv, "environment":environment,
+                    "returncode":None, "stdout":_observer_bytes(b""), "stderr":_observer_bytes(b"")}
+        report.update(source=source, observer=observer)
+        try:
+            result = subprocess.run(argv, capture_output=True, timeout=10, env=environment)
+        except subprocess.TimeoutExpired as error:
+            observer.update(stdout=_observer_bytes(error.stdout or b""),
+                            stderr=_observer_bytes(error.stderr or b""))
+            raise
+        observer.update(returncode=result.returncode, stdout=_observer_bytes(result.stdout),
+                        stderr=_observer_bytes(result.stderr))
+        fields = result.stdout.split(b"\n")
+        report["reported_paths"] = [line[1:].decode("ascii", errors="backslashreplace")
+                                    for line in fields if line.startswith(b"n")]
+        _need(result.returncode == 0, "macOS mapped-image observation failed")
+        _need(fields[-1] == b"" and fields[0] == f"p{identity.pid}".encode("ascii"),
+              "Invalid lsof field framing or process owner")
+        _need(all(line.startswith(b"n/") for line in fields[1:-1]), "Unknown lsof image field")
+        paths = [_lsof_path(line[1:]) for line in fields[1:-1]]
+        report["decoded_paths"] = paths
     else:
         raise RuntimeContractError("Loaded module observation is NOT_VERIFIED on this host")
     _need(process_identity(identity.pid) == identity, "Module owner changed during observation")
     _need(paths, "No executable modules were observed")
     resolved, missing, inaccessible = set(), [], []
+    report.update(source=source, missing_paths=missing, inaccessible_paths=inaccessible)
     for path in paths:
         try:
             normalized = str(Path(path).resolve(strict=True))
@@ -220,38 +288,43 @@ def observe_loaded_modules(identity: ProcessIdentity) -> dict:
             affected.append({"path":normalized, "reported_path":path,
                              "error":f"{type(error).__name__}: {error}"})
         resolved.add(normalized)
-    return {"status":"OBSERVED", "source":source, "process":asdict(identity),
-            "paths":sorted(resolved), "missing_paths":missing, "inaccessible_paths":inaccessible}
+        report["paths"] = sorted(resolved)
+    report["status"] = "OBSERVED"
+    return report
 
 
 def _inspect_libraries(identity: ProcessIdentity, package: Path, required: list[str]) -> dict:
     if not required:
         return {"status":"NOT_REQUIRED", "required":[], "reason":"No shared libraries required by external configuration"}
     report = observe_loaded_modules(identity)
-    observed = {Path(path) for path in report["paths"]}
-    disappeared = {Path(item[key]) for item in report.get("missing_paths", [])
-                   for key in ("path", "reported_path")}
-    inaccessible = {Path(item[key]) for item in report.get("inaccessible_paths", [])
-                    for key in ("path", "reported_path")}
-    matched = []
-    missing = []
-    for relative in required:
-        declared = package / relative
-        expected = declared.resolve(strict=True)
-        _need(expected.is_relative_to(package), f"Required library escapes package: {relative}")
-        _need(not {expected, declared} & disappeared, f"Required library mapping disappeared: {relative}")
-        _need(not {expected, declared} & inaccessible, f"Required library mapping inaccessible: {relative}")
-        names = {declared.name.casefold(), expected.name.casefold()}
-        _need(not any(path.name.casefold() in names and path not in {expected, declared}
-                      for path in observed | disappeared | inaccessible),
-              f"A second source for required library was observed: {relative}")
-        if expected not in observed:
-            missing.append(relative)
-            continue
-        matched.append({"relative_path":relative, "resolved_path":str(expected), "sha256":_sha(expected)})
-    if missing:
-        raise _LibrariesPending("Required library not observed from this runtime package: " + ", ".join(missing))
-    return {**report, "status":"VERIFIED", "required":matched}
+    try:
+        observed = {Path(path) for path in report["paths"]}
+        disappeared = {Path(item[key]) for item in report.get("missing_paths", [])
+                       for key in ("path", "reported_path")}
+        inaccessible = {Path(item[key]) for item in report.get("inaccessible_paths", [])
+                        for key in ("path", "reported_path")}
+        matched = []
+        missing = []
+        for relative in required:
+            declared = package / relative
+            expected = declared.resolve(strict=True)
+            _need(expected.is_relative_to(package), f"Required library escapes package: {relative}")
+            _need(not {expected, declared} & disappeared, f"Required library mapping disappeared: {relative}")
+            _need(not {expected, declared} & inaccessible, f"Required library mapping inaccessible: {relative}")
+            names = {declared.name.casefold(), expected.name.casefold()}
+            _need(not any(path.name.casefold() in names and path not in {expected, declared}
+                          for path in observed | disappeared | inaccessible),
+                  f"A second source for required library was observed: {relative}")
+            if expected not in observed:
+                missing.append(relative)
+                continue
+            matched.append({"relative_path":relative, "resolved_path":str(expected), "sha256":_sha(expected)})
+        if missing:
+            raise _LibrariesPending("Required library not observed from this runtime package: " + ", ".join(missing))
+        return {**report, "status":"VERIFIED", "required":matched}
+    except (OSError, ValueError, RuntimeContractError) as error:
+        error.module_observation = report
+        raise
 
 
 def _loaded_libraries(identity: ProcessIdentity, package: Path, required: list[str], deadline=None) -> dict:
@@ -264,8 +337,10 @@ def _loaded_libraries(identity: ProcessIdentity, package: Path, required: list[s
                     raise
                 time.sleep(min(0.02, max(0, deadline - time.monotonic())))
     except (OSError, ValueError, RuntimeContractError, subprocess.SubprocessError) as error:
-        observed = {"loaded_modules":{"status":"NOT_VERIFIED", "required":required,
-                                      "error":str(error), "process":asdict(identity)}}
+        details = dict(getattr(error, "module_observation", {}))
+        details.update(status="NOT_VERIFIED", required=required, error=str(error),
+                       error_type=type(error).__name__, process=asdict(identity))
+        observed = {"loaded_modules":details}
         raise _ObservationError("Required loaded-library provenance is NOT_VERIFIED", observed) from error
 
 

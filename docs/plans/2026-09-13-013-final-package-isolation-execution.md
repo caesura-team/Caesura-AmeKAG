@@ -1,6 +1,19 @@
 # U22 最终包隔离验证执行记录
 
-开始：2026-09-13。沿用当前计划 U22，底层优先、Studio 暂停。工作分支先整合 U21 候选 4c007407；U21 的最终完整门禁与合并结果仍独立跟踪，不能因下游准备开始而宣布上游完成。
+## 当前状态（2026-09-20）
+
+**U22 尚未完成四平台最终包验收。** 最近完成托管执行的候选为 `016f77f7af611c83bdac87c6dae12fd1a877d6ea`；[CI 35467654286](https://github.com/caesura-team/Caesura-AmeKAG/actions/runs/35467654286) attempt 1 已终态 FAILURE，11 个 job 中 **9 成功、2 失败、0 job 跳过**。实际执行的是 PR merge 源码 `cc258c6ae9293a24eec82ae7bfe7fbcf155bef2b`，不能与 API 的 PR head 混同；job 无跳过也不表示内部所有测试或条件步骤均无跳过。
+
+| 本轮范围 | 已有事实 | 尚未建立的验收 |
+|---|---|---|
+| Windows Debug/Release、Linux GCC、macOS Clang；Android/iOS 三项编译或静态探针 | 7 个 job 成功 | 编译/静态探针不证明移动设备运行 |
+| Windows ZIP；Linux TGZ、AppImage | 两个 package job 成功，验证、上传前复核及上传步骤成功 | 本记录尚未下载并逐字节审计本轮这三个最终包，旧候选下载审计不能移用于本轮 |
+| macOS TGZ | 原件已审计；新建游戏实际退出 0，但加载库来源检查失败，`accepted=false` | DMG 未到；不能因 Engine 正常退出改判整个 TGZ 通过 |
+| Web | Chrome 152 原始 CDP 记录确认离线覆盖后为 `online=false`，重载后变回 `true`，目录根场景失败 | 子路径和最终 ZIP 验收未到；Linux Chrome 153 尚无运行通过证据 |
+
+后续候选包含固定 Chrome 153 归档选择和严格 lsof 字节路径解析两项有界修复，证据详见末尾追加。Chrome 153 的 WSL 启动被缺失 `libnspr4.so` 阻止；lsof 修复已完成真实 Linux wire 控制及 Windows/WSL 脚本回归，但原 Mac 失败未保留被拒绝路径，转义问题仍是 **INFERENCE**。候选修复的本地回归不替代新的完整门禁和真实托管包验收，也不授予发布批准。
+
+历史起点为 2026-09-13，沿用当前计划 U22，底层优先、Studio 暂停。工作分支最初整合 U21 候选 `4c007407`，其后合流与验证记录保留如下。下文历史段落中的“当前”指该段记录时点；最新状态以本节和末尾追加为准，历史失败不覆盖、不改判。
 
 ## 合同与实现顺序
 
@@ -230,3 +243,48 @@ Web probe迁移到同一页面session中的Network.emulateNetworkConditionsByRul
 生产probe SHA256为8cdcf53a061f854e478649f6aca78cb1f3df0cbc4e50f0621fdaa7086dcc9c13，测试为c84b6cc7b970d5ebb6fc2ce4d2948152782f87dd37802c05908c23624910f920；冻结收据u22-hosted-d418845d/offline-controls-freeze-01.json摘要f4a77b5c91ac5958988dd2346eab62d6d70de5f240213928bed7b3f53b0974a2。私有真实Chrome153的连续session和断开后重连同target对照中，旧接口与新组合均通过；因此本变更只称兼容性迁移，不能声称复现或已修复托管Chrome152的原问题。对照确认package server已退出、SW可供字节、浏览器网络请求被阻断而独立存活HTTP正控仍返回200；所有owned进程已清理。首次辅助模型SystemInfo路由错误的FAIL独立保留。下一托管运行必须给出Chrome152实际结果，U22未据此验收。
 
 Web兼容性两文件独审无可行动发现，逐项重算冻结源码/日志/实际Chrome对照原件；报告offline-controls-independent-review-01.md摘要dc51fa29e836c6796012251289537d44d601350d029213ad8dfb38078c0cd831，JSON摘要d5a13a3ef698bbef2a55b69c3e9d97db4b75ca0be47f239b49752c46593ca502。独审未启动新浏览器，原托管问题仍等待下一次真实包CI判定。
+
+## 2026-09-20 016f77f7 托管终态与两项修复候选
+
+本节链接到的 `artifacts/validation/` 原始证据位于本工作树忽略目录，不随 Git 提交上传。[最终 API 状态 state-05.json](../../artifacts/validation/u22-hosted-016f77f7/state-05.json) 记录 run `35467654286` attempt 1 整体 failure：9 个成功 job、2 个失败 job、0 个跳过 job。PR head 为 `016f77f7af611c83bdac87c6dae12fd1a877d6ea`，原 job checkout 日志及包报告绑定的实际 merge 源码为 `cc258c6ae9293a24eec82ae7bfe7fbcf155bef2b`。
+
+Windows Debug/Release、Linux GCC、macOS Clang 和三个移动编译/静态探针均成功。[Windows Package 105966018617](https://github.com/caesura-team/Caesura-AmeKAG/actions/runs/35467654286/job/105966018617) 与 [Linux Package 105965941442](https://github.com/caesura-team/Caesura-AmeKAG/actions/runs/35467654286/job/105965941442) 的最终格式验证、上传前复核和上传步骤成功；本次未下载审计它们的 Windows ZIP、Linux TGZ、Linux AppImage 原件，因此这里只确认托管步骤状态。此前 `fd5b426b` 的固定 ID 下载审计继续仅属于原候选。两个失败是 [Web Final Package 105965941484](https://github.com/caesura-team/Caesura-AmeKAG/actions/runs/35467654286/job/105965941484) 和 [macOS Package 105964618274](https://github.com/caesura-team/Caesura-AmeKAG/actions/runs/35467654286/job/105964618274)。
+
+### Web：已取得 Chrome 152 原始重载记录，153 仍待实际 Linux 验收
+
+固定诊断 artifact `10592760182` 的原 ZIP 为 8,853,666 B，SHA256 `3e70b1dd8e87f3a42b444e60206451d26ea2affa92ea8c370edb9c774270cd88`，见 [artifact 元数据](../../artifacts/validation/u22-hosted-016f77f7/web-artifact-01.json) 与 [原 ZIP](../../artifacts/validation/u22-hosted-016f77f7/web-transfer-01/artifact.zip)。[原始审计](../../artifacts/validation/u22-hosted-016f77f7/web-offline-audit-01.json) 绑定实际 `Chrome/152.0.7977.82`：同一 session `7EC018C65787C9F2EC1CA0ABB0DE45BA` 先发送 `Network.emulateNetworkConditionsByRule` 和 `Network.overrideNetworkState`，得到非空 rule ID 后观察到 `online=false`，随后 `Page.reload` 的文档却为 `online=true`。本轮原 `offline/cdp.jsonl` 已保留并重算 SHA256 `0ee322777a335a9eea2b5f9988690c807c6d04e1851dcc5f9261a796d405765d`；报告摘要为 `c311beb495232f2f10e6e09ca56d11d0617f6f8d5ca7d6e208043f2b743d4f57`。这次实际记录证明前一轮迁移到新 CDP 接口仍未让 152 的重载状态满足严格合同，不能把接口调用成功当离线通过。
+
+失败发生在最终目录的 root 离线场景，子路径及最终 Web ZIP 验收未到。offline probe PID3578 实际退出 1；HTTP server PID3071/port39615 受控停止、退出 -15，Chrome PID3075/port38825 受控停止、退出 0。原收据均无 timeout/forced kill，owned cleanup COMPLETE，两端口已关闭；本次失败不是未回收进程造成的通过假象。
+
+已保存精确版本的 Chromium 上游源码与来源元数据：[152 源码](../../artifacts/validation/u22-hosted-016f77f7/blink-network-agent-152-01.txt)、[152 来源](../../artifacts/validation/u22-hosted-016f77f7/chromium-source-152-01.json)、[153 源码](../../artifacts/validation/u22-hosted-016f77f7/blink-network-agent-153-01.txt)、[153 来源](../../artifacts/validation/u22-hosted-016f77f7/chromium-source-153-01.json)。两份源码 SHA256 分别为 `9026665eb122d3a335ded423519c63c73c8c15c0a0dc6b126d5ee8b25a690d8d`、`29f17657e2df2a3725a0dc9fdca612bd47ba032453c7be33f7ca9b72de8441a7`。152 的 `overrideNetworkState` 未保存这些网络覆盖字段，`Restore` 也没有对应重施加；153 的 2631–2635 行保存 offline/latency/throughput/connection type，837–852 行在 `Restore` 重施加。这个差异与本轮重载观测相符，支持选择具有持久化实现的版本，但没有替代真实 Linux 浏览器验收。
+
+修复候选固定 Chrome for Testing `153.0.8010.52` 的官方 Linux64 归档；[下载原记录](../../artifacts/validation/u22-hosted-016f77f7/chrome-linux-download-01.json) 为 195,708,470 B，SHA256 **`e66f66d4802a46d4a022667e668aa950e277cadbfbed4b3777915b47413a0ef9`**。工作流先验证归档再解压，固定传入所选浏览器路径，并保存实际 binary 摘要、version stdout/stderr、退出码和 selection PASS/FAIL；没有自动替换浏览器或放松 offline/SW 断言。[版本选择独审](../../artifacts/validation/u22-hosted-016f77f7/browser-pin-review-01.md) 的初始 P2 是非零 version 调用丢失原 stderr，修订后已闭合；该独审属于静态接线检查。
+
+[WSL 准备原记录](../../artifacts/validation/u22-hosted-016f77f7/prepare-linux-chrome-01.json) 锁定解出的 executable SHA256 `328fbee82d8e58b05a755b2343abfd192d92ca7066353cb357fad389bc7e3989`，但 `--version` 实际退出 **127**：`libnspr4.so: cannot open shared object file`。因此本地没有 Linux Chrome 153 启动或包运行 PASS，也不能把这台 WSL 的缺依赖推断成托管 Ubuntu 同样缺失。候选仍需新托管运行证明精确浏览器启动、root/子路径、重载离线、SW 字节、网络阻断与清理；原 152 失败继续保留。
+
+### macOS：正常退出的 Engine 被来源检查拒绝，路径转义解释仍为推断
+
+固定诊断 artifact `10591659417` 的原 ZIP 为 14,729,574 B，SHA256 **`8b99ae8848870299032692ef065b514ebb08997532060c1127bc2bfd00b75c5d`**，匹配 [artifact 元数据](../../artifacts/validation/u22-hosted-016f77f7/mac-artifact-01.json) 与 [原 ZIP](../../artifacts/validation/u22-hosted-016f77f7/mac-transfer-01/artifact.zip)。[Mac 原件审计](../../artifacts/validation/u22-hosted-016f77f7/mac-package-audit-01.md) 及 [逐项摘要](../../artifacts/validation/u22-hosted-016f77f7/mac-package-audit-01.json) 绑定最终 TGZ SHA256 `d38dbcabffc811bbd7f95b7bac191689c25db434c93fec7b415e9d7eb14c4678`；21 项命令日志/收据引用重新计算一致，source/runtime-copy/created-game-copy/evidence 稳定。TGZ 准备成功，两个 editor、原始 demo 和 author create/build 阶段通过；`created_game_frames` 因 `A second source for required library was observed: libSDL3.0.dylib` 被拒绝，最终 `Required loaded-library provenance is NOT_VERIFIED`、`accepted=false`，后续 DMG 未到。
+
+失败阶段运行本包新建游戏的 `作品 输出` 目录，argv 含 `--frames 60 --audio-output software`。实际 PID31150、creation `1789850946:571402`，Engine 初始化 Metal 并运行新建 KAG 项目，最终 EXITED/exit0、无 stop/timeout/forced kill、cleanup COMPLETE。原 stdout 的真实软件混音为 76,416 frames、152,832 samples、43,490 nonzero、0 nonfinite，48kHz stereo；physical output 仍 NOT_RUN。来源观察先失败，后续 created-game 音频验收未到，因此这些事实不能将整个阶段改判为 PASS。
+
+旧 observer 把 lsof 的 `n` 字段直接当路径；C locale 对中文祖先目录的字节转义可能保留 SDL basename、改变全路径，进而触发同名异源拒绝。**这是 INFERENCE，不是已证实的该次托管根因。** 原失败未保留被拒绝路径或 lsof stdout，不能排除真正第二份 SDL，也不能用后来的重跑填补这次观察缺口。
+
+[真实 Linux lsof 4.99.4 wire 控制](../../artifacts/validation/u22-hosted-016f77f7/lsof-wire-control-01/report.json) 确认 C locale 转义中文/emoji，`-F0n` 只改变分隔符，UTF-8 locale 仍转义字面反斜杠；`-Di` 不受该版本支持并退出 1，原失败保留。[第二组 wire 控制](../../artifacts/validation/u22-hosted-016f77f7/lsof-wire-control-02/report.json) 又确认部分控制字节与合法字面 caret 名称具有相同输出，无法唯一还原，修复选择拒绝这种歧义。Linux 控制没有冒充 macOS 本地执行。
+
+生产修复显式设置 `LC_ALL=C`、捕获原字节，校验 PID 和字段结构后仅做一次严格 lsof 转义解析。字面双反斜杠保持字面路径；未知/残缺转义、NUL、C locale 非 ASCII 字段、caret 歧义均拒绝。原 PID/creation、文件存在及摘要、包内路径、未知 observer、混合/外来同名 SDL 拒绝合同未放宽。成功和失败观察均保存工具路径/摘要、argv、受控环境、退出码、带大小和摘要的原 stdout/stderr base64、原字段及可得的规范化路径；失败继续保留原错误类型/文本，超时保留已收到的部分输出，便于后续托管诊断。
+
+原测试先取得 RED：5 个方法出现 5 个 subcase failure、1 error；额外失败诊断/caret 控制 2 个方法出现 2 failure、2 error。冻结源码上的实际 GREEN 如下，均 0 failure、0 skipped，原失败未覆盖；命令退出 0，源码前后摘要一致。
+
+| 实际脚本范围 | 通过数 | 测试耗时 |
+|---|---:|---:|
+| Windows 定向 lsof 与既有 mac mapping 控制 | 17/17 | 0.703s |
+| WSL 定向 lsof 与既有 mac mapping 控制 | 20/20 | 0.406s |
+| Windows native package runtime 完整脚本 suite | 51/51 | 46.315s |
+| WSL native package runtime 完整脚本 suite | 52/52 | 29.350s |
+
+保留的真实 Linux 输出另经生产 parser 读回，20 字段中 14 项精确还原、6 项歧义拒绝，见 [wire 读回结果](../../artifacts/validation/u22-hosted-016f77f7/mac-lsof-retained-wire-readback-01.json)。这些脚本使用真实受控小进程和文件/摘要检查，但 Engine/Lua 协议夹具不证明真实 Engine 包通过。源码冻结 SHA256 为 `7395b3b8a2b113c1fb10fa96e8dfff1ea021c516c1ab8fa3cf333a46ff0ebe0e`，测试为 `16ba88fd25d8522d75afe155ff2c1566b3597fed063b4b73e2001b433bd48874`；[交接](../../artifacts/validation/u22-hosted-016f77f7/mac-lsof-handoff-01.md)、[69 项锁定清单与 RED/GREEN 原日志索引](../../artifacts/validation/u22-hosted-016f77f7/mac-lsof-freeze-02.json)、[精确差异](../../artifacts/validation/u22-hosted-016f77f7/mac-lsof-changes-01.patch) 均已保留。该修复未执行实际 Mac Engine、TGZ/DMG，也未替换原失败收据。
+
+两项候选由主代理统一审查、提交并执行适用完整门禁；需要后续真实托管包结果和当前最终产物的精确字节审计。本文没有重新构建、重跑 CI、变更服务器设置、发布或部署；U22 整体继续开放，旧本地通过、旧候选包审计、本轮托管失败与修复候选分别保留。
+
+主代理随后独立核对完整生产、测试和工作流差异，69项冻结原件逐项重算匹配，无剩余可行动发现；最终actionlint1.7.7实际exit0。审查JSON [candidate-independent-review-01.json](../../artifacts/validation/u22-hosted-016f77f7/candidate-independent-review-01.json) 摘要 `eedf0aeee37e6115bb638cec0554fb704835b5c95104f0c548abbe240c65874d`，当前workflow摘要 `a757cf5148baab00ff4a660ac04d46a3f0ae0c12f95839cc7825c0e7cf192f77`；[审查说明](../../artifacts/validation/u22-hosted-016f77f7/candidate-independent-review-01.md) 保留实际Mac/Linux浏览器未验边界。完整新候选门禁仍另行执行。
