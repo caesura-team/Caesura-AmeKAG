@@ -378,6 +378,70 @@ def _cmake_cache(path):
     return data
 
 
+def _cmake_toolchains(native, value, tc, cache):
+    """Follow this completed configure's File API index, never a reply glob."""
+    reply = _no_links(native / '.cmake/api/v1/reply')
+    indexes = [p for p in reply.iterdir() if p.name.startswith('index-') and p.name.endswith('.json')]
+    need(len(indexes) == 1, 'CMake File API requires one completed reply index')
+    index_lock = lock(indexes[0])
+    index = load(index_lock['path'], index_lock['sha256'])
+    need(type(index) is dict and type(index.get('cmake')) is dict, 'Invalid CMake File API index')
+    cmake = index['cmake']
+    need(type(cmake.get('paths')) is dict and type(cmake['paths'].get('cmake')) is str
+         and Path(cmake['paths']['cmake']).is_absolute()
+         and _no_links(cmake['paths']['cmake']) == Path(tc['tools']['cmake']['path']), 'File API CMake identity differs')
+    need(type(cmake.get('generator')) is dict and cmake['generator'].get('name') == 'Ninja'
+         and cmake['generator'].get('multiConfig') is False, 'File API generator differs')
+    objects, replies = index.get('objects'), index.get('reply')
+    need(type(objects) is list and all(type(item) is dict for item in objects)
+         and type(replies) is dict, 'Invalid CMake File API references')
+    selected, evidence = {}, [index_lock]
+    for kind, major in (('codemodel', 2), ('toolchains', 1)):
+        ref = replies.get(f'{kind}-v{major}')
+        need(type(ref) is dict and ref.get('kind') == kind and type(ref.get('version')) is dict,
+             'Missing CMake File API query response: ' + kind)
+        version = ref['version']
+        need(type(version.get('major')) is int and version['major'] == major
+             and type(version.get('minor')) is int and version['minor'] >= 0, 'Invalid File API object version')
+        matches = [item for item in objects if item.get('kind') == kind]
+        need(matches == [ref], 'File API index object differs or is duplicated: ' + kind)
+        name = relative(ref.get('jsonFile'))
+        need(Path(name).name == name and name.endswith('.json'), 'Unsafe File API reply reference')
+        record = lock(reply / name)
+        data = load(record['path'], record['sha256'])
+        need(type(data) is dict and data.get('kind') == kind and type(data.get('version')) is dict
+             and all(type(data['version'].get(key)) is int for key in ('major', 'minor'))
+             and data['version'] == version,
+             'File API response kind/version differs from index')
+        selected[kind] = data; evidence.append(record)
+    paths = selected['codemodel'].get('paths')
+    need(type(paths) is dict, 'File API codemodel paths missing')
+    for name, wanted in (('source', Path(value['repo'])), ('build', native)):
+        need(type(paths.get(name)) is str and Path(paths[name]).is_absolute()
+             and _no_links(paths[name]) == wanted, 'File API codemodel path differs: ' + name)
+    chains = selected['toolchains'].get('toolchains')
+    need(type(chains) is list and all(type(item) is dict for item in chains), 'Invalid File API toolchains')
+    component = tc['components']['ndk']; ndk = Path(component['root'])
+    compilers = {}
+    for language in ('C', 'CXX'):
+        matches = [item for item in chains if item.get('language') == language]
+        need(len(matches) == 1 and type(matches[0].get('compiler')) is dict,
+             'Missing or duplicated File API compiler: ' + language)
+        compiler = matches[0]['compiler']; name = compiler.get('path')
+        need(type(name) is str and Path(name).is_absolute(), 'Absolute File API compiler path required')
+        path = _no_links(name)
+        need(path.is_relative_to(ndk), 'Compiler is outside selected NDK')
+        rel = path.relative_to(ndk).as_posix()
+        _covered(component, rel)
+        file_lock(path, component['files'][rel])
+        key = f'CMAKE_{language}_COMPILER'
+        if key in cache:
+            need(Path(cache[key]).is_absolute() and _no_links(cache[key]) == path,
+                 'Explicit cache compiler differs from File API: ' + key)
+        compilers[language] = dict(path=str(path), sha256=component['files'][rel])
+    return compilers, evidence
+
+
 def _build_native(value, tc, command, work):
     tool = lambda n: tc['tools'][n]['path']
     root = lambda n: Path(tc['components'][n]['root'])
@@ -386,6 +450,8 @@ def _build_native(value, tc, command, work):
     query = native / '.cmake/api/v1/query'
     query.mkdir(parents=True)
     (query / 'codemodel-v2').write_bytes(b'')
+    (query / 'toolchains-v1').write_bytes(b'')
+    query_locks = [lock(query / name) for name in ('codemodel-v2', 'toolchains-v1')]
     argv = [tool('cmake'), '-S', value['repo'], '-B', str(native), '-G', 'Ninja',
             '-DCMAKE_MAKE_PROGRAM=' + tool('ninja'), '-DCMAKE_TOOLCHAIN_FILE=' + str(root('ndk') / 'build/cmake/android.toolchain.cmake'),
             '-DANDROID_NDK=' + str(root('ndk')), '-DANDROID_ABI=arm64-v8a', '-DANDROID_PLATFORM=android-24',
@@ -406,11 +472,11 @@ def _build_native(value, tc, command, work):
                               CMAKE_TOOLCHAIN_FILE=root('ndk') / 'build/cmake/android.toolchain.cmake',
                               SDL3_DIR=root('sdl') / 'lib/cmake/SDL3', OPENSSL_ROOT_DIR=root('openssl')).items():
         need(key in data and Path(data[key]).resolve() == expected.resolve(), 'Actual CMake path differs: ' + key)
-    # The selected compiler must be from the prelocked LLVM tree, never PATH.
-    for key in ('CMAKE_C_COMPILER', 'CMAKE_CXX_COMPILER'):
-        path = _no_links(data.get(key, ''))
-        need(path.is_relative_to(root('ndk')), 'Compiler is outside selected NDK')
-        _covered(tc['components']['ndk'], path.relative_to(root('ndk')).as_posix())
+    # Compilers are not necessarily cache entries (e.g. NDK with CMake 4).
+    # Read actual compiler selections through our requested File API replies.
+    for item in query_locks:
+        file_lock(item['path'], item['sha256'])
+    compilers, api_evidence = _cmake_toolchains(native, value, tc, data)
     compiles = native / 'compile_commands.json'
     entries = load(compiles, _sha256_file(compiles))
     need(type(entries) is list and entries, 'Actual compile commands missing')
@@ -433,12 +499,12 @@ def _build_native(value, tc, command, work):
     sdl_output = command.run('elf-sdl', [tool('readelf'), '--dynamic', str(sdl)], value['timeouts']['configure'])
     sdl_needed = re.findall(r'\(NEEDED\).*\[([^\]]+)\]', sdl_output)
     need(set(sdl_needed) <= platform, 'Unstaged SDL shared dependency')
-    evidence = [lock(cache), lock(compiles), lock(native / 'build.ninja')]
+    evidence = [lock(cache), lock(compiles), lock(native / 'build.ninja'), *query_locks, *api_evidence]
     reply = native / '.cmake/api/v1/reply'
-    need(reply.is_dir() and any(reply.glob('codemodel-v2-*.json')), 'CMake File API codemodel missing')
     for path in sorted(reply.iterdir()):
-        evidence.append(lock(path))
-    return dict(library=lock(compiled), build_evidence=evidence, needed=needed, sdl_needed=sdl_needed)
+        if str(path) not in {item['path'] for item in evidence}:
+            evidence.append(lock(path))
+    return dict(library=lock(compiled), build_evidence=evidence, needed=needed, sdl_needed=sdl_needed, compilers=compilers)
 
 
 def _stage(value, source, native, tc, dep, work):

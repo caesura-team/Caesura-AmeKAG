@@ -186,7 +186,19 @@ class AndroidDriverTests(unittest.TestCase):
             command = str(self.root / 'tools/ndk/clang') + ' --target=aarch64-none-linux-android24 -c ' + str(self.repo / 'src/main.cpp')
             write_json(native / 'compile_commands.json', [dict(file=str(self.repo / 'src/main.cpp'), command=command)])
             put(native / 'build.ninja', '# synthetic build graph')
-            write_json(native / '.cmake/api/v1/reply/codemodel-v2-fixture.json', {})
+            # File API shape observed from actual CMake 4.3.3 / NDK27.3
+            # configure. Tool execution remains an explicit fixture boundary.
+            reply = native / '.cmake/api/v1/reply'
+            refs = [dict(kind=kind, version=dict(major=major, minor=minor), jsonFile=f'{kind}-v{major}-fixture.json')
+                    for kind, major, minor in [('codemodel', 2, 10), ('toolchains', 1, 1)]]
+            write_json(reply / 'index-fixture.json', dict(cmake=dict(paths=dict(cmake=str(self.root / 'tools/cmake/cmake')),
+                generator=dict(name='Ninja', multiConfig=False)), objects=refs,
+                reply={f"{r['kind']}-v{r['version']['major']}": r for r in refs}))
+            write_json(reply / refs[0]['jsonFile'], dict(kind='codemodel', version=refs[0]['version'],
+                paths=dict(source=str(self.repo), build=str(native))))
+            write_json(reply / refs[1]['jsonFile'], dict(kind='toolchains', version=refs[1]['version'],
+                toolchains=[dict(language=language, compiler=dict(path=str(self.root / 'tools/ndk/clang'),
+                    id='Clang', version='18.0.4', target='aarch64-none-linux-android24')) for language in ('C', 'CXX')]))
         elif name == 'compile':
             put(native / 'libCaesuraAmeKAG.so', elf())
         elif name == 'elf':
@@ -405,6 +417,8 @@ class AndroidDriverTests(unittest.TestCase):
                  Path(result['outputs']['apk']['path']), Path(result['unsigned']['aab']['file']['path']),
                  Path(result['native']['library']['path']), Path(result['receipt_path']),
                  Path(result['commands'][0]['process_files'][0]['path'])]
+        paths.extend(Path(item['path']) for item in result['native']['build_evidence']
+                     if Path(item['path']).name in {'toolchains-v1', 'index-fixture.json', 'toolchains-v1-fixture.json'})
         for path in paths:
             before = path.read_bytes(); path.write_bytes(before + b'changed')
             with self.subTest(path=path), self.assertRaises((ValueError, RuntimeError)):
@@ -437,8 +451,9 @@ class AndroidDriverTests(unittest.TestCase):
         def hook(name, args):
             if name == 'configure':
                 path = self.work / 'native/CMakeCache.txt'
-                entries = path.read_text(encoding='utf-8').splitlines()
-                # Layout observed in the original real Android Release cache.
+                entries = [line for line in path.read_text(encoding='utf-8').splitlines()
+                           if not line.startswith(('CMAKE_C_COMPILER:', 'CMAKE_CXX_COMPILER:'))]
+                # Layout and absent optional compiler entries observed in the real NDK cache.
                 put(path, '# This is the CMakeCache file.\r\n\r\n'
                     + ''.join('//No help, variable specified on the command line.\r\n'
                               + entry + '\r\n\r\n' for entry in entries))
@@ -446,6 +461,103 @@ class AndroidDriverTests(unittest.TestCase):
         report = self.call()
         self.assertEqual(report['status'], 'FIXTURE_ONLY')
         self.assertFalse(report['release_ready'])
+
+    def native_only(self, mutation=None):
+        """Real driver/files; substitute only configure/build/readelf commands."""
+        self.sequence += 1
+        self.work = self.root / ('native-evidence-' + str(self.sequence))
+        self.work.mkdir()
+        owner = self
+        class Commands:
+            def run(self, name, argv, timeout):
+                text, code = owner.produce(name, argv)
+                owner.assertEqual(code, 0)
+                if name == 'configure' and mutation:
+                    mutation(owner.work / 'native')
+                return text
+        tools = {role: dict(path=str(Path(self.components[spec['component']]['root']) / spec['relative_path']))
+                 for role, spec in self.tools.items()}
+        return driver._build_native(self.value, dict(tools=tools, components=self.components), Commands(), self.work)
+
+    def test_file_api_compilers_work_without_optional_cache_entries(self):
+        def mutation(native):
+            path = native / 'CMakeCache.txt'
+            put(path, ''.join(line + '\n' for line in path.read_text(encoding='utf-8').splitlines()
+                             if not line.startswith(('CMAKE_C_COMPILER:', 'CMAKE_CXX_COMPILER:'))))
+        result = self.native_only(mutation)
+        self.assertEqual(set(result['compilers']), {'C', 'CXX'})
+        self.assertEqual(result['compilers']['C']['sha256'], sha(self.root / 'tools/ndk/clang'))
+        locked = {Path(item['path']).name for item in result['build_evidence']}
+        self.assertTrue({'toolchains-v1', 'index-fixture.json', 'toolchains-v1-fixture.json'} <= locked)
+
+    def test_file_api_missing_ambiguous_and_mismatched_replies_reject(self):
+        def changed(native, mode):
+            reply = native / '.cmake/api/v1/reply'
+            path = reply / 'index-fixture.json'
+            index = json.loads(path.read_text(encoding='utf-8'))
+            ref = index['reply']['toolchains-v1']
+            tools = reply / 'toolchains-v1-fixture.json'
+            value = json.loads(tools.read_text(encoding='utf-8'))
+            if mode == 'missing-index': path.unlink(); return
+            if mode == 'duplicate-index': write_json(reply / 'index-second.json', index); return
+            if mode == 'missing-reply': del index['reply']['toolchains-v1']
+            if mode == 'duplicate-object': index['objects'].append(copy.deepcopy(index['objects'][1]))
+            if mode == 'object-mismatch': index['objects'][1]['jsonFile'] = 'different.json'
+            if mode == 'escape': ref['jsonFile'] = '../toolchains.json'; index['objects'][1] = copy.deepcopy(ref)
+            if mode == 'absolute': ref['jsonFile'] = str(tools); index['objects'][1] = copy.deepcopy(ref)
+            if mode == 'wrong-cmake': index['cmake']['paths']['cmake'] = str(self.root / 'tools/ninja/ninja')
+            if mode == 'wrong-generator': index['cmake']['generator']['name'] = 'Unix Makefiles'
+            if mode == 'missing-file': tools.unlink()
+            if mode == 'wrong-kind': value['kind'] = 'cache'
+            if mode == 'wrong-version': value['version']['major'] = 2
+            if mode == 'boolean-version': value['version']['major'] = True
+            if mode == 'query-change': put(native / '.cmake/api/v1/query/toolchains-v1', 'changed')
+            if mode == 'missing-C': value['toolchains'] = value['toolchains'][1:]
+            if mode == 'missing-CXX': value['toolchains'] = value['toolchains'][:1]
+            if mode == 'duplicate-language': value['toolchains'].append(copy.deepcopy(value['toolchains'][0]))
+            if mode == 'wrong-source':
+                codemodel = reply / 'codemodel-v2-fixture.json'
+                data = json.loads(codemodel.read_text(encoding='utf-8')); data['paths']['source'] = str(self.root)
+                write_json(codemodel, data)
+            if mode == 'wrong-build':
+                codemodel = reply / 'codemodel-v2-fixture.json'
+                data = json.loads(codemodel.read_text(encoding='utf-8')); data['paths']['build'] = str(self.repo)
+                write_json(codemodel, data)
+            write_json(path, index)
+            if mode == 'duplicate-json': put(tools, '{"kind":"toolchains",' + json.dumps(value)[1:])
+            elif mode != 'missing-file': write_json(tools, value)
+        for mode in ('missing-index', 'duplicate-index', 'missing-reply', 'duplicate-object', 'object-mismatch',
+                     'escape', 'absolute', 'wrong-cmake', 'wrong-generator', 'missing-file', 'wrong-kind',
+                     'wrong-version', 'boolean-version', 'query-change', 'missing-C', 'missing-CXX', 'duplicate-language', 'duplicate-json',
+                     'wrong-source', 'wrong-build'):
+            with self.subTest(mode=mode):
+                with self.assertRaises((ValueError, OSError, RuntimeError)) as caught:
+                    self.native_only(lambda native: changed(native, mode))
+                self.assertNotIsInstance(caught.exception, UnicodeError)
+
+    def test_file_api_compilers_remain_ndk_locked_and_cache_consistent(self):
+        for mode in ('outside', 'unlocked', 'wrong-hash', 'cache-mismatch', 'cache-empty', 'relative', 'compile-target'):
+            def mutation(native):
+                path = native / '.cmake/api/v1/reply/toolchains-v1-fixture.json'
+                value = json.loads(path.read_text(encoding='utf-8'))
+                compiler = value['toolchains'][0]['compiler']
+                if mode == 'outside': compiler['path'] = str(self.root / 'tools/cmake/cmake')
+                if mode == 'unlocked': compiler['path'] = str(put(self.root / 'tools/ndk/unselected-clang', 'unselected'))
+                if mode == 'wrong-hash': put(self.root / 'tools/ndk/clang', 'changed compiler')
+                if mode == 'relative': compiler['path'] = 'clang'
+                if mode.startswith('cache-'):
+                    cache = native / 'CMakeCache.txt'
+                    replacement = '' if mode == 'cache-empty' else str(self.root / 'tools/ndk/readelf')
+                    put(cache, cache.read_text(encoding='utf-8').replace('CMAKE_C_COMPILER:STRING=' + str(self.root / 'tools/ndk/clang'), 'CMAKE_C_COMPILER:STRING=' + replacement))
+                if mode == 'compile-target':
+                    commands = native / 'compile_commands.json'
+                    put(commands, commands.read_text(encoding='utf-8').replace('--target=aarch64', '--target=x86_64'))
+                write_json(path, value)
+            with self.subTest(mode=mode):
+                with self.assertRaises((ValueError, OSError, RuntimeError)) as caught:
+                    self.native_only(mutation)
+                self.assertNotIsInstance(caught.exception, UnicodeError)
+            put(self.root / 'tools/ndk/clang', 'fixture clang')
 
     def test_duplicate_cache_selection_is_rejected_even_when_last_value_matches(self):
         def hook(name, args):
