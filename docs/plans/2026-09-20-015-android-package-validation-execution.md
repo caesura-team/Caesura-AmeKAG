@@ -24,4 +24,8 @@
 
 只读清点确认选定JDK、Gradle、NDK、SDK、SDL、OpenSSL、CMake、Ninja目录存在。默认Gradle cache为空，尚无本轮依赖种子及verification metadata。已安装Git完整runtime有正常安装硬链接，按当前合同不能直接选整树；只锁单个launcher也不能冒充完整runtime绑定。后续应在独占工作目录准备普通文件镜像和经审查的实际输入清单，再冻结新的干净候选。
 
-后续继续整合U23最新来源认证/包修复、注册两套维护测试并核对真实发现数、执行相应完整门禁，然后准备实际工具和依赖输入、执行一次真实native/Gradle/TEST签名及最终APK/AAB验证。初次真实执行仍需确认AGP输出位置、JNI不改写、CMake格式和单次Gradle子进程清理；任何失败均留存后再针对修复。设备安装、实际窗口/音频/生命周期和发布签名继续单独验收，当前不声称已完成。
+实现提交bbf78ddc已合入U23干净候选ce5e3e5d，合并为4f6536d9；代码注册提交6555d4fb新增两套CTest入口，六配置的实际最低发现数由57升至59，六个adversarial门槛57保持不变。独审确认五个Android文件Git blob及原始字节仍与已审实现一致，其他U23源码完整继承；原57个测试名称/属性没有遗漏。driver入口超时600秒用于真实owned Python子进程夹具，不代表Android构建执行。
+
+新Windows构建目录最初自动选中了System32的WSL Bash launcher，实际发现记录保留于ctest-discovery-59-01.json。随后显式配置Git Bash并保存ctest-discovery-59-02.json，两个Bash入口的命令已核对。两套新增测试经真实CTest入口通过：包合同24.68秒、driver176.57秒，总201.26秒，2/2、零失败零跳过；原始JUnit及日志在u24-controlled-driver/ctest-registered-01.*，审查及增量附记在u24-controlled-driver-review/integration-review-01/02。此时七个native可执行文件尚未在新build目录生成，因此新发现记录不是完整native门禁通过证据。
+
+正在仓外独占目录准备普通文件Git镜像、完整选定工具摘要，以及单独联网获取的Gradle依赖种子。获取只使用项目声明的Maven Central与Google Maven；未进行native编译或签名，准备阶段未包含Engine JNI，产物不作为候选。生成的verification metadata须另行核对后才能用于接受路径，实际受控验收仍为offline。完整候选门禁及native/Gradle/TEST签名/最终APK-AAB验证尚待执行；初次真实执行仍需确认AGP输出位置、JNI不改写、CMake格式和单次Gradle子进程清理。任何失败均留存后再针对修复，设备安装、实际窗口/音频/生命周期和发布签名继续单独验收。
