@@ -577,8 +577,8 @@ jobs:
         id: package
         shell: pwsh
         run: |
-          $python = (Get-Command python -CommandType Application).Source
-          $cpack = (Get-Command cpack -CommandType Application).Source
+          $python = (Get-Command python -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+          $cpack = (Get-Command cpack -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
           & $python scripts/ci_package_lane.py native --platform windows --source-sha $env:SOURCE_SHA --work $env:PACKAGE_WORK --build "$pwd/build" --requirements "$pwd/build/package-requirements-Release.json" --python $python --cpack $cpack --github-output $env:GITHUB_OUTPUT
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
