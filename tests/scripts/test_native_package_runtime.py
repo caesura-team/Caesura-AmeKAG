@@ -10,7 +10,8 @@ import importlib.util
 import base64
 import hashlib
 import http.server
-from contextlib import ExitStack
+from contextlib import ExitStack, redirect_stderr
+import io
 import json
 import os
 from pathlib import Path
@@ -40,6 +41,38 @@ else:
 # Native fixtures execute the actual current OS image, including framework Python
 # hosts where sys.executable is only an exec launcher. No PATH lookup is involved.
 FIXTURE_PYTHON = runtime.process_identity(os.getpid()).executable if runtime else sys.executable
+
+
+def _preserve_actual_observer_failure(test_id, error):
+    """Persist this failed observation only; never mask it with a capture error."""
+    try:
+        selected = Path(os.environ.get("RUNNER_TEMP") or tempfile.gettempdir())
+        if not selected.is_absolute():
+            raise ValueError("Observer diagnostic temporary root must be absolute")
+        parent = selected.resolve(strict=True) / "caesura-native-observer"
+        parent.mkdir(mode=0o700, exist_ok=True)
+        if parent.resolve(strict=True) != parent:
+            raise ValueError("Observer diagnostic directory must not be a link")
+        directory = Path(tempfile.mkdtemp(prefix="observation-", dir=parent))
+        path = directory / "observation.json"
+        payload = {"schema_version": 1, "kind": "native-observer-test-failure",
+                   "test_id": test_id,
+                   "error": {"type": type(error).__name__, "message": str(error)},
+                   "module_observation": getattr(error, "module_observation", None)}
+        data = (json.dumps(payload, ensure_ascii=True, indent=2) + "\n").encode("utf-8")
+        with path.open("xb") as stream:
+            stream.write(data)
+        print("[native-observer-diagnostic] " + json.dumps({
+            "path": str(path), "size": len(data), "sha256": hashlib.sha256(data).hexdigest()}),
+            file=sys.stderr, flush=True)
+    except Exception as capture_error:
+        # Diagnostics are secondary to the original observer exception. Even a
+        # broken stderr must not replace the failure the test is reporting.
+        try:
+            print("[native-observer-diagnostic] capture failed: " +
+                  type(capture_error).__name__ + ": " + str(capture_error), file=sys.stderr, flush=True)
+        except Exception:
+            pass
 
 
 class LoopbackHTTPServer(http.server.HTTPServer):
@@ -849,7 +882,11 @@ class NativePackageRuntimeTests(unittest.TestCase):
     def test_actual_current_process_module_paths_are_observed(self):
         self.assertIsNotNone(runtime, "Native package runtime controller is not implemented")
         identity = runtime.process_identity(os.getpid())
-        report = runtime.observe_loaded_modules(identity)
+        try:
+            report = runtime.observe_loaded_modules(identity)
+        except Exception as error:
+            _preserve_actual_observer_failure(self.id(), error)
+            raise
         self.assertEqual(report["status"], "OBSERVED")
         self.assertIn(str(Path(FIXTURE_PYTHON).resolve()), report["paths"])
 
@@ -1013,6 +1050,102 @@ class HttpSmokeStartupTests(unittest.TestCase):
                 for worker in workers:
                     worker.join(timeout=3)
             self.assertTrue(all(not worker.is_alive() for worker in workers))
+
+
+class ActualObserverDiagnosticTests(unittest.TestCase):
+    """Exercise the real self-observation test's failure boundary, without rerunning lsof."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="caesura-observer-diagnostic-")
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name).resolve()
+        self.environment = patch.dict(os.environ, {
+            "RUNNER_TEMP": str(self.root), "CAESURA_DIAGNOSTIC_SECRET": "do-not-copy-env-7259"})
+        self.environment.start()
+        self.addCleanup(self.environment.stop)
+        self.error = runtime.RuntimeContractError("Unknown lsof image field")
+        self.error.unrelated_secret = "do-not-copy-exception-9361"
+        self.stdout = b"p1234\n?synthetic-rejected-field\nn/fixture/\\xe4\\xbd\\x9c\\xe5\\x93\\x81\n"
+        self.stderr = b"original observer diagnostic\xff\n"
+        self.observation = {"status": "NOT_VERIFIED", "process": {"pid": 1234},
+            "reported_paths": ["/fixture/\\xe4\\xbd\\x9c\\xe5\\x93\\x81"],
+            "observer": {"tool": {"path": "/fixture/lsof", "sha256": "a" * 64},
+                         "argv": ["/fixture/lsof", "-a", "-p", "1234", "-d", "txt", "-Fn"],
+                         "environment": {"PATH": "/usr/bin:/bin:/usr/sbin", "LC_ALL": "C"},
+                         "returncode": 0, "stdout": runtime._observer_bytes(self.stdout),
+                         "stderr": runtime._observer_bytes(self.stderr)}}
+        self.error.module_observation = self.observation
+
+    def exercise_failure(self):
+        case = NativePackageRuntimeTests("test_actual_current_process_module_paths_are_observed")
+        output = io.StringIO()
+        with patch.object(runtime, "observe_loaded_modules", side_effect=self.error) as observer, redirect_stderr(output):
+            with self.assertRaises(runtime.RuntimeContractError) as caught:
+                case.test_actual_current_process_module_paths_are_observed()
+        self.assertIs(caught.exception, self.error)
+        observer.assert_called_once()
+        return output.getvalue()
+
+    def reports(self, expected=1):
+        paths = list((self.root / "caesura-native-observer").glob("*/observation.json"))
+        self.assertEqual(len(paths), expected)
+        return paths
+
+    def test_same_observation_raw_bytes_and_original_exception_are_preserved(self):
+        original = json.dumps(self.observation, sort_keys=True)
+        output = self.exercise_failure()
+        path, = self.reports()
+        raw = path.read_bytes()
+        report = json.loads(raw)
+        self.assertEqual(report["module_observation"], self.observation)
+        self.assertEqual(report["error"], {"type": "RuntimeContractError", "message": str(self.error)})
+        self.assertTrue(report["test_id"].endswith("NativePackageRuntimeTests.test_actual_current_process_module_paths_are_observed"))
+        for name, expected in (("stdout", self.stdout), ("stderr", self.stderr)):
+            value = report["module_observation"]["observer"][name]
+            self.assertEqual(base64.b64decode(value["base64"], validate=True), expected)
+            self.assertEqual(value["sha256"], hashlib.sha256(expected).hexdigest())
+            self.assertEqual(value["size"], len(expected))
+        self.assertEqual(json.dumps(self.observation, sort_keys=True), original)
+        self.assertIn(hashlib.sha256(raw).hexdigest(), output)
+        for secret in (b"do-not-copy-env-7259", b"do-not-copy-exception-9361"):
+            self.assertNotIn(secret, raw + output.encode("utf-8"))
+
+    def test_repeated_failures_use_exclusive_directories_without_overwriting(self):
+        self.exercise_failure()
+        first, = self.reports()
+        before = first.read_bytes()
+        self.exercise_failure()
+        self.reports(expected=2)
+        self.assertEqual(first.read_bytes(), before)
+
+    def test_missing_runner_temp_uses_local_temporary_root(self):
+        with patch.dict(os.environ):
+            os.environ.pop("RUNNER_TEMP", None)
+            with patch.object(tempfile, "gettempdir", return_value=str(self.root)):
+                self.exercise_failure()
+        self.reports()
+
+    def test_capture_directory_failure_does_not_replace_original_exception(self):
+        blocked = self.root / "caesura-native-observer"
+        blocked.write_bytes(b"preexisting owned negative-control file")
+        self.exercise_failure()
+        self.assertEqual(blocked.read_bytes(), b"preexisting owned negative-control file")
+
+    def test_missing_attached_observation_still_preserves_original_error(self):
+        del self.error.module_observation
+        self.exercise_failure()
+        path, = self.reports()
+        report = json.loads(path.read_bytes())
+        self.assertIsNone(report["module_observation"])
+        self.assertEqual(report["error"]["message"], str(self.error))
+
+    def test_success_keeps_original_assertions_and_does_not_create_diagnostics(self):
+        case = NativePackageRuntimeTests("test_actual_current_process_module_paths_are_observed")
+        with patch.object(runtime, "observe_loaded_modules", return_value={
+                "status": "OBSERVED", "paths": [str(Path(FIXTURE_PYTHON).resolve())]}) as observer:
+            case.test_actual_current_process_module_paths_are_observed()
+        observer.assert_called_once()
+        self.assertEqual(list(self.root.iterdir()), [])
 
 
 if __name__ == "__main__":

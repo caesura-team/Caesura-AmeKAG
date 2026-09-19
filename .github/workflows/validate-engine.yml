@@ -450,6 +450,7 @@ jobs:
         name: macos-rpc-failure-evidence
         path: |
           build/Testing/Temporary/LastTest.log
+          ${{ runner.temp }}/caesura-native-observer/**/*.json
           build/artifacts/validation/rpc-timeouts-*/
           build/artifacts/validation/stdio-output-*/
           build/artifacts/validation/http-smoke-*/
@@ -1160,6 +1161,7 @@ jobs:
         name: macos-release-runtime-failure-evidence
         path: |
           build/Testing/Temporary/LastTest.log
+          ${{ runner.temp }}/caesura-native-observer/**/*.json
           build/artifacts/validation/http-smoke-*/
         if-no-files-found: ignore
     - name: Preserve first macos-release execution attempt
@@ -1229,28 +1231,97 @@ jobs:
           https://storage.googleapis.com/chrome-for-testing-public/153.0.8010.52/linux64/chrome-linux64.zip \
           --output "$chrome_root/chrome.zip"
         printf '%s  %s\n' e66f66d4802a46d4a022667e668aa950e277cadbfbed4b3777915b47413a0ef9 "$chrome_root/chrome.zip" | sha256sum --check --strict
-        unzip -q "$chrome_root/chrome.zip" -d "$chrome_root"
-        export CHROME_BINARY="$chrome_root/chrome-linux64/chrome"
+        install_root=/opt/caesura-u22-chrome-153.0.8010.52
+        export CHROME_BINARY="$install_root/chrome-linux64/chrome"
+        # Chrome 153 discovers the sibling chrome-sandbox before consulting
+        # environment overrides. Keep the OS sandbox enabled and install the
+        # pinned helper with its required root ownership and setuid mode.
         python3 - <<'PY'
-        import hashlib, json, os, pathlib, subprocess, sys
+        import os, pathlib, stat
+        target = pathlib.Path(os.environ['CHROME_BINARY']).parents[1]
+        if os.geteuid() == 0:
+            raise SystemExit('Browser validation must run as the unprivileged runner')
+        for parent in reversed(target.parents):
+            info = parent.lstat()
+            if (not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or
+                    info.st_mode & 0o022 or os.access(parent, os.W_OK)):
+                raise SystemExit(f'Unsafe browser installation parent: {parent}')
+        if os.path.lexists(target):
+            raise SystemExit(f'Browser installation target already exists: {target}')
+        PY
+        sudo -n mkdir --mode=0755 -- "$install_root"
+        # Verify an immutable-to-runner archive copy before privileged unzip.
+        sudo -n install --owner=root --group=root --mode=0644 -- "$chrome_root/chrome.zip" "$install_root/chrome.zip"
+        printf '%s  %s\n' e66f66d4802a46d4a022667e668aa950e277cadbfbed4b3777915b47413a0ef9 "$install_root/chrome.zip" | sha256sum --check --strict
+        sudo -n unzip -q "$install_root/chrome.zip" -d "$install_root"
+        printf '%s  %s\n' \
+          328fbee82d8e58b05a755b2343abfd192d92ca7066353cb357fad389bc7e3989 "$CHROME_BINARY" \
+          c100b678a8c171ad0733e51b6f18d98d936d38ab945681c41da00f2ee22e7571 "$install_root/chrome-linux64/chrome_sandbox" \
+          | sha256sum --check --strict
+        test ! -e "$install_root/chrome-linux64/chrome-sandbox"
+        test ! -L "$install_root/chrome-linux64/chrome-sandbox"
+        sudo -n install --owner=root --group=root --mode=4755 -- "$install_root/chrome-linux64/chrome_sandbox" "$install_root/chrome-linux64/chrome-sandbox"
+        sudo -n rm -- "$install_root/chrome.zip"
+        python3 - <<'PY'
+        import hashlib, json, os, pathlib, stat, subprocess, sys
         binary = pathlib.Path(os.environ['CHROME_BINARY'])
+        helper = binary.with_name('chrome-sandbox')
+        install_root = binary.parents[1]
+        root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'u22-chrome-153.0.8010.52'
+        code, stdout, stderr = None, b'', b''
+        evidence = {'status': 'FAIL', 'path': str(binary), 'sha256': None,
+                    'archive_sha256': 'e66f66d4802a46d4a022667e668aa950e277cadbfbed4b3777915b47413a0ef9',
+                    'sandbox_runtime': 'NOT_VERIFIED', 'installation_parents': []}
+        def identity(path, directory=False, expected_mode=None, expected_sha256=None):
+            info = path.lstat()
+            mode = stat.S_IMODE(info.st_mode)
+            if ((not stat.S_ISDIR(info.st_mode) if directory else not stat.S_ISREG(info.st_mode)) or
+                    info.st_uid != 0 or info.st_gid != 0 or mode & 0o022 or os.access(path, os.W_OK) or
+                    (not directory and info.st_nlink != 1) or
+                    (mode & 0o7000 and path != helper) or
+                    (expected_mode is not None and mode != expected_mode)):
+                raise ValueError(f'Unsafe installed browser identity: {path}')
+            result = {'path': str(path), 'uid': info.st_uid, 'gid': info.st_gid,
+                      'mode': oct(mode), 'links': info.st_nlink, 'runner_writable': False}
+            if expected_sha256 is not None:
+                result['sha256'] = hashlib.sha256(path.read_bytes()).hexdigest()
+                if result['sha256'] != expected_sha256:
+                    raise ValueError(f'Installed browser digest differs: {path}')
+            return result
         try:
+            if os.geteuid() == 0:
+                raise ValueError('Browser validation must run as the unprivileged runner')
+            for parent in [*reversed(install_root.parents), install_root, binary.parent]:
+                evidence['installation_parents'].append(identity(parent, directory=True))
+            entries = 0
+            def traversal_error(error):
+                raise error
+            for current, directories, files in os.walk(install_root, followlinks=False, onerror=traversal_error):
+                for name in directories:
+                    identity(pathlib.Path(current) / name, directory=True)
+                for name in files:
+                    identity(pathlib.Path(current) / name)
+                entries += len(directories) + len(files)
+            evidence['tree_entries_checked'] = entries
+            evidence['binary_identity'] = identity(binary, expected_mode=0o755,
+                expected_sha256='328fbee82d8e58b05a755b2343abfd192d92ca7066353cb357fad389bc7e3989')
+            evidence['sha256'] = evidence['binary_identity']['sha256']
+            evidence['helper'] = identity(helper, expected_mode=0o4755,
+                expected_sha256='c100b678a8c171ad0733e51b6f18d98d936d38ab945681c41da00f2ee22e7571')
+            if not os.access(binary, os.X_OK) or not os.access(helper, os.X_OK):
+                raise ValueError('Installed browser and sandbox helper must be executable by the runner')
             result = subprocess.run([str(binary), '--version'], capture_output=True, timeout=20)
             code, stdout, stderr = result.returncode, result.stdout, result.stderr
         except subprocess.TimeoutExpired as error:
             code, stdout, stderr = None, error.stdout or b'', error.stderr or b''
             stderr += b'\nBrowser version command exceeded 20 seconds.\n'
-        except OSError as error:
+        except (OSError, ValueError) as error:
             code, stdout, stderr = None, b'', str(error).encode('utf-8')
-        root = binary.parents[1]
         root.joinpath('version.stdout.log').write_bytes(stdout)
         root.joinpath('version.stderr.log').write_bytes(stderr)
         version = stdout.decode('utf-8', errors='replace').strip()
         accepted = code == 0 and version.split()[-1:] == ['153.0.8010.52']
-        evidence = {'status': 'PASS' if accepted else 'FAIL', 'exit_code': code,
-                    'version': version, 'path': str(binary),
-                    'sha256': hashlib.sha256(binary.read_bytes()).hexdigest(),
-                    'archive_sha256': 'e66f66d4802a46d4a022667e668aa950e277cadbfbed4b3777915b47413a0ef9'}
+        evidence.update(status='PASS' if accepted else 'FAIL', exit_code=code, version=version)
         root.joinpath('selection.json').write_text(json.dumps(evidence, indent=2) + '\n', encoding='utf-8')
         print(json.dumps(evidence))
         sys.stderr.write(stderr.decode('utf-8', errors='replace'))

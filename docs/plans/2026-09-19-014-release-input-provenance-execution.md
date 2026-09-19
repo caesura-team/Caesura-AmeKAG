@@ -130,3 +130,10 @@ U22前一托管run35460659971的Linux最终TGZ/AppImage原件及69项原始证�
 实际现有ci_execution维护suite16/16、0失败0跳过，11.365秒；actionlint1.7.7检查五个workflows exit0、0.406秒。独立重算19个冻结原件及两workflow一致，未改测试或放宽断言。证据u23-next-gate-01/u22-0a651bfd-integration-02/handoff-01.md摘要 `acffbe553111601ab75d2435482d2c23c9009d9c0d165e42d658ab614b86f9a3`；freeze-01.json摘要 `fa56dd88f1337cc59c33556f91dc6fca36c5473433e81c278ce80f0f56252e7c`。
 
 此时U22新run35471198493仍运行中，Mac Clang已因真实lsof输出出现未知字段而失败，Mac package跳过；原字段尚未显示在失败日志，不能猜测具体内容或把本次整合宣称Mac修复验收。U23暂不推送新的正式聚合候选，继续等待有依据的诊断增量及适用完整门禁。AE7、11个真实下载artifact、服务端required-check和dry-run发布验收仍未完成，发布与Pages部署未执行。
+
+
+## U22 Chrome sandbox 与 Mac 原始观测保留整合
+
+整合 U22 `58f3678d2fcdc737a91e16c422cf955977ff88e8`，U23 原薄 caller 精确恢复为原 HEAD 字节；共用 validate-engine.yml 只移植固定 Chrome 153 的 root 所有安装与原厂 setuid helper，并向两个既有 Mac 失败上传路径加入固定 observer JSON。保留浏览器沙箱、既有路径/摘要/身份判定及 9 required producer jobs、11 artifact roles、45 outputs；未新增发布行为。现有 ci_execution suite 16/16、零失败零跳过；五工作流 actionlint 1.7.7 退出 0（未启用 shellcheck/pyflakes），25 个冻结原件重算一致，独立增量审查无发现。证据 u23-next-gate-01/u22-58f3678d-integration-01；handoff SHA256 `da197980d00defe111913f6e6903efbeeb51dac84f86e7964a3b7563d3e1e694`，freeze SHA256 `3c3b8a1ce25a53976b50b3d70aa443ac2d3c46d414cbe0bc0d957f1b008453f2`。
+
+U22 前轮 run35471198493 已结束为 8 成功、2 失败、1 跳过，Web 实际浏览器退出 -6、No usable sandbox，Mac 未知 lsof 字段；不得改标为通过。新 run35473344618 的 Mac 测试仍失败，但新增诊断成功保留实际 stdout，已确认路径前的 `ftxt` 标记触发解析拒绝；修复及新托管验证尚未完成，Web 新沙箱运行也仍待结果。本次仅是 U23 本地工作流整合，完整候选门禁、托管 11 artifact 聚合、AE7 与服务端 required-check 验收继续未完成。
