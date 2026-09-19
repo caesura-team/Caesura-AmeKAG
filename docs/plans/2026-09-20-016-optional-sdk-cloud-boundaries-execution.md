@@ -1,6 +1,6 @@
 # U26 可选 SDK 与云存档边界执行记录
 
-本记录对应当前唯一计划U26。已实证修复不可用Steam后端误替换本地provider，以及分块覆盖失败、大转小和SDK短读；完整候选门禁及其余云冲突、SDK ON和真实SDK功能仍待执行，U26未完成。
+本记录对应当前唯一计划U26。已实证修复不可用Steam后端误替换本地provider，以及分块覆盖失败、大转小和SDK短读；969a31c9 的 SDK OFF 完整 Debug 门禁已通过；SDK ON 首轮已编译 Steam 模块并在 Live2D 动作组 API 处暴露真实编译错误。后续修复验证、双方冲突保全及真实 SDK 功能仍待执行，U26未完成。
 
 ## 证据起点
 
@@ -33,3 +33,14 @@
 最终四文件身份由u26-cloud-chunks/freeze-03.json锁定：CloudSaveProvider.cpp SHA269972cdd3e366f741c16c6fe83b17c34c512dec09f28babeceeb25c2f355c6a，header d192f06be2564d0d3d83273cf195ad9608560f3829e312546bc3084c3eb4a0e6，cloud测试84ace4eebfb34e15a1864d94a62651d92c65019c3f8b2987edeab84032e2e3c3，storage测试b5219b1570ca898f14954e8edd262f9d6051e0cbb934f4d54422a05034c789f2。独审无可行动发现，报告SHA49574d853ace8321d6d1c0466e473eaf3cbbeaebd33cb90f03cd5e3d45d09855，独立12项原件核对JSON d3edc428d962af974273be7262856edccb7daaea6a5b4e236fd6cec05cff8ec2。
 
 证据仅覆盖同步SDK拒绝不改变目标对象的合同；现有bool接口没有rename/CAS，官方FileWrite说明未明确保证失败覆盖在断电/撕裂写下保持旧head。因此不宣称真实Steam崩溃原子性、并发写入或跨设备冲突解决。generation熵异常/碰撞耗尽只做静态审查，失败清理可能留下不可读孤立对象；后续SDK与冲突验收仍保留。
+
+
+## SDK OFF 完整门禁与 SDK ON 首次编译（2026-09-20）
+
+clean `969a31c94fe200e8374066bd9f0f5a130ea90260` 的 Windows Debug 完整执行 `4d95de30-e585-473e-8097-8a3cf7d0dcca` 已完成：全量构建退出0；C++ **1425/1425、427279断言，0失败/跳过**；Lua主套件147/147、隔离套件56/56；CTest57项为56通过及预声明可选AI一项跳过，0失败，669.62秒。runner、collector、strict verifier各退出0，11检查全部成功，源码与夹具前后稳定。run.json SHA `e3a230bff337135a6beed58d17e727a7ec086067ed838803cdbea91a7bfeab32`；独立复核67份原日志/收据引用，review SHA `4c46fe9f606459bee6fa28a052474dd49247c5428191a6044e5f997d6289106b`。HTTP实际73/73，PID3768、创建身份134343276464807771、端口5405，经请求停止后实际退出1，cleanup COMPLETE，无超时或强杀；HTTP独审 SHA `1f633cba75e5cb9c225d9d4513c2fcd41db3b0ac1971808e0c30a13ae461435a`。本段仅对应SDK关闭的该源码，不证明后续补丁或SDK运行。
+
+SDK ON 输入锁固定本机已有 Steam SDK、Cubism Native-5-r.5 的真实头文件/源码/库及工具。第一次隔离 configure 尚未进入SDK源码：MSBuild FileTracker在初始化CommonApplicationData时抛出路径异常，最终CMake报找不到C/C++编译器。四个只读.NET环境对照表明直接缺失字段是子进程allowlist遗漏的SystemDrive：原环境及仅补ProgramData失败，仅补SystemDrive和两者都补时均能解析C:\ProgramData。原尝试及CMakeConfigureLog完整保留，没有修改系统环境或SDK。
+
+新尝试stage02在新的两个build目录补入本机SystemDrive/ProgramData，保留相同VS、14.44.35207工具集和10.0.26100 SDK，并补锁实际amd64 MSBuild等工具。两个configure均退出0；SteamBackend.cpp实际编译并产生caesura_steam.lib，CubismFramework也编译成功。CaesuraLive2D实际编译在Live2DBackend.cpp:397报C2660：零参数GetMotionCount不存在；SDK区分GetMotionGroupCount()和GetMotionCount(groupName)。本补丁只将外层组循环改为GetMotionGroupCount，内层逐组动作计数/缓存合同不变。原失败不是被关闭SDK隐藏；新编译及可执行链接仍待随后执行，不能把静态库成功称为真实客户端/模型通过。
+
+原件均在本工作树artifacts/validation/u26-sdk-on-01：compile-stage-01/02.json、分命令stdout/stderr/owned receipts、compiler-diagnosis-01.md/json、inputs-lock-01/02.json。两轮源码与锁定输入均稳定，首轮未进入后续命令；第二轮最后一条退出1。测试模型、账户、成就/统计、云同步服务和motion/lip-sync实际运行均NOT_RUN。云冲突的typed读取与持久保全合同另有只读设计，仍未实施，不将旧显式push/pull的成功升级为冲突安全同步。
