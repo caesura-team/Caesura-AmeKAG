@@ -1,6 +1,6 @@
 # U24 Android 构建与包验证执行记录
 
-本记录属于当前唯一运行时可靠性计划的U24。当前交付是受控构建驱动和APK/AAB验证合同；第四次真实执行已完成NDK Release编译、ELF检查、Gradle打包和zipalign，但在APK测试签名失败，**签名后的最终包、安装与设备运行尚未验收**。不能以编译或维护夹具通过关闭U24或提升发布状态。
+本记录属于当前唯一运行时可靠性计划的U24。第五次真实执行已通过受控NDK Release编译、ELF检查、Gradle打包、zipalign、APK/AAB临时测试签名和最终包字节验证，独立审计无可行动发现。当前adb查询无连接设备，安装与设备运行仍为NOT_RUN；AAB manifest语义验证及正式发布签名也未建立。第四次签名失败和之前失败原件继续保留，整个U24及发布状态不因本地自动部分通过而关闭。
 
 ## 已实现的合同
 
@@ -86,3 +86,26 @@ File API修复已完成：预先锁定codemodel-v2/toolchains-v1查询，要求�
 原stderr明确为第二次从password.txt读取私钥口令时EOF。生产只写一行，却给apksigner的两个密码参数相同file路径。选定工具原JAR内置帮助和实际PasswordRetriever探针确认同文件按行顺序消费；两行相同口令及两个独立文件各一行的正控均成功，一行的第二次读取负控触发EOF。此真实Java探针PID9020退出0、owned/private cleanup COMPLETE，只检验口令读取，没有生成密钥或签名。另核对选定JDK src.zip：keytool/jarsigner各自重新打开文件并读取首行，因此保留原参数并写两行同一随机值即可修复；秘密不进入argv、环境或证据。
 
 两项维护回归先在未修生产取得RED（正常路径ERROR，EOF/不同key负控通过），修复后定向2/2、19.467秒；完整Windows49/49、242.078秒，WSL47/47、80.118秒，均0失败0跳过。原测试方法保留，工具边界模型始终FIXTURE_ONLY，不冒称真实签名。最终生产SHAfc0fa3a23ba6b204796531042d476a1bfd1f4823a521b33ed579697a69500316，测试SHA2c14f7247fb6f6e917a5f93b4d30460110916fda38a6c5253d7bb4fb5272f0e2。u24-signing-01/fix-freeze-01.json锁定27份证据，SHA3644261d0fd607071975de535cc2e4dc9e2162e33dc0b8796598086fb8efff9c；root独立审查核对原RED、真实探针、源码差异及所有摘要，没有可行动发现。下一次实际执行必须使用新干净提交、新请求和新工作目录，不能重写本次失败。
+
+
+## 第五次实际执行：本地编译、最终包和测试签名闭环通过
+
+本次固定干净源码 `8a0d5e3ea50710148ffb545eeec2bf8c892c8dca`，请求 `D:/caesura-u24-inputs-01/request-8a0d5e3e-05.json` SHA256 `29325b72723a09ee144145b1757621e52056763161b99c61dc1b05ff4ea0a27f`，新独占目录 `D:/caesura-u24-android-8a0d5e3e-05`。driver实际退出0，原 `android-validation.json` 为27,581,685 B、摘要 `bd2bfa353c7c7b81951415e30e84e4b07ecc19e6be5b042f95fb01af64f8af64`，结果 `ANDROID_VALIDATION_VERIFIED / OWNED_COMPILE_PACKAGE_TEST_SIGNATURE_VERIFIED / release_ready=false`，errors为空。原来的四次失败仍各自保留，没有替换原receipt或自动重试。
+
+实际NDK27.3.13750724、arm64-v8a/API24、c++_static、Release编译产生 `libCaesuraAmeKAG.so` SHA256 `ff901e114df2146829a9c66a8180930faf66757e0ecdc9b702981593a2b8101e`；File API、79项native构建引用及最终AArch64 ELF相符。JDK17.0.20驱动Gradle8.9，在独立home执行offline/strict依赖验证的 `:app:assembleRelease :app:bundleRelease`，原日志 `BUILD SUCCESSFUL in 43s`、54 actionable tasks全部实际executed。既有SDL/OpenSSL库的自身编译来源仍未认证。
+
+| 最终产物 | 字节数 | SHA256 |
+| --- | ---: | --- |
+| CaesuraAmeKAG-1.0.1-Android-arm64-v8a-test.apk | 125059538 | b3f90a67fbbd4cabbf33b19ac9c4fca6253e31c92dad8ac2620f3694d1581551 |
+| CaesuraAmeKAG-1.0.1-Android-arm64-v8a-test.aab | 56692251 | fb83b7726c39a5e684a2a46bbfb19824a1aa19f5f1114f3b7c32fa54bb9e8e71 |
+| test-certificate.der | 790 | b646a7e9084aca06ca4bb1a12de412fa8c50e35784d7ebf2791881f45fac2920 |
+
+APK250项、AAB255项业务文件与原未签名包逐项字节一致，每种格式的245份staged JNI/assets与最终包一致。签名仅增加预声明CAESURA三件套，选定Engine库保持原SHA。实际aapt2核对APK为com.caesura.app、1.0.1/code1、min24/target35、arm64-v8a；这些manifest语义不迁移到AAB，后者仍标 `STRUCTURE_AND_EXTERNALLY_LOCKED_BYTES_ONLY / NOT_VERIFIED`。
+
+实际apksigner verify退出0，一名signer，v2/v3验证成功，证书SHA等于上述DER；工具报告v1=false，不能因ZIP内存在签名元数据改写该结果。实际AAB签名退出0；`jarsigner -verify -strict -verbose -certs`退出4，日志精确包含未建立可信PKIX链、自签证书两项允许的测试身份错误，并保留即将到期和无timestamp两项warning。全部255项业务文件均有sm验证行，没有未签名、部分签名、过期、摘要或无效签名错误。因此结论是临时测试签名内容验证通过，而非普通exit0信任链或正式发行身份。测试证书 `CN=Caesura TEST ONLY, O=Unpublished Test`、RSA2048，有效期2026-09-20 05:29:49至09-22 05:29:49 CST。
+
+16条driver命令及5条最终验证命令共21条，均绑定真实PID/creation/executable与原argv/CWD，正常EXITED、launcher exit0、cleanup COMPLETE，无超时、强杀或stop请求；20项工具exit0及上述1项jarsigner exit4分别保留。private_cleanup为COMPLETE，独立文件检查确认private-signing目录不存在；只证明本次私有文件按合同删除，不声称secure erase。
+
+独立审计重新读取完整receipt及request，核对505个原引用、原命令日志/身份、构建/工具/源文件、全部unsigned/final ZIP条目与staging。最终包稳定性入口只读重解析返回ANDROID_PACKAGE_STABLE，末尾再次核验原request/receipt及source HEAD/cleanliness不变。完整约8GB工具/依赖inventory在driver结束前已全量检查；独审未重复读取全部8GB，不能把12个工具可执行文件的复算冒称整套依赖二次验收。审查见本工作树 `artifacts/validation/u24-signing-01/actual05-independent-review-01.md`（SHA `dbfb36715f463c8a9a19eecdcbd747ad589ce3f79bc49c632618afc6dfe56304`）及JSON（SHA `21efb76aa352314986f718fcfaaac3ebb6b0e5cb0b627099158d9008087c4945`），无可行动发现。审阅计算中的4395个谓词不是新增产品测试数量。
+
+2026-09-19 21:45:46 UTC另以已存在的adb35.0.2执行只读version和devices -l，两项均exit0，但设备列表只有标题、无设备。原 `u24-signing-01/device-discovery-01.json` 和stdout/stderr均保留，未尝试历史IP、连接、安装、shell或输入。真机安装/升级、CJK/IME、触摸、音频焦点、前后台和重启恢复仍需连接并授权的实际Android设备。未执行商店上传、发布签名或托管attestation；本轮新Windows完整维护门禁仍独立进行。
