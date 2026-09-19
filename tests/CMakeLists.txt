@@ -583,6 +583,17 @@ if(Python3_EXECUTABLE)
             WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     endforeach()
 
+    add_test(NAME CaesuraBenchmark_compare_contract
+        COMMAND ${Python3_EXECUTABLE} -B
+                ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_compare_benchmarks.py)
+    add_test(NAME CaesuraBenchmark_compiled_sampler
+        COMMAND ${Python3_EXECUTABLE} -B
+                ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_cpu_benchmark_sampler.py
+                --binary $<TARGET_FILE:CaesuraTests>)
+    set_tests_properties(CaesuraBenchmark_compare_contract CaesuraBenchmark_compiled_sampler
+        PROPERTIES LABELS "qa;performance;validation" TIMEOUT 240
+                   WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+
     find_program(CAESURA_NODE_PROGRAM node)
     if(CAESURA_REQUIRE_TEST_PREREQUISITES AND NOT CAESURA_NODE_PROGRAM)
         message(FATAL_ERROR "Complete validation requires Node 22+ for package probe contracts")
