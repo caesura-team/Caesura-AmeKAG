@@ -4,8 +4,8 @@
 # Caesura (AmeKAG) — Unified Platform Status Matrix
 
 > **Single Source of Truth**: [`docs/status/platform-matrix.yaml`](platform-matrix.yaml)<br>
-> **Evidence HEAD Commit**: `af170ce783e0abdce8668179c8c3894751c76559`<br>
-> **Generated At**: `2026-09-19T21:41:23.350761+00:00`<br>
+> **Evidence HEAD Commit**: `8bb4ed31b3b1dbc5ac908889c82bc5f138fdfe1a`<br>
+> **Generated At**: `2026-09-19T22:26:30.272009+00:00`<br>
 > **Verification Status**: 100% Evidence-Backed (Zero Undocumented Claims)
 
 ---
