@@ -324,3 +324,12 @@ Web job105974876150已成功下载、核SHA并选择Chrome for Testing153.0.8010
 同一run的Linux GCC在Web维护套件627/628处失败，perf-bundle故事比值0.7929896907216494低于固定0.8。日志source/bundle中位数均显示0.0ms；源码仍同步调用并丢弃async Promise，实际没有等待场景完成，不能将该数字解释为场景吞吐。原job105978202130日志945445字节、SHA256 `a9fd52f6f80a0dc2aebdc33b74c9324b67920a81edf4c7ff27fc09fa36172fb1`保留。Linux最终包与Web最终包被上游失败跳过，所以这轮Chrome sandbox安装尚无运行证据。
 
 精确移植U27已独审提交da9d833aad97b9440b7d5b3121439f18973b7439的三文件：计时器warmup与每个样本串行await、调用方返回Promise、入口等待完成并dispose。原采样次数、上下文、阈值和超时均保持；此前真实RED与确定性10/10及原638全套证据见U27执行记录。移植后在本树冻结dirty快照实际完整Web52文件638/638、0失败0跳过，170.51秒，源/工具/生成资源首尾稳定，owned exit0、无timeout/force、cleanup COMPLETE。tiny中位数9.5/9.6ms，story921.6/914.2ms、吞吐比1.008，synthetic1340.5/1045.7ms、比1.282，原0.8阈值不变。证据benchmark-integration-01/full-web-integration-01-outcome.json及原Vitest JSON；此为维护验证，不是正式Release多进程基线或真实浏览器长跑。新干净候选完整门禁及新的托管最终包仍须执行。
+
+
+## fab91a12 完整本地门禁与托管生成文档修正
+
+干净 fab91a127bef3004f63d8c6f51f707ac7785fdf5 的完整 Windows Debug run 5c0abca4-aa5d-41c7-8634-fa065839612e 已通过：全量构建、C++1415/1415及427088断言、Lua147/147与56/56、CTest48发现中47通过及1个预声明AI/Ollama不可达跳过，HTTP75/75含两项Web检查。runner/collector/strict verifier全部0，源码及夹具首末稳定。独立审计重新哈希163引用/94个物理文件148352195字节，live clean身份与原run相同，strict错误列表为空。原run SHA256 5b72df3b486044a105f542c073f6be8cd371edf5caecfbb2aaac046cfa8d7ddb，manifest 00b85c294e6905c28a475c58491b845a7aab54d6ae6d5147f7ab11f14d79d53a；完整原件与审查见u22-foundation/full-debug-fab91a12-01。HTTP进程PID9756（创建身份见原收据），受控STOPPED实际exit1、无超时强杀且cleanup COMPLETE；精确进程已不存在。
+
+托管run35474593317的Mac Clang job105981537066成功，实际checkout是merge ec82bf049779733e354c906effcb0ecced693479，与PR head分开记录。原日志确认Lua147/56、CTest47通过及1可选AI跳过；成功输出未展开C++/native Python实际内部计数，不能用源码注册数量替代。真实当前进程observer无skip/mock，可由精确merge源码和完整suite通过支持，但没有独立方法PASS行或原模块字节。原日志SHA256 2f9d7aca284ff813c5a19b459f48f19cd2f3d85847dc2ef1848763218daf9e07，审计见u22-hosted-fab91a12/mac-clang-audit-01。Mac Package也报告success，最终TGZ/DMG字节审计仍待完成。
+
+本轮Linux GCC的完整Web638/638及CTest48入口（47通过/1可选跳过）均已通过；唯一失败发生在随后生成能力矩阵的freshness检查：已提交指纹8f9a5fcfae4c8693仍对应旧Web测试输入，当前真实输入指纹为54564d50946c4426。原job105981537172日志SHA256 c114e6df74967a2348559b9ba38c41592dc2358687ea6d384cc6e94e4f85a9da保留于u22-hosted-fab91a12/linux-failure-01。重新运行原capability_closure.py，实际diff仅生成时间与源指纹，两者外全部矩阵字节不变；未手改矩阵、生成规则、测试或阈值。本次修正为生成文档同步，可复用上述未变产品源码的构建证据；新托管候选仍须通过实际全部门禁。该Linux失败导致本轮Linux/Web最终包任务skip，Chrome sandbox和完整U22仍未验收。
