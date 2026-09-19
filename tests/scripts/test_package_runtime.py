@@ -13,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from types import SimpleNamespace
 import unittest
 from unittest import mock
 
@@ -63,8 +64,17 @@ class PythonFrameworkIdentityTests(unittest.TestCase):
         # Each observation has a before/after poll. The child then exits normally.
         child.poll.side_effect = ([exit_code] if exited else [None] * (2 * len(observations))) + [exit_code] * 8
         child.wait.return_value = exit_code
+        elapsed = 0.0
+        def advance(duration):
+            nonlocal elapsed
+            elapsed = round(elapsed + duration, 9)
+        # This entire child/identity boundary is synthetic. Advance its deadline
+        # with its requested waits, independently of hosted scheduling latency.
+        # Real child tests below keep the production wall clock and sleeps.
+        clock = SimpleNamespace(monotonic=lambda: elapsed, sleep=advance)
         with mock.patch.object(runtime.subprocess, "Popen", return_value=child), \
-                mock.patch.object(runtime, "process_identity", side_effect=observations):
+                mock.patch.object(runtime, "process_identity", side_effect=observations), \
+                mock.patch.object(runtime, "time", clock):
             status = runtime._runtime_launcher(request_file)
         result = json.loads((control / "result.json").read_text(encoding="utf-8"))
         identity = control / "process.json"
@@ -83,6 +93,30 @@ class PythonFrameworkIdentityTests(unittest.TestCase):
         status, result, identity = self.launch([self.final, self.final])
         self.assertEqual(status, 0, result)
         self.assertEqual(identity["executable"], str(self.image))
+
+    def test_framework_fixture_observations_are_independent_of_host_sleep_delay(self):
+        actual_sleep = time.sleep
+        # The child and OS observations are already simulated. Scheduling delay
+        # must not determine whether their declared final-image sequence passes.
+        with mock.patch.object(runtime.time, "sleep", side_effect=lambda _: actual_sleep(0.08)):
+            status, result, identity = self.launch([self.initial, self.initial, self.final, self.final])
+        self.assertEqual(status, 0, result)
+        self.assertEqual(identity["executable"], str(self.image))
+        self.assertEqual(result["exec_transition"]["status"], "VERIFIED")
+
+    def test_framework_deadline_rejects_unverified_or_only_once_observed_final_image(self):
+        for name, observations in (("no-final", [self.initial] * 100),
+                                   ("one-final", [self.initial] * 19 + [self.final, self.final])):
+            with self.subTest(name=name):
+                status, result, identity = self.launch(observations)
+                self.assertEqual(status, 125, result)
+                self.assertIsNone(identity)
+                self.assertEqual(result["status"], "LAUNCH_FAILED")
+                self.assertEqual(result["exec_transition"]["contract"]["observation_timeout"], 0.2)
+                self.assertEqual(result["identity_error"],
+                                 "Final executable was not observed within the explicit exec deadline")
+                if name == "one-final":
+                    self.assertEqual(result["exec_transition"]["observations"][-1]["executable"], str(self.image))
 
     def test_framework_rejects_another_interpreter_and_changed_creation(self):
         for name, wrong in (("interpreter", replace(self.final, executable=str(self.root / "other-python"))),
