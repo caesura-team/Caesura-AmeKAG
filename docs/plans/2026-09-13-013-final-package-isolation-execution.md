@@ -309,3 +309,18 @@ Web job105974876150已成功下载、核SHA并选择Chrome for Testing153.0.8010
 
 
 下一候选浏览器安装增量已冻结：workflow SHA `13e7cdcd4189288afdaf64544162c581d518cfc913557f683c79a1e60f40c290`，bash -n、actionlint1.7.7和两段Python AST均通过。独立重核29项输入/诊断原件，除Web安装step外其余YAML与Mac诊断快照相同；未在本机执行特权安装或浏览器，新的实际沙箱与包运行保持NOT_RUN。冻结清单SHA `49918a386acd96fad7fa53bb6f8328fa261c8126a4bd4ccaab56c2b7346e959c`。
+
+
+## 58f3678d 完整本地门禁与实际 Mac 字段诊断
+
+干净58f3678d的windows-debug run `0c71cc4e-ea7d-42ee-938c-a52275836b67` 完成：Debug全量构建、C++1415/1415与427088断言、Lua147/147及56/56全部通过；CTest48项中47通过、0失败、仅预声明AI服务跳过，545.81秒。实际HTTP75/75，含两项Web打包正控；PID26872/创建134343307686759238、端口8316，受控STOPPED实际exit1、无强杀超时、cleanup COMPLETE。全部11个profile检查及runner/collector/strict verifier退出0；run.json SHA256 `54520f1fb4846fc2adb6e2b3d79367bf837c637f19a8436b997c10df11c53db9`。独审重核162引用、93独立文件、148302165字节及历史Git blob一致；证据u22-foundation/full-debug-58f3678d-01-review.md/json。该结果不迁移给下述新代码。
+
+托管run35473344618的Mac Clang在真实Python进程观察器维护测试失败，Mac最终包因此未跑。新诊断成功保留原lsof stdout：4447字节，SHA256 `9cddc38b392ad838a6112874dac7b376fa6f1cc619267c02a70d34912724190f`，35组完整ftxt/nPATH，observer实际exit0。固定artifact10593602536外层150969字节、SHA256 `22d6d4e51fa707e24ff7187cdc2e39c488ce9cc29790d693aa989e8c1b2363e5`。旧解析只接受n/行，在路径解码前拒绝ftxt。lsof上游manpage也说明旧版即使-Fn仍产生f描述符；此处依据实际字段修复，不推测丢失的旧日志。
+
+新增5方法先真实RED（3通过、1失败、1错误），生产只扩展为接受完整ftxt/name记录对或原name-only格式，拒绝混合、未知描述符、缺路径、额外PID及断裂记录；原路径转义、required库身份和第二来源拒绝保持。完整Python套件Windows62/62、WSL63/63，零失败零跳过，均前后源码稳定、实际exit0、cleanup COMPLETE。独审原始35记录旧解析拒绝/新解析全解出，并以2801有限序列和额外坏wire验证严格边界；53个原测试AST正文未变。独审报告mac-ftxt-fix-01/independent-review-01.md SHA256 `c4a283a83e9de232d5915a10f8b77b9cae256fd19da03101584093d4ae6e73d8`。协议重放不等于Mac真实Engine最终包验证。
+
+## 托管 Web 计时失败与既有 U27 修复移植
+
+同一run的Linux GCC在Web维护套件627/628处失败，perf-bundle故事比值0.7929896907216494低于固定0.8。日志source/bundle中位数均显示0.0ms；源码仍同步调用并丢弃async Promise，实际没有等待场景完成，不能将该数字解释为场景吞吐。原job105978202130日志945445字节、SHA256 `a9fd52f6f80a0dc2aebdc33b74c9324b67920a81edf4c7ff27fc09fa36172fb1`保留。Linux最终包与Web最终包被上游失败跳过，所以这轮Chrome sandbox安装尚无运行证据。
+
+精确移植U27已独审提交da9d833aad97b9440b7d5b3121439f18973b7439的三文件：计时器warmup与每个样本串行await、调用方返回Promise、入口等待完成并dispose。原采样次数、上下文、阈值和超时均保持；此前真实RED与确定性10/10及原638全套证据见U27执行记录。移植后在本树冻结dirty快照实际完整Web52文件638/638、0失败0跳过，170.51秒，源/工具/生成资源首尾稳定，owned exit0、无timeout/force、cleanup COMPLETE。tiny中位数9.5/9.6ms，story921.6/914.2ms、吞吐比1.008，synthetic1340.5/1045.7ms、比1.282，原0.8阈值不变。证据benchmark-integration-01/full-web-integration-01-outcome.json及原Vitest JSON；此为维护验证，不是正式Release多进程基线或真实浏览器长跑。新干净候选完整门禁及新的托管最终包仍须执行。
