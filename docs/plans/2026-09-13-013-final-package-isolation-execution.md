@@ -177,3 +177,31 @@ Windows路径回归使用实际Engine和新建目录：仓外ASCII控制通过�
 独审又以真实WSL目录symlink证明新增C++夹具的原TMPDIR别名与current_path物理路径不一致。仅将夹具绝对断点从chdir后的current_path构造，保留生产lexical路径合同及原断言；重建后15/15、243断言继续通过。该反例不冒充真实macOS运行。
 
 以上路径定向是headless最小资源夹具，不是完整游戏/GPU/PCM验收。CMake已实际重新配置并发现48项CTest；新增CaesuraResourceCwdCli和CaesuraPackage_package_runtime_install，后者经CTest真实执行通过。六配置CTest门槛46→48，新增一个实际C++用例后各平台C++最低数同步加一。独审、原RED/中间失败与原始摘要保留；新干净候选完整构建、C++/Lua/CTest、完整Web以及托管最终包仍须继续，U22–U29未完成项不变。
+
+## fd5b426b 完整本地门禁与托管最终包结果（2026-09-20）
+
+干净候选 `fd5b426b0886a585874e2e22f739cc30160c87c4`（代码提交 `f779cc5d`）的 windows-debug 严格验证通过。run `8edc0a29-4313-4810-868e-44ed6641c6cd` 完成 Debug 全量构建，C++ **1415/1415、427088 断言**，Lua **147/147 和 56/56**；CTest 发现48项、47通过、0失败，仅预声明可选AI服务一项跳过。真实HTTP检查、runner、collector和strict verifier均退出0，源码保持干净且不变。原始 `u22-foundation/candidate-fd5b426b-01/run.json` SHA256 为 `380dcaad1dbb965f88ff6226bff32b5e33035cd0b1e913c85dbfbbecaeb5e477`。同一干净候选完整Web套件 **628/628、0失败0跳过**，原始 `u22-final-package-fixes/web-full-fd5b426b-01.json` SHA256 为 `1a6459bb8683d5bd91192108ba641822fd98bc87af381db9c358b12a5ad2149f`。以上是该源码的执行事实，不迁移到后续修改后的候选。
+
+托管 run **35460659971** 最终为 **6个job成功、3个失败、2个跳过**。API head为fd5b426b，实际checkout和包身份为PR merge **c258c3b103ab82fa01eb0d6004e7eb858e31b437**。Linux GCC、Windows Release、三个移动probe和Linux最终包job成功；Windows Debug、macOS Clang和Web最终包失败，Windows/macOS最终包因前置失败未执行。完整原始状态保存在 `u22-final-package-fixes/hosted-state-06.json`，不能将前置构建成功改写为对应最终包通过。
+
+Linux最终包job **105947074117** 对TGZ与AppImage均给出accepted结果。最终TGZ SHA256为 `0ada673a5dfe811a3bbb695b32a853e4c9dbf83efc89b48ad71a0efb96000580`，AppImage为 `648e5484bde714687f571d84059678f702cdb6e840150b971782a2ce05bf16e2`，manifest为 `f86684cce8fae994ca2b454dc9b7b87b1a1c072477d95d1be5fdc4f62061877f`。job原日志与下载原包核验属于不同证据步骤；完整下载绑定结果另行追加，尚不由此授予U23发布批准。
+
+### 两项真实测试夹具竞态
+
+Windows Debug原日志记录 `launch_listener` 的readiness JSON被读到半写入状态，实际抛出JSONDecodeError。真实子进程写完首字节后停在屏障的回归先失败。现在所有异步夹具JSON先写完整同目录临时文件，再以 `os.replace` 发布；读端仍对已发布但损坏的JSON立即失败，没有增加容错重试。
+
+macOS原日志记录exec拒绝用例在正确回收非exec shell及其子进程后，继续等待子进程的应用消息。旧临时目录已被清理，不能补称已观察到原平台的精确调度时序。独立WSL屏障复现已启动子进程在应用发布前被正确回收，原断言却等待永远不会出现的文件。修复保留四类exec错误控制及无VERIFIED身份断言；另设真实父子进程握手，先核对实际PID、PPID和映像，再停止父进程，证明父子均退出且应用发布屏障从未释放。
+
+只修改 `tests/scripts/test_package_runtime.py`，原生产 `package_runtime.py` 未变。原维护方法全部保留，增加三项真实回归。完整Windows **32/32**、WSL **36/36**通过，0跳过；最终日志分别为 `u22-exec-fixture-race/windows-full-02.log` 与 `wsl-full-02.log`。测试冻结SHA256为 `3c44fba32f20751ad49eae6d02c4027e1745aeb10ceeb38a8ba036d153d9f5c5`，首个RED和中间结果保留。主代理独审未发现可行动问题；这些本地结果不替代新macOS CI。
+
+### Linux Chrome 的真实 Unix socket 路径上限
+
+Web job **105947074089** 的原artifact **10589054494**（7,573,098 B，SHA256 `8e5781e487c30d04d25e8b48c43f4ad3809ad4da8aa8caf8a0b3db0f8c5d0ca6`）已下载，16项runtime及3项顶层摘要均从原件重新计算。目录静态检查通过后，Chrome以 **-6** 退出，原fatal日志明确记录 **135字节** `SingletonSocket` 路径过长；尚未进入CDP和boot，ZIP验收未到。原HTTP/浏览器清理完整，无超时或强杀。原stderr SHA256为 `ac1e18f809c8abcab37cdc902d248a3942a9c4d8c0a1382a840f6c602d0603d8`，详见 `u22-hosted-fd5b426b/web-audit-01.md/json`。
+
+修复仅给POSIX Chrome的TMP/TEMP/TMPDIR分配canonical `/tmp` 下的唯一短目录，macOS先解析已知 `/tmp` 别名。HOME、profile、日志、控制文件和HTTP/Node probe的环境仍在原attempt。新目录要求本用户所有、0700权限，绑定设备/inode/UID/mode并持有目录描述符；只有owned浏览器确认完整退出后才按描述符清理。目录或所有者改变、进程退出未确认时保留目录并失败。没有弱化Chrome安全参数、超时、PID/端口归属或包字节验证。
+
+真实WSL AF_UNIX控制证明107字节可绑定、108字节拒绝。原控制器给出的200字节路径导致真实RED；修复后短路径GREEN。完整Web控制器Windows **27/27**、WSL **30/30**通过，0跳过，独立只读审查无可行动发现。生产文件冻结SHA256为 `d99eb8910bd77b46eb9feec796899a34ccc692dcb35c595f40ed268f4c8fd960`，测试为 `a8e55f2aada8694de5ed1013457baf329518d28b2972818850f2455196c7fb50`。
+
+首轮RED/GREEN的WSL临时目录后来不存在，删除来源未观察，内部process JSON未能补取；原始日志和collector失败保留。另一次冻结源码控制在同进程finally中立即复制全部原始证据：71字节socket绑定成功，真实HTTP PID449及socket子进程453均退出-15，无强杀/超时，三项cleanup通过，立即确认两PID已不存在。该控制刻意停在未实现的Chrome/CDP边界，不声称浏览器通过。完整证据见 `web-socket-handoff-01.md`、`web-socket-freeze-02.json` 和 `socket-independent-review-01.md/json`。
+
+本机WSL没有Chrome，未安装替代浏览器；真正Linux Chrome根/子路径及boot/offline仍等待后续托管验收。新候选需完成适用完整门禁及CI，PR25继续draft，U22/U23及U24–U29未完成范围保持开放，没有发布、部署或商店上传。
