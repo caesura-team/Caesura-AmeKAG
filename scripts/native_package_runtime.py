@@ -263,8 +263,17 @@ def _observe_loaded_modules(identity: ProcessIdentity, report: dict) -> dict:
         _need(result.returncode == 0, "macOS mapped-image observation failed")
         _need(fields[-1] == b"" and fields[0] == f"p{identity.pid}".encode("ascii"),
               "Invalid lsof field framing or process owner")
-        _need(all(line.startswith(b"n/") for line in fields[1:-1]), "Unknown lsof image field")
-        paths = [_lsof_path(line[1:]) for line in fields[1:-1]]
+        image_fields = fields[1:-1]
+        # Apple's lsof includes the file descriptor even with -Fn. Newer lsof
+        # may omit it. Accept complete txt/name pairs or name-only records;
+        # never silently discard unknown descriptors or broken boundaries.
+        if image_fields[:1] == [b"ftxt"]:
+            _need(len(image_fields) % 2 == 0 and
+                  all(line == b"ftxt" for line in image_fields[::2]),
+                  "Invalid lsof txt record framing")
+            image_fields = image_fields[1::2]
+        _need(all(line.startswith(b"n/") for line in image_fields), "Unknown lsof image field")
+        paths = [_lsof_path(line[1:]) for line in image_fields]
         report["decoded_paths"] = paths
     else:
         raise RuntimeContractError("Loaded module observation is NOT_VERIFIED on this host")

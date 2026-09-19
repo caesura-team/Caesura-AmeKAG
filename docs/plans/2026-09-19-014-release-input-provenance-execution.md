@@ -137,3 +137,6 @@ U22前一托管run35460659971的Linux最终TGZ/AppImage原件及69项原始证�
 整合 U22 `58f3678d2fcdc737a91e16c422cf955977ff88e8`，U23 原薄 caller 精确恢复为原 HEAD 字节；共用 validate-engine.yml 只移植固定 Chrome 153 的 root 所有安装与原厂 setuid helper，并向两个既有 Mac 失败上传路径加入固定 observer JSON。保留浏览器沙箱、既有路径/摘要/身份判定及 9 required producer jobs、11 artifact roles、45 outputs；未新增发布行为。现有 ci_execution suite 16/16、零失败零跳过；五工作流 actionlint 1.7.7 退出 0（未启用 shellcheck/pyflakes），25 个冻结原件重算一致，独立增量审查无发现。证据 u23-next-gate-01/u22-58f3678d-integration-01；handoff SHA256 `da197980d00defe111913f6e6903efbeeb51dac84f86e7964a3b7563d3e1e694`，freeze SHA256 `3c3b8a1ce25a53976b50b3d70aa443ac2d3c46d414cbe0bc0d957f1b008453f2`。
 
 U22 前轮 run35471198493 已结束为 8 成功、2 失败、1 跳过，Web 实际浏览器退出 -6、No usable sandbox，Mac 未知 lsof 字段；不得改标为通过。新 run35473344618 的 Mac 测试仍失败，但新增诊断成功保留实际 stdout，已确认路径前的 `ftxt` 标记触发解析拒绝；修复及新托管验证尚未完成，Web 新沙箱运行也仍待结果。本次仅是 U23 本地工作流整合，完整候选门禁、托管 11 artifact 聚合、AE7 与服务端 required-check 验收继续未完成。
+
+
+整合U22后续候选fab91a127bef3004f63d8c6f51f707ac7785fdf5：Mac真实观察字段已支持严格ftxt/name记录对，并精确引入U27已独审的异步播放计时修复。冲突仅两个平台文档anchor；U23薄caller、reusable workflow、9/11/45来源合同均无改动。原U22 Python Windows62/WSL63与完整Web638通过是对应原冻结快照的局部证据；新U23完整候选和托管聚合仍待执行。旧run35473344618的Mac与Linux失败保留，后者导致Web最终包尚未执行新sandbox；不因整合代码将旧失败改标为通过。

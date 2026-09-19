@@ -410,8 +410,9 @@ class MacLsofFieldProtocolTests(unittest.TestCase):
         # expected Unicode is supplied separately by the actual filesystem.
         self.unicode_directory = br"\xe4\xbd\x9c\xe5\x93\x81 \xe8\xbe\x93\xe5\x87\xba"
 
-    def inspect(self, wire_paths, *, exit_code=0, loaded=False):
-        fields = [b"p1234"] + [b"n/lsof-fixture/" + path for path in wire_paths]
+    def inspect(self, wire_paths, *, exit_code=0, loaded=False, raw_fields=None):
+        fields = ([b"p1234"] + [b"n/lsof-fixture/" + path for path in wire_paths]
+                  if raw_fields is None else raw_fields)
         lines, nuls = self.root / "lines.bin", self.root / "nuls.bin"
         lines.write_bytes(b"\n".join(fields) + b"\n")
         nuls.write_bytes(b"\x00\n".join(fields) + b"\x00\n")
@@ -457,6 +458,57 @@ class MacLsofFieldProtocolTests(unittest.TestCase):
         self.assertEqual(observed["environment"].get("LC_ALL"), "C")
         self.assertEqual(observed["argv"][:5], ["-a", "-p", "1234", "-d", "txt"])
         self.assertEqual(observed["environment"]["PATH"], "/usr/bin:/bin:/usr/sbin")
+
+    def test_macos_txt_descriptors_identify_real_unicode_package_files(self):
+        # Hosted macOS run 35473344618 returned pPID, then repeated ftxt/nPATH.
+        names = [self.unicode_directory + b"/CaesuraAmeKAG",
+                 self.unicode_directory + b"/libSDL3.0.dylib"]
+        fields = [b"p1234"]
+        for name in names:
+            fields.extend([b"ftxt", b"n/lsof-fixture/" + name])
+        result = self.inspect([], raw_fields=fields)
+        self.assertEqual(result["status"], "VERIFIED")
+        self.assertEqual(result["required"][0]["resolved_path"], str(self.library))
+        self.assertEqual(result["required"][0]["sha256"], hashlib.sha256(self.library.read_bytes()).hexdigest())
+
+    def test_macos_txt_descriptors_preserve_foreign_image_rejection(self):
+        foreign = self.root / self.library.name
+        foreign.write_bytes(self.library.read_bytes())
+        with self.assertRaisesRegex(runtime.RuntimeContractError, "second source"):
+            self.inspect([], raw_fields=[b"p1234", b"ftxt",
+                b"n/lsof-fixture/" + self.unicode_directory + b"/libSDL3.0.dylib",
+                b"ftxt", b"n/lsof-fixture/libSDL3.0.dylib"])
+
+    def test_macos_txt_descriptors_reject_malformed_record_boundaries(self):
+        name = b"n/lsof-fixture/" + self.unicode_directory + b"/libSDL3.0.dylib"
+        malformed = ([b"ftxt"], [b"ftxt", b"ftxt", name],
+                     [b"ftxt", name, name], [name, b"ftxt", name],
+                     [b"ftxt", name, b"ftxt"], [b"ftxt", name, b"p9999"],
+                     [b"fcwd", name], [b"f0", name], [b"ftxt ", name],
+                     [b"ftxt", b"nrelative"], [b"ftxt", b""],
+                     [b"ftxt", name, b"fmem", name])
+        for fields in malformed:
+            with self.subTest(fields=fields), self.assertRaises(runtime.RuntimeContractError):
+                self.inspect([], raw_fields=[b"p1234", *fields])
+
+    def test_macos_txt_descriptors_do_not_bypass_path_decoding(self):
+        for malformed in (br"bad\q/image", br"bad\xQ1/image", b"ambiguous-^A/image"):
+            with self.subTest(path=malformed), self.assertRaises(runtime.RuntimeContractError):
+                self.inspect([], raw_fields=[b"p1234", b"ftxt",
+                    b"n/lsof-fixture/" + self.unicode_directory + b"/libSDL3.0.dylib",
+                    b"ftxt", b"n/lsof-fixture/" + malformed])
+
+    def test_macos_txt_descriptors_retain_original_failure_bytes(self):
+        fields = [b"p1234", b"ftxt",
+                  b"n/lsof-fixture/" + self.unicode_directory + b"/libSDL3.0.dylib"]
+        with self.assertRaises(runtime._ObservationError) as raised:
+            self.inspect([], raw_fields=fields, exit_code=1, loaded=True)
+        observation = raised.exception.observations["loaded_modules"]
+        self.assertIn("observation failed", observation["error"])
+        self.assertEqual(observation["status"], "NOT_VERIFIED")
+        raw = b"\n".join(fields) + b"\n"
+        self.assertEqual(base64.b64decode(observation["observer"]["stdout"]["base64"], validate=True), raw)
+        self.assertEqual(observation["observer"]["stdout"]["sha256"], hashlib.sha256(raw).hexdigest())
 
     def test_foreign_and_mixed_same_name_images_remain_rejected(self):
         foreign = self.root / self.library.name

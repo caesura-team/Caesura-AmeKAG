@@ -9,11 +9,12 @@
 //   3. a large synthetic scene (1000+ commands).
 // Assertion: the bundle path is no more than 20% slower (>= 0.8x token
 // dispatch throughput). Interleaved runs cancel warmup/drift bias.
-import { describe, it, expect, beforeAll } from "vitest"
+import { describe, it, expect, beforeAll, afterAll } from "vitest"
 import { readFileSync, existsSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import { dirname, join } from "node:path"
 import { createPlayer } from "./bridge.js"
+import { dualMedianMs } from "./benchmark-timing.mjs"
 const here = dirname(fileURLToPath(import.meta.url))
 const rootDir = join(here, "..")
 const scriptsDir = join(rootDir, "scripts")
@@ -40,6 +41,7 @@ beforeAll(async () => {
     capabilities: JSON.parse(readFileSync(join(here, '../demo/caesura.project.json'), 'utf8')).capabilities,
   })
 })
+afterAll(async () => { await player?.dispose() })
 const NLx = String.fromCharCode(10)
 const Q = String.fromCharCode(34) // double-quote
 async function bakeBundle(scenes) {
@@ -61,17 +63,6 @@ async function lastTokenIndex() {
   await player.lua.doString("_G.__LT = _G.__LAST_CTX and _G.__LAST_CTX.token_index or 0")
   return Number(player.lua.global.get("__LT")) || 0
 }
-/** Alternate fnA/fnB for N+ reps after one warmup rep each; return medians. */
-function dualMedianMs(fnA, fnB, reps) {
-  fnA(); fnB() // warmup
-  const a = [], b = []
-  for (let i = 0; i < reps; i++) {
-    let t0 = process.hrtime.bigint(); fnA(); a.push(Number(process.hrtime.bigint() - t0) / 1e6)
-    t0 = process.hrtime.bigint(); fnB(); b.push(Number(process.hrtime.bigint() - t0) / 1e6)
-  }
-  a.sort((x, y) => x - y); b.sort((x, y) => x - y)
-  return { srcMs: a[Math.floor(a.length / 2)], bndMs: b[Math.floor(b.length / 2)] }
-}
 function syntheticScene(pages, cmdsPerPage) {
   const out = []
   for (let p = 0; p < pages; p++) {
@@ -85,9 +76,9 @@ function syntheticScene(pages, cmdsPerPage) {
 }
 function runBoth(sceneKey, src, bundle, maxFrames) {
   const srcFn = () => { player.core.backlog.length = 0; player.core.events.length = 0;
-    void player.runScene(src, sceneKey, { maxFrames, autoClick: true }) }
+    return player.runScene(src, sceneKey, { maxFrames, autoClick: true }) }
   const bndFn = () => { player.core.backlog.length = 0; player.core.events.length = 0;
-    void player.runFromBundle(bundle, sceneKey, { maxFrames, autoClick: true }) }
+    return player.runFromBundle(bundle, sceneKey, { maxFrames, autoClick: true }) }
   return { srcFn, bndFn }
 }
 
@@ -99,9 +90,9 @@ describe("bundle vs source performance (runFromBundle vs runScene)", () => {
     const src = "[ch name=\"C\" text=\"hi\"]\n[p]\n[ch name=\"C\" text=\"bye\"]\n[p]\n[end]"
     const bundle = await bakeBundle({ [key]: src })
     const reps = 10
-    const { srcMs, bndMs } = dualMedianMs(
-      (() => { player.core.backlog.length = 0; void player.runScene(src, key, { maxFrames: 100000, autoClick: true }) }),
-      (() => { player.core.backlog.length = 0; void player.runFromBundle(bundle, key, { maxFrames: 100000, autoClick: true }) }),
+    const { srcMs, bndMs } = await dualMedianMs(
+      (() => { player.core.backlog.length = 0; return player.runScene(src, key, { maxFrames: 100000, autoClick: true }) }),
+      (() => { player.core.backlog.length = 0; return player.runFromBundle(bundle, key, { maxFrames: 100000, autoClick: true }) }),
       reps)
     // eslint-disable-next-line no-console
     console.log("[perf] tiny  source median=" + srcMs.toFixed(1) + "ms   bundle median=" + bndMs.toFixed(1) + "ms")
@@ -117,13 +108,13 @@ describe("bundle vs source performance (runFromBundle vs runScene)", () => {
     expect(bundle.scenes[key]).toBeTruthy()
     const reps = 6
     const { srcFn, bndFn } = runBoth(key, src, bundle, 1000000)
-    const { srcMs, bndMs } = dualMedianMs(srcFn, bndFn, reps)
+    const { srcMs, bndMs } = await dualMedianMs(srcFn, bndFn, reps)
     // tokens are identical across paths (same scene); count from final ctx
     const tokens = await lastTokenIndex()
     const srcRate = tokens / Math.max(srcMs, 0.001)
     const bndRate = tokens / Math.max(bndMs, 0.001)
     // eslint-disable-next-line no-console
-    console.log("[perf] story.ks  source median=" + srcMs.toFixed(1) + "ms  bundle median=" + bndMs.toFixed(1) + "ms  (" + tokens + " tok)  ratios " + srcRate.toFixed(0) + " vs " + bndRate.toFixed(0) + " tok/s")
+    console.log("[perf] story.ks  source median=" + srcMs.toFixed(1) + "ms  bundle median=" + bndMs.toFixed(1) + "ms  (" + tokens + " tok)  rates " + srcRate.toFixed(3) + " vs " + bndRate.toFixed(3) + " tok/ms")
     const ratio = bndRate / srcRate
     // eslint-disable-next-line no-console
     console.log("[perf] story.ks  bundle/source throughput ratio = " + ratio.toFixed(3) + " (must be >= 0.8)")
@@ -138,13 +129,13 @@ describe("bundle vs source performance (runFromBundle vs runScene)", () => {
     expect(bundle.scenes[key]).toBeTruthy()
     const reps = 6
     const { srcFn, bndFn } = runBoth(key, src, bundle, 2000000)
-    const { srcMs, bndMs } = dualMedianMs(srcFn, bndFn, reps)
+    const { srcMs, bndMs } = await dualMedianMs(srcFn, bndFn, reps)
     const tokens = await lastTokenIndex()
     expect(tokens, "synthetic scene should have 1000+ tokens").toBeGreaterThan(1000)
     const srcRate = tokens / Math.max(srcMs, 0.001)
     const bndRate = tokens / Math.max(bndMs, 0.001)
     // eslint-disable-next-line no-console
-    console.log("[perf] big(1400+) source median=" + srcMs.toFixed(1) + "ms  bundle median=" + bndMs.toFixed(1) + "ms  (" + tokens + " tok)  ratios " + srcRate.toFixed(0) + " vs " + bndRate.toFixed(0) + " tok/s")
+    console.log("[perf] big(1400+) source median=" + srcMs.toFixed(1) + "ms  bundle median=" + bndMs.toFixed(1) + "ms  (" + tokens + " tok)  rates " + srcRate.toFixed(3) + " vs " + bndRate.toFixed(3) + " tok/ms")
     const ratio = bndRate / srcRate
     // eslint-disable-next-line no-console
     console.log("[perf] big(1400+) bundle/source throughput ratio = " + ratio.toFixed(3) + " (must be >= 0.8)")
