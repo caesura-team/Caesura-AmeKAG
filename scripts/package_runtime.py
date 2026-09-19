@@ -408,26 +408,43 @@ def _exec_file_identity(path: Path) -> dict:
 
 
 def _exec_contract(command, expected, observation_timeout, timeout):
+    launch = Path(command[0])
+    controller = None
     if expected is None:
-        return None
+        if sys.platform != "darwin" or launch != _executable(sys.executable):
+            return None
+        # CPython's macOS framework bin/python stub uses POSIX_SPAWN_SETEXEC
+        # to enter Python.app, while sys.executable deliberately names the
+        # stub. Bind only our exact current entry point to the OS-observed
+        # image of this controller. Never infer another interpreter from a
+        # basename, framework layout, PATH, or a child's self-report.
+        controller = process_identity(os.getpid())
+        final = _executable(controller.executable)
+        if final == launch:
+            return None
     if not (sys.platform.startswith("linux") or sys.platform == "darwin"):
         raise RuntimeContractError("Final executable mapping requires an actual POSIX host")
     if (isinstance(observation_timeout, bool) or not math.isfinite(observation_timeout)
             or observation_timeout <= 0):
         raise RuntimeContractError("Exec observation timeout must be positive and finite")
-    launch, final = Path(command[0]), _executable(expected)
     before = _exec_file_identity(launch)
-    with launch.open("rb") as stream:
-        line = stream.readline(4096)
-    match = re.fullmatch(rb"#![ \t]*(/[^\s]+)[ \t]*\r?\n", line)
-    if not match:
-        raise RuntimeContractError("Exec mapping requires an explicit single shebang interpreter without dispatcher arguments")
-    interpreter = _executable(os.fsdecode(match[1]))
-    if final in (launch, interpreter):
-        raise RuntimeContractError("The final executable must differ from its launch script and interpreter")
+    if controller is None:
+        final = _executable(expected)
+        with launch.open("rb") as stream:
+            line = stream.readline(4096)
+        match = re.fullmatch(rb"#![ \t]*(/[^\s]+)[ \t]*\r?\n", line)
+        if not match:
+            raise RuntimeContractError("Exec mapping requires an explicit single shebang interpreter without dispatcher arguments")
+        interpreter = _executable(os.fsdecode(match[1]))
+        if final in (launch, interpreter):
+            raise RuntimeContractError("The final executable must differ from its launch script and interpreter")
+    else:
+        interpreter = launch
     contract = {"launcher": before, "interpreter": _exec_file_identity(interpreter),
                 "final_executable": _exec_file_identity(final),
                 "observation_timeout": min(observation_timeout, timeout)}
+    if controller is not None:
+        contract.update(kind="macos-current-python", controller_process=asdict(controller))
     _check_exec_files(contract)
     return contract
 
@@ -448,6 +465,9 @@ def _wait_for_final_executable(process, contract, transition):
     transition.update(child_pid=process.pid, observations=[], status="OBSERVING")
     while time.monotonic() < deadline:
         if process.poll() is not None:
+            if contract.get("kind") == "macos-current-python":
+                transition["status"] = "EXITED_BEFORE_VERIFICATION"
+                return None
             raise RuntimeContractError("Launch child exited before its final executable was observed")
         try:
             identity = process_identity(process.pid)
@@ -456,6 +476,9 @@ def _wait_for_final_executable(process, contract, transition):
             time.sleep(0.01)
             continue
         if process.poll() is not None:
+            if contract.get("kind") == "macos-current-python":
+                transition["status"] = "EXITED_BEFORE_VERIFICATION"
+                return None
             raise RuntimeContractError("Launch child exited during final executable observation")
         observed_creation = (identity.pid, identity.created, identity.source)
         if creation is None:
@@ -503,8 +526,13 @@ def _runtime_launcher(request_path: Path) -> int:
                 identity = process_identity(process.pid)
                 if Path(identity.executable) != Path(request["argv"][0]):
                     raise RuntimeContractError("Started process executable differs from explicit command")
-            result["process"] = asdict(identity)
-            _write_json(identity_path, asdict(identity))
+            if identity is not None:
+                result["process"] = asdict(identity)
+                _write_json(identity_path, asdict(identity))
+            else:
+                # As for a fast directly launched command, retain the real
+                # exit but do not invent a live process identity/readiness.
+                result["identity_error"] = "Python exited before its final image could be verified"
         except RuntimeContractError as error:
             # A command may legitimately finish before observation. Its exit
             # remains useful, but no process identity/readiness is invented.
@@ -515,10 +543,17 @@ def _runtime_launcher(request_path: Path) -> int:
             if contract is not None:
                 try:
                     current = process_identity(process.pid)
-                except RuntimeContractError:
-                    if process.poll() is not None:
-                        break
-                    raise
+                except RuntimeContractError as error:
+                    # The executable mapping can disappear before poll sees
+                    # the child exit. Only a wait on this retained Popen child
+                    # can prove exit; query failure alone is never proof.
+                    try:
+                        exit_code = process.wait(timeout=1)
+                    except subprocess.TimeoutExpired:
+                        raise error
+                    result["exit_observation"] = dict(source="retained-child-wait",
+                        identity_error=str(error), wait_exit_code=exit_code)
+                    break
                 if current != identity:
                     raise RuntimeContractError("Verified final executable changed while the owned child was running")
             if stop_path is not None and (stop_path.exists() or stop_path.is_symlink()):
@@ -583,6 +618,10 @@ def run_runtime_command(argv: Sequence[str], cwd: str | Path, env: Mapping[str, 
     observes the same retained child's creation identity across exec, and publishes
     process.json only after two matching observations of the final image. It never
     follows a spawned child PID or accepts an unobserved early zero exit.
+    The current macOS Python entry point also locks its controller's OS image
+    and waits across the framework stub's exec before publishing readiness.
+    If that Python command exits too early, only its exit is retained; no live
+    identity or verified exec transition is claimed.
     """
     from validation_process import run_owned_command
     command = list(argv)

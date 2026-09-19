@@ -423,7 +423,6 @@ if(Python3_EXECUTABLE)
         RESOURCE_LOCK "global-singletons"
         FIXTURES_REQUIRED caesura-test-assets
         PASS_REGULAR_EXPRESSION "ALL HEADLESS HTTP SMOKE TESTS PASSED"
-        SKIP_RETURN_CODE 77
         TIMEOUT 90
         WORKING_DIRECTORY "$<TARGET_FILE_DIR:CaesuraAmeKAG>"
     )

@@ -8,14 +8,17 @@ from __future__ import annotations
 
 import importlib.util
 import hashlib
+import http.server
 import json
 import os
 from pathlib import Path
 import shlex
 import shutil
 import socket
+import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from unittest.mock import patch
@@ -29,6 +32,10 @@ if MODULE.is_file():
     spec.loader.exec_module(runtime)
 else:
     runtime = None
+
+# Native fixtures execute the actual current OS image, including framework Python
+# hosts where sys.executable is only an exec launcher. No PATH lookup is involved.
+FIXTURE_PYTHON = runtime.process_identity(os.getpid()).executable if runtime else sys.executable
 
 ENGINE_FIXTURE = r'''
 import http.server, json, os, secrets, sys
@@ -61,7 +68,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 code = 401
         self.send_response(code); self.send_header('Content-Length', str(len(body))); self.end_headers()
         self.wfile.write(body)
-http.server.HTTPServer(('127.0.0.1', int(sys.argv[-1])), Handler).serve_forever()
+http.server.HTTPServer(('127.0.0.1', int(os.environ['CAESURA_EDITOR_PORT'])), Handler).serve_forever()
 '''
 
 CLI_FIXTURE = r'''
@@ -125,20 +132,44 @@ class NativePackageRuntimeTests(unittest.TestCase):
         self.config = {"schema":1,"sdl_linkage":"static","sdl_libraries":[],
                        "ffmpeg":False,"steam":False,"live2d":False}
 
-    def invoke(self, *, mode="", attempt=None, launch=None):
+    def invoke(self, *, mode="", attempt=None, launch=None, editor_port=None):
         self.assertIsNotNone(runtime, "Native package runtime controller is not implemented")
         (self.package / "fixture-mode.txt").write_text(mode)
         def native_boundary(executable, *args):
             if Path(executable).name == "AppRun":
                 return [str(executable), *args]
             if Path(executable).name in ("lua", "lua.exe"):
-                return [sys.executable, "-I", "-c", "print('Lua 5.4 synthetic protocol fixture')"]
-            return [sys.executable, "-I", str(self.engine_script), *args, str(self.port)]
-        with patch.object(runtime, "EDITOR_PORT", self.port), patch.object(runtime, "_native_argv", native_boundary):
+                return [FIXTURE_PYTHON, "-I", "-c", "print('Lua 5.4 synthetic protocol fixture')"]
+            return [FIXTURE_PYTHON, "-I", str(self.engine_script), *args]
+        with patch.object(runtime, "_native_argv", native_boundary):
             return runtime.run_native_package(self.package, self.config, attempt or self.root / "attempt",
-                                              python_executable=sys.executable,
+                                              python_executable=FIXTURE_PYTHON,
                                               command_timeout=12, readiness_timeout=1,
+                                              editor_port=editor_port,
                                               **({"launch_relative_path":launch} if launch is not None else {}))
+
+    def test_automatic_port_does_not_inherit_or_touch_an_unrelated_listener(self):
+        with socket.socket() as listener:
+            listener.bind(('127.0.0.1', self.port)); listener.listen()
+            with patch.dict(os.environ, {'CAESURA_EDITOR_PORT':str(self.port)}):
+                report = self.invoke(editor_port=None)
+            self.assertEqual(report['status'], 'RUNTIME_PASS', report)
+            self.assertEqual(len(report['editor_endpoints']), 2)
+            for endpoint in report['editor_endpoints']:
+                self.assertNotEqual(endpoint['port'], self.port)
+                self.assertEqual(endpoint['selection'], 'os_assigned')
+                self.assertEqual(endpoint['race_policy'], 'FAIL_ON_FOREIGN_OWNER')
+                self.assertFalse(runtime.loopback_listeners(endpoint['port']))
+            self.assertTrue(runtime.loopback_listeners(self.port))
+            for stage in report['stages'][:2]:
+                self.assertEqual(stage['commands'][0]['observations']['port'], stage['editor_endpoint']['port'])
+
+    def test_invalid_explicit_editor_port_fails_before_any_command(self):
+        for index, port in enumerate((True, 0, -1, 65536, '9876')):
+            with self.subTest(port=port):
+                report = self.invoke(editor_port=port, attempt=self.root/f'invalid-{index}')
+                self.assertEqual(report['status'], 'RUNTIME_FAIL')
+                self.assertFalse(report['stages'])
 
     def test_unapproved_launcher_relative_path_is_refused_without_start(self):
         report = self.invoke(launch="../AppRun")
@@ -155,11 +186,11 @@ class NativePackageRuntimeTests(unittest.TestCase):
             self.assertFalse(report["stages"])
     elif sys.platform.startswith("linux"):
         def install_apprun_fixture(self, *, change_directory=True):
-            shutil.copy2(Path(sys.executable).resolve(), self.package / self.engine_name)
+            shutil.copy2(Path(FIXTURE_PYTHON).resolve(), self.package / self.engine_name)
             text = "#!/bin/sh\nAPPDIR=\"$(CDPATH= cd -- \"$(dirname -- \"$0\")\" && pwd -P)\"\n"
             if change_directory:
                 text += 'cd "$APPDIR" || exit 1\n'
-            text += 'exec "$APPDIR/CaesuraAmeKAG" -I ' + shlex.quote(str(self.engine_script)) + ' "$@" ' + str(self.port) + "\n"
+            text += 'exec "$APPDIR/CaesuraAmeKAG" -I ' + shlex.quote(str(self.engine_script)) + ' "$@"\n'
             (self.package / "AppRun").write_text(text, encoding="utf-8")
             (self.package / "AppRun").chmod(0o755)
             # The actual final-image process waits for the controller's identity
@@ -192,7 +223,7 @@ class NativePackageRuntimeTests(unittest.TestCase):
             report = self.invoke(launch="AppRun")
             self.assertEqual(report["status"], "RUNTIME_FAIL", report)
             self.assertEqual(report["cleanup"], "COMPLETE", report)
-            self.assertFalse(runtime.loopback_listeners(self.port))
+            self.assert_editor_ports_closed(report)
 
     def test_missing_controller_is_red_then_protocol_success_preserves_source(self):
         report = self.invoke()
@@ -216,11 +247,32 @@ class NativePackageRuntimeTests(unittest.TestCase):
     def test_foreign_listener_is_preserved_and_no_command_starts(self):
         with socket.socket() as listener:
             listener.bind(("127.0.0.1", self.port)); listener.listen()
-            report = self.invoke()
+            report = self.invoke(editor_port=self.port)
             self.assertEqual(report["status"], "RUNTIME_FAIL")
             self.assertFalse(report["stages"])
             with socket.create_connection(("127.0.0.1", self.port), timeout=2):
                 accepted, _ = listener.accept(); accepted.close()
+
+    def test_listener_winning_release_race_is_not_contacted_or_terminated(self):
+        execute = runtime._execute
+        with socket.socket() as listener:
+            def take_port(*args, **kwargs):
+                listener.bind(('127.0.0.1', kwargs['editor_port']))
+                listener.listen()
+                return execute(*args, **kwargs)
+            with patch.object(runtime, '_execute', take_port):
+                report = self.invoke()
+            self.assertEqual(report['status'], 'RUNTIME_FAIL')
+            command = report['stages'][0]['commands'][0]
+            self.assertEqual(command['run']['owned_tree_cleanup'], 'COMPLETE')
+            self.assertTrue(runtime.loopback_listeners(listener.getsockname()[1]))
+            listener.settimeout(0.1)
+            with self.assertRaises(TimeoutError):
+                listener.accept()  # The controller never sent HTTP to this owner.
+
+    def assert_editor_ports_closed(self, report):
+        for endpoint in report.get('editor_endpoints', []):
+            self.assertFalse(runtime.loopback_listeners(endpoint['port']))
 
     def test_missing_packaged_lua_cannot_fall_back_to_host(self):
         (self.package / self.lua_name).unlink()
@@ -240,7 +292,7 @@ class NativePackageRuntimeTests(unittest.TestCase):
         report = self.invoke(mode="open-api")
         self.assertEqual(report["status"], "RUNTIME_FAIL")
         self.assertEqual(report["cleanup"], "COMPLETE")
-        self.assertFalse(runtime.loopback_listeners(self.port))
+        self.assert_editor_ports_closed(report)
 
     def test_editor_early_exit_is_not_readiness(self):
         report = self.invoke(mode="early-exit")
@@ -251,7 +303,7 @@ class NativePackageRuntimeTests(unittest.TestCase):
         report = self.invoke(mode="missing-token")
         self.assertEqual(report["status"], "RUNTIME_FAIL")
         self.assertEqual(report["cleanup"], "COMPLETE")
-        self.assertFalse(runtime.loopback_listeners(self.port))
+        self.assert_editor_ports_closed(report)
 
     def test_changed_original_file_in_runtime_copy_is_not_ignored(self):
         report = self.invoke(mode="mutate")
@@ -370,7 +422,7 @@ class NativePackageRuntimeTests(unittest.TestCase):
         identity = runtime.process_identity(os.getpid())
         report = runtime.observe_loaded_modules(identity)
         self.assertEqual(report["status"], "OBSERVED")
-        self.assertIn(str(Path(sys.executable).resolve()), report["paths"])
+        self.assertIn(str(Path(FIXTURE_PYTHON).resolve()), report["paths"])
 
     def test_file_presence_does_not_prove_required_library_loaded(self):
         (self.package / "unused-library.dll").write_bytes(b"present but never loaded")
@@ -399,9 +451,9 @@ class NativePackageRuntimeTests(unittest.TestCase):
         env = runtime.native_env(self.package, engine=self.package/self.engine_name,
                                  lua=self.package/self.lua_name, work=self.root,
                                  home=self.root, temp=self.root)
-        with patch.object(runtime, "EDITOR_PORT", self.port):
-            return runtime._execute(attempt, "child", [sys.executable, "-I", "-c", "import time; time.sleep(30)"],
-                                    self.root, env, timeout, 2, monitor=monitor, controlled=controlled)
+        return runtime._execute(attempt, "child", [FIXTURE_PYTHON, "-I", "-c", "import time; time.sleep(30)"],
+                                self.root, env, timeout, 2, monitor=monitor, controlled=controlled,
+                                editor_port=self.port if controlled else None)
 
     def test_actual_command_timeout_records_reaped_failure(self):
         report = self.execute_fixture(timeout=0.3)
@@ -418,6 +470,120 @@ class NativePackageRuntimeTests(unittest.TestCase):
         self.assertFalse(report["passed"])
         self.assertEqual(report["run"]["owned_tree_cleanup"], "COMPLETE")
         self.assertEqual(report["run"]["status"], "STOPPED")
+
+
+class HttpSmokeStartupTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix='caesura-http-smoke-contract-')
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name).resolve()
+
+    def invoke(self, *, port=None):
+        env = dict(os.environ)
+        env.pop('CAESURA_EDITOR_PORT', None)
+        if port is not None:
+            env['CAESURA_EDITOR_PORT'] = str(port)
+        # Actual Python exits nonzero for --editor. It is an executable failure
+        # fixture, not an Engine or GPU simulation.
+        return subprocess.run([FIXTURE_PYTHON, '-B', '-X', 'utf8', str(ROOT/'tests/headless_http_smoke.py'),
+            FIXTURE_PYTHON, '--output', str(self.root/'evidence')], env=env,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=15)
+
+    def test_non_gpu_startup_failure_is_fail_with_retained_stderr(self):
+        result = self.invoke()
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertNotIn(b'NO GPU', result.stdout + result.stderr)
+        self.assertRegex((self.root/'evidence/engine.stderr.log').read_bytes(), rb'(?i)unknown option:? --editor')
+        report = json.loads((self.root/'evidence/result.json').read_text(encoding='utf-8'))
+        self.assertEqual(report['status'], 'FAIL')
+        self.assertEqual(report['actual_exit_code'], 2)
+        self.assertFalse(report['forced_kill'])
+
+    def test_occupied_explicit_port_is_not_replaced_and_listener_survives(self):
+        with socket.socket() as listener:
+            listener.bind(('127.0.0.1', 0)); listener.listen()
+            port = listener.getsockname()[1]
+            result = self.invoke(port=port)
+            self.assertEqual(result.returncode, 1, result.stdout)
+            report = json.loads((self.root/'evidence/result.json').read_text(encoding='utf-8'))
+            self.assertEqual(report['requested_port'], port)
+            self.assertIsNone(report['process'])
+            self.assertTrue(runtime.loopback_listeners(port))
+
+    def test_error_response_is_read_and_closed_before_final_owner_check(self):
+        spec = importlib.util.spec_from_file_location('http_smoke_contract', ROOT/'tests/headless_http_smoke.py')
+        smoke = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(smoke)
+        body = b'{"error":"synthetic owned HTTP response"}'
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+            def do_GET(self):
+                self.send_response(int(self.path[1:]))
+                self.send_header('Content-Length', str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+        with http.server.HTTPServer(('127.0.0.1', 0), Handler) as server:
+            worker = threading.Thread(target=server.serve_forever, daemon=True)
+            worker.start()
+            smoke.port = server.server_address[1]
+            smoke.proc = smoke._ObservedEngine(runtime.process_identity(os.getpid()))
+            try:
+                for code in (400, 401, 500):
+                    with self.subTest(status=code):
+                        response = []
+                        observations = []
+                        def verify(identity, port):
+                            runtime.verify_owned_listener(identity, port)
+                            observations.append(response[0].closed if response else 'before')
+                        with patch.object(smoke, 'verify_owned_listener', verify):
+                            with smoke._open(f'http://127.0.0.1:{smoke.port}/{code}', timeout=2) as reply:
+                                response.append(reply)
+                                self.assertEqual(reply.status, code)
+                                self.assertEqual(reply.read(), body)
+                        self.assertEqual(observations, ['before', True])
+            finally:
+                server.shutdown()
+                worker.join(timeout=3)
+            self.assertFalse(worker.is_alive())
+
+    def test_redirect_does_not_contact_another_endpoint_or_forward_token(self):
+        spec = importlib.util.spec_from_file_location('http_smoke_redirect', ROOT/'tests/headless_http_smoke.py')
+        smoke = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(smoke)
+        received = []
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+            def do_GET(self):
+                if self.path == '/target':
+                    received.append(self.headers.get('Authorization'))
+                    self.send_response(200)
+                    body = b'{"status":"ok"}'
+                else:
+                    self.send_response(302)
+                    self.send_header('Location', f'http://127.0.0.1:{target.server_port}/target')
+                    body = b''
+                self.send_header('Content-Length', str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+        with http.server.HTTPServer(('127.0.0.1', 0), Handler) as target, \
+             http.server.HTTPServer(('127.0.0.1', 0), Handler) as origin:
+            workers = [threading.Thread(target=server.serve_forever, daemon=True) for server in (target, origin)]
+            for worker in workers:
+                worker.start()
+            smoke.port = origin.server_port
+            smoke.BASE = f'http://127.0.0.1:{smoke.port}'
+            smoke.proc = smoke._ObservedEngine(runtime.process_identity(os.getpid()))
+            try:
+                status, body = smoke.request('/api/ping')
+                self.assertEqual((status, received), (302, []))
+            finally:
+                for server in (target, origin):
+                    server.shutdown()
+                for worker in workers:
+                    worker.join(timeout=3)
+            self.assertTrue(all(not worker.is_alive() for worker in workers))
 
 
 if __name__ == "__main__":

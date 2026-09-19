@@ -20,6 +20,7 @@ from pathlib import Path
 import re
 import secrets
 import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -30,9 +31,6 @@ from package_runtime import (ProcessIdentity, RuntimeContractError, native_env,
                              verify_owned_listener, run_runtime_command)
 from package_verification import inspect_inventory, _sha256_file, _reparse
 from verify_native_package import _configuration
-
-EDITOR_PORT = 9876  # The current Engine CLI has no configurable editor port.
-
 
 class _ObservationError(RuntimeContractError):
     def __init__(self, message, observations):
@@ -51,6 +49,34 @@ def _sha(path: Path) -> str:
 def _need(condition, message):
     if not condition:
         raise RuntimeContractError(message)
+
+
+def _reserve_editor_port(requested=None):
+    """Reserve one usable loopback port; caller closes only this reservation.
+
+    None asks the OS for a port. Explicit ports never silently fall back. Engine
+    accepts the selected value through CAESURA_EDITOR_PORT. Releasing the socket
+    before Engine binds leaves a race: subsequent PID/creation/listener checks
+    must fail on a foreign owner, never adopt or terminate it.
+    """
+    _need(requested is None or (type(requested) is int and 1 <= requested <= 65535),
+          "Explicit editor port must be an integer in 1..65535")
+    if requested is not None:
+        _need(not loopback_listeners(requested), f"Editor port {requested} is already owned")
+    reservation = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        if os.name == "nt":
+            reservation.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        reservation.bind(("127.0.0.1", requested if requested is not None else 0))
+        selected = reservation.getsockname()[1]
+        _need(not loopback_listeners(selected), f"Editor port {selected} has another loopback owner")
+        reservation.listen(1)
+        return reservation, {"port":selected, "requested_port":requested,
+            "selection":"os_assigned" if requested is None else "explicit",
+            "address":"127.0.0.1", "race_policy":"FAIL_ON_FOREIGN_OWNER"}
+    except BaseException:
+        reservation.close()
+        raise
 
 
 def _file(path: Path) -> dict:
@@ -173,9 +199,9 @@ def _loaded_libraries(identity: ProcessIdentity, package: Path, required: list[s
         raise _ObservationError("Required loaded-library provenance is NOT_VERIFIED", observed) from error
 
 
-def _http(identity: ProcessIdentity, path: str, token: str | None = None) -> tuple[int, bytes]:
-    verify_owned_listener(identity, EDITOR_PORT)
-    connection = http.client.HTTPConnection("127.0.0.1", EDITOR_PORT, timeout=3)
+def _http(identity: ProcessIdentity, port: int, path: str, token: str | None = None) -> tuple[int, bytes]:
+    verify_owned_listener(identity, port)
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=3)
     try:
         headers = {"Authorization":"Bearer " + token} if token is not None else {}
         connection.request("GET", path, headers=headers)
@@ -185,18 +211,18 @@ def _http(identity: ProcessIdentity, path: str, token: str | None = None) -> tup
         code = response.status
     finally:
         connection.close()
-    verify_owned_listener(identity, EDITOR_PORT)
+    verify_owned_listener(identity, port)
     return code, body
 
 
-def _editor_protocol(identity, package, token, deadline, libraries) -> dict:
+def _editor_protocol(identity, port, package, token, deadline, libraries) -> dict:
     token_file = package / ".caesura-editor-token"
     generated = token is None
     while True:
         _need(process_identity(identity.pid) == identity, "Editor exited before readiness")
-        rows = loopback_listeners(EDITOR_PORT)
+        rows = loopback_listeners(port)
         if rows:
-            verify_owned_listener(identity, EDITOR_PORT)  # A foreign owner fails immediately.
+            verify_owned_listener(identity, port)  # A foreign owner fails immediately.
         if generated and token is None and token_file.exists():
             _need(token_file.is_file() and not token_file.is_symlink(), "Generated token must be a regular file")
             raw = token_file.read_bytes()
@@ -208,20 +234,20 @@ def _editor_protocol(identity, package, token, deadline, libraries) -> dict:
         _need(time.monotonic() < deadline, "Editor did not publish owned readiness and its required token")
         time.sleep(0.02)
     expected = (package / "web-editor/dist/index.html").read_bytes()
-    code, body = _http(identity, "/", token)
+    code, body = _http(identity, port, "/", token)
     _need(code == 200 and body == expected and b"Caesura Web Editor" in body, "Authenticated editor HTML differs from this package")
-    plain_code, plain = _http(identity, "/")
+    plain_code, plain = _http(identity, port, "/")
     browser_mode = "public"
     if plain_code != 200 or plain != expected:
-        plain_code, plain = _http(identity, "/?token=" + quote(token, safe=""))
+        plain_code, plain = _http(identity, port, "/?token=" + quote(token, safe=""))
         browser_mode = "query_token"
     _need(plain_code == 200 and plain == expected, "Ordinary browser navigation cannot obtain packaged editor HTML")
-    ping_code, ping = _http(identity, "/api/ping", token)
+    ping_code, ping = _http(identity, port, "/api/ping", token)
     _need(ping_code == 200 and json.loads(ping).get("status") == "ok", "Authenticated ping is not ok")
-    denied, _ = _http(identity, "/api/ping")
+    denied, _ = _http(identity, port, "/api/ping")
     _need(denied == 401, "Unauthenticated editor API did not return 401")
     modules = _loaded_libraries(identity, package, libraries, deadline)
-    return {"html_status":code, "html_sha256":hashlib.sha256(body).hexdigest(),
+    return {"port":port, "html_status":code, "html_sha256":hashlib.sha256(body).hexdigest(),
             "browser_status":plain_code, "browser_mode":browser_mode,
             "ping_status":ping_code, "unauthenticated_status":denied,
             "token_source":"generated_file" if generated else "explicit_environment",
@@ -229,12 +255,15 @@ def _editor_protocol(identity, package, token, deadline, libraries) -> dict:
 
 
 def _execute(attempt, name, argv, cwd, env, timeout, readiness_timeout, *, monitor=None, controlled=False,
-             expected_final_executable=None) -> dict:
+             expected_final_executable=None, editor_port=None) -> dict:
     directory = attempt / "commands" / name
     directory.mkdir(parents=True)
     control = directory / "control"
     record = {"name":name, "argv":argv, "cwd":str(cwd), "executable":_file(Path(argv[0])),
               "passed":False, "errors":[], "run":None}
+    if controlled:
+        _need(type(editor_port) is int and 1 <= editor_port <= 65535, "Controlled editor needs its explicit port")
+        record["editor_port"] = editor_port
     options = {"stop_request":control / "stop" if controlled else None}
     if expected_final_executable is not None:
         record["expected_final_executable"] = _file(Path(expected_final_executable))
@@ -276,7 +305,7 @@ def _execute(attempt, name, argv, cwd, env, timeout, readiness_timeout, *, monit
                         record["run"] = json.loads((control / "run.json").read_text(encoding="utf-8"))
                 if controlled:
                     try:
-                        _need(not loopback_listeners(EDITOR_PORT), "Editor port remains occupied after owned shutdown")
+                        _need(not loopback_listeners(editor_port), "Editor port remains occupied after owned shutdown")
                         if identity:
                             try:
                                 current = process_identity(identity.pid)
@@ -356,15 +385,19 @@ def _copy_changes(before: dict, after: dict) -> dict:
 
 
 def run_native_package(package_root, required_configuration, attempt_dir, *, python_executable,
-                       command_timeout=120, readiness_timeout=45, launch_relative_path=None) -> dict:
+                       command_timeout=120, readiness_timeout=45, launch_relative_path=None,
+                       editor_port=None) -> dict:
     report = {"schema":"caesura.native-package-runtime.v1", "status":"RUNTIME_FAIL",
               "runtime":"NOT_RUN", "source_stable":False, "runtime_copy_stable":False,
               "evidence_stable":False, "cleanup":"NOT_STARTED", "stages":[], "errors":[]}
     attempt = package = copy = before = copied = game = game_before = None
+    reservation = None
     try:
         for value in (command_timeout, readiness_timeout):
             _need(not isinstance(value, bool) and math.isfinite(value) and value > 0, "Timeouts must be positive finite numbers")
         platform = _host_platform()
+        _need(editor_port is None or (type(editor_port) is int and 1 <= editor_port <= 65535),
+              "Explicit editor port must be an integer in 1..65535")
         _need(launch_relative_path in (None, "AppRun"), "Only an explicit packaged AppRun launcher is supported")
         _need(launch_relative_path is None or platform in ("linux", "macos"), "AppRun requires an actual POSIX host")
         configuration, libraries = _configuration(platform, required_configuration)
@@ -412,7 +445,8 @@ def run_native_package(package_root, required_configuration, attempt_dir, *, pyt
                 "container_identity":"BOUND_BY_CALLER", "fuse_mount_runtime":"NOT_RUN",
                 "apprun_stages":["editor_explicit_token", "editor_generated_token", "engine_frames"],
                 "author_cli":"PACKAGED_CLI_COMMAND", "created_game":"ACTUAL_CLI_OUTPUT_ENGINE"}
-        _need(not loopback_listeners(EDITOR_PORT), "Editor port 9876 is already owned; refusing to start a command")
+        reservation, endpoint = _reserve_editor_port(editor_port)
+        report["editor_endpoints"] = []
         report.update(runtime="RUNNING", cleanup="COMPLETE")
 
         def stage(title):
@@ -427,8 +461,15 @@ def run_native_package(package_root, required_configuration, attempt_dir, *, pyt
             return value
 
         for generated in (False, True):
+            if reservation is None:
+                # A completed HTTP session may leave TIME_WAIT entries. Let
+                # the OS choose a fresh usable port for each default session;
+                # explicit ports retain strict no-fallback behavior.
+                reservation, endpoint = _reserve_editor_port(editor_port)
             current = stage("editor_generated_token" if generated else "editor_explicit_token")
-            _need(not loopback_listeners(EDITOR_PORT), "Editor port is occupied before a new session")
+            port = endpoint["port"]
+            current["editor_endpoint"] = endpoint
+            report["editor_endpoints"].append(dict(endpoint, stage=current["name"]))
             token = None if generated else secrets.token_hex(32)
             editor_env = dict(env)
             if token is not None:
@@ -436,8 +477,13 @@ def run_native_package(package_root, required_configuration, attempt_dir, *, pyt
             else:
                 _need(not (copy / ".caesura-editor-token").exists(), "Generated-token session requires a fresh token file")
             editor_env["PWD"] = str(launch_cwd)
+            editor_env["CAESURA_EDITOR_PORT"] = str(port)
+            reservation.close()
+            reservation = None
+            _need(not loopback_listeners(port), "Editor port is occupied before a new session")
             value = command(current, current["name"], _native_argv(launcher, "--editor"), launch_cwd, editor_env,
-                            controlled=True, monitor=lambda identity, deadline: _editor_protocol(identity, copy, token, deadline, libraries),
+                            controlled=True, editor_port=port,
+                            monitor=lambda identity, deadline: _editor_protocol(identity, port, copy, token, deadline, libraries),
                             **launch_options)
             if generated:
                 _need("Generated editor token" in _log(attempt, value), "Generated-token startup marker was not logged")
@@ -514,6 +560,8 @@ def run_native_package(package_root, required_configuration, attempt_dir, *, pyt
         if report["stages"] and report["stages"][-1]["status"] == "RUNNING":
             report["stages"][-1]["status"] = "FAIL"
     finally:
+        if reservation is not None:
+            reservation.close()
         if package is not None and before is not None:
             try:
                 final = inspect_inventory(package)

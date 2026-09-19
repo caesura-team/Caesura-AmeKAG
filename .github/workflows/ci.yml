@@ -233,6 +233,10 @@ jobs:
           # parent diff and would misreport the tip as the evidence HEAD.
           fetch-depth: 0
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.2'
+
       - name: Install Dependencies
         run: |
           brew install cmake sdl3 freetype zstd openssl@3 pkg-config lua

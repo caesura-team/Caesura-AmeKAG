@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { createServer } from 'node:http'
 import { createHash } from 'node:crypto'
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -21,7 +21,7 @@ const invoke = args => new Promise((done, reject) => {
   const timer = setTimeout(() => { child.kill(); reject(new Error('Probe CLI did not terminate')) }, 12000)
   child.on('close', code => { clearTimeout(timer); done({ code, stdout, stderr }) })
 })
-const directory = t => { const path = mkdtempSync(join(tmpdir(), 'caesura-web-probe-')); t.after(() => rmSync(path, { recursive: true, force: true })); return path }
+const directory = t => { const path = realpathSync(mkdtempSync(join(tmpdir(), 'caesura-web-probe-'))); t.after(() => rmSync(path, { recursive: true, force: true })); return path }
 const argumentsFor = out => ['--url', 'http://127.0.0.1:12345/games/example/', '--cdp-url', 'http://127.0.0.1:12346', '--browser-pid', '4242', '--output', out]
 
 function packet(value) {
@@ -431,12 +431,21 @@ test('CDP control HTTP reaches Fetch-restricted ports and retains the separate W
     return error.cause?.message === 'bad port'
   })
   assert.equal(f.requests.length, 0, 'Fetch rejects the port before any TCP HTTP request')
+  // Undici's error type/message differs across Node versions. Capture the
+  // actual native cause on this runtime, then require the CLI to preserve it.
+  const websocketCause = await new Promise((done, reject) => {
+    const socket = new WebSocket(f.cdp.replace('http:', 'ws:') + '/devtools/browser/fixture')
+    const timer = setTimeout(() => { socket.close(); reject(new Error('Expected native WebSocket port rejection')) }, 3000)
+    socket.addEventListener('open', () => { clearTimeout(timer); socket.close(); reject(new Error('Restricted WebSocket unexpectedly connected')) }, { once: true })
+    socket.addEventListener('error', event => { clearTimeout(timer); done(event.error) }, { once: true })
+  })
+  assert.ok(websocketCause instanceof Error, 'native WebSocket must supply a diagnostic cause')
   const result = await invoke(fixtureArgs(out, f)), report = readReport(out, result)
   assert.notEqual(result.code, 0, 'the native WebSocket restriction must not be reported as a passing probe')
   assert.deepEqual(f.requests, ['/json/version'], JSON.stringify(report))
   assert.equal(report.browser_ws_url, f.cdp.replace('http:', 'ws:') + '/devtools/browser/fixture')
   assert.match(JSON.stringify(report.errors), /CDP WebSocket connection failed/)
-  assert.match(JSON.stringify(report.errors), /Caused by:.*Received network error or non-101 status code/)
+  assert.ok(report.errors.some(error => error.includes('Caused by: ' + String(websocketCause))), JSON.stringify(report.errors))
   assert.equal(report.status, 'PROBE_FAIL'); assert.equal(report.browser_pid_verified, false)
   assert.equal(f.commands.length, 0)
 })

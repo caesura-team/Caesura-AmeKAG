@@ -103,3 +103,19 @@ attempt03 辅助 driver 在最后比较完整 inventory 字典时仍 FAIL，未�
 
 
 补正 CAESURA_LUA_BIN 为本工作区 Debug Lua、PYTHON 为固定 Python，并等本代理所有 AppImage/CLI 重负载结束后，完整 Web 串行第二轮 50 文件、626/626 通过，0 failed/0 skipped，157.32秒（u22-pwa/web-full-02.log）。没有改变性能用例或阈值，也不由单次通过推断正式U27长跑/多进程基线已完成。U22现在进入候选源码冻结、完整 Debug/C++/Lua/CTest 与托管跨平台最终包门禁阶段；上述第一轮失败和真实包诊断结果保持各自范围。
+
+## 首个干净候选的门禁失败与修复（2026-09-19）
+
+候选00944056086e6e2ffa54047a2cdc988b5bf37eae已推送至草稿PR #25，并请求TaotianZhufang审查。完整windows-debug执行4d6e4103-1f9b-41e5-a0b9-961ff595bc7f在12:06:43–12:18:30 UTC运行，源码/夹具前后稳定；全量Debug构建、C++1404/1404（402737断言、0失败0跳过）、Lua主147/147和隔离56/56通过。CTest实际发现45项，43通过、HTTP及AI两项跳过。profile仅允许预先声明的AI跳过，因此collector及严格verifier结果均FAIL；执行器exit0不能替代门禁结论。原始run.json、ctest.xml和验证日志保留在u22-foundation/candidate-00944056-01等目录，未删改首次记录。
+
+受控真实复现确认HTTP失败由固定9876落入Windows保留端口9868–9967导致。PID5800启动后自然退出1，stderr记录socket error 10013；同一Debug引擎只改CAESURA_EDITOR_PORT=14784，PID30372即可由真实GPU窗口路径建立本轮拥有的listener并通过/api/ping，随后受控停止并确认端口关闭。此前smoke丢弃stdout/stderr且把任何早退非零都标为NO GPU，这一诊断错误不能继续作为跳过依据；证据见u22-http-skip-audit/real-repro-01。端口选择与启动失败归类正在修复。
+
+托管CI35441973534的首attempt全部结束：Windows Debug/Release在生成文档新鲜度失败（实际Lua源文件93，文档仍92）；Linux在事务测试复制的Web夹具缺少播放器声明的icon-192.png处失败；macOS的六组CTest失败包含系统/var别名、Framework Python启动器exec后的映像身份，以及未固定Node时内部WebSocket诊断文本变化。后续桌面/Web包job均未执行；三个Android/iOS静态或配置probe成功，不提升为最终包或设备运行证明。四份原始失败job日志均保留在u22-foundation/ci-35441973534-*.log。
+
+文档由原生成器重新生成；事务测试仅补复制真实192/512图标，不改原子提交与输出保护断言，本地同源RED为0test/1 setup error，修复后完整45/45通过。资产依赖测试复用相同fixture，仍需其实际执行结果。macOS路径问题用本机真实目录链接复现，三项定向测试修复前1失败1错误，规范化受控temp根后3通过；生产路径检查不变，显式链接拒绝负控保留。完整release static20、native static22、Web probe26项通过、无跳过。独立增量审查未发现可行动缺陷，见u22-offline-review/platform-review-01.md；macOS实际Framework进程和最终包门禁继续待修复与新托管执行。
+
+后续资产依赖完整18/18通过（u22-platform-fixes/asset-dependencies-full-01.log）；actionlint1.7.7复核三workflow通过。macOS Framework Python修复只接受精确当前sys.executable启动入口到控制者OS观测映像的映射，锁定双文件摘要、同PID/创建身份/身份来源与连续两次终态观察。短命Python保留真实退出码且process=null，不发布readiness；AppRun未达到终态仍拒绝。六项回归先失败后通过，Windows process24、WSL28、Windows Web controller24、WSL22全通过且零跳过，见u22-python-framework-fix/freeze-01.json。这些跨平台边界夹具不能代替真实macOS执行，下一托管候选仍必需。
+
+原生编辑器会话现在逐次由OS分配可用loopback端口，明确指定端口则不可回退；释放预留socket到引擎绑定之间仍有竞态，因此在发送请求前后继续检查本轮PID/创建时间与listener归属。HTTP smoke保留stdout/stderr、真实退出码和受控清理收据，启动失败直接FAIL；CTest仅移除该smoke的77跳过约定，AI的预声明可选跳过保持不变。独立真实双进程负控发现urllib自动重定向会转发测试token给外部listener，已禁止跟随重定向并保留原始3xx供断言拒绝；匿名401路径及响应关闭顺序也由实际HTTP回归覆盖。Windows原生套件28/28与自动/显式可用端口两组真实Debug HTTP各75/75通过，9876则在创建进程前明确拒绝10013；见u22-http-skip-audit/handoff-01.md与u22-offline-review/runtime-review-01/review-01.md。
+
+随后WSL原生集成26项有1项失败：AppRun已经达到正确终态映像，但子进程自然退出时/proc映像查询消失早于poll观察，造成退出0被误报启动失败。原native-wsl-final-02.log的25通过/1失败保留。确定性真实Popen屏障先红后绿，修复只在原保留子进程wait于一秒内证实退出时记录exit_observation与实际退出码；仍存活、超时或明确身份变化仍拒绝。新helper完整Windows27/27、WSL31/31通过；所需WSL原生集成重新26/26通过，真实Windows Debug HTTP再次75/75通过，受控停止实际exit1、无强杀、清理完整且无残留PID/listener。独立增量审查关闭此项；最终helper摘要f6498cb0d6b0a98809588d2ff9668d0655ac1144ee0c24e6a625bee4869c771a，证据u22-runtime-exit-race与u22-http-skip-audit/handoff-02.md。上述Windows28项结果对应旧helper，不冒称新helper全套；新候选全量门禁及真实托管Linux/macOS最终包仍待执行。

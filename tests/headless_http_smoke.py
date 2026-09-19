@@ -2,34 +2,70 @@
 # transport end-to-end (ping / eval / getState / breakpoint lifecycle /
 # continue / inspect reachability) plus the Live2D model-load route.
 import json
+import argparse
+from contextlib import contextmanager
+from dataclasses import asdict
+import hashlib
 import os
-import subprocess
+from pathlib import Path
+import re
 import sys
 import time
 import urllib.error
 import urllib.request
+import uuid
 
-exe = sys.argv[1] if len(sys.argv) > 1 else "CaesuraAmeKAG.exe"
-cwd = os.path.dirname(os.path.abspath(exe)) or "."
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
+from native_package_runtime import _execute, _reserve_editor_port
+from package_runtime import RuntimeContractError, process_identity, verify_owned_listener
 
-port = 9876
+exe = cwd = BASE = None
+port = proc = None
 # [Sprint 1 t4] The HTTP editor is default-deny: it now requires a bearer
 # token and generates one when none is configured. The smoke test supplies
 # its own token so it does not have to read the generated one back, and sends
 # it on every request.
 TOKEN = "headless-http-smoke-token"
-_env = dict(os.environ)
-_env["CAESURA_EDITOR_TOKEN"] = TOKEN
-proc = subprocess.Popen(
-    [exe, "--editor"],
-    stdout=subprocess.DEVNULL,
-    stderr=subprocess.DEVNULL,
-    cwd=cwd,
-    env=_env,
-)
-
 results = []
-BASE = "http://127.0.0.1:%d" % port
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        # Every observation is bound to the selected Engine listener. Do not
+        # forward even the disposable token to an unchecked redirect target.
+        return None
+
+
+_opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect())
+
+
+class _ObservedEngine:
+    def __init__(self, identity):
+        self.identity = identity
+
+    def poll(self):
+        # Only distinguishes live from unavailable. The owned runner records
+        # the real OS exit code; do not invent one from a failed observation.
+        try:
+            return None if process_identity(self.identity.pid) == self.identity else "identity changed"
+        except RuntimeContractError:
+            return "exited"
+
+
+@contextmanager
+def _open(request, timeout):
+    verify_owned_listener(proc.identity, port)
+    try:
+        try:
+            response = _opener.open(request, timeout=timeout)
+        except urllib.error.HTTPError as error:
+            # Error status/body belongs to the same owned response lifecycle.
+            response = error
+        with response:
+            yield response
+    finally:
+        verify_owned_listener(proc.identity, port)
 
 
 def _repo_root_for_import():
@@ -51,7 +87,7 @@ def _repo_root_for_import():
 
 
 def check(name, ok, detail=""):
-    results.append((name, ok))
+    results.append((name, bool(ok)))
     if not ok:
         print("FAIL", name, detail)
 
@@ -65,18 +101,12 @@ def request(path, data=None, timeout=30, headers=None):
         BASE + path, data=data, headers=hdrs,
     )
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        with _open(req, timeout=timeout) as r:
             body = r.read().decode("utf-8", errors="replace")
             try:
                 return r.status, json.loads(body)
             except Exception:
                 return r.status, {"raw": body[:200]}
-    except urllib.error.HTTPError as e:
-        body = e.read().decode("utf-8", errors="replace")
-        try:
-            return e.code, json.loads(body)
-        except Exception:
-            return e.code, {"raw": body[:200]}
     except Exception as e:
         return -1, {"error": str(e)}
 
@@ -91,29 +121,22 @@ def main():
             _probe = urllib.request.Request(
                 BASE + "/api/ping",
                 headers={"Authorization": "Bearer " + TOKEN})
-            with urllib.request.urlopen(_probe, timeout=1) as r:
+            with _open(_probe, timeout=1) as r:
                 if r.status == 200:
                     ready = True
                     break
+        except RuntimeContractError:
+            # No listener yet is normal startup; any observed foreign listener
+            # or changed process must not be retried or contacted.
+            from package_runtime import loopback_listeners
+            if loopback_listeners(port) or proc.poll() is not None:
+                raise
+            time.sleep(0.5)
         except Exception:
             time.sleep(0.5)
     check("server-ready", ready)
     if not ready:
-        # The editor needs a GPU window; on headless CI runners (no display,
-        # or SDL dummy video driver) bgfx init fails and the engine exits.
-        # That is an environment limitation, not an HTTP-route regression --
-        # the same routes are covered locally and by the stdio smoke. Skip
-        # with ctest SKIP_RETURN_CODE (77) instead of failing the pipeline.
-        # Skip only when the engine genuinely exited non-zero (GPU-less
-        # runners: bgfx init fails, process exits). If the engine is still
-        # alive but the server never became ready, that is a real route or
-        # startup regression and must fail, not skip. A single poll() call
-        # avoids a TOCTOU between two checks.
-        rc = proc.poll()
-        if rc is not None and rc != 0:
-            print("HTTP smoke: skipped (editor needs GPU, engine exited rc=%d)" % rc)
-            print("HTTP SMOKE SKIPPED: NO GPU")
-            sys.exit(77)
+        print("HTTP smoke: editor startup did not provide an owned HTTP endpoint; see retained Engine logs")
         finish(1)
 
     st, resp = request("/api/ping")
@@ -403,11 +426,9 @@ def main():
     _anon = urllib.request.Request(BASE + "/api/status",
                                    headers={"Content-Type": "application/json"})
     try:
-        with urllib.request.urlopen(_anon, timeout=10) as r:
+        with _open(_anon, timeout=10) as r:
             _anon_status = r.status
-    except urllib.error.HTTPError as e:
-        _anon_status = e.code
-        e.read()
+            r.read()
     except Exception:
         _anon_status = -1
     check("anonymous-request-rejected", _anon_status == 401, str(_anon_status))
@@ -658,19 +679,108 @@ def main():
 
 
 def finish(rc):
-    if proc.poll() is None:
-        proc.terminate()
+    # The owned runner publishes the real exit code and reaps its process tree.
+    raise SystemExit(rc)
+
+
+def run_smoke(executable, output=None):
+    global exe, cwd, BASE, port, proc
+    exe = str(Path(executable).resolve(strict=True))
+    cwd = str(Path(exe).parent)
+    results.clear()
+    output = Path(output) if output else Path(cwd) / "artifacts/validation" / ("http-smoke-" + uuid.uuid4().hex)
+    output = output.absolute()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.mkdir()  # Never overwrite evidence from an earlier attempt.
+    report = {"schema":"caesura.http-smoke.v1", "status":"FAIL", "requested_port":None,
+              "process":None, "actual_exit_code":None, "forced_kill":False,
+              "command":None, "checks":[], "errors":[]}
+    reservation = None
+    sources = [Path(exe), Path(__file__), ROOT / "scripts/native_package_runtime.py",
+               ROOT / "scripts/package_runtime.py", ROOT / "scripts/validation_process.py"]
+
+    def inputs():
+        return {str(path.resolve()):hashlib.sha256(path.read_bytes()).hexdigest() for path in sources}
+
+    try:
+        report["inputs_before"] = inputs()
+        raw_port = os.environ.get("CAESURA_EDITOR_PORT")
+        if raw_port is not None:
+            if not re.fullmatch(r"[0-9]{1,5}", raw_port):
+                raise RuntimeContractError("CAESURA_EDITOR_PORT must be an integer in 1..65535")
+            report["requested_port"] = int(raw_port)
+        reservation, endpoint = _reserve_editor_port(report["requested_port"])
+        report["editor_endpoint"] = endpoint
+        port = endpoint["port"]
+        BASE = "http://127.0.0.1:" + str(port)
+        environment = dict(os.environ, CAESURA_EDITOR_TOKEN=TOKEN, CAESURA_EDITOR_PORT=str(port))
+        smoke_exit = None
+
+        def exercise(identity, deadline):
+            nonlocal smoke_exit
+            global proc
+            proc = _ObservedEngine(identity)
+            report["process"] = asdict(identity)
+            try:
+                main()
+            except SystemExit as error:
+                smoke_exit = error.code
+            return {"port":port, "checks":list(results), "smoke_exit_code":smoke_exit}
+
+        reservation.close()
+        reservation = None
+        command = _execute(output, "http_smoke", [exe, "--editor"], Path(cwd), environment,
+                           82, 42, monitor=exercise, controlled=True, editor_port=port)
+        report["command"] = command
+        run = command.get("run") or {}
+        report.update(process=run.get("process"), actual_exit_code=run.get("actual_exit_code"),
+                      forced_kill=run.get("forced_kill", False))
+        report["errors"].extend(command["errors"])
+        if smoke_exit != 0 or not results or not all(ok for _, ok in results):
+            report["errors"].append("HTTP route checks did not complete successfully")
+    except Exception as error:
+        report["errors"].append(f"{type(error).__name__}: {error}")
+    finally:
+        if reservation is not None:
+            reservation.close()
+        report["checks"] = [{"name":name, "passed":ok} for name, ok in results]
         try:
-            proc.wait(timeout=5)
-        except Exception:
-            proc.kill()
-    passed = sum(1 for _, ok in results if ok)
-    total = len(results)
-    print("HTTP smoke: %d/%d passed" % (passed, total))
-    if rc == 0:
+            report["inputs_after"] = inputs()
+            report["inputs_stable"] = report.get("inputs_before") == report["inputs_after"]
+            if not report["inputs_stable"]:
+                report["errors"].append("Engine or smoke controller inputs changed during execution")
+        except OSError as error:
+            report["errors"].append(f"Cannot verify original inputs: {error}")
+        # Keep original owned-runner files, and convenient raw Engine log copies.
+        report["logs"] = {}
+        for channel in ("stdout", "stderr"):
+            raw = output / "commands/http_smoke" / (channel + ".log")
+            data = raw.read_bytes() if raw.is_file() else b""
+            path = output / ("engine." + channel + ".log")
+            path.write_bytes(data)
+            report["logs"][channel] = {"path":path.name, "sha256":hashlib.sha256(data).hexdigest(), "size":len(data)}
+        report["status"] = "FAIL" if report["errors"] else "PASS"
+        temporary = output / ".result.json.writing"
+        with temporary.open("x", encoding="utf-8") as stream:
+            json.dump(report, stream, ensure_ascii=False, indent=2)
+            stream.write("\n")
+        os.replace(temporary, output / "result.json")
+    print("HTTP smoke: %d/%d passed" % (sum(ok for _, ok in results), len(results)))
+    print("HTTP smoke evidence:", output / "result.json")
+    if report["status"] == "PASS":
         print("ALL HEADLESS HTTP SMOKE TESTS PASSED")
-    sys.exit(rc)
+        return 0
+    print("HTTP smoke failed:", "; ".join(report["errors"]))
+    for channel in ("stdout", "stderr"):
+        text = (output / ("engine." + channel + ".log")).read_bytes()[-8192:].decode("utf-8", errors="replace")
+        if text:
+            print("Engine " + channel + " (last 8192 bytes):\n" + text)
+    return 1
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Exercise real, owned Engine HTTP routes with retained startup evidence")
+    parser.add_argument("executable", nargs="?", default="CaesuraAmeKAG.exe")
+    parser.add_argument("--output", type=Path, help="New evidence directory; existing directories are refused")
+    args = parser.parse_args()
+    sys.exit(run_smoke(args.executable, args.output))
