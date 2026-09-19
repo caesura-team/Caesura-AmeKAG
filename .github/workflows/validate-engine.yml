@@ -826,7 +826,7 @@ jobs:
       run: |
         $python = (Get-Command python -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
         $cpack = (Get-Command cpack -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
-        & $python scripts/ci_package_lane.py native --platform windows --source-sha $env:SOURCE_SHA --work $env:PACKAGE_WORK --build "$pwd/build" --requirements "$pwd/build/package-requirements-Release.json" --python $python --cpack $cpack --github-output $env:GITHUB_OUTPUT
+        & $python scripts/ci_package_lane.py native --platform windows --audio-output software --source-sha $env:SOURCE_SHA --work $env:PACKAGE_WORK --build "$pwd/build" --requirements "$pwd/build/package-requirements-Release.json" --python $python --cpack $cpack --github-output $env:GITHUB_OUTPUT
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     - name: Recheck accepted bytes immediately before upload
       env:
@@ -986,7 +986,7 @@ jobs:
       id: package
       run: |
         xvfb-run -a -s "-screen 0 1280x720x24" python3 scripts/ci_package_lane.py native \
-          --platform linux --source-sha "$SOURCE_SHA" --work "$PACKAGE_WORK" \
+          --platform linux --audio-output software --source-sha "$SOURCE_SHA" --work "$PACKAGE_WORK" \
           --build "$PWD/build" --requirements "$PWD/build/package-requirements-Release.json" \
           --python "$(command -v python3)" --cpack "$(command -v cpack)" \
           --appimagetool "$RUNNER_TEMP/u22-appimage-tools/appimagetool" \
@@ -1126,7 +1126,7 @@ jobs:
       id: package
       run: |
         python3 scripts/ci_package_lane.py native \
-          --platform macos --source-sha "$SOURCE_SHA" --work "$PACKAGE_WORK" \
+          --platform macos --audio-output software --source-sha "$SOURCE_SHA" --work "$PACKAGE_WORK" \
           --build "$PWD/build" --requirements "$PWD/build/package-requirements-Release.json" \
           --python "$(command -v python3)" --cpack "$(command -v cpack)" --hdiutil /usr/bin/hdiutil \
           --github-output "$GITHUB_OUTPUT"

@@ -44,7 +44,7 @@
           "id": "cpp",
           "parser": "doctest",
           "required": true,
-          "min_discovered": 1408,
+          "min_discovered": 1414,
           "allowed_skips": [],
           "command": [
             "{cpp_binary}",
@@ -167,7 +167,7 @@
           "id": "ctest",
           "parser": "ctest-junit",
           "required": true,
-          "min_discovered": 54,
+          "min_discovered": 55,
           "allowed_skips": [
             "CaesuraHeadlessAiSmoke"
           ],
@@ -216,7 +216,7 @@
           "id": "cpp",
           "parser": "doctest",
           "required": true,
-          "min_discovered": 1408,
+          "min_discovered": 1414,
           "allowed_skips": [],
           "command": [
             "{cpp_binary}",
@@ -339,7 +339,7 @@
           "id": "ctest",
           "parser": "ctest-junit",
           "required": true,
-          "min_discovered": 54,
+          "min_discovered": 55,
           "allowed_skips": [
             "CaesuraHeadlessAiSmoke"
           ],
@@ -388,7 +388,7 @@
           "id": "cpp",
           "parser": "doctest",
           "required": true,
-          "min_discovered": 1364,
+          "min_discovered": 1370,
           "allowed_skips": [],
           "command": [
             "{cpp_binary}",
@@ -511,7 +511,7 @@
           "id": "ctest",
           "parser": "ctest-junit",
           "required": true,
-          "min_discovered": 54,
+          "min_discovered": 55,
           "allowed_skips": [
             "CaesuraHeadlessAiSmoke"
           ],
@@ -560,7 +560,7 @@
           "id": "cpp",
           "parser": "doctest",
           "required": true,
-          "min_discovered": 1364,
+          "min_discovered": 1370,
           "allowed_skips": [],
           "command": [
             "{cpp_binary}",
@@ -683,7 +683,7 @@
           "id": "ctest",
           "parser": "ctest-junit",
           "required": true,
-          "min_discovered": 54,
+          "min_discovered": 55,
           "allowed_skips": [
             "CaesuraHeadlessAiSmoke"
           ],
@@ -732,7 +732,7 @@
           "id": "cpp",
           "parser": "doctest",
           "required": true,
-          "min_discovered": 1251,
+          "min_discovered": 1257,
           "allowed_skips": [],
           "command": [
             "{cpp_binary}",
@@ -855,7 +855,7 @@
           "id": "ctest",
           "parser": "ctest-junit",
           "required": true,
-          "min_discovered": 54,
+          "min_discovered": 55,
           "allowed_skips": [
             "CaesuraHeadlessAiSmoke"
           ],
@@ -904,7 +904,7 @@
           "id": "cpp",
           "parser": "doctest",
           "required": true,
-          "min_discovered": 1251,
+          "min_discovered": 1257,
           "allowed_skips": [],
           "command": [
             "{cpp_binary}",
@@ -1027,7 +1027,7 @@
           "id": "ctest",
           "parser": "ctest-junit",
           "required": true,
-          "min_discovered": 54,
+          "min_discovered": 55,
           "allowed_skips": [
             "CaesuraHeadlessAiSmoke"
           ],
