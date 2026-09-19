@@ -114,19 +114,19 @@ bool archivePublisherKeyPath(int argc, char* argv[], int optionIndex,
     }
 }
 
-std::string archiveKeyPathLabel(const std::filesystem::path& path) {
+std::string nativePathLabel(const std::filesystem::path& path) {
     try {
         const auto utf8 = path.u8string();
         return {reinterpret_cast<const char*>(utf8.data()), utf8.size()};
     } catch (const std::exception&) {
         // A diagnostic conversion must not prevent opening a valid native path.
-        return "<host-selected path>";
+        return "<native path>";
     }
 }
 
 bool readArchivePublisherKey(const std::filesystem::path& keyPath,
                              Caesura::carc::ArchivePublicKey& key) {
-    const std::string pathLabel = archiveKeyPathLabel(keyPath);
+    const std::string pathLabel = nativePathLabel(keyPath);
     try {
         std::error_code ec;
         if (!std::filesystem::is_regular_file(keyPath, ec)) {
@@ -1356,7 +1356,9 @@ extern "C" int main(int argc, char* argv[]) {
         std::error_code ec;
         fs::current_path(target, ec);
         if (!ec) {
-            fprintf(stderr, "[main] Working directory: %s\n", target.string().c_str());
+            // path.string() uses the Windows ANSI code page and can throw for
+            // a valid native directory. Logging must not abort game startup.
+            fprintf(stderr, "[main] Working directory: %s\n", nativePathLabel(target).c_str());
         }
     }
 

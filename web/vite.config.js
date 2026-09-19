@@ -135,8 +135,10 @@ function devScriptsIndex() {
   }
 }
 
-export default defineConfig({
-  publicDir: '..',
+export default defineConfig(({ command }) => ({
+  // Production assets must be emitted by Vite or copied explicitly below;
+  // treating in-checkout node_modules as public leaves unresolved WASM URLs.
+  publicDir: command === 'build' ? false : '..',
   server: { port: 5174, host: '127.0.0.1' },
   base: './',
   build: {
@@ -146,4 +148,4 @@ export default defineConfig({
     assetsDir: 'web-assets',
   },
   plugins: [copyRuntimeDirs(), devScriptsIndex(), w7WasmPin(), pwaManifestLink()],
-})
+}))
