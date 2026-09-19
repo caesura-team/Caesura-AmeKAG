@@ -38,6 +38,17 @@ namespace {
 class CloudMockSteam final : public ISteamBackend {
 public:
     std::map<std::string, std::string> files;
+    // One-shot faults at the SDK I/O boundary. A rejected write does not
+    // modify that object; a short read copies and reports fewer actual bytes.
+    // Defaults leave every existing cloud-save test's transport unchanged.
+    int writesBeforeFailure = -1;
+    int writeFailureCount = 0;
+    int readsBeforeShortRead = -1;
+    int shortReadCount = 0;
+    std::string rejectedWriteName;
+    std::string rejectedDeleteName;
+    int deleteFailureCount = 0;
+    bool corruptNextWrite = false;
 
     bool init() override { return true; }
     void shutdown() override {}
@@ -56,15 +67,37 @@ public:
     bool storeStats() override { return true; }
     bool cloudWrite(const char* fileName, const void* data, int32_t size) override {
         if (!fileName || size < 0) return false;
+        if (rejectedWriteName == fileName) {
+            rejectedWriteName.clear();
+            ++writeFailureCount;
+            return false;
+        }
+        if (writesBeforeFailure == 0) {
+            writesBeforeFailure = -1;
+            ++writeFailureCount;
+            return false;
+        }
+        if (writesBeforeFailure > 0) --writesBeforeFailure;
         files[fileName] = std::string(static_cast<const char*>(data),
                                       static_cast<size_t>(size));
+        if (corruptNextWrite && size > 0) {
+            corruptNextWrite = false;
+            files[fileName][0] ^= 1;
+        }
         return true;
     }
     int32_t cloudRead(const char* fileName, void* buffer, int32_t maxSize) override {
         const auto it = files.find(fileName ? fileName : "");
         if (it == files.end() || !buffer || maxSize <= 0) return 0;
-        const int32_t n = std::min<int32_t>(maxSize,
-                                            static_cast<int32_t>(it->second.size()));
+        int32_t n = std::min<int32_t>(maxSize,
+                                      static_cast<int32_t>(it->second.size()));
+        if (readsBeforeShortRead == 0) {
+            readsBeforeShortRead = -1;
+            ++shortReadCount;
+            if (n > 0) --n;
+        } else if (readsBeforeShortRead > 0) {
+            --readsBeforeShortRead;
+        }
         std::memcpy(buffer, it->second.data(), static_cast<size_t>(n));
         return n;
     }
@@ -76,6 +109,10 @@ public:
         return files.count(fileName ? fileName : "") > 0;
     }
     bool cloudDelete(const char* fileName) override {
+        if (rejectedDeleteName == (fileName ? fileName : "")) {
+            ++deleteFailureCount;
+            return false;
+        }
         files.erase(fileName ? fileName : "");
         return true;
     }
@@ -763,6 +800,208 @@ TEST_CASE("CloudSaveProvider: null backend refuses both transfer directions") {
     std::string got((std::istreambuf_iterator<char>(f)),
                     std::istreambuf_iterator<char>());
     CHECK(got == "local-data");
+}
+
+TEST_CASE("U26 cloud chunks: failed overwrite preserves the complete previous save") {
+    int successfulWritesBeforeFailure = 0;
+    SUBCASE("first write rejected") {}
+    SUBCASE("one write accepted before failure") { successfulWritesBeforeFailure = 1; }
+    SUBCASE("two writes accepted before failure") { successfulWritesBeforeFailure = 2; }
+    CAPTURE(successfulWritesBeforeFailure);
+
+    CloudMockSteam steam;
+    CloudSaveProvider provider(&steam);
+    const std::string path = "saves/save_6.json";
+    std::string previous(600000, 'A');
+    previous[262144] = '\0';
+    previous.back() = 'Z';
+    const std::string replacement(650000, 'B');
+    REQUIRE(provider.writeFile(path, previous));
+    REQUIRE(bool(provider.readFile(path) == previous));
+
+    steam.writesBeforeFailure = successfulWritesBeforeFailure;
+    CHECK_FALSE(provider.writeFile(path, replacement));
+    CHECK(steam.writeFailureCount == 1);  // The real provider reached the fault.
+    CloudSaveProvider reopened(&steam);
+    const auto restored = reopened.readFile(path);
+    CHECK(restored.size() == previous.size());
+    CHECK(bool(restored == previous));  // Full opaque bytes, including NUL.
+
+    // A failed update must not poison a later explicit retry.
+    REQUIRE(reopened.writeFile(path, replacement));
+    CHECK(bool(CloudSaveProvider(&steam).readFile(path) == replacement));
+}
+
+TEST_CASE("U26 cloud chunks: replacing a large save with a small save reads the new version") {
+    CloudMockSteam steam;
+    CloudSaveProvider provider(&steam);
+    const std::string path = "saves/save_7.json";
+    const std::string previous(600000, 'L');
+    const std::string replacement("new\0small", 9);
+    REQUIRE(provider.writeFile(path, previous));
+    REQUIRE(bool(provider.readFile(path) == previous));
+    REQUIRE(provider.writeFile(path, replacement));
+
+    // Reopen through the public interface: stale metadata/chunks must not
+    // shadow the successful small write, regardless of physical key layout.
+    CloudSaveProvider reopened(&steam);
+    const auto current = reopened.readFile(path);
+    CHECK(current.size() == replacement.size());
+    CHECK(bool(current == replacement));
+}
+
+TEST_CASE("U26 cloud chunks: short SDK reads cannot publish partial save bytes") {
+    size_t payloadSize = 101;
+    int completeReadsBeforeFault = 0;
+    SUBCASE("single file short read") {}
+    SUBCASE("chunk metadata short read") { payloadSize = 600000; }
+    SUBCASE("first chunk short read") {
+        payloadSize = 600000;
+        completeReadsBeforeFault = 1;
+    }
+    SUBCASE("last chunk short read") {
+        payloadSize = 600000;
+        completeReadsBeforeFault = 3;
+    }
+    CAPTURE(payloadSize);
+    CAPTURE(completeReadsBeforeFault);
+
+    CloudMockSteam steam;
+    CloudSaveProvider provider(&steam);
+    const std::string path = "saves/save_8.json";
+    const std::string payload(payloadSize, 'R');
+    REQUIRE(provider.writeFile(path, payload));
+    REQUIRE(bool(provider.readFile(path) == payload));
+
+    steam.readsBeforeShortRead = completeReadsBeforeFault;
+    const auto incomplete = provider.readFile(path);
+    CHECK(steam.shortReadCount == 1);
+    CHECK(incomplete.empty());
+
+    // The transport fault is transient, and reads must not mutate remote data.
+    CHECK(bool(CloudSaveProvider(&steam).readFile(path) == payload));
+}
+
+TEST_CASE("U26 cloud publication: legacy chunks remain readable and can become a small save") {
+    CloudMockSteam steam;
+    const std::string previous(600000, 'L');
+    steam.files["legacy.json.meta"] = "600000,3";
+    steam.files["legacy.json.chunk000"] = previous.substr(0, 262144);
+    steam.files["legacy.json.chunk001"] = previous.substr(262144, 262144);
+    steam.files["legacy.json.chunk002"] = previous.substr(524288);
+    steam.files["unrelated.json"] = "untouched";
+    CloudSaveProvider provider(&steam);
+    REQUIRE(bool(provider.readFile("legacy.json") == previous));
+    REQUIRE(provider.writeFile("legacy.json", "small replacement"));
+    CHECK(provider.readFile("legacy.json") == "small replacement");
+    CHECK_FALSE(steam.cloudFileExists("legacy.json.chunk000"));
+    CHECK_FALSE(steam.cloudFileExists("legacy.json.chunk001"));
+    CHECK_FALSE(steam.cloudFileExists("legacy.json.chunk002"));
+    CHECK(steam.files.at("unrelated.json") == "untouched");
+}
+
+TEST_CASE("U26 cloud publication: rejected head preserves the old generation and unrelated files") {
+    CloudMockSteam steam;
+    CloudSaveProvider provider(&steam);
+    const std::string previous(600000, 'P');
+    REQUIRE(provider.writeFile("save_10.json", previous));
+    REQUIRE(bool(provider.readFile("save_10.json") == previous));
+    steam.files["neighbor.json"] = "not ours";
+    const auto before = steam.files;
+    steam.rejectedWriteName = "save_10.json.meta";
+    CHECK_FALSE(provider.writeFile("save_10.json", std::string(650000, 'N')));
+    CHECK(steam.writeFailureCount == 1);
+    CHECK(bool(steam.files == before));
+    CHECK(bool(CloudSaveProvider(&steam).readFile("save_10.json") == previous));
+}
+
+TEST_CASE("U26 cloud publication: staged bytes must verify before the head changes") {
+    CloudMockSteam steam;
+    CloudSaveProvider provider(&steam);
+    const std::string previous(600000, 'P');
+    REQUIRE(provider.writeFile("verify.json", previous));
+    const auto before = steam.files;
+    steam.corruptNextWrite = true;
+    CHECK_FALSE(provider.writeFile("verify.json", std::string(650000, 'N')));
+    CHECK_FALSE(steam.corruptNextWrite);  // Fault reached the actual SDK write.
+    CHECK(bool(steam.files == before));
+    CHECK(bool(CloudSaveProvider(&steam).readFile("verify.json") == previous));
+}
+
+TEST_CASE("U26 cloud publication: cleanup failure cannot hide an already published replacement") {
+    CloudMockSteam steam;
+    CloudSaveProvider provider(&steam);
+    const std::string previous(600000, 'P');
+    const std::string replacement(650000, 'N');
+    REQUIRE(provider.writeFile("cleanup.json", previous));
+    for (const auto& file : steam.files) {
+        if (file.first.find(".chunk") != std::string::npos) {
+            steam.rejectedDeleteName = file.first;
+            break;
+        }
+    }
+    REQUIRE_FALSE(steam.rejectedDeleteName.empty());
+    REQUIRE(provider.writeFile("cleanup.json", replacement));
+    CHECK(steam.deleteFailureCount == 1);
+    CHECK(steam.cloudFileExists(steam.rejectedDeleteName.c_str()));
+    CHECK(bool(CloudSaveProvider(&steam).readFile("cleanup.json") == replacement));
+    CHECK(provider.listFiles("*").empty());  // No staging keys exposed as slots.
+}
+
+TEST_CASE("U26 cloud publication: untrusted metadata never selects arbitrary objects for deletion") {
+    const std::array<std::string, 8> invalid = {
+        "v2,1,1,../victim", "v2,1,1,ffffffffffffffffffffffffffffffff,extra",
+        "v2,1,1,FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", "1,1,trailing",
+        "-1,1", "300000,1", std::string("1,1\0junk", 8), std::string(1024, '9')
+    };
+    for (const auto& metadata : invalid) {
+        CAPTURE(metadata.size());
+        CloudMockSteam steam;
+        steam.files["bad.json.meta"] = metadata;
+        steam.files["bad.json.chunk000"] = "x";
+        steam.files["bad.json"] = "stale direct bytes";
+        steam.files["victim"] = "not ours";
+        const auto before = steam.files;
+        CloudSaveProvider provider(&steam);
+        CHECK(provider.readFile("bad.json").empty());
+        // Preserve the existing corrupt-slot recovery contract. Only the
+        // explicitly requested direct key and its head may be removed; no
+        // references from malformed metadata may drive chunk deletion.
+        steam.rejectedDeleteName = "bad.json.meta";
+        CHECK_FALSE(provider.deleteFile("bad.json"));
+        CHECK(steam.deleteFailureCount == 1);
+        CHECK(steam.files.at("bad.json.meta") == metadata);
+        steam.rejectedDeleteName.clear();
+        CHECK(provider.deleteFile("bad.json"));
+        auto expected = before;
+        expected.erase("bad.json.meta");
+        expected.erase("bad.json");
+        CHECK(bool(steam.files == expected));
+        REQUIRE(provider.writeFile("bad.json", "recovered"));
+        CHECK(provider.readFile("bad.json") == "recovered");
+    }
+}
+
+TEST_CASE("U26 cloud publication: deleting a generation respects SDK failure and unrelated saves") {
+    CloudMockSteam steam;
+    CloudSaveProvider provider(&steam);
+    REQUIRE(provider.writeFile("delete.json", std::string(600000, 'D')));
+    steam.files["other.json"] = "keep";
+    for (const auto& file : steam.files) {
+        if (file.first.find(".chunk") != std::string::npos) {
+            steam.rejectedDeleteName = file.first;
+            break;
+        }
+    }
+    REQUIRE_FALSE(steam.rejectedDeleteName.empty());
+    CHECK_FALSE(provider.deleteFile("delete.json"));
+    CHECK(steam.deleteFailureCount == 1);
+    CHECK(steam.files.at("other.json") == "keep");
+    steam.rejectedDeleteName.clear();
+    CHECK(provider.deleteFile("delete.json"));
+    CHECK(provider.readFile("delete.json").empty());
+    CHECK(steam.files.size() == 1);
+    CHECK(steam.files.at("other.json") == "keep");
 }
 
 TEST_CASE("Cloud sync: encrypted pull publication failures preserve the complete local envelope") {

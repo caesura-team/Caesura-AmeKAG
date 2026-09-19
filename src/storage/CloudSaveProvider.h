@@ -1,5 +1,5 @@
 // CloudSaveProvider — ISaveProvider backed by ISteamRemoteStorage
-// Splits saves > 256KB into chunks (Steam Remote Storage per-file limit)
+// Splits saves > 256 KiB into generations, while reading the legacy layout.
 #pragma once
 #include "api/ISaveProvider.h"
 #include "api/ICloudSaveTransport.h"
@@ -16,6 +16,9 @@ public:
     // Paths are normalized to a FLAT cloud key (directory component stripped),
     // so "<saveDir>/save_5.json" and "save_5.json" address the SAME cloud
     // object whichever entry point is used.
+    // Chunk writes stage and verify new bytes before one metadata publication
+    // call. This relies on synchronous SDK rejection leaving the head intact;
+    // it does not establish crash atomicity or concurrent-writer arbitration.
     std::string readFile(const std::string& path) override;
     bool writeFile(const std::string& path, const std::string& content) override;
     bool deleteFile(const std::string& path) override;
@@ -35,10 +38,6 @@ private:
     static std::string cloudKey(const std::string& slotPath);
 
     ISteamBackend* m_steam;
-    static constexpr int32_t kChunkSize = 256 * 1024; // 256KB Steam limit
-    // Hard cap on a single chunked save; protects against corrupt .meta
-    // triggering multi-GB reserves / billion-iteration loops.
-    static constexpr int32_t kMaxChunkedSize = 64 * 1024 * 1024; // 64MB
 };
 
 } // namespace Caesura

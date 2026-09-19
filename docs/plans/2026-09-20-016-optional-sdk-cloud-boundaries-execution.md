@@ -1,6 +1,6 @@
 # U26 可选 SDK 与云存档边界执行记录
 
-本记录对应当前唯一计划U26。首个已实证修复是不可用但已注册的Steam后端误替换本地存档provider；完整候选门禁及其余云冲突、分块失败恢复、SDK ON和真实SDK功能仍待执行，U26未完成。
+本记录对应当前唯一计划U26。已实证修复不可用Steam后端误替换本地provider，以及分块覆盖失败、大转小和SDK短读；完整候选门禁及其余云冲突、SDK ON和真实SDK功能仍待执行，U26未完成。
 
 ## 证据起点
 
@@ -18,4 +18,18 @@
 
 ## 下一步
 
-独立核对已有分块存档覆盖中途失败、large-to-small替换与短读，然后建立共同祖先后本地/云端分叉保留双方的合同。HTTP真实loopback超时/重试与Steam失败/重复/迟到回调、Cubism加载失败及motion释放按实际边界分别回归。只有经过真实复现的疑点才修复；尚无本轮账号、设备、商店发布或真实SDK功能验收，后续完整Debug/C++/Lua/CTest与选定SDK ON产物继续独立验证。
+建立共同祖先后本地/云端分叉保留双方的合同。HTTP真实loopback超时/重试与Steam失败/重复/迟到回调、Cubism加载失败及motion释放按实际边界分别回归。只有经过真实复现的疑点才修复；尚无本轮账号、设备、商店发布或真实SDK功能验收，后续完整Debug/C++/Lua/CTest与选定SDK ON产物继续独立验证。
+
+## 分块覆盖与短读的真实回归
+
+在b470dece基线上先新增三个公开provider行为测试，生产代码不动。实际目标构建退出0，定向3方法全部失败，49断言中9失败：覆盖中途拒绝后旧600000字节读回空、大档换为9字节后仍读旧600000字节，单文件/首块/末块短读被接受。仅metadata短读已有正确拒绝。原red-01.log SHA6cb146e998f497e4de4bd87212a06eebfdc3244dea95917c1d623154b4bfd2de及原测试快照保留；其1416其他用例为过滤未选中。
+
+再新增六项发布合同，第二轮实际RED为6方法1通过5失败、58断言中28失败。唯一通过的是最终head拒绝控制；legacy迁移、staged读回、cleanup故障计数、恶意metadata与删除故障仍有失败。新增恶意metadata删除期望随后根据已有生产恢复注释澄清：允许只删除调用者精确slot与其.meta，不能跟随非法引用；原RED和此前测试快照保留，此前提修正不冒称生产修复。最初三个测试正文始终未改。
+
+最终实现读取原直接文件及legacy size,count布局，严格核对每次实际读取长度、metadata边界和精确分块长度。新分块使用32位小写十六进制随机generation，检查整个合法块命名空间避免覆盖已有对象；全部新块写入并逐字节读回后，只在最后一次head写入发布。大转小也使用该发布布局。发布前失败只清理本次暂存对象，发布后旧对象清理失败保留新版可读并记录诊断；删除传播实际SDK失败，不宣称事务删除。非法head恢复只删精确slot/head，不猜测引用，不删除其他slot。
+
+实际GREEN目标构建退出0；九项定向9/9、147断言全部通过，cloud_save/storage邻近74/74、1313断言全部通过；1416和1351均为未选中。原cloud16方法和storage49方法全部保留，新增9方法，另两条storage断言强化清理检查。六native profile的C++最低发现数再加9（Windows1425、Linux1381、macOS1268），CTest门槛不变。storage耦合检查仍通过。
+
+最终四文件身份由u26-cloud-chunks/freeze-03.json锁定：CloudSaveProvider.cpp SHA269972cdd3e366f741c16c6fe83b17c34c512dec09f28babeceeb25c2f355c6a，header d192f06be2564d0d3d83273cf195ad9608560f3829e312546bc3084c3eb4a0e6，cloud测试84ace4eebfb34e15a1864d94a62651d92c65019c3f8b2987edeab84032e2e3c3，storage测试b5219b1570ca898f14954e8edd262f9d6051e0cbb934f4d54422a05034c789f2。独审无可行动发现，报告SHA49574d853ace8321d6d1c0466e473eaf3cbbeaebd33cb90f03cd5e3d45d09855，独立12项原件核对JSON d3edc428d962af974273be7262856edccb7daaea6a5b4e236fd6cec05cff8ec2。
+
+证据仅覆盖同步SDK拒绝不改变目标对象的合同；现有bool接口没有rename/CAS，官方FileWrite说明未明确保证失败覆盖在断电/撕裂写下保持旧head。因此不宣称真实Steam崩溃原子性、并发写入或跨设备冲突解决。generation熵异常/碰撞耗尽只做静态审查，失败清理可能留下不可读孤立对象；后续SDK与冲突验收仍保留。
