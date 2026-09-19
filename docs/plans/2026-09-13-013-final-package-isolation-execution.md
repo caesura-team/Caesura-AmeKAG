@@ -2,7 +2,9 @@
 
 ## 当前状态（2026-09-20）
 
-**U22 尚未完成四平台最终包验收。** 最近完成托管执行的候选为 `016f77f7af611c83bdac87c6dae12fd1a877d6ea`；[CI 35467654286](https://github.com/caesura-team/Caesura-AmeKAG/actions/runs/35467654286) attempt 1 已终态 FAILURE，11 个 job 中 **9 成功、2 失败、0 job 跳过**。实际执行的是 PR merge 源码 `cc258c6ae9293a24eec82ae7bfe7fbcf155bef2b`，不能与 API 的 PR head 混同；job 无跳过也不表示内部所有测试或条件步骤均无跳过。
+**U22 尚未完成四平台最终包验收。** 当前候选 `0a651bfdd29555152246f44ce626602f5a7764be` 的完整本地 Windows Debug 门禁已通过；[CI 35471198493](https://github.com/caesura-team/Caesura-AmeKAG/actions/runs/35471198493) 已终态 FAILURE：11个job为8成功、2失败、1跳过。失败是Mac原始字段观察及Chrome153沙箱启动，详见末尾追加；macOS Package因上游失败未执行。Windows ZIP与Linux TGZ/AppImage两个包job及其上传前复核/上传步骤成功，本轮原包尚未逐字节下载审计。下一候选只补同次 Mac 原始观察持久化，以及按 Chromium 合同安装浏览器沙箱，不放宽包接受条件。
+
+此前最近完成全部托管执行的候选为 `016f77f7af611c83bdac87c6dae12fd1a877d6ea`；[CI 35467654286](https://github.com/caesura-team/Caesura-AmeKAG/actions/runs/35467654286) attempt 1 已终态 FAILURE，11 个 job 中 **9 成功、2 失败、0 job 跳过**。实际执行的是 PR merge 源码 `cc258c6ae9293a24eec82ae7bfe7fbcf155bef2b`，不能与 API 的 PR head 混同；job 无跳过也不表示内部所有测试或条件步骤均无跳过。
 
 | 本轮范围 | 已有事实 | 尚未建立的验收 |
 |---|---|---|
@@ -288,3 +290,22 @@ Windows Debug/Release、Linux GCC、macOS Clang 和三个移动编译/静态探�
 两项候选由主代理统一审查、提交并执行适用完整门禁；需要后续真实托管包结果和当前最终产物的精确字节审计。本文没有重新构建、重跑 CI、变更服务器设置、发布或部署；U22 整体继续开放，旧本地通过、旧候选包审计、本轮托管失败与修复候选分别保留。
 
 主代理随后独立核对完整生产、测试和工作流差异，69项冻结原件逐项重算匹配，无剩余可行动发现；最终actionlint1.7.7实际exit0。审查JSON [candidate-independent-review-01.json](../../artifacts/validation/u22-hosted-016f77f7/candidate-independent-review-01.json) 摘要 `eedf0aeee37e6115bb638cec0554fb704835b5c95104f0c548abbe240c65874d`，当前workflow摘要 `a757cf5148baab00ff4a660ac04d46a3f0ae0c12f95839cc7825c0e7cf192f77`；[审查说明](../../artifacts/validation/u22-hosted-016f77f7/candidate-independent-review-01.md) 保留实际Mac/Linux浏览器未验边界。完整新候选门禁仍另行执行。
+
+
+## 0a651bfd 的完整本地门禁与新托管失败（2026-09-20）
+
+本地 clean `0a651bfdd29555152246f44ce626602f5a7764be` 的完整Windows Debug run `36864c0f-d14f-4d18-98e5-a0b8437df12d` 已通过：全量构建退出0，C++1415/1415、427088断言、0失败/跳过；Lua147/147及56/56；CTest48项为47通过、预声明可选AI一项跳过，0失败，552.14秒。runner、collector、strict verifier均0，源码/夹具稳定。run.json SHA `dcfc384cbeaf55796353d4883022583729e235ee3d17f0346323d9b1d711ffbd`；独立重核68个日志/收据引用，review SHA `f307aea927457c441881892a044ce6edaee55bdd3019e55bf8d05a673192cacc`。这是本地SDK关闭证据，不替代托管最终包。
+
+托管run35471198493的head为0a651bfd，实际PR merge执行源码为`ffb64bfb8f3fc172c05062c63dd08eb7f23fd145`。Mac Clang job105972355724中，原生Python suite实际50方法、49通过1ERROR，8个新增wire方法全部通过；CTest46通过、1失败和1可选AI跳过，退出8。实际当前Python进程的lsof成功返回，但中间字段有不以n/开头的行；严格解析抛Unknown lsof image field，尚未进入路径解码。原job日志SHA `e7543cbf27820794f1ef3661ef895bd6c62bbc7b0406bc6c9a2c154c23a79a1b`。固定诊断artifact10593003412已下载，与API/原上传摘要一致，146601字节、SHA `3541e0285b3cb273b8f3424399caa37f7c8b7902c1b9efae56d6f72d84d59042`；31成员均未保存module_observation原字节。未知字段继续标UNKNOWN，不猜测f字段、匿名映射或Unicode。
+
+诊断缺口在测试直接调用observer：异常附带的记录未被unittest序列化。新增诊断只复制该次异常已有的module_observation、测试ID和错误到独占临时目录，再原样抛同一个异常；保存失败不能替换原异常，不重新运行lsof、不复制整个环境、不改parser。Mac失败上传增加固定caesura-native-observer根。独立回归先6方法4FAIL/2PASS，再Windows及WSL各7/7（含真实当前进程观察）、0失败/跳过，actionlint通过。freeze SHA `d14a1f1c6e8eb47518df4a4f879a6584fe85387f08abd6279253e2a3b701cda5`；独审重核21份原件，无可行动发现。新Mac真实字段仍待下一次执行，不将诊断补丁称为parser修复。
+
+Web job105974876150已成功下载、核SHA并选择Chrome for Testing153.0.8010.52，实际binary SHA `328fbee82d8e58b05a755b2343abfd192d92ca7066353cb357fad389bc7e3989`。固定artifact10593825042已按API验证下载，7593986字节、SHA `1796f1815ae6ac310bf7a2052f4b299d74ec777600e910270280d59360dc3349`。根场景浏览器PID2938在CDP/page启动前退出-6，原stderr为No usable sandbox；stages为空，未执行应用boot、离线重载、子路径或ZIP运行。server/browser/私有Chrome临时目录cleanup均通过。本次不能证明也不能否定153的离线重载行为；与上一轮152的navigator.onLine失败分开。
+
+原锁定CfT ZIP含chrome_sandbox（下划线、755），而精确153源码GetSandboxBinaryPath优先寻找binary旁chrome-sandbox（连字符），PrependWrapper要求root属主/SUID/可执行。按Chromium官方SUID安装合同补齐独占root-owned安装树及同包helper，保持浏览器/OS沙箱开启；不添加no-sandbox、不修改AppArmor或sysctl。helper SHA `c100b678a8c171ad0733e51b6f18d98d936d38ab945681c41da00f2ee22e7571`，与已锁完整ZIP绑定。安装/模式readback只提供启动前提，真实下一轮包运行才提供验收。确切153源码和首失败证据保存于u22-hosted-0a651bfd，web-sandbox-diagnosis-01.json SHA `83ebe957de426077b7953e814a938484a794e0adecf62c08e234dd5416dbcd71`。
+
+
+该轮最终API快照state-04.json SHA `cb675d60ab6595332b078400d97da871a44f3d9b3ab24f38731e6b8ab9660ba5` 记录8成功、2失败、1跳过；首次失败不重跑覆盖。对应本地完整门禁中的HTTP实际75/75，PID28976、创建身份134343285306528988、端口13115；requested stop后实际退出1，cleanup COMPLETE，无timeout/force。原result.json SHA `12583c67fafd0b316527a7c6e9094be563a284f90e173f70edb5bd7447dbb9ea`；独立3份原日志/owned收据重核报告SHA `ba54e00da48af5300492489330e0341ce4b01d66a57f90c7e60a453b711654dc`。
+
+
+下一候选浏览器安装增量已冻结：workflow SHA `13e7cdcd4189288afdaf64544162c581d518cfc913557f683c79a1e60f40c290`，bash -n、actionlint1.7.7和两段Python AST均通过。独立重核29项输入/诊断原件，除Web安装step外其余YAML与Mac诊断快照相同；未在本机执行特权安装或浏览器，新的实际沙箱与包运行保持NOT_RUN。冻结清单SHA `49918a386acd96fad7fa53bb6f8328fa261c8126a4bd4ccaab56c2b7346e959c`。
