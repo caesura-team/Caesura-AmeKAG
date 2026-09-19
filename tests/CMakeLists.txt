@@ -504,6 +504,19 @@ if(Python3_EXECUTABLE)
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
     )
     add_test(
+        NAME CaesuraAudioOutputCli
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_audio_output_cli.py
+                --engine $<TARGET_FILE:CaesuraAmeKAG>
+    )
+    set_tests_properties(CaesuraAudioOutputCli PROPERTIES
+        LABELS "qa;cli;audio"
+        TIMEOUT 360
+        RUN_SERIAL TRUE
+        RESOURCE_LOCK "global-singletons"
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    )
+    add_test(
         NAME CaesuraTargetCapabilities
         COMMAND ${CMAKE_COMMAND} -E env
                 "CAESURA_ENGINE=$<TARGET_FILE:CaesuraAmeKAG>"

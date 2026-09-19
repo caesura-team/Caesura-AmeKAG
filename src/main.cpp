@@ -1147,6 +1147,8 @@ extern "C" int main(int argc, char* argv[]) {
     bool editorInsecure = false;
     // Optional GPU backend override: --backend <opengl|vulkan|dx11|dx12|metal|webgpu>
     std::string renderBackend;
+    auto audioOutput = Caesura::SoLoudAudioEngine::OutputMode::Device;
+    bool audioOutputExplicit = false;
     // Optional deterministic frame limit: --frames N (GPU smoke runs; 0 = unlimited)
     uint32_t frameLimit = 0;
     // Optional demo/video export: --export-replay <replay.json> drives the
@@ -1195,6 +1197,7 @@ extern "C" int main(int argc, char* argv[]) {
             printf("  --editor-stdio        run the stdin/stdout JSON-RPC editor transport\n");
             printf("  --editor-insecure     disable the default-deny editor auth gate (loud warning; use at your own risk)\n");
             printf("  --backend <name>      GPU backend override (opengl|vulkan|dx11|dx12|metal|webgpu)\n");
+            printf("  --audio-output <mode> device (default) or software (real mixer; no physical output)\n");
             printf("  --frames <N>          deterministic frame limit (0 = unlimited)\n");
             printf("  --resolution <WxH>    render canvas size (default 1920x1080)\n");
             printf("  --export-replay <f>   replay a recorded input JSON while exporting frames\n");
@@ -1210,7 +1213,8 @@ extern "C" int main(int argc, char* argv[]) {
         std::string arg = argv[i];
         const bool takesValue = arg == "--resource-root" || arg == "--carc-trust" ||
             arg == "--carc-public-key" || arg == "--backend" || arg == "--frames" ||
-            arg == "--export-replay" || arg == "--export-dir" || arg == "--resolution";
+            arg == "--export-replay" || arg == "--export-dir" || arg == "--resolution" ||
+            arg == "--audio-output";
         if (takesValue && (i + 1 >= argc || argv[i + 1][0] == '\0' ||
                            std::string(argv[i + 1]).rfind("--", 0) == 0)) {
             fprintf(stderr, "[main] ERROR: %s requires a value.\n", arg.c_str());
@@ -1254,6 +1258,20 @@ extern "C" int main(int argc, char* argv[]) {
             publisherKeyPath = std::move(value);
         } else if (arg == "--backend" && i + 1 < argc) {
             renderBackend = argv[++i];
+        } else if (arg == "--audio-output") {
+            const std::string value = argv[++i];
+            if (value != "device" && value != "software") {
+                fprintf(stderr, "[main] ERROR: Invalid --audio-output value: %s\n", value.c_str());
+                return 1;
+            }
+            const auto mode = value == "software" ? Caesura::SoLoudAudioEngine::OutputMode::Software
+                                                   : Caesura::SoLoudAudioEngine::OutputMode::Device;
+            if (audioOutputExplicit && audioOutput != mode) {
+                fprintf(stderr, "[main] ERROR: Conflicting --audio-output options.\n");
+                return 1;
+            }
+            audioOutput = mode;
+            audioOutputExplicit = true;
         } else if (arg == "--frames" && i + 1 < argc) {
             char* end = nullptr;
             const long v = strtol(argv[++i], &end, 10);
@@ -1375,8 +1393,12 @@ extern "C" int main(int argc, char* argv[]) {
     if (!headless || editorMode) {
         config.platform = new Caesura::SDL3PlatformBackend();
         config.render   = new Caesura::BgfxRenderDevice();
-        config.audio    = new Caesura::SoLoudAudioEngine();
         config.miniGame = new Caesura::BgfxMiniGameBackend();
+    }
+    // Explicit audio output also applies to a headless host. Its default remains
+    // the existing Null backend; an explicit request is never silently ignored.
+    if (!headless || editorMode || audioOutputExplicit) {
+        config.audio = new Caesura::SoLoudAudioEngine(audioOutput);
     }
 
     CAESURA_LOGI("[main] EngineConfig assembled; constructing Engine...");

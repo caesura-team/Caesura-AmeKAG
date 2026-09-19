@@ -9,6 +9,7 @@ from __future__ import annotations
 import importlib.util
 import hashlib
 import http.server
+from contextlib import ExitStack
 import json
 import os
 from pathlib import Path
@@ -21,6 +22,7 @@ import sys
 import tempfile
 import threading
 import time
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -52,6 +54,16 @@ root = Path.cwd()
 mode = (root / 'fixture-mode.txt').read_text() if (root / 'fixture-mode.txt').exists() else ''
 if '--editor' not in sys.argv:
     print('[KAG Runner] Started synthetic protocol scene', flush=True)
+    audio = sys.argv[sys.argv.index('--audio-output') + 1]
+    physical = 'NOT_RUN' if audio == 'software' else 'NOT_VERIFIED'
+    print('[Audio] Output mode: ' + audio + '; physical_device=' + physical)
+    print('[Audio] SoLoud initialized: 3 buses (BGM, VOICE, SE) ready.')
+    if audio == 'software':
+        stats = dict(frames=480, samples=960, nonzero_samples=500, nonfinite_samples=0,
+                     peak=0.5, absolute_energy=10.0, sample_rate=48000, channels=2,
+                     physical_device='NOT_RUN', saturated=False)
+        if mode == 'audio-empty': stats.update(nonzero_samples=0, peak=0, absolute_energy=0)
+        if mode != 'audio-missing': print('[Audio] Software mix stats: ' + json.dumps(stats))
     if mode == 'render-disabled': print('rendering disabled (BGFX_DEBUG_IFH)', flush=True)
     if mode == 'mutate-created-game' and (root/'BUILD-INFO.json').exists():
         next((root/'projects').rglob('story.ks')).write_text('changed during game execution')
@@ -118,6 +130,144 @@ else:
 '''
 
 
+class AudioEvidenceTests(unittest.TestCase):
+    def text(self, **changes):
+        stats = dict(frames=480, samples=960, nonzero_samples=500, nonfinite_samples=0,
+                     peak=0.5, absolute_energy=10.0, sample_rate=48000, channels=2,
+                     physical_device='NOT_RUN', saturated=False)
+        stats.update(changes)
+        return ('[Audio] Output mode: software; physical_device=NOT_RUN\n'
+                '[Audio] SoLoud initialized: 3 buses (BGM, VOICE, SE) ready.\n'
+                '[Audio] Software mix stats: ' + json.dumps(stats) + '\n')
+
+    def test_pcm_statistics_contract_and_silent_created_game(self):
+        result = runtime._audio_evidence(self.text(), 'software', require_signal=True)
+        self.assertEqual(result['physical_device'], 'NOT_RUN')
+        self.assertEqual(result['statistics']['frames'], 480)
+        runtime._audio_evidence(self.text(nonzero_samples=0, peak=0, absolute_energy=0),
+                                'software', require_signal=False)
+
+    def test_missing_duplicate_wrong_mode_and_bad_pcm_statistics_fail(self):
+        invalid = [self.text().replace('Output mode: software', 'Output mode: device'),
+                   self.text() + self.text(), self.text().split('[Audio] Software mix stats:')[0],
+                   self.text() + '[BackendRegistry] Using NullAudioBackend.\n']
+        invalid += [self.text(**change) for change in (
+            {'frames':0, 'samples':0}, {'frames':True}, {'samples':959},
+            {'nonzero_samples':961}, {'nonzero_samples':0}, {'nonfinite_samples':1},
+            {'peak':float('nan')}, {'absolute_energy':float('inf')}, {'absolute_energy':-1},
+            {'sample_rate':44100}, {'channels':1}, {'physical_device':'VERIFIED'},
+            {'saturated':True})]
+        for text in invalid:
+            with self.subTest(text=text), self.assertRaises((runtime.RuntimeContractError, ValueError)):
+                runtime._audio_evidence(text, 'software', require_signal=True)
+
+
+class MacMappedLibraryTests(unittest.TestCase):
+    """Real files/unlink, with only macOS lsof/identity/path spelling replaced.
+
+    These tests run on every host; they do not claim an actual macOS mapping.
+    The original hosted failure supplies that platform evidence separately.
+    """
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory(prefix="u22-mac-mapped-library-")
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name).resolve()
+        self.package = self.root / "package"
+        self.package.mkdir()
+        self.library = self.package / "libSDL3.0.dylib"
+        self.library.write_bytes(b"required library byte fixture")
+        self.engine = self.package / "CaesuraAmeKAG"
+        self.engine.write_bytes(b"owned engine byte fixture")
+        self.cache = self.root / ".plist-cache.transient"
+        self.cache.write_bytes(b"unrelated mapped cache fixture")
+        self.lsof = self.root / "lsof"
+        self.lsof.write_bytes(b"tool boundary fixture")
+        self.identity = runtime.ProcessIdentity(1234, "creation-fixture", str(self.engine), "fixture")
+
+    def inspect(self, paths, *, exit_code=0, identities=None):
+        # Map explicit POSIX lsof names into real fixture paths on Windows as
+        # well as POSIX. Path resolution and file reads themselves stay real.
+        prefix = "/lsof-fixture/"
+        def host_path(value):
+            value = str(value)
+            if value == "/usr/sbin/lsof":
+                return self.lsof
+            if value.startswith(prefix):
+                return self.root / value[len(prefix):]
+            return Path(value)
+        output = "p1234\n" + "".join("n" + prefix + path.relative_to(self.root).as_posix() + "\n" for path in paths)
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(runtime, "os", SimpleNamespace(name="posix")))
+            stack.enter_context(patch.object(runtime, "sys", SimpleNamespace(platform="darwin")))
+            stack.enter_context(patch.object(runtime, "Path", host_path))
+            stack.enter_context(patch.object(runtime, "process_identity", side_effect=identities or [self.identity, self.identity]))
+            call = stack.enter_context(patch.object(runtime.subprocess, "run",
+                return_value=SimpleNamespace(returncode=exit_code, stdout=output, stderr="")))
+            result = runtime._inspect_libraries(self.identity, self.package, [self.library.name])
+            self.assertEqual(call.call_args.args[0], [str(self.lsof), "-a", "-p", "1234", "-d", "txt", "-Fn"])
+            return result
+
+    def test_disappeared_unrelated_txt_does_not_hide_required_library(self):
+        self.cache.unlink()  # Deterministic disappearance after lsof's snapshot.
+        report = self.inspect([self.engine, self.cache, self.library])
+        self.assertEqual(report["status"], "VERIFIED")
+        self.assertEqual(report["required"][0]["sha256"], hashlib.sha256(self.library.read_bytes()).hexdigest())
+        self.assertEqual(report["missing_paths"][0]["path"], str(self.cache))
+        self.assertIn(str(self.cache), report["paths"])
+        self.assertIn("FileNotFoundError", report["missing_paths"][0]["error"])
+
+    def test_required_library_disappearance_remains_fatal(self):
+        self.library.unlink()
+        with self.assertRaises((FileNotFoundError, runtime.RuntimeContractError)):
+            self.inspect([self.engine, self.library])
+
+    def test_reappearing_required_path_cannot_replace_missing_mapping(self):
+        self.library.unlink()
+        observe = runtime.observe_loaded_modules
+        def restore_after_observation(identity):
+            result = observe(identity)
+            self.library.write_bytes(b"replacement after observed disappearance")
+            return result
+        with patch.object(runtime, "observe_loaded_modules", restore_after_observation):
+            with self.assertRaises((FileNotFoundError, runtime.RuntimeContractError)):
+                self.inspect([self.engine, self.library])
+
+    def test_unreadable_required_library_remains_fatal(self):
+        open_file = Path.open
+        def deny_required(path, *args, **kwargs):
+            if path == self.library:
+                raise PermissionError("required library read denied by fixture boundary")
+            return open_file(path, *args, **kwargs)
+        with patch.object(Path, "open", deny_required), self.assertRaises(PermissionError):
+            self.inspect([self.engine, self.library])
+
+    def test_foreign_same_name_remains_fatal_even_after_disappearing(self):
+        foreign = self.root / self.library.name
+        for disappeared in (False, True):
+            with self.subTest(disappeared=disappeared):
+                foreign.write_bytes(self.library.read_bytes())
+                if disappeared:
+                    foreign.unlink()
+                with self.assertRaises((FileNotFoundError, runtime.RuntimeContractError)):
+                    self.inspect([self.engine, foreign, self.library])
+
+    def test_unrelated_permission_error_is_not_swallowed(self):
+        resolve = Path.resolve
+        def deny_cache(path, *args, **kwargs):
+            if path == self.cache:
+                raise PermissionError("unrelated path resolution denied by fixture boundary")
+            return resolve(path, *args, **kwargs)
+        with patch.object(Path, "resolve", deny_cache), self.assertRaises(PermissionError):
+            self.inspect([self.engine, self.cache, self.library])
+
+    def test_failed_observer_and_changed_owner_remain_fatal(self):
+        with self.assertRaisesRegex(runtime.RuntimeContractError, "observation failed"):
+            self.inspect([self.engine, self.library], exit_code=1)
+        changed = runtime.ProcessIdentity(self.identity.pid, "different-creation", str(self.engine), "fixture")
+        with self.assertRaisesRegex(runtime.RuntimeContractError, "owner changed"):
+            self.inspect([self.engine, self.library], identities=[self.identity, changed])
+
+
 class NativePackageRuntimeTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory(prefix="u22-native-runtime-中文-")
@@ -144,7 +294,7 @@ class NativePackageRuntimeTests(unittest.TestCase):
         self.config = {"schema":1,"sdl_linkage":"static","sdl_libraries":[],
                        "ffmpeg":False,"steam":False,"live2d":False}
 
-    def invoke(self, *, mode="", attempt=None, launch=None, editor_port=None):
+    def invoke(self, *, mode="", attempt=None, launch=None, editor_port=None, audio_output='device'):
         self.assertIsNotNone(runtime, "Native package runtime controller is not implemented")
         (self.package / "fixture-mode.txt").write_text(mode)
         def native_boundary(executable, *args):
@@ -157,8 +307,32 @@ class NativePackageRuntimeTests(unittest.TestCase):
             return runtime.run_native_package(self.package, self.config, attempt or self.root / "attempt",
                                               python_executable=FIXTURE_PYTHON,
                                               command_timeout=12, readiness_timeout=1,
-                                              editor_port=editor_port,
+                                              editor_port=editor_port, audio_output=audio_output,
                                               **({"launch_relative_path":launch} if launch is not None else {}))
+
+    def test_explicit_software_selection_binds_argv_and_completed_pcm_observation(self):
+        report = self.invoke(audio_output='software')
+        self.assertEqual(report['status'], 'RUNTIME_PASS', report)
+        self.assertEqual(report['physical_audio_output'], 'NOT_RUN')
+        for stage in report['stages']:
+            if stage['name'] == 'author_create_build': continue
+            argv = stage['commands'][0]['argv']
+            self.assertEqual(argv[argv.index('--audio-output')+1], 'software')
+            if stage['name'].endswith('_frames'):
+                self.assertEqual(stage['audio']['statistics']['frames'], 480)
+
+    def test_software_missing_statistics_or_silent_demo_cannot_pass(self):
+        for mode in ('audio-empty', 'audio-missing'):
+            with self.subTest(mode=mode):
+                report = self.invoke(audio_output='software', mode=mode, attempt=self.root/mode)
+                self.assertEqual(report['status'], 'RUNTIME_FAIL')
+                self.assertEqual(report['stages'][-1]['name'], 'engine_frames')
+                self.assertEqual(report['cleanup'], 'COMPLETE')
+
+    def test_unknown_audio_selection_fails_before_commands(self):
+        report = self.invoke(audio_output='automatic')
+        self.assertEqual(report['status'], 'RUNTIME_FAIL')
+        self.assertFalse(report['stages'])
 
     def test_automatic_port_does_not_inherit_or_touch_an_unrelated_listener(self):
         with socket.socket() as listener:

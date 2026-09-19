@@ -103,14 +103,15 @@ def _runtime_stage(platform, payload, requirements, attempt, tools):
     from native_package_runtime import run_native_package
     options = {"launch_relative_path": "AppRun"} if requirements.get("container_format") == "appimage" else {}
     return run_native_package(payload, requirements["required_configuration"], attempt,
-                              python_executable=tools["python"]["path"], **options)
+                              python_executable=tools["python"]["path"],
+                              audio_output=requirements['audio_output'], **options)
 
 
 def run_package_validation(*, input_path, expected_sha256=None, expected_inventory_sha256=None,
                            attempt_dir, platform, configuration, source_sha,
                            requirements_path=None, requirements_sha256=None,
                            diagnostic=False, tool_paths=None, actions_path=None, actions_sha256=None,
-                           container_format=None, payload_relative_path=None):
+                           container_format=None, payload_relative_path=None, audio_output=None):
     attempt = _attempt(attempt_dir, input_path)
     report = {"schema": SCHEMA, "run_id": str(uuid.uuid4()), "started_at": _now(),
               "status": "FAIL", "accepted": False, "platform": platform,
@@ -125,6 +126,10 @@ def run_package_validation(*, input_path, expected_sha256=None, expected_invento
     source = None
     try:
         _require(platform in ("windows", "linux", "macos", "web"), "Unknown package platform")
+        _require(audio_output in (None, 'device', 'software'), 'Unknown audio output mode')
+        _require(platform != 'web' or audio_output is None, 'Native audio output only applies to native packages')
+        if platform != 'web':
+            report['audio_output'] = audio_output or 'device'
         host = _host_platform()
         _require(platform == "web" or platform == host, "Native runtime must execute on the selected platform")
         _require(container_format in (None, "dmg", "appimage"), "Unknown explicit container format")
@@ -174,6 +179,8 @@ def run_package_validation(*, input_path, expected_sha256=None, expected_invento
             _require(requirements.get("platform") == platform, "Requirements platform mismatch")
             _require(requirements.get("configuration") == configuration, "Requirements configuration mismatch")
             report["requirements"] = {"path": str(requirement_path), "sha256": actual_sha, "value": requirements}
+            # Caller policy is separate from the package/build self-description.
+            requirements = {**requirements, 'audio_output':report['audio_output']}
         if container_format is not None:
             _require(source.is_file(), "Final container input must be a file")
             container = prepare_container(source, attempt / "container", container_format=container_format,
@@ -266,6 +273,7 @@ def main():
     parser.add_argument("--actions-sha256")
     parser.add_argument("--container-format", choices=("dmg", "appimage"))
     parser.add_argument("--payload-relative-path")
+    parser.add_argument('--audio-output', choices=('device', 'software'))
     parser.add_argument("--diagnostic", action="store_true")
     for name in ("python", "lua", "node", "browser", "hdiutil"):
         parser.add_argument("--" + name, type=Path)
@@ -277,6 +285,7 @@ def main():
             requirements_path=args.requirements, requirements_sha256=args.requirements_sha256,
             actions_path=args.actions, actions_sha256=args.actions_sha256,
             container_format=args.container_format, payload_relative_path=args.payload_relative_path,
+            audio_output=args.audio_output,
             diagnostic=args.diagnostic, tool_paths={key: getattr(args, key) for key in
                                                   ("python", "lua", "node", "browser", "hdiutil") if getattr(args, key)})
         print(json.dumps({"status": report["status"], "accepted": report["accepted"],

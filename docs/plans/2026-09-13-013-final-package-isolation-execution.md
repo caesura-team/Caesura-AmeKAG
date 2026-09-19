@@ -144,3 +144,19 @@ CI新增三平台失败HTTP目录和LastTest上传；独审指出Windows必须�
 固定Mac诊断artifact10585526480已下载原始141983字节，API与ZIP摘要均为b0bae68a033453ace1f283b8419bd713b0491f50b3f47011caafd467e68dc71a。原HTTP收据证明PID33095、创建身份1789826169:501546、本轮OS分配127.0.0.1:49345，stop_requested=true、自然退出0、forced_kill=false、timed_out=false、cleanup COMPLETE，stdout记录真实清理退出。HTTP实际73/73，另两项Web打包检查因该Mac job无Web工具链跳过；这不等于75项全跑。Native runtime实际25项与Web runtime24项通过；整个Mac job仍因合成Framework测试失败。Linux仅读取原job日志，没有下载189510770字节诊断包，故不额外声称其PID/停止/清理收据已核验。原件、摘要与身份边界见u22-hosted-runtime-027/。
 
 Windows CLI失败根因由真实PowerShell复现：PATH含两份cpack.exe时Get-Command的.Source返回数组，第二完整路径作为多余参数进入argparse；同样的双Python候选会使调用表达式失败。提交46490236仅令两项命令发现按PATH顺序选择首个Application，并让不存在的命令立即失败。旧片段双工具候选RED，新片段正确分派；单个带空格路径通过，缺工具与显式多余参数继续拒绝，actionlint通过，见u22-package-cli-audit/。验证在生产CLI解析后由capture worker故意返回失败，未调用CPack或Engine，不作为最终包通过。平台数据仅同步新代码审阅anchor；实际本地0278910e及托管merge69e07778的执行证据身份分别保留。
+
+## 最终包首次运行失败与显式软件混音（2026-09-20）
+
+托管 run35451773753 的 head0785b697 对应实际 PR merge fa2a2c1d06cfa9b56c15d22aec5566f41734aaeb。Windows Debug/Release、macOS Debug 及三个移动平台 probe 成功；Linux 完整 CTest 与 Web626通过，随后生成能力矩阵指纹过期导致 job 失败。独立 Git blob 清单证明新增 offline-manifest.test.js 和资源回归改变了输入；使用原生成器更新文档，仅生成时间和指纹变化，能力计数与状态不变。原始日志及反证见 u22-linux-latest-audit/。
+
+macOS 最终 TGZ 静态检查通过，但实际 editor 运行的映像观察器对已消失的无关系统日志缓存严格 resolve，导致 loaded_modules=NOT_VERIFIED。保留原 path/标准化 path 后只容忍 Darwin 的 FileNotFoundError；必需库消失、同名外部库、权限失败和身份改变仍拒绝。真实文件删除负控先失败后通过，Windows36/36、WSL34/34，独审无发现；这些替身边界不能代替新 macOS 包运行。后续 U23 run35452996878 的固定 artifact10588215587（11148992B，SHA256 95065c5f030c45f5d2d4d5855d6ff18f7b258be693bfc0c6fe1e041acc5b7f58）再次确认相同观察器错误类别，但不同缓存文件。原 Engine 受控退出0、无强杀、清理完整，TGZ仍FAIL、DMG未到；见 u22-macos-tgz-audit/ 与 U23 u23-hosted-79e8b439/audit-handoff-02.md。
+
+Windows 最终 ZIP 的固定诊断 artifact10587806605（11110474B，SHA256 4f37426bdaa163a7c2fd23cd5501e07c4b748da561d634f03aa1d6161d4ccf13）证明包内 SDL 来源与 D3D11 初始化通过，但 SoLoud init 返回7、回退 Null；默认 demo 的 playbgm 正确报告 backend_unavailable，之后 engine_frames 超时并被本轮拥有的 runner 清理。没有独立枚举托管音频设备，因此不能将其归因为“没有声卡”。原 package FAIL 与 timeout 收据完整保留在 u22-windows-package-audit/。
+
+新增显式 `--audio-output device|software`，默认 Device 保留，既有 ManualMix 仍由外部手动推进。Software 使用真实 SoLoud NULLDRIVER，在 update 中按有限正 dt 推进48kHz双声道混音，单次最多0.25秒、固定缓冲、分数样本累计；暂停不积压补偿、重新初始化重置会话。正常 shutdown 输出实际 PCM 统计。三个托管桌面包 lane 预声明 software；原 argv、包收据和模式必须一致，默认 demo 必须实际产生非零 PCM，缺失/重复/非法统计、Null fallback 或未完成混音均拒绝。物理音频输出始终 NOT_RUN，不注入假 PCM，不改变剧情/ErrorUI，不自动改模式重试。
+
+真实 C++ RED为6项中1通过5失败；实现后6/6、24059断言通过，1408项仅过滤未选中。真实 Engine CLI 从1/10变为10/10，新CTest入口实际通过；CTest现发现46项，六个平台profile门槛同步增加一个CTest及六个C++用例。Python controller/lane/runner Windows41/34/22、WSL39/34/21全部通过，零跳过；平台数量差异是预定义OS条件。独审19组统计/日志反证和实际adapter/ZIP合同无发现。WSL手动测试首次发现Lua仅返回PATH名字，改为测试夹具显式锁定实际绝对解释器；原失败与实际lane错误保留，生产路径规则未放宽。
+
+本机真实 dirty Debug 诊断启动 D3D11 默认 demo，正常达到60帧并 exit0，无超时/强杀、owned cleanup COMPLETE。Engine SHA256 45551eb6c9389eab67c1efdaeecdf80e5753ba332ba152fd5069d74bcd22e713，实际26256混音帧、52512样本、6011非零、0非有限；原日志明确记录 daily.wav BGM 与清理完成。见 u22-software-audio/debug-demo-driver-02.log 及其绑定的Temp原件。这不是最终发行包验收，也不证明物理输出；首次辅助脚本路径错误日志同样保留。
+
+Web 真正 producer 还复现了仓外 --out 被原打包器拒绝。修复在新建、Git实际忽略的仓内唯一暂存目录运行原 Node/Lua 打包，再完整复制到仓外新目标并核对目录身份、全部文件摘要及前后稳定性；原打包器仓内输出限制不变。首次真实RED、Windows/WSL32项回归、实际已有播放器正控、禁止读取原web/dist的自含夹具均保留在 u22-web-lane-output/，主代理独审无发现。加入音频接线后helper为34项。完整新候选、实际仓外目录/ZIP/Pages tar及托管包验收继续待执行，U22/U23均未因此完成。

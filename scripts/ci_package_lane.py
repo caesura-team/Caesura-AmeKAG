@@ -15,12 +15,13 @@ import os
 from pathlib import Path
 import re
 import shutil
+import subprocess
 import sys
 import time
 import uuid
 import zipfile
 
-from package_verification import _component, _sha256_file, inspect_inventory
+from package_verification import _component, _plain_root, _sha256_file, inspect_inventory
 from run_validation import _source_identity
 from validation_process import run_owned_command
 
@@ -105,9 +106,64 @@ def _check_lock(lock):
 
 
 def _stable(report):
+    for lock in report.get("directory_locks", []):
+        _require(_directory_identity(Path(lock["path"])) == lock["identity"],
+                 f"Directory identity changed: {lock['path']}")
     for lock in report["locks"]:
         _check_lock(lock)
     _require(_identity() == report["source_before"], "Source identity changed during package lane")
+
+
+def _directory_identity(path):
+    """Bind plain directory objects and every parent, not only resolved bytes."""
+    path = Path(path).absolute()
+    result = []
+    for current in (path, *path.parents):
+        _require(_plain_root(current, directory=True) == current, "Directory pathname changed")
+        info = current.stat()
+        result.append({"path":str(current), "device":info.st_dev, "inode":info.st_ino})
+    return result
+
+
+def _web_staging(report):
+    root_identity = _directory_identity(ROOT)
+    _require((ROOT / ".git").exists(), "Web staging requires a source checkout")
+    parent = ROOT / "dist"
+    parent.mkdir(exist_ok=True)
+    _require(_directory_identity(ROOT) == root_identity, "Source parent changed during staging")
+    parent_identity = _directory_identity(parent)
+    container = parent / ("caesura-web-" + uuid.uuid4().hex)
+    ignored = subprocess.run(["git", "-C", str(ROOT), "check-ignore", "--quiet", "--", str(container)],
+                             capture_output=True, timeout=10)
+    _require(ignored.returncode == 0, "Web staging must be ignored by the source checkout")
+    container.mkdir()  # exclusive, even if a prior owned output has a valid ledger
+    _require(_directory_identity(parent) == parent_identity, "Web staging parent changed")
+    identity = _directory_identity(container)
+    report.setdefault("directory_locks", []).append({"path":str(container), "identity":identity})
+    stage = container / "site"  # absent leaf; the Node packer owns its transaction
+    report["web_staging"] = str(stage)
+    return stage, identity
+
+
+def _copy_web_site(report, stage, site, container_identity):
+    _require(_directory_identity(stage.parent) == container_identity, "Web staging container changed")
+    source_identity = _directory_identity(stage)
+    destination_identity = _directory_identity(site.parent)
+    inventory = inspect_inventory(stage)
+    for entry in inventory["entries"]:
+        _require(entry["type"] in ("directory", "file"), "Web staging cannot contain links")
+        if entry["type"] == "file":
+            _require((stage / entry["path"]).stat().st_nlink == 1, "Web staging cannot contain hardlinks")
+    source = _lock(report, stage, expected=inventory["sha256"])
+    report["directory_locks"].append({"path":str(stage), "identity":source_identity})
+    shutil.copytree(stage, site, symlinks=True)  # new destination; never merge/overwrite
+    _require(_directory_identity(stage) == source_identity, "Web staging directory changed during copy")
+    _require(_directory_identity(site.parent) == destination_identity, "Web output parent changed during copy")
+    output_identity = _directory_identity(site)
+    _check_lock(source)
+    _require(inspect_inventory(site) == inventory, "Web site bytes changed during copy")
+    report["directory_locks"].append({"path":str(site), "identity":output_identity})
+    return _lock(report, site, expected=source["sha256"])
 
 
 @contextmanager
@@ -162,6 +218,8 @@ def _validate(report, name, artifact, python, extra):
     _require(value.get("expected_source_sha") == report["source_sha"]
              and value.get("platform") == report["platform"] and value.get("configuration") == "Release",
              "Package validation receipt context mismatch")
+    if report['platform'] != 'web':
+        _require(value.get('audio_output') == report['audio_output'], 'Package audio output selection mismatch')
     if "--container-format" in extra:
         selected = value.get("container", {})
         observed = selected.get("expected_sha256")
@@ -190,9 +248,12 @@ def _finish(report, artifacts):
 
 def run_native_lane(*, build_dir, requirements_path, platform, source_sha, work_dir,
                     cpack_executable, python_executable, hdiutil_executable=None,
-                    appimagetool_path=None, appimagetool_sha256=None, runtime_path=None, runtime_sha256=None):
+                    appimagetool_path=None, appimagetool_sha256=None, runtime_path=None, runtime_sha256=None,
+                    audio_output='device'):
     report = _start(work_dir, platform, source_sha)
     try:
+        _require(audio_output in ('device', 'software'), 'Unknown audio output mode')
+        report['audio_output'] = audio_output
         _source_start(report)
         _require(platform in ("windows", "linux", "macos"), "Unknown desktop platform")
         build = Path(build_dir).resolve(strict=True)
@@ -212,7 +273,8 @@ def run_native_lane(*, build_dir, requirements_path, platform, source_sha, work_
             _require(appimagetool_sha256 is not None and runtime_sha256 is not None, "AppImage needs both external builder pins")
             tool = _lock(report, appimagetool_path, expected=appimagetool_sha256, executable=True)
             runtime = _lock(report, runtime_path, expected=runtime_sha256)
-        extra = ["--requirements", requirements["path"], "--requirements-sha256", requirements["sha256"], "--python", python]
+        extra = ["--requirements", requirements["path"], "--requirements-sha256", requirements["sha256"], "--python", python,
+                 '--audio-output', audio_output]
         outputs = Path(report["work"]) / "outputs"
         artifacts = []
         formats = ("zip",) if platform == "windows" else ("tgz", "appimage" if platform == "linux" else "dmg")
@@ -272,9 +334,10 @@ def run_web_lane(*, game, source_sha, work_dir, node_executable, lua_executable,
         site = Path(report["work"]) / "outputs/site"
         _run(report, "web-bake", [lua, ROOT / "scripts/ks_bake.lua", "--dir", ROOT / "demo", "--web", ROOT / "cache/story"], ROOT)
         _run(report, "web-build", [node, vite, "build"], ROOT / "web")
-        _run(report, "web-package", [node, ROOT / "scripts/package_game.mjs", "--no-web-build", "--out", site, chosen], ROOT,
+        stage, container_identity = _web_staging(report)
+        _run(report, "web-package", [node, ROOT / "scripts/package_game.mjs", "--no-web-build", "--out", stage, chosen], ROOT,
              env_delta={"CAESURA_LUA": lua})
-        directory = _lock(report, site)
+        directory = _copy_web_site(report, stage, site, container_identity)
         report["site"] = str(site)
         _validate(report, "validate-web-directory", directory, python, extra)
         artifacts = [directory]
@@ -360,6 +423,7 @@ def main(argv=None):
             for argument in ("build", "requirements", "cpack", "python"):
                 part.add_argument("--" + argument, type=Path, required=True)
             part.add_argument("--platform", choices=("windows", "linux", "macos"), required=True)
+            part.add_argument('--audio-output', choices=('device', 'software'), default='device')
             for argument in ("hdiutil", "appimagetool", "runtime"):
                 part.add_argument("--" + argument, type=Path)
             for argument in ("appimagetool-sha256", "runtime-sha256"):
@@ -390,6 +454,7 @@ def main(argv=None):
             if args.command == "native":
                 result = run_native_lane(**common, build_dir=args.build, requirements_path=args.requirements,
                     platform=args.platform, cpack_executable=args.cpack, python_executable=args.python,
+                    audio_output=args.audio_output,
                     hdiutil_executable=args.hdiutil, appimagetool_path=args.appimagetool,
                     appimagetool_sha256=args.appimagetool_sha256, runtime_path=args.runtime, runtime_sha256=args.runtime_sha256)
             else:
