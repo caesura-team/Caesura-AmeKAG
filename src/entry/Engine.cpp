@@ -73,6 +73,25 @@ namespace Caesura {
 
 namespace {
 
+// Declare before the payload owner so cleanup retains its debt until the
+// payloads have been destroyed. Each scope removes only its own contribution,
+// preserving outer batches/dispatches during owner-thread reentry.
+class HostPayloadScope {
+public:
+    explicit HostPayloadScope(uint64_t& total, uint64_t count = 0) noexcept
+        : m_total(total), m_remaining(count) { m_total += count; }
+    ~HostPayloadScope() { m_total -= m_remaining; }
+    HostPayloadScope(const HostPayloadScope&) = delete;
+    HostPayloadScope& operator=(const HostPayloadScope&) = delete;
+
+    void add(uint64_t count) noexcept { m_total += count; m_remaining += count; }
+    void releaseOne() noexcept { --m_total; --m_remaining; }
+
+private:
+    uint64_t& m_total;
+    uint64_t m_remaining;
+};
+
 // Wait for this already-submitted readback; never manufacture another bgfx
 // frame or read a filename that could belong to an earlier request.
 ScreenshotResult awaitScreenshot(IRenderDevice& renderer, const ScreenshotTicket& ticket) {
@@ -226,6 +245,29 @@ void Engine::requireInitialized() const {
     if (!m_initialized) {
         throw std::logic_error("Engine service access requires a successful init()");
     }
+}
+
+EngineHostSnapshot Engine::getHostSnapshot() const {
+    CAESURA_ASSERT_MAIN_THREAD();
+    EngineHostSnapshot snapshot;
+    snapshot.supported = true;
+    snapshot.initialized = m_initialized;
+    snapshot.running = m_running;
+    snapshot.luaPaused = m_initialized && isLuaExecutionPaused();
+    const bool direct = m_config.headless || m_config.editorMode;
+    snapshot.delivery = direct ? AsyncHostDelivery::DirectDrain : AsyncHostDelivery::SdlEvents;
+    // SDL-published events and external consumers are outside these counters.
+    snapshot.asyncOwnershipComplete = direct;
+    snapshot.completedOwnerFrames = m_completedOwnerFrames;
+    for (const auto& completed : m_deferredAsyncLoads)
+        if (completed) ++snapshot.deferredAsyncPayloads;
+    snapshot.drainingAsyncPayloads = m_drainingAsyncPayloads;
+    snapshot.dispatchingAsyncPayloads = m_dispatchingAsyncPayloads;
+    snapshot.audioCompletionTrackingSupported = true;
+    snapshot.audioCompletionsPending = m_audioVoiceCompletionsPending;
+    snapshot.audioCompletionsActive = m_activeAudioCompletions;
+    snapshot.audioCompletionOwnerRefs = m_audioCompletionOwnerRef > 0 ? 1 : 0;
+    return snapshot;
 }
 
 IRenderDevice& Engine::renderDevice() { requireInitialized(); return *m_renderDevice; }
@@ -863,15 +905,20 @@ void Engine::run(const OwnerPump& ownerPump) {
                     lua_setglobal(L, "_CAESURA_VOICE_COMPLETE");
                 }
             }
-            const unsigned int completed =
-                m_audioBackend->consumeVoiceCompletions();
-            if (completed > 0 && m_audioVoiceCompletionsPending == 0 && L && GameState::push(L))
-                m_audioCompletionOwnerRef = luaL_ref(L, LUA_REGISTRYINDEX);
-            const unsigned int capacity =
-                std::numeric_limits<unsigned int>::max() -
-                m_audioVoiceCompletionsPending;
-            m_audioVoiceCompletionsPending +=
-                completed > capacity ? capacity : completed;
+            {
+                const unsigned int completed =
+                    m_audioBackend->consumeVoiceCompletions();
+                // The backend has released these notices. Account for the
+                // local transfer before Lua binds the batch's owner reference.
+                const HostPayloadScope transferring(m_activeAudioCompletions, completed);
+                if (completed > 0 && m_audioVoiceCompletionsPending == 0 && L && GameState::push(L))
+                    m_audioCompletionOwnerRef = luaL_ref(L, LUA_REGISTRYINDEX);
+                const unsigned int capacity =
+                    std::numeric_limits<unsigned int>::max() -
+                    m_audioVoiceCompletionsPending;
+                m_audioVoiceCompletionsPending +=
+                    completed > capacity ? capacity : completed;
+            } // Adopted notices belong to pending; excess follows the existing cap.
 
             if (m_audioBackend->isVoicePlaying() && L) {
                 lua_pushboolean(L, 0);
@@ -888,6 +935,10 @@ void Engine::run(const OwnerPump& ownerPump) {
                     lua_setglobal(L, "_CAESURA_VOICE_COMPLETE");
                     break;
                 }
+                // Retain the current notice through lookup, protected Lua
+                // execution and error/non-function stack cleanup, even when a
+                // callback replaces its owner or requests Engine exit.
+                const HostPayloadScope dispatching(m_activeAudioCompletions, 1);
                 --m_audioVoiceCompletionsPending;
                 lua_pushboolean(L, 1);
                 lua_setglobal(L, "_CAESURA_VOICE_COMPLETE");
@@ -970,6 +1021,12 @@ void Engine::run(const OwnerPump& ownerPump) {
             }
         }
 
+        // Only completed owner-loop iterations count. Standalone captures and
+        // shutdown renderer drains never reach this boundary; recovery and
+        // failed iterations exit earlier. Keep --frames/export numbering intact.
+        if (!m_shutdownComplete && !m_renderFailed && !m_deviceRecoveryPaused)
+            ++m_completedOwnerFrames;
+
         // -- Deterministic frame limit (--frames N): lets CI drive a real
         // GPU window for N frames, then exits cleanly with code 0. --
         if (m_config.frameLimit > 0 &&
@@ -1017,6 +1074,7 @@ bool Engine::pendingVoiceOwnerMatches(lua_State* L) const {
 }
 
 void Engine::clearPendingVoiceCompletions(lua_State* L) {
+    // Local transfers/dispatches release their own debt after their stacks unwind.
     if (L && m_audioCompletionOwnerRef > 0)
         luaL_unref(L, LUA_REGISTRYINDEX, m_audioCompletionOwnerRef);
     m_audioCompletionOwnerRef = 0;
@@ -1062,8 +1120,13 @@ void Engine::quit() {
 }
 
 
-void Engine::dispatchAsyncLoad(std::unique_ptr<CompletedLoad> completed) {
-    if (!completed || !m_asyncLoader->isCurrent(*completed)) return;
+void Engine::dispatchAsyncLoad(std::unique_ptr<CompletedLoad> incoming) {
+    if (!incoming) return;
+    HostPayloadScope dispatching(m_dispatchingAsyncPayloads, 1);
+    // A by-value parameter outlives local guards. Move to a local declared
+    // after the guard so its payload is disposed before dispatch debt drops.
+    auto completed = std::move(incoming);
+    if (!m_asyncLoader->isCurrent(*completed)) return;
     if (isLuaExecutionPaused()) {
         m_deferredAsyncLoads.push_back(std::move(completed));
         return;
@@ -1243,10 +1306,13 @@ void Engine::processEvents() {
     // Move the deferred batch out before invoking Lua: a callback may reload,
     // cancel, or pause again. Every result is rechecked at its dispatch point.
     if (!isLuaExecutionPaused() && !m_deferredAsyncLoads.empty()) {
+        HostPayloadScope draining(m_drainingAsyncPayloads,
+                                  static_cast<uint64_t>(m_deferredAsyncLoads.size()));
         auto deferred = std::move(m_deferredAsyncLoads);
         m_deferredAsyncLoads.clear();
         for (auto& completed : deferred) {
             dispatchAsyncLoad(std::move(completed));
+            draining.releaseOne(); // Dispatch has disposed or transferred this item.
             if (m_shutdownComplete) return;
         }
     }
@@ -1256,10 +1322,16 @@ void Engine::processEvents() {
     // SDL's POSIX signal handlers turn SIGTERM/SIGINT into queued quit events,
     // which require an event pump before they can stop the editor loop.
     if (m_config.headless || m_config.editorMode) {
-        for (auto& c : m_asyncLoader->drainCompleted()) {
-            dispatchAsyncLoad(std::make_unique<CompletedLoad>(std::move(c)));
-            if (m_shutdownComplete) return;
-        }
+        {
+            HostPayloadScope draining(m_drainingAsyncPayloads);
+            auto completed = m_asyncLoader->drainCompleted();
+            draining.add(static_cast<uint64_t>(completed.size()));
+            for (auto& c : completed) {
+                dispatchAsyncLoad(std::make_unique<CompletedLoad>(std::move(c)));
+                draining.releaseOne();
+                if (m_shutdownComplete) return;
+            }
+        } // Dispose any unfinished batch before its guard removes the debt.
         if (m_config.editorMode) {
             SDL_PumpEvents();
             // Discard ordinary editor-window input so it cannot fill the SDL

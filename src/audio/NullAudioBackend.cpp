@@ -10,6 +10,7 @@ NullAudioBackend::NullAudioBackend() {
 // -- Lifecycle ---------------------------------------------------------
 
 bool NullAudioBackend::init() { return true; }
+AudioBackendSnapshot NullAudioBackend::getSnapshot() { return {}; }
 void NullAudioBackend::shutdown() {}
 void NullAudioBackend::update(float /*deltaTime*/) {}
 void NullAudioBackend::suspend() {}

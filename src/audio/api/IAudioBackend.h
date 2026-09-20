@@ -1,7 +1,31 @@
 #pragma once
+#include <cstdint>
 #include <string>
 
 namespace Caesura {
+
+// Selected output path, not evidence that a physical device is audible.
+enum class AudioOutputMode { Unknown, Device, ManualMix, Software };
+
+struct AudioBackendSnapshot {
+    bool supported = false;
+    bool running = false; // An initialized playback implementation.
+    AudioOutputMode outputMode = AudioOutputMode::Unknown;
+    // Actual non-bus mixer voices, including paused/virtual/retiring voices.
+    uint64_t liveVoices = 0;
+    uint64_t busVoices = 0;
+    // Owner records still held, including invalid handles awaiting culling:
+    // current BGM + occupied voice slots + SE + both retiring collections.
+    uint64_t sessionHandles = 0;
+    uint64_t retiringBGM = 0;   // Subset of sessionHandles.
+    uint64_t retiringVoice = 0; // Subset of sessionHandles.
+    uint64_t waveCacheEntries = 0; // Reusable sources may remain at idle.
+    uint64_t rawCacheEntries = 0;  // Session PCM owners, not reusable cache.
+    uint64_t voiceCompletionsPending = 0;
+    // Restored source outside the wave cache; its handle aliases a session
+    // record and must not be counted as another voice or quota allocation.
+    uint64_t restoredSources = 0;
+};
 
 // ---------------------------------------------------------------------------
 // IAudioBackend   Abstract audio backend interface
@@ -24,6 +48,14 @@ public:
     // not proof that a particular asset plays or a physical device is audible.
     // Silent fallbacks return false even when their init() succeeds.
     virtual bool isPlaybackAvailable() const = 0;
+
+    // Owner/main thread only; do not race init/shutdown. Observation must not
+    // cull handles, consume completions, mix/update, flush, or release quotas.
+    // Counts are meaningful only when supported. Owner records and mixer
+    // voices describe different phases and must not be summed as resources.
+    // Device playback may finish between the mixer's individually locked
+    // reads; this is not a globally atomic or global-quiescence assertion.
+    virtual AudioBackendSnapshot getSnapshot() = 0;
 
     // -- App-lifecycle audio suspend/resume (mobile backgrounding) ----------
     // Suspends all playback (mixer paused) without releasing loaded assets;

@@ -51,6 +51,7 @@ public:
     void shutdown() override;
     void update(float deltaTime) override;
     bool isPlaybackAvailable() const override { return m_initialized; }
+    AudioBackendSnapshot getSnapshot() override;
     void suspend() override;
     void resume() override;
 

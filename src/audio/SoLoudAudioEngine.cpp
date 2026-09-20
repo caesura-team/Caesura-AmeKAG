@@ -91,6 +91,46 @@ SoLoudAudioEngine::~SoLoudAudioEngine() {
     shutdown();
 }
 
+AudioBackendSnapshot SoLoudAudioEngine::getSnapshot() {
+    CAESURA_ASSERT_MAIN_THREAD();
+    AudioBackendSnapshot snapshot;
+    snapshot.supported = true;
+    snapshot.running = m_initialized;
+    switch (m_outputMode) {
+    case OutputMode::Device: snapshot.outputMode = AudioOutputMode::Device; break;
+    case OutputMode::ManualMix: snapshot.outputMode = AudioOutputMode::ManualMix; break;
+    case OutputMode::Software: snapshot.outputMode = AudioOutputMode::Software; break;
+    }
+
+    // Preserve owner records even after their mixer voices have finished.
+    // Observation must not collect that debt or consume pending notifications.
+    snapshot.retiringBGM = m_retiringBGM.size();
+    snapshot.retiringVoice = m_retiringVoice.size();
+    snapshot.sessionHandles = (m_currentBGM != 0 ? 1u : 0u)
+        + m_activeSE.size() + snapshot.retiringBGM + snapshot.retiringVoice;
+    for (const auto handle : m_voicePool)
+        snapshot.sessionHandles += (handle != 0 ? 1u : 0u);
+    snapshot.waveCacheEntries = m_waveCache.size();
+    snapshot.rawCacheEntries = m_rawWaveCache.size();
+    snapshot.voiceCompletionsPending = m_voiceCompletionsPending;
+    snapshot.restoredSources = m_restoredBGMSource ? 1u : 0u;
+
+    if (m_initialized) {
+        // These getter calls only read under the mixer lock. Unlike
+        // getActiveVoiceCount(), getVoiceCount() does not recalculate voices.
+        const SoLoud::handle buses[] = {
+            m_bgmBusHandle, m_voiceBusHandle, m_seBusHandle
+        };
+        for (const auto handle : buses)
+            if (m_soloud.isValidVoiceHandle(handle)) ++snapshot.busVoices;
+        // The protected buses cannot naturally end, and owner lifecycle must
+        // not race this call. Read the total after observing those buses;
+        // device playback may finish non-bus voices between these reads.
+        snapshot.liveVoices = m_soloud.getVoiceCount() - snapshot.busVoices;
+    }
+    return snapshot;
+}
+
 bool SoLoudAudioEngine::init(){
     CAESURA_ASSERT_MAIN_THREAD();
     if (m_initialized) return true;

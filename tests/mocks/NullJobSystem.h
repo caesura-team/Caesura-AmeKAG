@@ -81,6 +81,9 @@ public:
     int workerCount() const override { return 0; }
     int pendingJobs() const override { return 0; }
     bool isRunning() const override { return m_running; }
+    JobSystemSnapshot getSnapshot() const override {
+        return {false, m_running, 0, 0, 0};
+    }
 
 private:
     bool m_running = false;

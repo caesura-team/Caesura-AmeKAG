@@ -5,6 +5,8 @@
 #include "di/api/ThreadAssert.h"
 #include "mocks/NullJobSystem.h"
 #include "TestPaths.h"
+#include <SDL3/SDL.h>
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <filesystem>
@@ -379,4 +381,213 @@ TEST_CASE("AsyncLoader U5: shutdown invalidates cached and late worker results")
     CHECK(fx.loader.isCurrent(restarted[0]));
     if (!transferred.empty()) CHECK_FALSE(fx.loader.isCurrent(transferred[0]));
     CHECK(fx.loader.pendingCount() == 0);
+}
+
+namespace {
+void checkAsyncSnapshot(const AsyncLoaderSnapshot& state, bool running,
+                        uint64_t pending, uint64_t inflight, uint64_t buffered,
+                        uint64_t entries, uint64_t bytes) {
+    CHECK(state.supported);
+    CHECK(state.running == running);
+    CHECK(state.pendingWaiters == pending);
+    CHECK(state.inflightKeys == inflight);
+    CHECK(state.completedBuffered == buffered);
+    CHECK(state.cacheEntries == entries);
+    CHECK(state.cacheBytes == bytes);
+}
+
+struct SnapshotAsyncEvents {
+    bool ready = SDL_InitSubSystem(SDL_INIT_EVENTS);
+    ~SnapshotAsyncEvents() { if (ready) SDL_QuitSubSystem(SDL_INIT_EVENTS); }
+};
+}
+
+TEST_CASE("AsyncLoader U27 snapshot: waiters keys buffered results and cache stay distinct") {
+    SteppedAsyncFixture fx;
+    IAsyncLoader& api = fx.loader;
+    auto provider = std::make_unique<MemProvider>(100, "snapshot");
+    provider->put("snapshot.tga", std::vector<uint8_t>(std::begin(kRedTga), std::end(kRedTga)));
+    provider->put("snapshot.bin", {'r', 'a', 'w'});
+    auto* source = provider.get();
+    fx.assets.addProvider(std::move(provider));
+    checkAsyncSnapshot(api.getSnapshot(), true, 0, 0, 0, 0, 0);
+    const int first = fx.loader.enqueue("snapshot.tga", "texture");
+    const int shared = fx.loader.enqueue("snapshot.tga", "texture");
+    const int raw = fx.loader.enqueue("snapshot.bin", "bytes");
+    REQUIRE(first > 0);
+    REQUIRE(shared > first);
+    REQUIRE(raw > shared);
+    REQUIRE(fx.jobs.submittedCount() == 2);
+    checkAsyncSnapshot(api.getSnapshot(), true, 3, 2, 0, 0, 0);
+
+    fx.jobs.runWork(0); // Real read/decode finished, private result not delivered.
+    checkAsyncSnapshot(api.getSnapshot(), true, 3, 2, 0, 0, 0);
+    fx.jobs.complete(0);
+    checkAsyncSnapshot(api.getSnapshot(), true, 3, 1, 2, 1, 4);
+    fx.jobs.runWork(1);
+    fx.jobs.complete(1);
+    checkAsyncSnapshot(api.getSnapshot(), true, 3, 0, 3, 1, 4);
+    CHECK(fx.loader.pendingCount() == 3);
+    const auto transferred = fx.loader.drainCompleted();
+    REQUIRE(transferred.size() == 3);
+    CHECK(transferred[0].id == first);
+    CHECK(transferred[1].id == shared);
+    CHECK(transferred[2].id == raw);
+    CHECK(transferred[0].rgba == std::vector<uint8_t>{255, 0, 0, 255});
+    CHECK(transferred[1].rgba == transferred[0].rgba);
+    CHECK(transferred[2].data == std::vector<uint8_t>{'r', 'a', 'w'});
+    checkAsyncSnapshot(api.getSnapshot(), true, 0, 0, 0, 1, 4);
+
+    source->put("snapshot.tga", {}); // A cache hit must not reread these bytes.
+    const int hit = fx.loader.enqueue("snapshot.tga", "texture");
+    REQUIRE(hit > raw);
+    CHECK(fx.jobs.submittedCount() == 2);
+    checkAsyncSnapshot(api.getSnapshot(), true, 1, 0, 1, 1, 4);
+    const auto cached = fx.loader.drainCompleted();
+    REQUIRE(cached.size() == 1);
+    CHECK(cached[0].id == hit);
+    CHECK(cached[0].rgba == transferred[0].rgba);
+    checkAsyncSnapshot(api.getSnapshot(), true, 0, 0, 0, 1, 4);
+    fx.loader.cancelAll();
+    checkAsyncSnapshot(api.getSnapshot(), true, 0, 0, 0, 0, 0);
+    CHECK_FALSE(fx.loader.isCurrent(transferred[0]));
+    CHECK(transferred[0].rgba == std::vector<uint8_t>{255, 0, 0, 255}); // Host still owns bytes.
+
+    REQUIRE(fx.loader.enqueue("snapshot.tga", "texture") > hit);
+    REQUIRE(fx.jobs.submittedCount() == 3);
+    fx.jobs.runWork(2);
+    fx.jobs.complete(2);
+    checkAsyncSnapshot(api.getSnapshot(), true, 1, 0, 1, 0, 0);
+    const auto failed = fx.loader.drainCompleted();
+    REQUIRE(failed.size() == 1);
+    CHECK_FALSE(failed[0].success);
+    checkAsyncSnapshot(api.getSnapshot(), true, 0, 0, 0, 0, 0);
+    fx.loader.shutdown();
+    checkAsyncSnapshot(api.getSnapshot(), false, 0, 0, 0, 0, 0);
+}
+
+TEST_CASE("AsyncLoader U27 snapshot: cancelled containers do not claim old workers have stopped") {
+    TestPaths::ScopedTempDir temp("async_snapshot_running");
+    const auto file = temp.path() / "generation.tga";
+    writeGenerationPixel(file, false);
+    std::atomic<bool> oldWorkerFinished{false};
+    SteppedAsyncFixture fx;
+    auto provider = std::make_unique<SnapshotReadProvider>(file);
+    auto* source = provider.get();
+    fx.assets.addProvider(std::move(provider));
+    const int oldId = fx.loader.enqueue("generation.tga", "texture");
+    REQUIRE(oldId > 0);
+    REQUIRE(fx.loader.enqueue("generation.tga", "texture") > oldId);
+    auto oldWork = fx.jobs.takeWork(0);
+    ScopedSnapshotWorker worker(*source, [work = std::move(oldWork), &oldWorkerFinished] {
+        work();
+        oldWorkerFinished = true;
+    });
+    REQUIRE(source->waitForFirstRead());
+    checkAsyncSnapshot(fx.loader.getSnapshot(), true, 2, 1, 0, 0, 0);
+    fx.loader.cancelAll();
+    checkAsyncSnapshot(fx.loader.getSnapshot(), true, 0, 0, 0, 0, 0);
+    CHECK_FALSE(oldWorkerFinished.load()); // Real thread remains held at the read barrier.
+    CHECK_FALSE(fx.jobs.getSnapshot().supported); // Stepped scheduler is not real Job telemetry.
+
+    writeGenerationPixel(file, true);
+    const int freshId = fx.loader.enqueue("generation.tga", "texture");
+    REQUIRE(freshId > oldId);
+    REQUIRE(fx.jobs.submittedCount() == 2);
+    fx.jobs.runWork(1);
+    checkAsyncSnapshot(fx.loader.getSnapshot(), true, 1, 1, 0, 0, 0);
+    worker.finish();
+    CHECK(oldWorkerFinished.load());
+    fx.jobs.complete(0); // Old result must not erase the fresh key or refill cache.
+    checkAsyncSnapshot(fx.loader.getSnapshot(), true, 1, 1, 0, 0, 0);
+    const int freshWaiter = fx.loader.enqueue("generation.tga", "texture");
+    REQUIRE(freshWaiter > freshId);
+    CHECK(fx.jobs.submittedCount() == 2);
+    checkAsyncSnapshot(fx.loader.getSnapshot(), true, 2, 1, 0, 0, 0);
+    fx.jobs.complete(1);
+    checkAsyncSnapshot(fx.loader.getSnapshot(), true, 2, 0, 2, 1, 4);
+    const auto fresh = fx.loader.drainCompleted();
+    REQUIRE(fresh.size() == 2);
+    CHECK(fresh[0].id == freshId);
+    CHECK(fresh[1].id == freshWaiter);
+    CHECK(fresh[0].rgba == std::vector<uint8_t>{0, 0, 255, 255});
+    CHECK(fresh[1].rgba == fresh[0].rgba);
+    CHECK(source->reads() == 2);
+    checkAsyncSnapshot(fx.loader.getSnapshot(), true, 0, 0, 0, 1, 4);
+    fx.loader.shutdown();
+    checkAsyncSnapshot(fx.loader.getSnapshot(), false, 0, 0, 0, 0, 0);
+}
+
+TEST_CASE("AsyncLoader U27 snapshot: SDL and host owned payloads are outside loader containers") {
+    SnapshotAsyncEvents events;
+    REQUIRE_MESSAGE(events.ready, "SDL event initialization failed: ", SDL_GetError());
+    SteppedAsyncFixture fx;
+    auto provider = std::make_unique<MemProvider>(100, "snapshot SDL");
+    provider->put("snapshot-event.bin", {'e', 'v', 't'});
+    fx.assets.addProvider(std::move(provider));
+    const int id = fx.loader.enqueue("snapshot-event.bin", "bytes");
+    REQUIRE(id > 0);
+    fx.jobs.runWork(0);
+    fx.jobs.complete(0);
+    checkAsyncSnapshot(fx.loader.getSnapshot(), true, 1, 0, 1, 0, 0);
+    REQUIRE(fx.loader.poll());
+    checkAsyncSnapshot(fx.loader.getSnapshot(), true, 0, 0, 0, 0, 0);
+
+    struct CapturedEvent {
+        AsyncLoader* owner;
+        std::unique_ptr<CompletedLoad> payload;
+        int count = 0;
+    } captured{&fx.loader, nullptr};
+    // Take only this loader's actual event; preserve every unrelated event.
+    SDL_FilterEvents([](void* userdata, SDL_Event* event) -> bool {
+        auto& own = *static_cast<CapturedEvent*>(userdata);
+        if (event->type != CAESURA_EVENT_ASYNC_LOAD || event->user.data2 != own.owner)
+            return true;
+        ++own.count;
+        own.payload.reset(static_cast<CompletedLoad*>(event->user.data1));
+        return false;
+    }, &captured);
+    REQUIRE(captured.count == 1);
+    REQUIRE(captured.payload != nullptr);
+    CHECK(captured.payload->id == id);
+    CHECK(captured.payload->success);
+    CHECK(captured.payload->data == std::vector<uint8_t>{'e', 'v', 't'});
+    fx.loader.shutdown();
+    checkAsyncSnapshot(fx.loader.getSnapshot(), false, 0, 0, 0, 0, 0);
+    CHECK_FALSE(fx.loader.isCurrent(*captured.payload));
+    CHECK(captured.payload->data == std::vector<uint8_t>{'e', 'v', 't'});
+}
+
+TEST_CASE("AsyncLoader U27 snapshot: shutdown clears buffered or delayed generations") {
+    bool completeBeforeShutdown = false;
+    SUBCASE("private worker result awaiting completion callback") {}
+    SUBCASE("completed result and cache still owned by loader") { completeBeforeShutdown = true; }
+    SteppedAsyncFixture fx;
+    auto provider = std::make_unique<MemProvider>(100, "snapshot shutdown");
+    provider->put("snapshot-stop.tga", std::vector<uint8_t>(std::begin(kRedTga), std::end(kRedTga)));
+    auto* source = provider.get();
+    fx.assets.addProvider(std::move(provider));
+    REQUIRE(fx.loader.enqueue("snapshot-stop.tga", "texture") > 0);
+    fx.jobs.runWork(0);
+    if (completeBeforeShutdown) fx.jobs.complete(0);
+    checkAsyncSnapshot(fx.loader.getSnapshot(), true, 1,
+                       completeBeforeShutdown ? 0 : 1,
+                       completeBeforeShutdown ? 1 : 0,
+                       completeBeforeShutdown ? 1 : 0,
+                       completeBeforeShutdown ? 4 : 0);
+    fx.loader.shutdown();
+    checkAsyncSnapshot(fx.loader.getSnapshot(), false, 0, 0, 0, 0, 0);
+    CHECK(fx.loader.drainCompleted().empty());
+    source->put("snapshot-stop.tga", {});
+    fx.loader.init();
+    checkAsyncSnapshot(fx.loader.getSnapshot(), true, 0, 0, 0, 0, 0);
+    REQUIRE(fx.loader.enqueue("snapshot-stop.tga", "texture") > 0);
+    REQUIRE(fx.jobs.submittedCount() == 2);
+    fx.jobs.runWork(1);
+    fx.jobs.complete(1);
+    checkAsyncSnapshot(fx.loader.getSnapshot(), true, 1, 0, 1, 0, 0);
+    const auto restarted = fx.loader.drainCompleted();
+    REQUIRE(restarted.size() == 1);
+    CHECK_FALSE(restarted[0].success); // No stale cached success survived shutdown.
+    checkAsyncSnapshot(fx.loader.getSnapshot(), true, 0, 0, 0, 0, 0);
 }

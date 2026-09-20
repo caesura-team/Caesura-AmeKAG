@@ -190,6 +190,65 @@ struct RpcSmaSaveResult {
     std::vector<std::string> errors;
 };
 
+// Copied owner-thread observations. Unsupported zeroes are not measurements;
+// phases can overlap and must not be summed into a global idle/resource total.
+// RPC owns these value types; transports never retain backend pointers.
+enum class RpcAsyncDelivery { Unknown, DirectDrain, SdlEvents };
+enum class RpcAudioOutput { Unknown, Device, ManualMix, Software };
+
+struct RpcJobStats {
+    bool supported = false;
+    bool running = false;
+    std::uint64_t workerPending = 0;
+    std::uint64_t queuedCompletions = 0;
+    std::uint64_t dispatchingCompletions = 0;
+};
+
+struct RpcAsyncLoaderStats {
+    bool supported = false;
+    bool running = false;
+    std::uint64_t pendingWaiters = 0;
+    std::uint64_t inflightKeys = 0;
+    std::uint64_t completedBuffered = 0;
+    std::uint64_t cacheEntries = 0;
+    std::uint64_t cacheBytes = 0;
+};
+
+struct RpcHostStats {
+    bool supported = false;
+    bool initialized = false;
+    bool running = false;
+    bool luaPaused = false;
+    RpcAsyncDelivery delivery = RpcAsyncDelivery::Unknown;
+    // Only the standard host direct-drain route can be complete; SDL events
+    // and externally taken payloads cannot be inferred from these counters.
+    bool asyncOwnershipComplete = false;
+    std::uint64_t completedOwnerFrames = 0;
+    std::uint64_t deferredAsyncPayloads = 0;
+    std::uint64_t drainingAsyncPayloads = 0;
+    std::uint64_t dispatchingAsyncPayloads = 0;
+    // Host audio debt is independently supported from the backend observation.
+    bool audioCompletionTrackingSupported = false;
+    std::uint64_t audioCompletionsPending = 0;
+    std::uint64_t audioCompletionsActive = 0;
+    std::uint64_t audioCompletionOwnerRefs = 0;
+};
+
+struct RpcAudioStats {
+    bool supported = false;
+    bool running = false;
+    RpcAudioOutput outputMode = RpcAudioOutput::Unknown;
+    std::uint64_t liveVoices = 0;
+    std::uint64_t busVoices = 0;
+    std::uint64_t sessionHandles = 0;
+    std::uint64_t retiringBGM = 0;
+    std::uint64_t retiringVoice = 0;
+    std::uint64_t waveCacheEntries = 0;
+    std::uint64_t rawCacheEntries = 0;
+    std::uint64_t voiceCompletionsPending = 0;
+    std::uint64_t restoredSources = 0;
+};
+
 struct RpcStatsResult {
     int textureBudgetMB = 0;
     int textureTier = 0;
@@ -198,6 +257,10 @@ struct RpcStatsResult {
     int jobWorkers = 0;
     int jobPending = 0;
     int luaKb = 0;
+    RpcJobStats jobs;
+    RpcAsyncLoaderStats asyncLoader;
+    RpcHostStats host;
+    RpcAudioStats audio;
 };
 
 struct RpcFrameResult {

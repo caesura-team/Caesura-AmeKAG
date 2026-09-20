@@ -3,6 +3,7 @@
 #include "ImageDecoder.h"
 #include "../debug/api/DebugLog.h"
 #include "../di/BackendRegistry.h"
+#include "../di/api/ThreadAssert.h"
 #include "../job/api/IJobSystem.h"
 #include <SDL3/SDL.h>
 #include <cstdio>
@@ -27,6 +28,18 @@ AsyncLoader::AsyncLoader(AssetManager* assetManager)
 
 AsyncLoader::~AsyncLoader() {
     shutdown();
+}
+
+AsyncLoaderSnapshot AsyncLoader::getSnapshot() const {
+    CAESURA_ASSERT_MAIN_THREAD();
+    // Only inspect owner-managed containers. InFlightEntry::result may still
+    // be written by a worker, and transferred host/SDL payloads are not ours.
+    std::scoped_lock lock(m_completeMutex, m_inflightMutex, m_cacheMutex);
+    return {true, m_running.load(), static_cast<uint64_t>(m_pendingCount.load()),
+            static_cast<uint64_t>(m_inflight.size()),
+            static_cast<uint64_t>(m_completed.size()),
+            static_cast<uint64_t>(m_rgbaCache.size()),
+            static_cast<uint64_t>(m_cacheBytes)};
 }
 
 void AsyncLoader::init() {

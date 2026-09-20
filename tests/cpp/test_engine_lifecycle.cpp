@@ -218,6 +218,7 @@ TEST_CASE("Engine: service access before init throws") {
 // nulls, so no GPU or display is needed.
 namespace {
 struct FailingAudioBackend : IAudioBackend {
+    AudioBackendSnapshot getSnapshot() override { return {}; }
     bool init() override { return false; }
     void shutdown() override {}
     bool isPlaybackAvailable() const override { return false; }
@@ -557,4 +558,45 @@ TEST_CASE("Engine: negative dimensions accepted with no clamp (headless)") {
     CHECK(engine.platform().getWindowWidth()  == -1);
     CHECK(engine.platform().getWindowHeight() == -2);
     engine.shutdown();
+}
+
+
+TEST_CASE("Host U27 snapshot: state remains readable outside the initialized lifetime") {
+    bool editor = false;
+    SUBCASE("headless direct drain") {}
+    SUBCASE("editor direct drain with injected Null backends") { editor = true; }
+    ScopedEditorEvents events;
+    Engine engine(editorEventConfig(editor));
+    const IEngineHostSnapshot& api = engine;
+    const auto before = api.getHostSnapshot();
+    CHECK(before.supported);
+    CHECK_FALSE(before.initialized);
+    CHECK_FALSE(before.running);
+    CHECK_FALSE(before.luaPaused);
+    CHECK(before.completedOwnerFrames == 0);
+    CHECK(before.deferredAsyncPayloads == 0);
+    CHECK(before.drainingAsyncPayloads == 0);
+    CHECK(before.dispatchingAsyncPayloads == 0);
+    REQUIRE(engine.init());
+    const auto ready = api.getHostSnapshot();
+    CHECK(ready.supported);
+    CHECK(ready.initialized);
+    CHECK_FALSE(ready.running); // init does not start the main loop.
+    CHECK_FALSE(ready.luaPaused);
+    CHECK(ready.delivery == AsyncHostDelivery::DirectDrain);
+    CHECK(ready.asyncOwnershipComplete);
+    CHECK(ready.completedOwnerFrames == 0);
+    CHECK(ready.deferredAsyncPayloads == 0);
+    CHECK(ready.drainingAsyncPayloads == 0);
+    CHECK(ready.dispatchingAsyncPayloads == 0);
+    engine.shutdown();
+    engine.shutdown();
+    const auto stopped = api.getHostSnapshot();
+    CHECK(stopped.supported);
+    CHECK_FALSE(stopped.initialized);
+    CHECK_FALSE(stopped.running);
+    CHECK(stopped.completedOwnerFrames == 0);
+    CHECK(stopped.deferredAsyncPayloads == 0);
+    CHECK(stopped.drainingAsyncPayloads == 0);
+    CHECK(stopped.dispatchingAsyncPayloads == 0);
 }

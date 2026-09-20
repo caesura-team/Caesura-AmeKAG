@@ -3,6 +3,7 @@
 // ===========================================================================
 
 #include "EditorServer.h"
+#include "RpcStatsJson.h"
 #include "ConstantTime.h"
 #include "ProjectContext.h"
 #include "services/ProjectService.h"
@@ -1057,16 +1058,9 @@ void EditorServer::serverLoop(int port) {
                 "Stats reply missing result"));
             return;
         }
-        res.set_content(dumpJson({
-            {"status", "ok"},
-            {"texture_budget_mb", s->textureBudgetMB},
-            {"texture_tier", s->textureTier},
-            {"texture_tier_name", s->textureTierName},
-            {"mesh_count", s->meshCount},
-            {"job_workers", s->jobWorkers},
-            {"job_pending", s->jobPending},
-            {"lua_kb", s->luaKb},
-        }), "application/json");
+        auto body = rpc_detail::statsJson(*s);
+        body["status"] = "ok";
+        res.set_content(dumpJson(body), "application/json");
     });
 
     // ---------------------------------------------------------------------

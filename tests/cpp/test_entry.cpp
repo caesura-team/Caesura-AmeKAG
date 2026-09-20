@@ -2100,3 +2100,467 @@ TEST_CASE("U17 Entry: cached voice completions cannot cross a replaced runner ow
     engine.shutdown();
     checkEngineRegistryCleared();
 }
+
+
+namespace {
+struct U27HostAudioObservation {
+    int tag = 0;
+    EngineHostSnapshot host, repeatedHost;
+    AudioBackendSnapshot backend;
+};
+
+struct U27HostAudioObservations {
+    Engine* engine = nullptr;
+    std::array<U27HostAudioObservation, 16> values{};
+    size_t count = 0;
+    bool overflow = false;
+    bool quitRequested = false;
+
+    // Never throw a doctest assertion through a Lua C frame. Copy fixed-size
+    // public observations here, then check them after the protected Lua call.
+    static int capture(lua_State* state) {
+        auto& self = *static_cast<U27HostAudioObservations*>(
+            lua_touserdata(state, lua_upvalueindex(1)));
+        if (self.count == self.values.size()) {
+            self.overflow = true;
+            return 0;
+        }
+        auto& value = self.values[self.count++];
+        value.tag = static_cast<int>(lua_tointeger(state, 1));
+        value.host = self.engine->getHostSnapshot();
+        value.repeatedHost = self.engine->getHostSnapshot();
+        if (auto* backend = BackendRegistry::instance().getAudioBackend())
+            value.backend = backend->getSnapshot();
+        return 0;
+    }
+
+    static int requestQuit(lua_State* state) {
+        auto& self = *static_cast<U27HostAudioObservations*>(
+            lua_touserdata(state, lua_upvalueindex(1)));
+        self.quitRequested = true;
+        self.engine->quit(); // Only request exit; never destroy the live Lua VM.
+        return 0;
+    }
+};
+
+void u27CheckHostAudio(const EngineHostSnapshot& value, uint64_t pending,
+                     uint64_t active, uint64_t ownerRefs) {
+    CHECK(value.supported);
+    CHECK(value.audioCompletionTrackingSupported);
+    CHECK(value.audioCompletionsPending == pending);
+    CHECK(value.audioCompletionsActive == active);
+    CHECK(value.audioCompletionOwnerRefs == ownerRefs);
+}
+
+void u27CheckVoiceDispatch(const U27HostAudioObservation& value, int tag,
+                          uint64_t pending) {
+    CHECK(value.tag == tag);
+    u27CheckHostAudio(value.host, pending, 1, 1);
+    u27CheckHostAudio(value.repeatedHost, pending, 1, 1);
+    CHECK(value.backend.supported);
+    CHECK(value.backend.running);
+    CHECK(value.backend.outputMode == AudioOutputMode::ManualMix);
+    CHECK(value.backend.voiceCompletionsPending == 0);
+}
+
+struct U27HostAudioFixture {
+    U17ObservedManualMix* audio;
+    // Engine is destroyed before this log; Lua closures cannot outlive it.
+    U27HostAudioObservations observations;
+    Engine engine;
+    std::array<unsigned, 2> voices{};
+    unsigned voiceCount = 0;
+    DebugProtocol::CommandSink commands;
+    DebugProtocol::PauseId pause = DebugProtocol::NoPause;
+
+    static EngineConfig configuration(U17ObservedManualMix* audio) {
+        EngineConfig cfg;
+        cfg.headless = true;
+        cfg.enableDebugger = true;
+        cfg.frameLimit = 32; // Fixed finite safety limit, never a sleep/retry.
+        cfg.audio = audio;
+        return cfg;
+    }
+
+    U27HostAudioFixture()
+        : audio(new U17ObservedManualMix), engine(configuration(audio)) {
+        observations.engine = &engine;
+    }
+
+    void init() {
+        REQUIRE(engine.init());
+        REQUIRE(BackendRegistry::instance().getAudioBackend() == audio);
+        REQUIRE(audio->soloud().getBackendId() == SoLoud::Soloud::NULLDRIVER);
+        REQUIRE(audio->soloud().getBackendSamplerate() == u17MixRate);
+        REQUIRE(audio->soloud().getBackendChannels() == u17MixChannels);
+        REQUIRE(audio->getSnapshot().supported);
+        REQUIRE(audio->getSnapshot().outputMode == AudioOutputMode::ManualMix);
+        auto* state = engine.lua().state();
+        REQUIRE(state != nullptr);
+        lua_pushlightuserdata(state, &observations);
+        lua_pushcclosure(state, &U27HostAudioObservations::capture, 1);
+        lua_setglobal(state, "u27_host_audio_observe");
+        lua_pushlightuserdata(state, &observations);
+        lua_pushcclosure(state, &U27HostAudioObservations::requestQuit, 1);
+        lua_setglobal(state, "u27_host_audio_request_quit");
+        u17MixLua(engine, R"lua(
+            package.path = 'scripts/?.lua;scripts/?/init.lua;' .. package.path
+            local runner = require('kag_runner')
+            assert(runner.start('assets/script/tests/u17_voice_wait_manualmix.ks'))
+            u27_callbacks = 0
+            function engine_update(dt) runner.update(dt) end
+            function _onVoiceComplete()
+                u27_callbacks = u27_callbacks + 1
+                u27_host_audio_observe(u27_callbacks)
+            end
+        )lua");
+    }
+
+    void play(unsigned count) {
+        REQUIRE(count >= 1);
+        REQUIRE(count <= voices.size());
+        voiceCount = count;
+        for (unsigned i = 0; i < count; ++i) {
+            u17MixLua(engine, "assert(KAG.play_voice('assets/voice/line01.wav'))");
+            voices[i] = audio->lastVoice;
+            REQUIRE(voices[i] != 0);
+            REQUIRE(audio->soloud().isValidVoiceHandle(voices[i]));
+        }
+        if (count == 2) REQUIRE(voices[0] != voices[1]);
+    }
+
+    void mixFixed() {
+        std::array<float, u17MixBlock * u17MixChannels> samples{};
+        for (unsigned block = 0; block < 120; ++block)
+            audio->soloud().mix(samples.data(), u17MixBlock);
+    }
+
+    void finishNaturally() {
+        for (unsigned i = 0; i < voiceCount; ++i)
+            REQUIRE(audio->soloud().isValidVoiceHandle(voices[i]));
+        mixFixed(); // Actual PCM clock advances, never a synthetic completion.
+        for (unsigned i = 0; i < voiceCount; ++i)
+            REQUIRE_FALSE(audio->soloud().isValidVoiceHandle(voices[i]));
+    }
+
+    void pauseLua() {
+        auto* protocol = engine.debugProtocol();
+        REQUIRE(protocol != nullptr);
+        constexpr const char* code = "local value=1\nvalue=value+1\nreturn value\n";
+        protocol->setBreakpoint("u27_host_voice_debug.lua", 2);
+        lua_State* state = engine.lua().state();
+        lua_State* coroutine = lua_newthread(state); // Keep it rooted on stack.
+        REQUIRE(luaL_loadbuffer(coroutine, code, std::strlen(code),
+                               "u27_host_voice_debug.lua") == LUA_OK);
+        int results = 0;
+        REQUIRE(lua_resume(coroutine, state, 0, &results) == LUA_YIELD);
+        pause = protocol->currentPauseId();
+        commands = protocol->commandSink();
+        REQUIRE(pause != DebugProtocol::NoPause);
+    }
+
+    void resumeLua() {
+        REQUIRE(pause != DebugProtocol::NoPause);
+        REQUIRE(commands(pause, DebugProtocol::Command::Continue));
+    }
+
+    void checkEmpty() {
+        u27CheckHostAudio(engine.getHostSnapshot(), 0, 0, 0);
+        u27CheckHostAudio(engine.getHostSnapshot(), 0, 0, 0);
+        CHECK_FALSE(observations.overflow);
+    }
+};
+
+static_assert(std::is_same_v<decltype(EngineHostSnapshot{}.audioCompletionsPending), uint64_t>);
+static_assert(std::is_same_v<decltype(EngineHostSnapshot{}.audioCompletionsActive), uint64_t>);
+static_assert(std::is_same_v<decltype(EngineHostSnapshot{}.audioCompletionOwnerRefs), uint64_t>);
+} // namespace
+
+TEST_CASE("Host U27 audio debt: paused real notifications transfer and dispatch once") {
+    U27HostAudioFixture f;
+    f.init();
+    f.play(2);
+    unsigned tick = 0;
+    f.engine.run([&] {
+        ++tick;
+        if (tick == 2) {
+            f.pauseLua();
+            f.finishNaturally();
+        } else if (tick == 3) {
+            CHECK(f.audio->consumedNaturalCompletions == 2);
+            CHECK(f.audio->getSnapshot().voiceCompletionsPending == 0);
+            CHECK(f.observations.count == 0);
+            const auto paused = f.engine.getHostSnapshot();
+            CHECK(paused.luaPaused);
+            u27CheckHostAudio(paused, 2, 0, 1);
+            u27CheckHostAudio(f.engine.getHostSnapshot(), 2, 0, 1);
+            f.resumeLua();
+        } else if (tick == 4) {
+            CHECK(f.observations.count == 0); // Resume frame still defers Lua.
+            u27CheckHostAudio(f.engine.getHostSnapshot(), 2, 0, 1);
+        } else if (tick >= 5) {
+            f.checkEmpty();
+            f.engine.quit();
+        }
+    });
+    CHECK(tick == 5);
+    CHECK(f.audio->consumedNaturalCompletions == 2);
+    CHECK(u17MixInteger(f.engine.lua().state(), "u27_callbacks") == 2);
+    REQUIRE(f.observations.count == 2);
+    u27CheckVoiceDispatch(f.observations.values[0], 1, 1);
+    u27CheckVoiceDispatch(f.observations.values[1], 2, 0);
+    f.engine.shutdown();
+    f.checkEmpty();
+    checkEngineRegistryCleared();
+}
+
+TEST_CASE("Host U27 audio debt: real Lua error and absent callback unwind debt") {
+    enum class Callback { StringError, TableError, Absent };
+    Callback callback = Callback::StringError;
+    SUBCASE("string error preserves the next actual notification") {}
+    SUBCASE("non-string error preserves the next actual notification") { callback = Callback::TableError; }
+    SUBCASE("absent callback disposes then a fresh real voice dispatches") { callback = Callback::Absent; }
+    U27HostAudioFixture f;
+    f.init();
+    if (callback == Callback::Absent) {
+        u17MixLua(f.engine, "_onVoiceComplete = nil");
+    } else {
+        u17MixLua(f.engine, callback == Callback::TableError
+            ? "u27_error_value = { reason = 'u27-real-voice' }"
+            : "u27_error_value = 'u27-real-voice'");
+        u17MixLua(f.engine, R"lua(
+            function _onVoiceComplete()
+                u27_callbacks = u27_callbacks + 1
+                u27_host_audio_observe(u27_callbacks)
+                if u27_callbacks == 1 then error(u27_error_value) end
+            end
+        )lua");
+    }
+    f.play(2);
+    unsigned tick = 0;
+    CHECK_NOTHROW(f.engine.run([&] {
+        ++tick;
+        if (tick == 2) f.finishNaturally();
+        else if (tick == 3) {
+            CHECK(f.audio->consumedNaturalCompletions == 2);
+            f.checkEmpty();
+            if (callback == Callback::Absent) {
+                CHECK(f.observations.count == 0);
+                u17MixLua(f.engine, R"lua(
+                    function _onVoiceComplete()
+                        u27_callbacks = u27_callbacks + 1
+                        u27_host_audio_observe(u27_callbacks)
+                    end
+                )lua");
+                f.play(1);
+            } else f.engine.quit();
+        } else if (tick == 4) f.finishNaturally();
+        else if (tick >= 5) f.engine.quit();
+    }));
+    f.checkEmpty();
+    if (callback == Callback::Absent) {
+        CHECK(tick == 5);
+        CHECK(f.audio->consumedNaturalCompletions == 3);
+        CHECK(u17MixInteger(f.engine.lua().state(), "u27_callbacks") == 1);
+        REQUIRE(f.observations.count == 1);
+        u27CheckVoiceDispatch(f.observations.values[0], 1, 0);
+    } else {
+        CHECK(tick == 3);
+        CHECK(u17MixInteger(f.engine.lua().state(), "u27_callbacks") == 2);
+        REQUIRE(f.observations.count == 2);
+        u27CheckVoiceDispatch(f.observations.values[0], 1, 1);
+        u27CheckVoiceDispatch(f.observations.values[1], 2, 0);
+    }
+    f.engine.shutdown();
+    f.checkEmpty();
+    checkEngineRegistryCleared();
+}
+
+TEST_CASE("Host U27 audio debt: stopped paused owner stays visible until disposal") {
+    U27HostAudioFixture f;
+    f.init();
+    u17MixLua(f.engine, "u27_old_owner = require('kag_runner').get_ctx()");
+    f.play(1);
+    unsigned tick = 0;
+    f.engine.run([&] {
+        ++tick;
+        if (tick == 2) {
+            f.pauseLua();
+            f.finishNaturally();
+        } else if (tick == 3) {
+            CHECK(f.audio->consumedNaturalCompletions == 1);
+            CHECK(f.audio->getSnapshot().voiceCompletionsPending == 0);
+            u27CheckHostAudio(f.engine.getHostSnapshot(), 1, 0, 1);
+            u17MixLua(f.engine, "assert(require('kag_runner').stop())");
+            // Stopping the backend/runner does not yet dispose Engine's pin.
+            u27CheckHostAudio(f.engine.getHostSnapshot(), 1, 0, 1);
+            CHECK(f.observations.count == 0);
+        } else if (tick == 4) {
+            f.checkEmpty(); // The preceding frame's real owner check disposed it.
+            f.resumeLua();
+        } else if (tick == 5) {
+            u17MixLua(f.engine, R"lua(
+                local runner = require('kag_runner')
+                assert(runner.start('assets/script/tests/u17_voice_wait_manualmix.ks'))
+                assert(runner.get_ctx() ~= u27_old_owner)
+            )lua");
+            f.play(1);
+        } else if (tick == 6) {
+            CHECK(f.observations.count == 0);
+            f.finishNaturally();
+        } else if (tick >= 7) f.engine.quit();
+    });
+    CHECK(tick == 7);
+    CHECK(f.audio->consumedNaturalCompletions == 2);
+    CHECK(u17MixInteger(f.engine.lua().state(), "u27_callbacks") == 1);
+    REQUIRE(f.observations.count == 1);
+    u27CheckVoiceDispatch(f.observations.values[0], 1, 0);
+    f.checkEmpty();
+    f.engine.shutdown();
+    f.checkEmpty();
+    checkEngineRegistryCleared();
+}
+
+TEST_CASE("Host U27 audio debt: callback replacement retains current debt and cancels tail") {
+    U27HostAudioFixture f;
+    f.init();
+    u17MixLua(f.engine, R"lua(
+        function _onVoiceComplete()
+            u27_callbacks = u27_callbacks + 1
+            if u27_callbacks == 1 then
+                local runner = require('kag_runner')
+                local old = runner.get_ctx()
+                u27_host_audio_observe(10)
+                assert(runner.stop())
+                u27_host_audio_observe(11)
+                assert(runner.start('assets/script/tests/u17_voice_wait_manualmix.ks'))
+                assert(runner.get_ctx() ~= old)
+                u27_host_audio_observe(12)
+            else u27_host_audio_observe(20) end
+        end
+    )lua");
+    f.play(2);
+    unsigned tick = 0;
+    f.engine.run([&] {
+        ++tick;
+        if (tick == 2) f.finishNaturally();
+        else if (tick == 3) {
+            CHECK(u17MixInteger(f.engine.lua().state(), "u27_callbacks") == 1);
+            CHECK(f.audio->consumedNaturalCompletions == 2);
+            CHECK(f.observations.count == 3);
+            f.checkEmpty();
+            f.play(1); // Genuine successor positive control, not an old callback.
+        } else if (tick == 4) f.finishNaturally();
+        else if (tick >= 5) f.engine.quit();
+    });
+    CHECK(tick == 5);
+    CHECK(f.audio->consumedNaturalCompletions == 3);
+    CHECK(u17MixInteger(f.engine.lua().state(), "u27_callbacks") == 2);
+    REQUIRE(f.observations.count == 4);
+    u27CheckVoiceDispatch(f.observations.values[0], 10, 1);
+    u27CheckVoiceDispatch(f.observations.values[1], 11, 1);
+    u27CheckVoiceDispatch(f.observations.values[2], 12, 1);
+    u27CheckVoiceDispatch(f.observations.values[3], 20, 0);
+    f.checkEmpty();
+    f.engine.shutdown();
+    f.checkEmpty();
+    checkEngineRegistryCleared();
+}
+
+TEST_CASE("Host U27 audio debt: safe shutdown after paused debt or callback unwind") {
+    bool callbackQuit = false;
+    SUBCASE("paused notifications are cancelled only by safe owner shutdown") {}
+    SUBCASE("callback requests quit and Lua returns before shutdown") { callbackQuit = true; }
+    U27HostAudioFixture f;
+    f.checkEmpty();
+    CHECK_FALSE(f.engine.getHostSnapshot().initialized);
+    f.init();
+    f.checkEmpty();
+    if (callbackQuit) {
+        u17MixLua(f.engine, R"lua(
+            function _onVoiceComplete()
+                u27_callbacks = u27_callbacks + 1
+                u27_host_audio_observe(1)
+                u27_host_audio_request_quit()
+                u27_host_audio_observe(2)
+            end
+        )lua");
+    }
+    f.play(callbackQuit ? 1 : 2);
+    unsigned tick = 0;
+    f.engine.run([&] {
+        ++tick;
+        if (tick == 2) {
+            if (!callbackQuit) f.pauseLua();
+            f.finishNaturally();
+        } else if (tick >= 3) {
+            if (!callbackQuit) {
+                u27CheckHostAudio(f.engine.getHostSnapshot(), 2, 0, 1);
+                CHECK(f.observations.count == 0);
+            }
+            f.engine.quit();
+        }
+    });
+    // No Lua call is live here. The owner invokes shutdown only after run returns.
+    REQUIRE(f.audio->getSnapshot().running);
+    if (callbackQuit) {
+        CHECK(tick == 2);
+        CHECK(f.observations.quitRequested);
+        CHECK(u17MixInteger(f.engine.lua().state(), "u27_callbacks") == 1);
+        REQUIRE(f.observations.count == 2);
+        u27CheckVoiceDispatch(f.observations.values[0], 1, 0);
+        u27CheckVoiceDispatch(f.observations.values[1], 2, 0);
+        CHECK_FALSE(f.observations.values[1].host.running);
+        f.checkEmpty();
+    } else {
+        CHECK(tick == 3);
+        CHECK(f.audio->consumedNaturalCompletions == 2);
+        CHECK(u17MixInteger(f.engine.lua().state(), "u27_callbacks") == 0);
+        u27CheckHostAudio(f.engine.getHostSnapshot(), 2, 0, 1);
+    }
+    f.engine.shutdown();
+    f.checkEmpty();
+    CHECK_FALSE(f.engine.getHostSnapshot().initialized);
+    CHECK_FALSE(f.engine.getHostSnapshot().running);
+    CHECK_FALSE(f.audio->getSnapshot().running);
+    const auto observationsBefore = f.observations.count;
+    f.engine.shutdown();
+    f.checkEmpty();
+    CHECK(f.observations.count == observationsBefore);
+    checkEngineRegistryCleared();
+}
+
+TEST_CASE("Host U27 audio debt: explicit real stop creates no natural notification") {
+    U27HostAudioFixture f;
+    f.init();
+    f.play(1);
+    const unsigned stopped = f.voices[0];
+    unsigned tick = 0;
+    f.engine.run([&] {
+        ++tick;
+        if (tick == 1) {
+            u17MixLua(f.engine, "KAG.stop_voice()");
+            f.mixFixed(); // Drain the real stop fade; do not synthesize an end.
+            REQUIRE_FALSE(f.audio->soloud().isValidVoiceHandle(stopped));
+            CHECK(f.audio->getSnapshot().voiceCompletionsPending == 0);
+        } else if (tick == 2) {
+            CHECK(f.audio->consumedNaturalCompletions == 0);
+            CHECK(f.observations.count == 0);
+            f.checkEmpty();
+            f.play(1);
+            REQUIRE(f.voices[0] != stopped);
+        } else if (tick == 3) f.finishNaturally();
+        else if (tick >= 4) f.engine.quit();
+    });
+    CHECK(tick == 4);
+    CHECK(f.audio->successfulPlays == 2);
+    CHECK(f.audio->voiceStops >= 1);
+    CHECK(f.audio->consumedNaturalCompletions == 1);
+    CHECK(u17MixInteger(f.engine.lua().state(), "u27_callbacks") == 1);
+    REQUIRE(f.observations.count == 1);
+    u27CheckVoiceDispatch(f.observations.values[0], 1, 0);
+    f.checkEmpty();
+    f.engine.shutdown();
+    f.checkEmpty();
+    checkEngineRegistryCleared();
+}

@@ -2,12 +2,14 @@
 #include <algorithm>
 #include <cstring>
 #include "audio/SoLoudAudioEngine.h"
+#include "audio/NullAudioBackend.h"
 #include "audio/AudioFocusService.h"
 #include "audio/api/IAudioFocusService.h"
 #include "di/BackendRegistry.h"
 #include "di/api/ISandboxQuota.h"
 #include "job/JobSystem.h"
 #include <atomic>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <filesystem>
@@ -1703,4 +1705,246 @@ TEST_CASE("U17 AudioFocus: independent lost and interrupted reasons survive inte
     CHECK(focus.currentState() == State::Lost);
     focus.post(Event::FocusGained);
     CHECK(focus.currentState() == State::Normal);
+}
+
+namespace {
+void u27CheckAudioIdle(const AudioBackendSnapshot& state, bool running,
+                       uint64_t buses, uint64_t waves, AudioOutputMode mode) {
+    CHECK(state.supported);
+    CHECK(state.running == running);
+    CHECK(state.outputMode == mode);
+    CHECK(state.liveVoices == 0);
+    CHECK(state.busVoices == buses);
+    CHECK(state.sessionHandles == 0);
+    CHECK(state.retiringBGM == 0);
+    CHECK(state.retiringVoice == 0);
+    CHECK(state.waveCacheEntries == waves);
+    CHECK(state.rawCacheEntries == 0);
+    CHECK(state.voiceCompletionsPending == 0);
+    CHECK(state.restoredSources == 0);
+}
+
+void u27CheckSameAudioSnapshot(const AudioBackendSnapshot& first,
+                              const AudioBackendSnapshot& second) {
+    CHECK(first.supported == second.supported);
+    CHECK(first.running == second.running);
+    CHECK(first.outputMode == second.outputMode);
+    CHECK(first.liveVoices == second.liveVoices);
+    CHECK(first.busVoices == second.busVoices);
+    CHECK(first.sessionHandles == second.sessionHandles);
+    CHECK(first.retiringBGM == second.retiringBGM);
+    CHECK(first.retiringVoice == second.retiringVoice);
+    CHECK(first.waveCacheEntries == second.waveCacheEntries);
+    CHECK(first.rawCacheEntries == second.rawCacheEntries);
+    CHECK(first.voiceCompletionsPending == second.voiceCompletionsPending);
+    CHECK(first.restoredSources == second.restoredSources);
+}
+
+// A fixed PCM clock, independent of device scheduling and wall time. This
+// intentionally does not call update/cull or any mutating playback query.
+double u27MixAudioFrames(SoLoudAudioEngine& audio, unsigned frames) {
+    std::array<float, 512 * 2> pcm{};
+    double energy = 0;
+    bool finite = true;
+    while (frames != 0) {
+        const auto count = (std::min)(512u, frames);
+        audio.soloud().mix(pcm.data(), count);
+        for (unsigned i = 0; i != count * 2; ++i) {
+            finite = finite && std::isfinite(pcm[i]);
+            energy += std::abs(double(pcm[i]));
+        }
+        frames -= count;
+    }
+    CHECK(finite);
+    return energy;
+}
+}
+
+TEST_CASE("Audio U27 snapshot: lifecycle distinguishes real mixers from unsupported backends") {
+    SoLoudAudioEngine device;
+    SoLoudAudioEngine software{SoLoudAudioEngine::OutputMode::Software};
+    SoLoudAudioEngine audio{SoLoudAudioEngine::OutputMode::ManualMix};
+    IAudioBackend& api = audio;
+    // Device and Software are observed before init; no physical device opens.
+    u27CheckAudioIdle(device.getSnapshot(), false, 0, 0, AudioOutputMode::Device);
+    u27CheckAudioIdle(software.getSnapshot(), false, 0, 0, AudioOutputMode::Software);
+    u27CheckAudioIdle(api.getSnapshot(), false, 0, 0, AudioOutputMode::ManualMix);
+    REQUIRE(audio.init());
+    REQUIRE(audio.soloud().getBackendId() == SoLoud::Soloud::NULLDRIVER);
+    REQUIRE(audio.soloud().getBackendSamplerate() == 48000);
+    REQUIRE(audio.soloud().getBackendChannels() == 2);
+    CHECK(audio.soloud().getVoiceCount() == 3); // Infrastructure buses only.
+    u27CheckAudioIdle(api.getSnapshot(), true, 3, 0, AudioOutputMode::ManualMix);
+    u27CheckSameAudioSnapshot(api.getSnapshot(), api.getSnapshot());
+    CHECK(audio.softwareMixStats().frames == 0);
+    audio.shutdown();
+    u27CheckAudioIdle(api.getSnapshot(), false, 0, 0, AudioOutputMode::ManualMix);
+    REQUIRE(audio.init());
+    u27CheckAudioIdle(api.getSnapshot(), true, 3, 0, AudioOutputMode::ManualMix);
+    audio.shutdown();
+
+    NullAudioBackend silent;
+    CHECK_FALSE(silent.getSnapshot().supported);
+    REQUIRE(silent.init());
+    CHECK_FALSE(silent.getSnapshot().supported);
+    CHECK_FALSE(silent.getSnapshot().running);
+    CHECK(silent.getSnapshot().outputMode == AudioOutputMode::Unknown);
+    silent.shutdown();
+    CHECK_FALSE(silent.getSnapshot().supported);
+}
+
+TEST_CASE("Audio U27 snapshot: finished raw PCM retains cleanup debt until owner update") {
+    AudioQuota quota(2);
+    ScopedAudioQuota scopedQuota(quota);
+    SoLoudAudioEngine audio{SoLoudAudioEngine::OutputMode::ManualMix};
+    REQUIRE(audio.init());
+    REQUIRE(audio.soloud().getBackendId() == SoLoud::Soloud::NULLDRIVER);
+    std::vector<float> pcm(128 * 2, 0.125f);
+    const auto handle = audio.playRawPCM(pcm.data(), 128, 48000, 2);
+    REQUIRE(handle != 0);
+    CHECK(quota.activeCount == 1);
+    const auto playing = audio.getSnapshot();
+    CHECK(playing.supported);
+    CHECK(playing.liveVoices == 1);
+    CHECK(playing.busVoices == 3);
+    CHECK(playing.sessionHandles == 1);
+    CHECK(playing.rawCacheEntries == 1);
+    CHECK(playing.waveCacheEntries == 0);
+    const auto position = audio.soloud().getStreamPosition(handle);
+    u27CheckSameAudioSnapshot(playing, audio.getSnapshot());
+    CHECK(audio.soloud().getStreamPosition(handle) == position);
+    CHECK(u27MixAudioFrames(audio, 48000) > 0);
+    REQUIRE_FALSE(audio.soloud().isValidVoiceHandle(handle));
+    const auto finished = audio.getSnapshot();
+    CHECK(finished.liveVoices == 0);
+    CHECK(finished.sessionHandles == 1);
+    CHECK(finished.rawCacheEntries == 1);
+    CHECK(quota.activeCount == 1);
+    CHECK(quota.releaseCalls == 0);
+    u27CheckSameAudioSnapshot(finished, audio.getSnapshot());
+    CHECK(quota.releaseCalls == 0);
+    audio.update(0);
+    u27CheckAudioIdle(audio.getSnapshot(), true, 3, 0, AudioOutputMode::ManualMix);
+    CHECK(quota.activeCount == 0);
+    CHECK(quota.releaseCalls == 1);
+    CHECK(quota.releaseUnderflows == 0);
+    audio.shutdown();
+    u27CheckAudioIdle(audio.getSnapshot(), false, 0, 0, AudioOutputMode::ManualMix);
+}
+
+TEST_CASE("Audio U27 snapshot: natural voice notifications survive repeated observations") {
+    AudioQuota quota(2);
+    ScopedAudioQuota scopedQuota(quota);
+    SoLoudAudioEngine audio{SoLoudAudioEngine::OutputMode::ManualMix};
+    REQUIRE(audio.init());
+    REQUIRE(audio.soloud().getBackendId() == SoLoud::Soloud::NULLDRIVER);
+    // The retained fixture is 4410 frames at 44100 Hz (0.1 seconds).
+    const auto handle = audio.playVoice("tests/audio/silence.wav");
+    REQUIRE(handle != 0);
+    const auto playing = audio.getSnapshot();
+    CHECK(playing.liveVoices == 1);
+    CHECK(playing.sessionHandles == 1);
+    CHECK(playing.voiceCompletionsPending == 0);
+    u27MixAudioFrames(audio, 48000);
+    REQUIRE_FALSE(audio.soloud().isValidVoiceHandle(handle));
+    const auto uncollected = audio.getSnapshot();
+    CHECK(uncollected.liveVoices == 0);
+    CHECK(uncollected.sessionHandles == 1);
+    CHECK(uncollected.voiceCompletionsPending == 0);
+    CHECK(quota.releaseCalls == 0);
+    audio.update(0);
+    const auto completed = audio.getSnapshot();
+    CHECK(completed.supported);
+    CHECK(completed.sessionHandles == 0);
+    CHECK(completed.voiceCompletionsPending == 1);
+    CHECK(completed.waveCacheEntries == 1);
+    CHECK(quota.releaseCalls == 1);
+    for (unsigned i = 0; i != 3; ++i)
+        u27CheckSameAudioSnapshot(completed, audio.getSnapshot());
+    CHECK(audio.consumeVoiceCompletions() == 1);
+    CHECK(audio.consumeVoiceCompletions() == 0);
+    u27CheckAudioIdle(audio.getSnapshot(), true, 3, 1, AudioOutputMode::ManualMix);
+    audio.flushWaveCache();
+    u27CheckAudioIdle(audio.getSnapshot(), true, 3, 0, AudioOutputMode::ManualMix);
+    CHECK(quota.releaseUnderflows == 0);
+}
+
+TEST_CASE("Audio U27 snapshot: retiring BGM and voice owners remain visible until culled") {
+    AudioQuota quota(8);
+    ScopedAudioQuota scopedQuota(quota);
+    SoLoudAudioEngine audio{SoLoudAudioEngine::OutputMode::ManualMix};
+    REQUIRE(audio.init());
+    REQUIRE(audio.soloud().getBackendId() == SoLoud::Soloud::NULLDRIVER);
+    SUBCASE("BGM replacement retains the retired source until update") {
+        const auto first = audio.playBGM("tests/audio/silence.wav", 0);
+        REQUIRE(first != 0);
+        audio.soloud().setLooping(first, true);
+        const auto second = audio.playBGM("tests/audio/silence.wav", 0.05f);
+        REQUIRE(second != 0);
+        audio.soloud().setLooping(second, true);
+        const auto retiring = audio.getSnapshot();
+        CHECK(retiring.liveVoices == 2);
+        CHECK(retiring.sessionHandles == 2);
+        CHECK(retiring.retiringBGM == 1);
+        CHECK(retiring.retiringVoice == 0);
+        CHECK(retiring.waveCacheEntries == 1);
+        u27CheckSameAudioSnapshot(retiring, audio.getSnapshot());
+        u27MixAudioFrames(audio, 48000);
+        REQUIRE_FALSE(audio.soloud().isValidVoiceHandle(first));
+        REQUIRE(audio.soloud().isValidVoiceHandle(second));
+        const auto uncollected = audio.getSnapshot();
+        CHECK(uncollected.liveVoices == 1);
+        CHECK(uncollected.sessionHandles == 2);
+        CHECK(uncollected.retiringBGM == 1);
+        CHECK(quota.activeCount == 2);
+        audio.update(0);
+        const auto culled = audio.getSnapshot();
+        CHECK(culled.liveVoices == 1);
+        CHECK(culled.sessionHandles == 1);
+        CHECK(culled.retiringBGM == 0);
+        CHECK(quota.activeCount == 1);
+        audio.stopBGM(0);
+    }
+    SUBCASE("Voice rotation and explicit stop do not manufacture completions") {
+        std::array<unsigned, 5> handles{};
+        for (auto& handle : handles) {
+            handle = audio.playVoice("tests/audio/silence.wav");
+            REQUIRE(handle != 0);
+            audio.soloud().setLooping(handle, true);
+        }
+        const auto retiring = audio.getSnapshot();
+        CHECK(retiring.liveVoices == 5);
+        CHECK(retiring.sessionHandles == 5);
+        CHECK(retiring.retiringBGM == 0);
+        CHECK(retiring.retiringVoice == 1);
+        CHECK(retiring.waveCacheEntries == 1);
+        u27CheckSameAudioSnapshot(retiring, audio.getSnapshot());
+        u27MixAudioFrames(audio, 48000);
+        REQUIRE_FALSE(audio.soloud().isValidVoiceHandle(handles[0]));
+        const auto uncollected = audio.getSnapshot();
+        CHECK(uncollected.liveVoices == 4);
+        CHECK(uncollected.sessionHandles == 5);
+        CHECK(uncollected.retiringVoice == 1);
+        CHECK(quota.activeCount == 5);
+        audio.update(0);
+        CHECK(audio.getSnapshot().sessionHandles == 4);
+        CHECK(audio.getSnapshot().retiringVoice == 0);
+        CHECK(quota.activeCount == 4);
+        audio.stopVoice();
+        CHECK(audio.getSnapshot().retiringVoice == 4);
+        CHECK(audio.getSnapshot().sessionHandles == 4);
+        CHECK(audio.getSnapshot().voiceCompletionsPending == 0);
+        u27MixAudioFrames(audio, 48000);
+        CHECK(audio.getSnapshot().liveVoices == 0);
+        CHECK(audio.getSnapshot().retiringVoice == 4);
+        CHECK(quota.activeCount == 4);
+        audio.update(0);
+        CHECK(audio.consumeVoiceCompletions() == 0);
+    }
+    u27CheckAudioIdle(audio.getSnapshot(), true, 3, 1, AudioOutputMode::ManualMix);
+    CHECK(quota.activeCount == 0);
+    CHECK(quota.releaseUnderflows == 0);
+    audio.flushWaveCache();
+    audio.shutdown();
+    u27CheckAudioIdle(audio.getSnapshot(), false, 0, 0, AudioOutputMode::ManualMix);
 }

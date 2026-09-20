@@ -6,6 +6,7 @@
 
 #include "RpcServer.h"
 #include "StdioRpcOutput.h"
+#include "RpcStatsJson.h"
 
 #include <chrono>
 #include <climits>
@@ -778,15 +779,8 @@ std::string RpcServer::handleStats(int id) {
         return replyError(id, RpcReply{RpcReplyStatus::Failed,
             "invalid_dispatcher_reply", "Stats reply missing result", {}});
     }
-    std::ostringstream out;
-    out << "{\"id\":" << id << ",\"stats\":{\"texture_budget_mb\":"
-        << s->textureBudgetMB << ",\"texture_tier\":" << s->textureTier
-        << ",\"texture_tier_name\":\"" << jsonEscape(s->textureTierName) << "\""
-        << ",\"mesh_count\":" << s->meshCount
-        << ",\"job_workers\":" << s->jobWorkers
-        << ",\"job_pending\":" << s->jobPending
-        << ",\"lua_kb\":" << s->luaKb << "}}";
-    return out.str();
+    return nlohmann::json{{"id", id}, {"stats", rpc_detail::statsJson(*s)}}
+        .dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
 }
 
 std::string RpcServer::handleSmaSave(int id, const std::string& path,

@@ -8,9 +8,9 @@
 
 | Metric | Count |
 |--------|-------|
-| Module libraries (src/) | 15 |
-| API interface headers (src/*/api/I*.h) | 38 |
-| Pure-virtual interface methods | 444 |
+| Module libraries (src/) | 16 |
+| API interface headers (src/*/api/I*.h) | 39 |
+| Pure-virtual interface methods | 448 |
 | Lua binding functions (luaL_Reg entries) | 182 |
 | KAG command handler files | 13 |
 | KAG contract commands (command-contracts.md) | 134 |
@@ -25,15 +25,16 @@
 | archive | IArchiveReader.h | 7 |
 | archive | IArchiveWriter.h | 3 |
 | archive | ICryptoEngine.h | 12 |
-| audio | IAudioBackend.h | 32 |
+| audio | IAudioBackend.h | 33 |
 | audio | IAudioFocusService.h | 5 |
 | audio | IAudioRestore.h | 5 |
 | debug | IDebugManager.h | 26 |
 | di | IDeviceLostListener.h | 2 |
 | di | ISandboxQuota.h | 5 |
 | di | ITextureBudget.h | 7 |
+| entry | IEngineHostSnapshot.h | 1 |
 | input | IInputRouter.h | 14 |
-| job | IJobSystem.h | 8 |
+| job | IJobSystem.h | 9 |
 | live2d | IAnimationBackend.h | 16 |
 | minigame | IMiniGameBackend.h | 13 |
 | platform | IDisplayService.h | 1 |
@@ -49,7 +50,7 @@
 | render | IVideoPlayer.h | 19 |
 | resource | IAssetProvider.h | 5 |
 | resource | IAssetReader.h | 1 |
-| resource | IAsyncLoader.h | 9 |
+| resource | IAsyncLoader.h | 10 |
 | resource | IImageDecoder.h | 1 |
 | resource | IResourceGenerationTracker.h | 4 |
 | rpc | IEditorServer.h | 9 |

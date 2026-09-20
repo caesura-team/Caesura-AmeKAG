@@ -1,6 +1,7 @@
 #pragma once
 
 #include "entry/EngineConfig.h"
+#include "api/IEngineHostSnapshot.h"
 #include <cstdint>  // fixed-width types (GCC strict)
 #include "platform/api/IPlatformBackend.h"
 #include "platform/api/ILifecycleService.h"
@@ -48,7 +49,7 @@ namespace carc { class ICryptoEngine; }
 // The Lua KAG runner owns its session table. GameState references that exact
 // table in the VM registry for native queries and hot reload; VM initialization
 // creates no independent state. Engine stops the runner before native teardown.
-class Engine : public ILifecycleListener, public IAudioFocusListener {
+class Engine : public ILifecycleListener, public IAudioFocusListener, public IEngineHostSnapshot {
 public:
     using OwnerPump = std::function<void()>;
 
@@ -69,6 +70,7 @@ public:
     bool isHeadless() const { return m_config.headless; }
     bool isEditorMode() const { return m_config.editorMode; }
     bool hasRenderFailure() const noexcept { return m_renderFailed; }
+    EngineHostSnapshot getHostSnapshot() const override;
     void renderOneFrame();
     std::string captureFrameForRpc(int w, int h);
     bool reloadScriptsNow();
@@ -181,6 +183,8 @@ private:
     bool         m_miniGameInitialized = false;
     bool         m_animationInitialized = false;
     unsigned int m_audioVoiceCompletionsPending = 0;
+    // Stack-owned transfer and Lua dispatch debt; clear only by scope unwind.
+    uint64_t m_activeAudioCompletions = 0;
     // Positive Lua registry reference pins the batch's runner table. Zero
     // denotes engine-owned audio outside a runner, not a raw table address.
     int m_audioCompletionOwnerRef = 0;
@@ -190,6 +194,8 @@ private:
     // Rendered-frame counter; when m_config.frameLimit > 0 the main loop
     // stops deterministically after that many frames (--frames N).
     uint32_t m_frameCount = 0;
+    // Owner-loop progress, independent of export numbering and retained at shutdown.
+    uint64_t m_completedOwnerFrames = 0;
     bool         m_deviceRecoveryPaused = false;
     bool         m_skipLuaCallbacksThisFrame = false;
     static void* luaAllocHook(void* ud, void* ptr, size_t osize, size_t nsize);
@@ -236,6 +242,9 @@ private:
     void dispatchAsyncLoad(std::unique_ptr<CompletedLoad> completed);
 
     std::vector<std::unique_ptr<CompletedLoad>> m_deferredAsyncLoads;
+    // Owner-thread scope debt; shutdown/cancellation must not clear live stacks.
+    uint64_t m_drainingAsyncPayloads = 0;
+    uint64_t m_dispatchingAsyncPayloads = 0;
     // Cached last-written GPU-state globals: written to Lua only when the
     // value changes (avoid per-frame global-table hashing for near-constant
     // values).

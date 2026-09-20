@@ -257,6 +257,11 @@ public:
         if (m_probe.onShutdown) m_probe.onShutdown();
     }
     bool isPlaybackAvailable() const override { return m_initialized; }
+    AudioBackendSnapshot getSnapshot() override {
+        AudioBackendSnapshot snapshot;
+        snapshot.running = m_initialized;
+        return snapshot; // This lifecycle double cannot observe real resources.
+    }
     void update(float) override { ++m_probe.audioUpdateCalls; }
     void suspend() override { ++m_probe.audioSuspendCalls; }
     void resume() override { ++m_probe.audioResumeCalls; }

@@ -1,6 +1,6 @@
-# U27：Web 快照与恢复路径成本执行记录
+# U27：Web 成本、正式 CPU 比较与长跑执行记录
 
-本记录承接[唯一 U1–U29 计划](2026-09-05-001-refactor-runtime-foundation-plan.md)和[U15 截图生命周期](2026-09-08-005-u15-screenshot-lifecycle-execution.md)。本机共同性能问题已取得一次完整 Web **511/511、0 失败/0 跳过**的冻结执行证据；完整 U27 的 Release 多进程基线及一小时长跑尚未执行，不能据此标记整个 U27 完成。
+本记录承接[唯一 U1–U29 计划](2026-09-05-001-refactor-runtime-foundation-plan.md)和[U15 截图生命周期](2026-09-08-005-u15-screenshot-lifecycle-execution.md)。2026-09-20 当前状态：冻结源码的完整 Web 维护套件已有 **638/638、0 失败/0 跳过**；首次正式 Release CPU 比较已保留六个独立进程的全部 180 个正式样本及 36 个预热样本，三个工作负载均通过事先锁定的噪声与 10% 回归规则，原始数据独立复算一致。真实后端至少一小时长跑仍未执行，整个 U27 未完成。下文保留各次历史失败与当时的未测状态。
 
 ## 固定诊断与原始失败
 
@@ -86,3 +86,67 @@ Web 协程恢复仅对第一 yield 值为 nil 增加本地短路；所有非 nil
 机器原始观察锁定Windows11 10.0.26200、AMD64/16逻辑CPU、原进程0至15亲和性及现有High Performance电源计划GUID；未修改电源或亲和性。machine-01.json摘要f18d52b48231c7b836caea3501f97ea9c4d4c001ba37eb705db404f696ea37f8。正式测量要求先结束本轮所有自有构建/测试/浏览器/Android流水线，再顺序运行六个sampler；不声称用户/OS后台活动全部消失，超限噪声按冻结规则拒绝。
 
 首选production基线65e5b425的sampler-only overlay d48aaf90ec79723223a26eaa0fc925e1a8bc35f8确实只改一个测试文件，sampler与candidate相同且src/scripts零差异。其首次Release全量构建及C++1404/1404、402726断言通过；但完整U1运行5468be18-bb33-4e6a-97c9-aa900863933e被严格门禁拒绝：CTest33项中原HTTP smoke意外SKIP（原脚本丢弃Engine输出、rc1后标NO GPU），AI为预声明可选跳过。原301.89秒CTest和整体FAIL保留。没有原Engine stdout可定位rc1，不能将其认定为无GPU或把该baseline投入正式接受比较；不降低HTTP required检查或改阈值。
+
+
+## 2026-09-20 首次正式 Release CPU 比较
+
+首选 U21 baseline 的完整门禁失败后，在正式采样之前的 2026-09-19 20:48:01 UTC 明确改用 production `d418845dc62dfb9d24a04927d0fd030bedfa8ec8`。其测量 checkout `b008bc387739f50319f8095504f65fa189655b1c` 仅覆盖同一 sampler 测试文件，生产 src/scripts 没有变化。候选 production/measurement 均为 `93b8ddc2f76db3c2a851367d816daed013311926`。原 policy、workload、machine 不变；baseline-selection-02.json 摘要 `c7a29f61086b93fe4bd46a33aa025f2f6bf057dcc81f5fdd164c0eaa2f015806` 保存先后关系。此次比较的基线是较后的 U22 提交，不能称为对原 U21 baseline 的通过结论。
+
+候选干净 93b8ddc2 的完整 Debug run `4e2368d2-cc2a-40dd-8ef9-4dce25b454ab` 与 Release run `02c45af0-9031-4ccd-a7c2-862a76b1a7ab` 均完成全量构建、C++、Lua、CTest 及其余 profile 检查，runner/collector/strict verifier 均 exit0。Release C++ 为 1415/1415、427077 个断言、0 failed/0 skipped，Lua 为 147/147 与 56/56，CTest 为 59 个发现、58 通过及 1 个事先声明的可选 AI 跳过，632.22 秒；实际 HTTP 检查通过。新 base Release run `065a4a1e-a0f5-4656-a66a-6e5d8ae3a90c` 同样通过严格 U1，C++1415/1415、Lua147/56，CTest48项为47通过及1个预声明AI跳过，582.36秒。未用定向结果拼接完整候选通过。
+
+正式请求 `D:/caesura-u27-inputs-01/request-01.json` SHA256 `a31701e1a7d698bea148da17051f59fabf6738783c7427458a203847e9f7236d` 绑定两侧干净源码、完整 Release U1、实际二进制和相邻 SDL3 DLL、机器及工作负载。base/candidate 二进制摘要分别为 `1bdd5a2673417eb01082fe0f33de1abb8abcd1ea50a10c76354cd492532e1b24` 和 `2f4d31db938ed9a634129c6140d818ab6442a0156f40bebf994374e51bbda1a4`。采样前本轮自有构建、测试、浏览器及 Android 执行全部结束；机器和输入在执行后再次核验一致，不主张所有用户/OS后台活动均不存在。
+
+唯一一次正式 collection 在 2026-09-19 21:20:20.305240 至 21:20:24.636790 UTC 按 AB/BA/AB 执行。六个 UUID 和 PID/creation 身份不同、时间区间没有重叠，均 actual exit0、cleanup COMPLETE，无超时、强杀或 stop 请求。每个进程三个指标，各保留 2 次预热和 10 次正式测量；180 个正式样本与 36 个预热样本全部进入原始记录，没有剔除慢值、追加测量或替换结果。每个采样进程实际只选择三个 Perf 用例、1412 filtered，不能改称其执行完整 C++ 套件。72 次 SMA 结果摘要全部为 `4fdacb2d04bfab2fa46c980232d7c15827dffd151238b5bd4144c24e02fd52ef`。
+
+| CPU 工作负载 | base 三进程上中位数（ms） | candidate 三进程上中位数（ms） | candidate/base 配对比率 |
+| --- | --- | --- | --- |
+| Lua format + append，10000 | 4.5450 / 4.5666 / 4.5091 | 4.4098 / 4.5212 / 4.6799 | 0.970253 / 0.990058 / 1.037879 |
+| Lua table reads，10000 | 0.2546 / 0.2436 / 0.2623 | 0.2542 / 0.2600 / 0.2490 | 0.998429 / 1.067323 / 0.949295 |
+| SMA，8192顶点×10 | 1.5556 / 1.5827 / 1.5687 | 1.6004 / 1.6150 / 1.5929 | 1.028799 / 1.020408 / 1.015427 |
+
+实际最大组内 rMAD 为 6.7382%，最大进程间 spread 为 7.3449%，最大顺序 drift 为 6.1250%；所有样本均满足固定 block 时长下限，三个指标的全部配对比率均不超过1.10。结果为 `MEASURED / PASS / fixture=false / gate_pass=true / release_ready=false`。这只说明这三个 CPU 工作负载没有超过事先锁定的回归规则，不证明引擎整体提速，也不覆盖 GPU、Web 或音频性能。
+
+原 collection `D:/caesura-u27-formal-01/collection.json` 摘要 `f9d877d08aeb1bb1948744e998cf5dd8ff54a90a88ffc99c0d71728ba7c10c87`；原 comparison `D:/caesura-u27-comparison-01.json` 摘要 `c050a5d7c3776ed4b284162900a30d8be234069654cb38acde708779f5744272`。u27-worktree/artifacts/validation/u27-cpu-sampler/formal-independent-review-01.md 摘要 `7fbbca54fcc3b82969dc6c2a244b4184c74eb2dfbe1a6dae00a17ed2117dae46`，JSON摘要 `80c5e7689b6e21b875ca0e3c3cc112367fd6f868594bc30df1367b80c8efedf8`。独审重新验证两个完整 Release U1，重读24个子进程原始引用并独立计算所有中位数、rMAD、spread、drift和配对比率，逐值一致，无可行动发现；它是保存数据的复算，不是新的独立性能测量。首个审阅脚本将 Lua table 结果误设为100000，按原源码及原样本更正为1515000后才完成复算；未改产品数据。
+
+为保持原始 comparison 可重放，两侧测量工作树继续冻结在93b8ddc2和b008bc38。后续长跑实现转入独立 u27-soak-worktree。JobSystem 回调队列与当前执行 batch、异步资源、真实渲染/音频资源、Lua heap及RSS的静止点观测仍须落实；目前没有真实后端一小时结果，U27 与整体 U1–U29 仍未完成。
+
+
+## Job 与 Async 所有权快照回归
+
+为真实长跑的静止判定新增 owner-thread Job/Async 只读快照，Null 与直接替身明确 unsupported。Job 分别记录 worker pending、排队 completion 与当前派发批次；Async 同时锁定容器读取 waiter、inflight、buffered 与 cache 实际数量，cacheBytes只计载荷数据，不代表GPU或分配器总量。取消后的worker及宿主转移载荷须由其他所有者继续计数，不能据loader容器为零宣称全局空闲。
+
+最初空实现实际10方法1通过9失败（553断言、152失败），实现后10/10及相邻84/84通过。独审随后发现shutdown在main mutex内析构排队回调捕获对象，析构回入snapshot会异常终止。新增真实捕获析构回归在旧实现编译成功后实际exit1，doctest报Terminate handler called，18条之前的断言通过；25秒超时没有触发，未将其误记为超时死锁或猜测异常类型。
+
+修复将待取消deque在锁内转移，锁外销毁，所有权计数在整个销毁过程保留，最后还原外层派发数量；不执行取消回调，不清零重入栈上的既有债务。修复后的新增快照11/11、599断言；六文件相邻85/85、1244断言，原1415/1341项分别为过滤未选中。实际进程退出0、无超时强杀、cleanup COMPLETE、源和binary稳定；独审P2关闭、无其他发现，报告u27-job-snapshot/independent-review-02.md SHA256 `9984bb7bf57dff6dcea2f5ec1ca554fa0a701c5b299bba1ff27f8f654ace2d2d`，JSON `e6234270fd83e14173a7d0a47000c0dbdf3392a5cc8143400e7db77e627d719f`。原RED、首次GREEN与修复后GREEN分开保留。
+
+## 宿主快照首次真实 RED
+
+新的IEngineHostSnapshot纯虚接口区分direct drain与普通SDL事件交付，普通SDL队列所有权暂为incomplete；计数设计包含deferred、当前draining与dispatching载荷及实际完成的owner-loop帧，重叠阶段不相加成资源总量。空getter冻结后主代理实际完整编译CaesuraTests成功，八个新增方法全部失败，530断言中371通过159失败，1426个既有方法过滤未选中，退出1且清理完成。原三测试文件既有3+5+26方法主体保留，首次RED记录u27-host-snapshot/build-and-red-01.json及原stdout/stderr。生产计数实现仍在推进；这些Null/确定性后端回归不证明真实GPU、音频或一小时长跑，RPC接线及其余资源快照仍未完成。
+
+
+## 宿主与真实 ManualMix 音频快照联合 GREEN
+
+宿主getter补齐后八个既有RED方法全部通过，530断言；普通SDL事件路径仍明确async ownership incomplete，successful owner-loop帧与renderOneFrame/export计数分开。作用域计数覆盖实际载荷销毁，取消/重入不清零外层所有权。音频API随后以真实SoLoud ManualMix建立5方法RED：585断言中157失败，全部是新增snapshot字段，真实mix/完成/配额等先决断言通过。实现只读getter后统一重建CaesuraTests；Audio/Host/Job/Async合计24/24、1714断言，12个相关文件270/270、37879断言全部通过。分别1415/1169方法为过滤未选中，不能当完整套件。
+
+联合执行源码在93b8ddc2的未提交快照，fingerprint a35dc5fbb95d7b78d8c33123cba4ef74d479a2b75fd2fee69c0bda6e494eed3d首末相同，锁定文件未变。构建与两测试进程均exit0、无超时强杀、cleanup COMPLETE；binary SHA256 38b5c53ef1b8175e250dbccb034fb18774c3aaffa6c53081432ae98f5ed43bde。原联合收据u27-audio-snapshot/integrated-green-01.json SHA256 215ab31462201fcac5e811ad564046965d6a871123bc223c28d311b5afb6bb8e，根代理只读审查root-review-green-01.md摘要9a9374af0d2eac4ea10b9798a2a4c528a086ebc9316e179a39f7a35c89a636b9，无可行动发现。
+
+音频getter保留尚未cull的owner记录、退役句柄、缓存、待消费通知与恢复source，Null明确unsupported；SoLoud各读操作内部加锁，不声称Device跨字段原子。静止判定还有Engine宿主已接收通知、当前Lua回调和registry owner引用这一具体缺口，已形成audio-host-debt-plan-01.md并继续真实RED/GREEN。物理音频、GPU释放、RPC完整导出、干净完整候选及一小时真实后端长跑仍未完成。
+
+
+## 宿主音频通知所有权的真实回归
+
+新增六方法在冻结空字段实现上实际 RED：1152 断言中 181 失败，全部属于新增支持位、pending、active 与 Lua owner 引用观测；真实 ManualMix、暂停、runner 替换、回调异常及安全 shutdown 的先决断言通过。生产修复仅在后端通知转交与 Lua 回调派发周围保留作用域计数，并由 getter 读取；取消/清理不清零仍在栈上的 active 债务，原容量上限未变。接口与六方法在 RED/GREEN 之间逐字节不变。
+
+修复后统一重建并执行 30/30 新增快照方法（2866 断言）和 12 文件 276/276 相关方法（39031 断言），均 0 failed；1415/1169 项分别为过滤未选中，不代表完整套件。构建与两个测试进程分别 PID3184/29140/23584，均实际 exit0、无超时强杀、owned cleanup COMPLETE。源码 fingerprint a0f96c20b75e17c8070aad69f8a6d616d797f6fb888c874d52451208e75c9955 首末相同，26 个源码锁及原日志回读一致；binary SHA256 18f5f0864b4f8a6ea2dc6d6344317d94234f394ef02669cc36179b5f8beb7363。
+
+原结果 u27-host-snapshot/audio-host-debt-green-01/integrated-green-01.json 摘要 df11bd3aa4c4d353074975f8edffdb110dea0099b28509b0267d6ad46736f88d；root-review-01.json 摘要 7baef6572f5d858f25d7cbcba9e6c956426beabcd4b5a80752c0478d6cb9a790。根代理审阅无可行动发现。此结果关闭本轮宿主音频通知观测缺口；物理音频、完整渲染资源与在途截图回调、RPC 导出、干净候选完整门禁和一小时真实后端长跑仍未完成。
+
+## RPC 快照导出与真实 main 验证
+
+RPC DTO新增jobs、async_loader、host、audio四组38字段，两个transport共用只接收值对象的序列化helper；原7字段和stdio嵌套/HTTP平铺结构保持。main在原OwnerRpcQueue executor中通过BackendRegistry访问三个后端并引用Engine接口，四个快照各读一次，完整复制Host四个音频通知字段。整数保留uint64，不经过浮点或有符号中间转换；未知枚举保持Unknown，SDL/Unknown不能被提升为完整所有权。读取不推进帧、不混音、不排空或等待；四个独立观察不是全局原子空闲状态。
+
+9个新增方法在空字段实现上取得有效RED：4通过5失败，629断言中60失败，精确为12个对象大小差异及48个缺失组；所有前提通过。实现后实际同时构建CaesuraTests和CaesuraAmeKAG成功，9/9、2381断言及三文件邻接86/86、3184断言全通过，1445/1368方法分别过滤未选中。源及17项锁首尾相符，全部命令exit0、无超时强杀、owned cleanup COMPLETE；`u27-rpc-snapshot/run-green-01.json`摘要c24f1d26587e7ce0d668cde6378b2b9f72f3eec88f786e2e9a4435f50c0e96f5，main二进制2e2ce899319d36d995a78e5024ab86cf2baef3046d281c6335b7048ed513cbb9。
+
+随后对同源同binary执行一次真实HTTP和一次stdio main smoke，分别独占进程和目录。HTTP `--editor`实际返回Device音频supported/running，全部字段及类型满足合同，owner帧从0增至3；PID6476、creation134343374525878081、受控STOPPED实际exit1、无超时强杀、cleanup COMPLETE且监听消失。stdio `--headless`实际返回Null音频unsupported/unknown，帧从1增至5；Engine PID11184、creation134343375107010412收到stop后退出0，stdout reader完成；其独占Python控制器PID3052也exit0且整个owned树清理完成。没有用HTTP受控退出1冒充正常退出0，也没有把Null计数当真实设备负载。
+
+两路径锁定21份源码/helper、368份运行输入56727456字节、请求和原构建收据，前后全部匹配。根代理复算各自14/18份原始证据并解析真实请求/响应，`main-smoke-01/root-review-01.json`摘要6278ab2b6dd6634796ae819bb9a44908e5a56e6785cec2fa25c8ec705072138a；没有剩余可行动发现。实际main未注入uint64极值，极值精确序列化证据来自独立transport回归。以上不证明物理可听输出、GPU fence、普通SDL事件所有权完整、一小时真实后端长跑或完整合并门禁。Renderer资源与独立在途截图callback债务仍继续按既定计划实现。

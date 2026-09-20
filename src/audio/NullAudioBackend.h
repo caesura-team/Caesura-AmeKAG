@@ -20,6 +20,7 @@ public:
     void shutdown() override;
     void update(float deltaTime) override;
     bool isPlaybackAvailable() const override { return false; }
+    AudioBackendSnapshot getSnapshot() override;
     void suspend() override;
     void resume() override;
 

@@ -1555,3 +1555,347 @@ TEST_CASE("rpc::service::PackagingService::widenUtf8 decodes real UTF-8 to wchar
     // Empty input yields an empty wide string.
     CHECK(rpc::service::PackagingService::widenUtf8("").empty());
 }
+
+
+// U27 copied runtime snapshots: the dispatcher is the only substituted backend
+// boundary. The actual production parsers, serializers and transports run below.
+#include <cerrno>
+#include <sstream>
+#if defined(_WIN32)
+#include <fcntl.h>
+#include <io.h>
+#endif
+
+namespace {
+using U27Json = nlohmann::json;
+
+RpcStatsResult u27WideStats() {
+    RpcStatsResult s;
+    s.textureBudgetMB = 1536; s.textureTier = 2;
+    s.textureTierName = "tier \"quoted\"\nline";
+    s.meshCount = 37; s.jobWorkers = 3; s.jobPending = 5; s.luaKb = 123;
+    s.jobs = {true, false, 4294967301ULL, 9007199254740993ULL, 18446744073709551615ULL};
+    s.asyncLoader = {true, true, 4294967302ULL, 9007199254740995ULL,
+        18446744073709551614ULL, 4294967303ULL, 9007199254740997ULL};
+    s.host.supported = true; s.host.initialized = true; s.host.running = true;
+    s.host.luaPaused = true; s.host.delivery = RpcAsyncDelivery::DirectDrain;
+    s.host.asyncOwnershipComplete = true;
+    s.host.completedOwnerFrames = 18446744073709551613ULL;
+    s.host.deferredAsyncPayloads = 4294967304ULL;
+    s.host.drainingAsyncPayloads = 9007199254740999ULL;
+    s.host.dispatchingAsyncPayloads = 18446744073709551612ULL;
+    s.host.audioCompletionTrackingSupported = true;
+    s.host.audioCompletionsPending = 4294967305ULL;
+    s.host.audioCompletionsActive = 9007199254741001ULL;
+    s.host.audioCompletionOwnerRefs = 1;
+    s.audio = {true, false, RpcAudioOutput::ManualMix, 4294967306ULL,
+        9007199254741003ULL, 18446744073709551611ULL, 4294967307ULL,
+        9007199254741005ULL, 18446744073709551610ULL, 4294967308ULL,
+        9007199254741007ULL, 18446744073709551609ULL};
+    return s;
+}
+
+// Literal wire oracle: it is not produced by serializing the supplied DTO.
+// These intentionally synthetic widths are protocol values, not real telemetry.
+U27Json u27ExpectedWideStats() {
+    return U27Json::parse(R"({
+      "texture_budget_mb":1536,"texture_tier":2,"texture_tier_name":"tier \"quoted\"\nline",
+      "mesh_count":37,"job_workers":3,"job_pending":5,"lua_kb":123,
+      "jobs":{"supported":true,"running":false,"worker_pending":4294967301,
+        "queued_completions":9007199254740993,"dispatching_completions":18446744073709551615},
+      "async_loader":{"supported":true,"running":true,"pending_waiters":4294967302,
+        "inflight_keys":9007199254740995,"completed_buffered":18446744073709551614,
+        "cache_entries":4294967303,"cache_bytes":9007199254740997},
+      "host":{"supported":true,"initialized":true,"running":true,"lua_paused":true,
+        "delivery":"direct_drain","async_ownership_complete":true,
+        "completed_owner_frames":18446744073709551613,"deferred_async_payloads":4294967304,
+        "draining_async_payloads":9007199254740999,"dispatching_async_payloads":18446744073709551612,
+        "audio_completion_tracking_supported":true,"audio_completions_pending":4294967305,
+        "audio_completions_active":9007199254741001,"audio_completion_owner_refs":1},
+      "audio":{"supported":true,"running":false,"output_mode":"manual_mix",
+        "live_voices":4294967306,"bus_voices":9007199254741003,
+        "session_handles":18446744073709551611,"retiring_bgm":4294967307,
+        "retiring_voice":9007199254741005,"wave_cache_entries":18446744073709551610,
+        "raw_cache_entries":4294967308,"voice_completions_pending":9007199254741007,
+        "restored_sources":18446744073709551609}
+    })");
+}
+
+void u27CheckScalar(const U27Json& actual, const U27Json& expected) {
+    CHECK(actual.type() == expected.type());
+    if (expected.is_number_unsigned()) {
+        CHECK(actual.is_number_unsigned());
+        if (actual.is_number_unsigned())
+            CHECK(actual.get<std::uint64_t>() == expected.get<std::uint64_t>());
+    } else CHECK(actual == expected);
+}
+
+void u27CheckStats(const U27Json& actual, const U27Json& expected) {
+    REQUIRE(actual.is_object());
+    CHECK(actual.size() == expected.size());
+    for (auto field = expected.begin(); field != expected.end(); ++field) {
+        CAPTURE(field.key());
+        CHECK(actual.contains(field.key()));
+        if (!actual.contains(field.key())) continue;
+        const auto& value = actual.at(field.key());
+        if (!field.value().is_object()) {
+            u27CheckScalar(value, field.value());
+            continue;
+        }
+        CHECK(value.is_object());
+        if (!value.is_object()) continue;
+        CHECK(value.size() == field.value().size());
+        for (auto member = field.value().begin(); member != field.value().end(); ++member) {
+            CAPTURE(member.key());
+            CHECK(value.contains(member.key()));
+            if (value.contains(member.key())) u27CheckScalar(value.at(member.key()), member.value());
+        }
+    }
+    CHECK_FALSE(actual.contains("idle"));
+    CHECK_FALSE(actual.contains("global_idle"));
+}
+
+std::vector<std::pair<RpcStatsResult, U27Json>> u27StatsModes() {
+    auto unsupported = u27ExpectedWideStats();
+    for (auto& field : unsupported.items()) {
+        if (field.value().is_object()) {
+            for (auto& member : field.value().items()) {
+                if (member.value().is_boolean()) member.value() = false;
+                else if (member.value().is_string()) member.value() = "unknown";
+                else member.value() = std::uint64_t{0};
+            }
+        } else if (field.value().is_string()) field.value() = "";
+        else field.value() = std::uint64_t{0};
+    }
+    std::vector<std::pair<RpcStatsResult, U27Json>> cases;
+    cases.emplace_back(RpcStatsResult{}, std::move(unsupported));
+    auto sdl = u27WideStats(); auto sdlWire = u27ExpectedWideStats();
+    sdl.host.delivery = RpcAsyncDelivery::SdlEvents;
+    sdl.host.asyncOwnershipComplete = false;
+    sdl.host.audioCompletionTrackingSupported = false;
+    sdl.audio.outputMode = RpcAudioOutput::Software;
+    sdlWire["host"]["delivery"] = "sdl_events";
+    sdlWire["host"]["async_ownership_complete"] = false;
+    sdlWire["host"]["audio_completion_tracking_supported"] = false;
+    sdlWire["audio"]["output_mode"] = "software";
+    cases.emplace_back(std::move(sdl), std::move(sdlWire));
+    auto unknown = u27WideStats(); auto unknownWire = u27ExpectedWideStats();
+    unknown.host.delivery = static_cast<RpcAsyncDelivery>(99);
+    unknown.host.asyncOwnershipComplete = false;
+    unknown.audio.outputMode = static_cast<RpcAudioOutput>(99);
+    unknownWire["host"]["delivery"] = "unknown";
+    unknownWire["host"]["async_ownership_complete"] = false;
+    unknownWire["audio"]["output_mode"] = "unknown";
+    cases.emplace_back(std::move(unknown), std::move(unknownWire));
+    auto device = u27WideStats(); auto deviceWire = u27ExpectedWideStats();
+    device.audio.outputMode = RpcAudioOutput::Device;
+    deviceWire["audio"]["output_mode"] = "device";
+    cases.emplace_back(std::move(device), std::move(deviceWire));
+    return cases;
+}
+
+std::shared_ptr<RecordingRpcDispatcher> u27StatsDispatcher(const RpcStatsResult& value) {
+    return std::make_shared<RecordingRpcDispatcher>([value](const RpcRequest& request) {
+        if (!std::holds_alternative<RpcStatsRequest>(request.payload))
+            return RpcReply{RpcReplyStatus::Failed, "unexpected_fixture_request", {}, {}};
+        return RpcReply{RpcReplyStatus::Ok, {}, {}, value};
+    });
+}
+
+// Owns both real pipe descriptors and its reader. Destruction closes the
+// original writer before joining; the inner RpcServer first closes its duplicate.
+class U27RpcOutputCapture {
+public:
+    U27RpcOutputCapture() {
+#if defined(_WIN32)
+        if (::_pipe(m_fds, 4096, _O_BINARY | _O_NOINHERIT) != 0)
+#else
+        if (::pipe(m_fds) != 0)
+#endif
+            m_fds[0] = m_fds[1] = -1;
+    }
+    ~U27RpcOutputCapture() { finish(); close(m_fds[0]); }
+    bool valid() const { return m_fds[0] >= 0 && m_fds[1] >= 0; }
+    int writer() const { return m_fds[1]; }
+    void startReader() {
+        m_reader = std::thread([this] {
+            try {
+                char bytes[4096];
+                for (;;) {
+#if defined(_WIN32)
+                    const int n = ::_read(m_fds[0], bytes, sizeof(bytes));
+#else
+                    const int n = static_cast<int>(::read(m_fds[0], bytes, sizeof(bytes)));
+#endif
+                    if (n < 0 && errno == EINTR) continue;
+                    if (n <= 0) { m_readFailed = n < 0; break; }
+                    m_bytes.append(bytes, static_cast<std::size_t>(n));
+                }
+            } catch (...) { m_readFailed = true; }
+        });
+    }
+    void closeWriter() { close(m_fds[1]); }
+    void finish() { closeWriter(); if (m_reader.joinable()) m_reader.join(); }
+    const std::string& bytes() const { return m_bytes; }
+    bool readFailed() const { return m_readFailed; }
+private:
+    static void close(int& fd) {
+        if (fd < 0) return;
+#if defined(_WIN32)
+        ::_close(fd);
+#else
+        ::close(fd);
+#endif
+        fd = -1;
+    }
+    int m_fds[2]{-1, -1};
+    std::thread m_reader;
+    std::string m_bytes;
+    bool m_readFailed = false; // inspected only after join
+};
+} // namespace
+
+TEST_CASE("U27 RPC stats: stdio nested values preserve every counter and legacy field") {
+    auto dispatcher = u27StatsDispatcher(u27WideStats());
+    RpcServer rpc;
+    rpc.setDispatcher(dispatcher);
+    const auto response = U27Json::parse(rpc.processRequestLine(R"({"id":2701,"method":"stats"})"));
+    REQUIRE(response.contains("stats"));
+    CHECK(response.size() == 2);
+    CHECK(response.at("id") == 2701);
+    u27CheckStats(response.at("stats"), u27ExpectedWideStats());
+    REQUIRE(dispatcher->requestCount() == 1);
+    CHECK(std::holds_alternative<RpcStatsRequest>(dispatcher->requestAt(0).payload));
+}
+
+TEST_CASE("U27 RPC stats: stdio keeps unsupported unknown and SDL incomplete explicit") {
+    for (const auto& [value, expected] : u27StatsModes()) {
+        RpcServer rpc;
+        rpc.setDispatcher(u27StatsDispatcher(value));
+        const auto response = U27Json::parse(rpc.processRequestLine(R"({"id":2702,"method":"stats"})"));
+        REQUIRE(response.contains("stats"));
+        CHECK(response.size() == 2);
+        u27CheckStats(response.at("stats"), expected);
+    }
+}
+
+TEST_CASE("U27 RPC stats: real stdio descriptor emits complete ordered uint64 lines") {
+    U27RpcOutputCapture output;
+    REQUIRE(output.valid());
+    auto source = std::make_shared<ControlledLineSource>();
+    source->enqueue(R"({"id":2703,"method":"stats"})");
+    source->enqueue(R"({"id":2704,"method":"stats"})");
+    source->finish();
+    auto dispatcher = u27StatsDispatcher(u27WideStats());
+    {
+        RpcServer rpc(lineSourceFor(source), output.writer());
+        REQUIRE(rpc.outputReady());
+        rpc.setDispatcher(dispatcher);
+        output.startReader();
+        output.closeWriter();
+        rpc.run(); // finite real input/EOF, actual StdioRpcOutput writer
+        CHECK_FALSE(rpc.isRunning());
+    }
+    output.finish();
+    REQUIRE_FALSE(output.readFailed());
+    REQUIRE_FALSE(output.bytes().empty());
+    CHECK(output.bytes().back() == '\n');
+    std::istringstream lines(output.bytes());
+    for (const int id : {2703, 2704}) {
+        std::string line;
+        REQUIRE(static_cast<bool>(std::getline(lines, line)));
+        const auto response = U27Json::parse(line);
+        CHECK(response.at("id") == id);
+        CHECK(response.size() == 2);
+        REQUIRE(response.contains("stats"));
+        u27CheckStats(response.at("stats"), u27ExpectedWideStats());
+    }
+    std::string extra;
+    CHECK_FALSE(static_cast<bool>(std::getline(lines, extra)));
+    CHECK(dispatcher->requestCount() == 2);
+    CHECK(source->readCalls() == 3);
+}
+
+TEST_CASE("U27 RPC stats: real HTTP flat response matches stdio without truncation") {
+    auto dispatcher = u27StatsDispatcher(u27WideStats());
+    EditorServer server;
+    server.setDispatcher(dispatcher);
+    REQUIRE(startOpen(server));
+    httplib::Client client("127.0.0.1", server.port());
+    client.set_connection_timeout(2, 0); client.set_read_timeout(3, 0);
+    const auto response = client.Get("/api/stats");
+    REQUIRE(response);
+    REQUIRE(response->status == 200);
+    auto body = U27Json::parse(response->body);
+    CHECK(body.at("status") == "ok");
+    CHECK_FALSE(body.contains("stats"));
+    body.erase("status");
+    u27CheckStats(body, u27ExpectedWideStats());
+    RpcServer rpc;
+    rpc.setDispatcher(dispatcher);
+    const auto stdio = U27Json::parse(rpc.processRequestLine(R"({"id":2705,"method":"stats"})"));
+    REQUIRE(stdio.contains("stats"));
+    CHECK(body == stdio.at("stats"));
+    CHECK(dispatcher->requestCount() == 2);
+    server.stop();
+    CHECK_FALSE(server.isRunning());
+}
+
+TEST_CASE("U27 RPC stats: real HTTP preserves unsupported and all delivery output modes") {
+    for (const auto& [value, expected] : u27StatsModes()) {
+        EditorServer server;
+        auto dispatcher = u27StatsDispatcher(value);
+        server.setDispatcher(dispatcher);
+        REQUIRE(startOpen(server));
+        httplib::Client client("127.0.0.1", server.port());
+        client.set_connection_timeout(2, 0); client.set_read_timeout(3, 0);
+        const auto response = client.Get("/api/stats");
+        REQUIRE(response);
+        REQUIRE(response->status == 200);
+        auto body = U27Json::parse(response->body);
+        CHECK(body.at("status") == "ok");
+        CHECK_FALSE(body.contains("stats"));
+        body.erase("status");
+        u27CheckStats(body, expected);
+        CHECK(dispatcher->requestCount() == 1);
+        server.stop();
+    }
+}
+
+TEST_CASE("U27 RPC stats: failures and wrong payload never become success snapshots") {
+    struct Failure { RpcReply reply; const char* code; int http; };
+    const std::vector<Failure> failures = {
+        {{RpcReplyStatus::Busy, "request_cancelled", "not started", {}}, "request_cancelled", 503},
+        {{RpcReplyStatus::Busy, "result_unknown", "already started", {}}, "result_unknown", 503},
+        {{RpcReplyStatus::Unavailable, "dispatcher_closed", "closed", {}}, "dispatcher_closed", 503},
+        {{RpcReplyStatus::Ok, {}, {}, RpcStatusResult{true}}, "invalid_dispatcher_reply", 500},
+    };
+    for (const auto& failure : failures) {
+        CAPTURE(failure.code);
+        auto dispatcher = std::make_shared<RecordingRpcDispatcher>([failure](const RpcRequest&) {
+            return failure.reply;
+        });
+        RpcServer rpc; rpc.setDispatcher(dispatcher);
+        const auto stdio = U27Json::parse(rpc.processRequestLine(R"({"id":2706,"method":"stats"})"));
+        CHECK(stdio.at("id") == 2706);
+        CHECK(stdio.at("code") == failure.code);
+        CHECK(stdio.contains("error"));
+        CHECK_FALSE(stdio.contains("stats"));
+        EditorServer server; server.setDispatcher(dispatcher);
+        REQUIRE(startOpen(server));
+        httplib::Client client("127.0.0.1", server.port());
+        client.set_connection_timeout(2, 0); client.set_read_timeout(3, 0);
+        const auto response = client.Get("/api/stats");
+        REQUIRE(response);
+        CHECK(response->status == failure.http);
+        const auto body = U27Json::parse(response->body);
+        CHECK(body.at("code") == failure.code);
+        CHECK(body.at("status") != "ok");
+        for (const char* name : {"stats", "jobs", "async_loader", "host", "audio"}) {
+            CHECK_FALSE(body.contains(name));
+            CHECK_FALSE(stdio.contains(name));
+        }
+        CHECK(dispatcher->requestCount() == 2);
+        server.stop();
+    }
+}

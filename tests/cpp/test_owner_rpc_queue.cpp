@@ -343,3 +343,200 @@ TEST_CASE("U18 OwnerRpcQueue: request context restores after nested owner dispat
         if (std::strcmp(event.operation, "eval") == 0) CHECK(event.requestId == inner);
     }
 }
+
+
+// U27 owner stats observation. These tests exercise the actual queue and one
+// actual Engine/Job callback path; the local executor is not main.cpp's mapper.
+#include "entry/Engine.h"
+#include "di/BackendRegistry.h"
+#include "job/api/IJobSystem.h"
+
+TEST_CASE("U27 OwnerRpc stats: foreign request reads only at owner pump and returns a value copy") {
+    Events events;
+    const auto owner = std::this_thread::get_id();
+    std::atomic<int> calls{0};
+    std::atomic<bool> ownerOnly{true};
+    RpcStatsResult current;
+    current.host.supported = true;
+    current.host.completedOwnerFrames = 9007199254740993ULL;
+    current.jobs.supported = true;
+    current.jobs.queuedCompletions = 4294967301ULL;
+    std::mutex currentMutex;
+    OwnerRpcQueue queue([&](const RpcRequest& request) {
+        ++calls;
+        if (std::this_thread::get_id() != owner) ownerOnly = false;
+        if (!std::holds_alternative<RpcStatsRequest>(request.payload))
+            return RpcReply{RpcReplyStatus::Failed, "unexpected_fixture_request", {}, {}};
+        std::lock_guard<std::mutex> lock(currentMutex);
+        return RpcReply{RpcReplyStatus::Ok, {}, {}, current};
+    }, [&](const auto& event) { events.add(event); });
+    Caller caller(queue, RpcRequest{RpcStatsRequest{}});
+    REQUIRE(events.wait(Phase::Accepted, "stats"));
+    CHECK(calls.load() == 0);
+    CHECK(count(events.snapshot(), Phase::Started, "stats") == 0);
+    queue.pump();
+    const auto reply = caller.finish();
+    REQUIRE(reply.status == RpcReplyStatus::Ok);
+    const auto* first = std::get_if<RpcStatsResult>(&reply.payload);
+    REQUIRE(first != nullptr);
+    CHECK(first->host.completedOwnerFrames == 9007199254740993ULL);
+    CHECK(first->jobs.queuedCompletions == 4294967301ULL);
+    {
+        std::lock_guard<std::mutex> lock(currentMutex);
+        current.host.completedOwnerFrames = 18446744073709551615ULL;
+        current.jobs.queuedCompletions = 0;
+    }
+    const auto next = queue.dispatch(RpcRequest{RpcStatsRequest{}});
+    REQUIRE(std::holds_alternative<RpcStatsResult>(next.payload));
+    CHECK(std::get<RpcStatsResult>(next.payload).host.completedOwnerFrames == 18446744073709551615ULL);
+    CHECK(first->host.completedOwnerFrames == 9007199254740993ULL);
+    CHECK(first->jobs.queuedCompletions == 4294967301ULL);
+    CHECK(ownerOnly.load());
+    CHECK(calls.load() == 2);
+    const auto trace = events.snapshot();
+    CHECK(count(trace, Phase::Started, "stats") == 2);
+    CHECK(count(trace, Phase::Completed, "stats") == 2);
+}
+
+TEST_CASE("U27 OwnerRpc stats: inline callback observes real Job debt until unwind") {
+    EngineConfig config;
+    config.headless = true;
+    Engine engine(std::move(config));
+    REQUIRE(engine.init());
+    auto* jobs = BackendRegistry::instance().getJobSystem();
+    REQUIRE(jobs != nullptr);
+    REQUIRE(jobs->getSnapshot().supported);
+    const auto owner = std::this_thread::get_id();
+    bool ownerOnly = true;
+    int reads = 0;
+    OwnerRpcQueue queue([&](const RpcRequest& request) {
+        ownerOnly = ownerOnly && std::this_thread::get_id() == owner;
+        ++reads;
+        if (!std::holds_alternative<RpcStatsRequest>(request.payload))
+            return RpcReply{RpcReplyStatus::Failed, "unexpected_fixture_request", {}, {}};
+        const auto job = jobs->getSnapshot();
+        const auto host = engine.getHostSnapshot();
+        RpcStatsResult observed;
+        observed.jobs = {job.supported, job.running, job.workerPending,
+            job.queuedCompletions, job.dispatchingCompletions};
+        observed.host.supported = host.supported;
+        observed.host.initialized = host.initialized;
+        observed.host.completedOwnerFrames = host.completedOwnerFrames;
+        observed.host.audioCompletionTrackingSupported = host.audioCompletionTrackingSupported;
+        observed.host.audioCompletionsPending = host.audioCompletionsPending;
+        observed.host.audioCompletionsActive = host.audioCompletionsActive;
+        observed.host.audioCompletionOwnerRefs = host.audioCompletionOwnerRefs;
+        return RpcReply{RpcReplyStatus::Ok, {}, {}, observed};
+    });
+    std::atomic<bool> bodyRan{false};
+    bool callbackRan = false;
+    RpcReply during;
+    REQUIRE(jobs->submit([&] { bodyRan = true; }, JobPriority::Normal, [&] {
+        callbackRan = true;
+        during = queue.dispatch(RpcRequest{RpcStatsRequest{}}); // direct owner path
+    }) != 0);
+    jobs->waitIdle(); // actual worker completion publication, not a sleep
+    CHECK(bodyRan.load());
+    CHECK_FALSE(callbackRan);
+    CHECK(reads == 0);
+    REQUIRE(jobs->getSnapshot().queuedCompletions == 1);
+    jobs->pollMainThreadJobs();
+    REQUIRE(callbackRan);
+    REQUIRE(during.status == RpcReplyStatus::Ok);
+    REQUIRE(std::holds_alternative<RpcStatsResult>(during.payload));
+    const auto saved = std::get<RpcStatsResult>(during.payload);
+    CHECK(saved.jobs.workerPending == 0);
+    CHECK(saved.jobs.queuedCompletions == 0);
+    CHECK(saved.jobs.dispatchingCompletions == 1);
+    CHECK(saved.host.supported);
+    CHECK(saved.host.initialized);
+    CHECK(saved.host.audioCompletionTrackingSupported);
+    CHECK(saved.host.completedOwnerFrames == 0); // no main-loop frame was pumped
+    const auto after = queue.dispatch(RpcRequest{RpcStatsRequest{}});
+    REQUIRE(std::holds_alternative<RpcStatsResult>(after.payload));
+    CHECK(std::get<RpcStatsResult>(after.payload).jobs.dispatchingCompletions == 0);
+    CHECK(saved.jobs.dispatchingCompletions == 1); // immutable returned value
+    CHECK(ownerOnly);
+    CHECK(reads == 2);
+    queue.close();
+    engine.shutdown(); // only after the callback and queue dispatch unwind
+}
+
+TEST_CASE("U27 OwnerRpc stats: timeout and closed intake never manufacture zero snapshots") {
+    SUBCASE("unstarted timeout cancels without a read then fresh stats succeeds") {
+        Events events;
+        int reads = 0;
+        OwnerRpcQueue queue([&](const RpcRequest&) {
+            ++reads;
+            RpcStatsResult s; s.jobs.supported = true; s.jobs.workerPending = 4294967301ULL;
+            return RpcReply{RpcReplyStatus::Ok, {}, {}, s};
+        }, [&](const auto& event) { events.add(event); });
+        Caller caller(queue, RpcRequest{RpcStatsRequest{}}, 40ms);
+        REQUIRE(events.wait(Phase::Accepted, "stats"));
+        const auto reply = caller.finish();
+        CHECK(reply.status == RpcReplyStatus::Busy);
+        CHECK(reply.code == "request_cancelled");
+        CHECK(std::holds_alternative<std::monostate>(reply.payload));
+        queue.pump();
+        CHECK(reads == 0);
+        CHECK(count(events.snapshot(), Phase::Started, "stats") == 0);
+        const auto fresh = queue.dispatch(RpcRequest{RpcStatsRequest{}});
+        REQUIRE(fresh.status == RpcReplyStatus::Ok);
+        REQUIRE(std::holds_alternative<RpcStatsResult>(fresh.payload));
+        CHECK(std::get<RpcStatsResult>(fresh.payload).jobs.workerPending == 4294967301ULL);
+        CHECK(reads == 1);
+    }
+    SUBCASE("started timeout returns unknown even though one late read completes") {
+        Events events;
+        Gate started, callerReturned;
+        std::atomic<bool> acceptedWaited{false};
+        bool executorWaited = false;
+        int reads = 0;
+        OwnerRpcQueue queue([&](const RpcRequest&) {
+            executorWaited = callerReturned.wait();
+            ++reads;
+            RpcStatsResult s; s.host.supported = true; s.host.completedOwnerFrames = 9007199254740993ULL;
+            return RpcReply{RpcReplyStatus::Ok, {}, {}, s};
+        }, [&](const auto& event) {
+            events.add(event);
+            if (event.phase == Phase::Accepted) acceptedWaited = started.wait();
+            if (event.phase == Phase::Started) started.open();
+        });
+        Caller caller(queue, RpcRequest{RpcStatsRequest{}}, 40ms);
+        REQUIRE(events.wait(Phase::Accepted, "stats"));
+        RpcReply reply;
+        std::thread release([&] { reply = caller.finish(); callerReturned.open(); });
+        queue.pump();
+        release.join();
+        CHECK(acceptedWaited.load());
+        CHECK(executorWaited);
+        CHECK(reply.status == RpcReplyStatus::Busy);
+        CHECK(reply.code == "result_unknown");
+        CHECK(std::holds_alternative<std::monostate>(reply.payload));
+        CHECK(reads == 1);
+        const auto trace = events.snapshot();
+        CHECK(count(trace, Phase::TimedOut, "stats") == 1);
+        CHECK(count(trace, Phase::Completed, "stats") == 1);
+        CHECK(count(trace, Phase::Cancelled, "stats") == 0);
+    }
+    SUBCASE("close wakes a queued stats caller without reading the backend") {
+        Events events;
+        int reads = 0;
+        OwnerRpcQueue queue([&](const RpcRequest&) {
+            ++reads; return RpcReply{RpcReplyStatus::Ok, {}, {}, RpcStatsResult{}};
+        }, [&](const auto& event) { events.add(event); });
+        Caller caller(queue, RpcRequest{RpcStatsRequest{}});
+        REQUIRE(events.wait(Phase::Accepted, "stats"));
+        queue.close();
+        const auto reply = caller.finish();
+        CHECK(reply.status == RpcReplyStatus::Unavailable);
+        CHECK(reply.code == "dispatcher_closed");
+        CHECK(std::holds_alternative<std::monostate>(reply.payload));
+        queue.pump();
+        CHECK(reads == 0);
+        const auto later = queue.dispatch(RpcRequest{RpcStatsRequest{}});
+        CHECK(later.status == RpcReplyStatus::Unavailable);
+        CHECK(std::holds_alternative<std::monostate>(later.payload));
+        CHECK(reads == 0);
+    }
+}

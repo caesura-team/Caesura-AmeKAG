@@ -9,6 +9,10 @@ extern "C" {
 }
 #include "render/BgfxRenderDevice.h"
 #include "di/api/ITextureBudget.h"
+#include "di/BackendRegistry.h"
+#include "resource/api/IAsyncLoader.h"
+#include "audio/api/IAudioBackend.h"
+#include "entry/api/IEngineHostSnapshot.h"
 #include "job/api/IJobSystem.h"
 #include "render/api/IMeshRenderer.h"
 #include "audio/SoLoudAudioEngine.h"
@@ -493,6 +497,81 @@ private:
                 stats.jobPending = m_engine.jobSystem().pendingJobs();
                 if (lua_State* L = m_engine.lua().state()) {
                     stats.luaKb = static_cast<int>(lua_gc(L, LUA_GCCOUNT, 0));
+                }
+                // execute() is called only by OwnerRpcQueue's owner executor.
+                // Copy each observer once; transports never access these backends.
+                // Independent worker/mixer phases are not one atomic idle sample.
+                auto& registry = Caesura::BackendRegistry::instance();
+                if (auto* jobs = registry.getJobSystem()) {
+                    const auto snapshot = jobs->getSnapshot();
+                    stats.jobs.supported = snapshot.supported;
+                    stats.jobs.running = snapshot.running;
+                    stats.jobs.workerPending = snapshot.workerPending;
+                    stats.jobs.queuedCompletions = snapshot.queuedCompletions;
+                    stats.jobs.dispatchingCompletions = snapshot.dispatchingCompletions;
+                }
+                if (auto* loader = registry.getAsyncLoader()) {
+                    const auto snapshot = loader->getSnapshot();
+                    stats.asyncLoader.supported = snapshot.supported;
+                    stats.asyncLoader.running = snapshot.running;
+                    stats.asyncLoader.pendingWaiters = snapshot.pendingWaiters;
+                    stats.asyncLoader.inflightKeys = snapshot.inflightKeys;
+                    stats.asyncLoader.completedBuffered = snapshot.completedBuffered;
+                    stats.asyncLoader.cacheEntries = snapshot.cacheEntries;
+                    stats.asyncLoader.cacheBytes = snapshot.cacheBytes;
+                }
+                const Caesura::IEngineHostSnapshot& hostObserver = m_engine;
+                const auto host = hostObserver.getHostSnapshot();
+                stats.host.supported = host.supported;
+                stats.host.initialized = host.initialized;
+                stats.host.running = host.running;
+                stats.host.luaPaused = host.luaPaused;
+                switch (host.delivery) {
+                case Caesura::AsyncHostDelivery::DirectDrain:
+                    stats.host.delivery = Caesura::RpcAsyncDelivery::DirectDrain;
+                    break;
+                case Caesura::AsyncHostDelivery::SdlEvents:
+                    stats.host.delivery = Caesura::RpcAsyncDelivery::SdlEvents;
+                    break;
+                default: break; // Unsupported future values remain Unknown.
+                }
+                stats.host.asyncOwnershipComplete = host.supported
+                    && host.asyncOwnershipComplete
+                    && stats.host.delivery == Caesura::RpcAsyncDelivery::DirectDrain;
+                stats.host.completedOwnerFrames = host.completedOwnerFrames;
+                stats.host.deferredAsyncPayloads = host.deferredAsyncPayloads;
+                stats.host.drainingAsyncPayloads = host.drainingAsyncPayloads;
+                stats.host.dispatchingAsyncPayloads = host.dispatchingAsyncPayloads;
+                stats.host.audioCompletionTrackingSupported = host.audioCompletionTrackingSupported;
+                stats.host.audioCompletionsPending = host.audioCompletionsPending;
+                stats.host.audioCompletionsActive = host.audioCompletionsActive;
+                stats.host.audioCompletionOwnerRefs = host.audioCompletionOwnerRefs;
+                if (auto* audio = registry.getAudioBackend()) {
+                    const auto snapshot = audio->getSnapshot();
+                    stats.audio.supported = snapshot.supported;
+                    stats.audio.running = snapshot.running;
+                    switch (snapshot.outputMode) {
+                    case Caesura::AudioOutputMode::Device:
+                        stats.audio.outputMode = Caesura::RpcAudioOutput::Device;
+                        break;
+                    case Caesura::AudioOutputMode::ManualMix:
+                        stats.audio.outputMode = Caesura::RpcAudioOutput::ManualMix;
+                        break;
+                    case Caesura::AudioOutputMode::Software:
+                        stats.audio.outputMode = Caesura::RpcAudioOutput::Software;
+                        break;
+                    case Caesura::AudioOutputMode::Unknown: break;
+                    default: break;
+                    }
+                    stats.audio.liveVoices = snapshot.liveVoices;
+                    stats.audio.busVoices = snapshot.busVoices;
+                    stats.audio.sessionHandles = snapshot.sessionHandles;
+                    stats.audio.retiringBGM = snapshot.retiringBGM;
+                    stats.audio.retiringVoice = snapshot.retiringVoice;
+                    stats.audio.waveCacheEntries = snapshot.waveCacheEntries;
+                    stats.audio.rawCacheEntries = snapshot.rawCacheEntries;
+                    stats.audio.voiceCompletionsPending = snapshot.voiceCompletionsPending;
+                    stats.audio.restoredSources = snapshot.restoredSources;
                 }
                 Caesura::RpcReply reply = rpcOk();
                 reply.payload = std::move(stats);
