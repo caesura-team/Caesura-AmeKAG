@@ -8,6 +8,7 @@
 #include "storage/CloudSaveProvider.h"
 #include "storage/api/ISaveProvider.h"
 #include "storage/api/ICloudSaveTransport.h"
+#include "storage/api/ICloudSaveSnapshotTransport.h"
 #include "steam/api/ISteamBackend.h"
 #include "steam/NullSteamBackend.h"
 #include "di/BackendRegistry.h"
@@ -26,6 +27,10 @@
 #include <fstream>
 #include <iterator>
 #include <cstdio>
+#include <atomic>
+#include <future>
+#include <functional>
+
 
 using namespace Caesura;
 
@@ -1045,4 +1050,487 @@ TEST_CASE("Cloud sync: encrypted pull publication failures preserve the complete
     REQUIRE(manager.pullSlotFromCloud(3));
     CHECK(cloudFileBytes(slot) == cloudEnvelope);
     CHECK(manager.load(3) == replacement);
+}
+
+namespace {
+constexpr size_t u26SnapshotLocalLimit = 10u * 1024u * 1024u;
+
+std::string u26SnapshotPath(const std::filesystem::path& path) {
+    const auto utf8 = path.generic_u8string();
+    return std::string(utf8.begin(), utf8.end());
+}
+
+void u26CheckUnversioned(const CloudSnapshot& snapshot) {
+    CHECK(snapshot.revisionKind == CloudRevisionKind::None);
+    CHECK(snapshot.revision.empty());
+}
+
+void u26CheckReadFailure(const CloudSnapshot& snapshot, CloudReadState state,
+                         CloudReadError error) {
+    CHECK(snapshot.state == state);
+    CHECK(snapshot.error == error);
+    CHECK(snapshot.bytes.empty());
+    u26CheckUnversioned(snapshot);
+}
+
+// Actual loopback HTTP framing, including deliberately incomplete bodies.
+// The only blocking handler is released before stop/join on every exit path.
+class U26SnapshotHttpServer {
+public:
+    enum class Mode {
+        Present, Empty, Missing, Denied, ServerError, Redirect,
+        ShortFixed, ShortChunked, DeclaredTooLarge, StreamTooLarge, Timeout
+    };
+    explicit U26SnapshotHttpServer(Mode mode) : gate(release.get_future().share()) {
+        server.Get("/saves/save_0.json", [this, mode](const httplib::Request&, httplib::Response& res) {
+            ++gets;
+            entered = true;
+            res.set_header("ETag", "\"opaque-server-tag\"");
+            res.set_header("Connection", "close");
+            switch (mode) {
+            case Mode::Present: res.set_content(payload, "application/octet-stream"); return;
+            case Mode::Empty: res.set_content("", "application/octet-stream"); return;
+            case Mode::Missing: res.status = 404; return;
+            case Mode::Denied: res.status = 401; return;
+            case Mode::ServerError: res.status = 500; return;
+            case Mode::Redirect: res.set_redirect("/redirected"); return;
+            case Mode::ShortFixed:
+                res.set_content_provider(11, "application/octet-stream",
+                    [](size_t, size_t, httplib::DataSink& sink) {
+                        sink.write("abc", 3);
+                        return false; // Close before the declared eleven bytes.
+                    });
+                return;
+            case Mode::ShortChunked:
+                res.set_chunked_content_provider("application/octet-stream",
+                    [](size_t, httplib::DataSink& sink) {
+                        sink.write("abc", 3);
+                        return false; // No terminating zero-length chunk.
+                    });
+                return;
+            case Mode::DeclaredTooLarge:
+                res.set_content_provider(u26SnapshotLocalLimit + 1, "application/octet-stream",
+                    [](size_t, size_t, httplib::DataSink&) { return false; });
+                return;
+            case Mode::StreamTooLarge:
+                res.set_chunked_content_provider("application/octet-stream",
+                    [block = std::string(64 * 1024, 'x')](size_t offset, httplib::DataSink& sink) {
+                        const auto count = (std::min)(block.size(), u26SnapshotLocalLimit + 1 - offset);
+                        if (!sink.write(block.data(), count)) return false;
+                        if (offset + count == u26SnapshotLocalLimit + 1) sink.done();
+                        return true;
+                    });
+                return;
+            case Mode::Timeout:
+                gate.wait(); // The actual client read deadline must fire first.
+                res.set_content("released", "application/octet-stream");
+                return;
+            }
+        });
+        server.Get("/redirected", [this](const httplib::Request&, httplib::Response& res) {
+            ++redirectGets;
+            res.set_content("must not follow", "text/plain");
+        });
+        server.Put(R"(/saves/(.*))", [this](const httplib::Request&, httplib::Response& res) {
+            ++writes;
+            res.status = 200;
+        });
+        server.Delete(R"(/saves/(.*))", [this](const httplib::Request&, httplib::Response& res) {
+            ++deletes;
+            res.status = 200;
+        });
+        port = server.bind_to_any_port("127.0.0.1");
+        REQUIRE(port > 0);
+        worker = std::thread([this]() { server.listen_after_bind(); });
+        server.wait_until_ready();
+    }
+    ~U26SnapshotHttpServer() {
+        release.set_value();
+        server.stop();
+        if (worker.joinable()) worker.join();
+    }
+    std::string endpoint() const {
+        return "http://127.0.0.1:" + std::to_string(port) + "/saves";
+    }
+    const std::string payload = std::string("raw\0snapshot", 12);
+    std::atomic<int> gets{0}, redirectGets{0}, writes{0}, deletes{0};
+    std::atomic<bool> entered{false};
+private:
+    std::promise<void> release;
+    std::shared_future<void> gate;
+    httplib::Server server;
+    std::thread worker;
+    int port = 0;
+};
+
+// Only the SDK boundary is replaced. Every snapshot is requested from the
+// actual CloudSaveProvider; no result classifier is reproduced in this mock.
+class U26SnapshotSteam final : public NullSteamBackend {
+public:
+    std::map<std::string, std::string> files;
+    bool available = true;
+    std::string shortReadName;
+    std::function<void(const std::string&)> afterRead;
+    int reads = 0, writes = 0, deletes = 0;
+    mutable int probes = 0;
+    bool isAvailable() const override { return available; }
+    bool cloudFileExists(const char* name) const override {
+        ++probes;
+        return files.count(name) != 0;
+    }
+    int32_t cloudFileSize(const char* name) const override {
+        ++probes;
+        const auto found = files.find(name);
+        return found == files.end() ? 0 : static_cast<int32_t>(found->second.size());
+    }
+    int32_t cloudRead(const char* name, void* buffer, int32_t maxSize) override {
+        ++reads;
+        const auto found = files.find(name);
+        if (found == files.end() || !buffer || maxSize <= 0) return 0;
+        auto size = (std::min)(maxSize, static_cast<int32_t>(found->second.size()));
+        if (shortReadName == name && size > 0) --size;
+        std::memcpy(buffer, found->second.data(), static_cast<size_t>(size));
+        if (afterRead) afterRead(name);
+        return size;
+    }
+    bool cloudWrite(const char* name, const void* bytes, int32_t size) override {
+        ++writes;
+        if (size < 0) return false;
+        files[name] = std::string(static_cast<const char*>(bytes), static_cast<size_t>(size));
+        return true;
+    }
+    bool cloudDelete(const char* name) override {
+        ++deletes;
+        files.erase(name);
+        return true;
+    }
+    void resetCounts() { reads = writes = deletes = probes = 0; }
+};
+}
+
+TEST_CASE("U26 cloud snapshot: local files distinguish complete empty missing and invalid") {
+    TestPaths::ScopedTempDir temporary("typed_cloud_local");
+    // macOS /var and Windows TEMP aliases are canonicalized in the fixture,
+    // not accepted as evidence that a product link-traversal check succeeded.
+    const auto root = std::filesystem::canonical(temporary.path());
+    const auto path = root / "save_0.json";
+    std::string payload("disk\0bytes", 10);
+    CloudReadState expected = CloudReadState::Present;
+    CloudReadError error = CloudReadError::None;
+    bool createFile = true;
+    SUBCASE("ordinary binary bytes") {}
+    SUBCASE("ordinary empty file remains Present") { payload.clear(); }
+    SUBCASE("missing leaf in an existing directory") {
+        createFile = false;
+        expected = CloudReadState::Missing;
+    }
+    SUBCASE("directory is not a save file") {
+        createFile = false;
+        std::filesystem::create_directory(path);
+        expected = CloudReadState::Invalid;
+        error = CloudReadError::NotRegularFile;
+    }
+    SUBCASE("oversized local file is invalid without returning partial bytes") {
+        payload.assign(u26SnapshotLocalLimit + 1, 'x');
+        expected = CloudReadState::Invalid;
+        error = CloudReadError::TooLarge;
+    }
+    if (createFile) {
+        replaceCloudFileBytes(path, payload);
+        REQUIRE(cloudFileBytes(path) == payload);
+    }
+    CloudSaveProvider steam(nullptr); // Local does not require a Steam session.
+    HttpCloudSaveProvider http("http://127.0.0.1:1/saves");
+    for (ICloudSaveSnapshotTransport* transport :
+         std::array<ICloudSaveSnapshotTransport*, 2>{&steam, &http}) {
+        const auto snapshot = transport->readSnapshot(CloudSide::Local, u26SnapshotPath(path));
+        CHECK(snapshot.state == expected);
+        CHECK(snapshot.error == error);
+        CHECK(snapshot.httpStatus == 0);
+        u26CheckUnversioned(snapshot);
+        if (expected == CloudReadState::Present) {
+            CHECK(snapshot.bytes == payload);
+            CHECK(snapshot.observedBytes == payload.size());
+        } else {
+            CHECK(snapshot.bytes.empty());
+            CHECK(snapshot.observedBytes <= u26SnapshotLocalLimit);
+        }
+    }
+    if (createFile) CHECK(cloudFileBytes(path) == payload);
+    if (expected == CloudReadState::Missing) CHECK_FALSE(std::filesystem::exists(path));
+}
+
+TEST_CASE("U26 cloud snapshot: invalid local paths and access failures never mean Missing") {
+    TestPaths::ScopedTempDir temporary("typed_cloud_local_failure");
+    const auto root = std::filesystem::canonical(temporary.path());
+    const auto file = root / "save_0.json";
+    replaceCloudFileBytes(file, "retained");
+    CloudSaveProvider provider(nullptr);
+    SUBCASE("embedded NUL is rejected before filesystem I/O") {
+        auto invalid = u26SnapshotPath(file);
+        invalid.append("\0suffix", 7);
+        u26CheckReadFailure(provider.readSnapshot(CloudSide::Local, invalid),
+                            CloudReadState::Invalid, CloudReadError::InvalidPath);
+    }
+    SUBCASE("a file used as a parent is an invalid path") {
+        u26CheckReadFailure(provider.readSnapshot(CloudSide::Local, u26SnapshotPath(file / "child")),
+                            CloudReadState::Invalid, CloudReadError::InvalidPath);
+    }
+#ifdef _WIN32
+    SUBCASE("owned exclusive Windows handle proves a real denied open") {
+        struct ExclusiveFile {
+            HANDLE handle;
+            explicit ExclusiveFile(const std::filesystem::path& path)
+                : handle(CreateFileW(path.c_str(), GENERIC_READ, 0, nullptr,
+                                     OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr)) {}
+            ~ExclusiveFile() { if (handle != INVALID_HANDLE_VALUE) CloseHandle(handle); }
+        } held(file);
+        REQUIRE(held.handle != INVALID_HANDLE_VALUE);
+        // A second real open confirms the OS sharing precondition independently.
+        HANDLE control = CreateFileW(file.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
+                                     OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (control != INVALID_HANDLE_VALUE) CloseHandle(control);
+        REQUIRE(control == INVALID_HANDLE_VALUE);
+        u26CheckReadFailure(provider.readSnapshot(CloudSide::Local, u26SnapshotPath(file)),
+                            CloudReadState::Failed, CloudReadError::ReadDenied);
+    }
+#endif
+    CHECK(cloudFileBytes(file) == "retained");
+}
+
+TEST_CASE("U26 cloud snapshot: actual HTTP responses preserve typed status and bytes") {
+    using Mode = U26SnapshotHttpServer::Mode;
+    Mode mode = Mode::Present;
+    CloudReadState expected = CloudReadState::Present;
+    CloudReadError error = CloudReadError::None;
+    int status = 200;
+    SUBCASE("complete binary 200 is Present without a trusted revision") {}
+    SUBCASE("complete empty 200 is Present rather than Missing") { mode = Mode::Empty; }
+    SUBCASE("complete 404 is Missing") { mode = Mode::Missing; expected = CloudReadState::Missing; status = 404; }
+    SUBCASE("401 is a rejected read rather than Missing") {
+        mode = Mode::Denied; expected = CloudReadState::Failed; error = CloudReadError::HttpStatus; status = 401;
+    }
+    SUBCASE("500 is failure rather than Missing") {
+        mode = Mode::ServerError; expected = CloudReadState::Failed; error = CloudReadError::HttpStatus; status = 500;
+    }
+    SUBCASE("redirect is not silently followed") {
+        mode = Mode::Redirect; expected = CloudReadState::Failed; error = CloudReadError::HttpStatus; status = 302;
+    }
+    U26SnapshotHttpServer server(mode);
+    HttpCloudSaveProvider provider(server.endpoint(), 500);
+    const auto snapshot = provider.readSnapshot(CloudSide::Cloud, "save_0.json");
+    CHECK(snapshot.state == expected);
+    CHECK(snapshot.error == error);
+    CHECK(snapshot.httpStatus == status);
+    CHECK(snapshot.bytes == (mode == Mode::Present ? server.payload : std::string{}));
+    if (expected == CloudReadState::Present) CHECK(snapshot.observedBytes == snapshot.bytes.size());
+    u26CheckUnversioned(snapshot); // Even the real ETag does not establish CAS.
+    CHECK(provider.conditionalWriteSupport(CloudSide::Cloud) == CloudConditionalWriteSupport::Unsupported);
+    CHECK(server.gets.load() == 1);
+    CHECK(server.redirectGets.load() == 0);
+    CHECK(server.writes.load() == 0);
+    CHECK(server.deletes.load() == 0);
+}
+
+TEST_CASE("U26 cloud snapshot: actual incomplete and oversized HTTP bodies are unusable") {
+    using Mode = U26SnapshotHttpServer::Mode;
+    Mode mode = Mode::ShortFixed;
+    CloudReadState expected = CloudReadState::Failed;
+    CloudReadError error = CloudReadError::Truncated;
+    SUBCASE("fixed Content-Length is not satisfied") {}
+    SUBCASE("chunked body has no terminator") { mode = Mode::ShortChunked; }
+    SUBCASE("declared length exceeds the existing payload cap") {
+        mode = Mode::DeclaredTooLarge; expected = CloudReadState::Invalid; error = CloudReadError::TooLarge;
+    }
+    SUBCASE("chunked payload exceeds the cap while receiving") {
+        mode = Mode::StreamTooLarge; expected = CloudReadState::Invalid; error = CloudReadError::TooLarge;
+    }
+    U26SnapshotHttpServer server(mode);
+    HttpCloudSaveProvider provider(server.endpoint(), 500);
+    const auto snapshot = provider.readSnapshot(CloudSide::Cloud, "save_0.json");
+    u26CheckReadFailure(snapshot, expected, error);
+    CHECK(snapshot.httpStatus == 200);
+    CHECK(snapshot.observedBytes <= u26SnapshotLocalLimit);
+    CHECK(server.gets.load() == 1);
+    CHECK(server.writes.load() == 0);
+    CHECK(server.deletes.load() == 0);
+}
+
+TEST_CASE("U26 cloud snapshot: a controlled HTTP deadline is unavailable and never writes") {
+    U26SnapshotHttpServer server(U26SnapshotHttpServer::Mode::Timeout);
+    HttpCloudSaveProvider provider(server.endpoint(), 80);
+    const auto snapshot = provider.readSnapshot(CloudSide::Cloud, "save_0.json");
+    u26CheckReadFailure(snapshot, CloudReadState::Unavailable, CloudReadError::TransportUnavailable);
+    CHECK(snapshot.httpStatus == 0);
+    CHECK(snapshot.observedBytes == 0);
+    CHECK(server.entered.load()); // Handler was actually waiting at its barrier.
+    CHECK(server.gets.load() == 1);
+    CHECK(server.writes.load() == 0);
+    CHECK(server.deletes.load() == 0);
+    // The fixture's destructor releases its handler before stop/join.
+}
+
+TEST_CASE("U26 cloud snapshot: Steam direct reads do not guess absence from zero") {
+    U26SnapshotSteam steam;
+    CloudSaveProvider provider(&steam);
+    const std::string payload("sdk\0bytes", 9);
+    steam.files["save_0.json"] = payload;
+    CloudReadState expected = CloudReadState::Present;
+    CloudReadError error = CloudReadError::None;
+    bool backendUnavailable = false;
+    SUBCASE("exact direct bytes") {}
+    SUBCASE("SDK reports no file without authoritative absence") {
+        steam.files.clear(); expected = CloudReadState::Unavailable; error = CloudReadError::IndeterminateMissing;
+    }
+    SUBCASE("zero size is not sufficient proof of a complete empty SDK read") {
+        steam.files["save_0.json"].clear(); expected = CloudReadState::Failed; error = CloudReadError::IndeterminateSize;
+    }
+    SUBCASE("short direct read withholds all bytes") {
+        steam.shortReadName = "save_0.json"; expected = CloudReadState::Failed; error = CloudReadError::Truncated;
+    }
+    SUBCASE("unavailable initialized interface cannot claim missing") {
+        steam.available = false; backendUnavailable = true;
+        expected = CloudReadState::Unavailable; error = CloudReadError::BackendUnavailable;
+    }
+    const auto original = steam.files;
+    const auto snapshot = provider.readSnapshot(CloudSide::Cloud, "ignored-directory/save_0.json");
+    CHECK(snapshot.state == expected);
+    CHECK(snapshot.error == error);
+    CHECK(snapshot.httpStatus == 0);
+    u26CheckUnversioned(snapshot);
+    if (expected == CloudReadState::Present) {
+        CHECK(snapshot.bytes == payload);
+        CHECK(snapshot.observedBytes == payload.size());
+        CHECK(steam.reads == 1);
+    } else {
+        CHECK(snapshot.bytes.empty());
+    }
+    if (backendUnavailable) CHECK(steam.probes == 0);
+    CHECK(steam.writes == 0);
+    CHECK(steam.deletes == 0);
+    CHECK(steam.files == original);
+    CloudSaveProvider absent(nullptr);
+    u26CheckReadFailure(absent.readSnapshot(CloudSide::Cloud, "save_0.json"),
+                        CloudReadState::Unavailable, CloudReadError::BackendUnavailable);
+}
+
+TEST_CASE("U26 cloud snapshot: actual Steam generation reads reject incomplete or changed heads") {
+    U26SnapshotSteam steam;
+    CloudSaveProvider provider(&steam);
+    const std::string payload(256 * 1024 + 19, 'g');
+    REQUIRE(provider.writeFile("save_0.json", payload)); // Real production publication.
+    REQUIRE(provider.readFile("save_0.json") == payload);
+    CloudReadState expected = CloudReadState::Present;
+    CloudReadError error = CloudReadError::None;
+    std::string replacementHead;
+    SUBCASE("published generation is complete and unversioned") {}
+    SUBCASE("legacy metadata and chunks remain readable") {
+        steam.files.clear();
+        steam.files["save_0.json.meta"] = std::to_string(payload.size()) + ",2";
+        steam.files["save_0.json.chunk000"] = payload.substr(0, 256 * 1024);
+        steam.files["save_0.json.chunk001"] = payload.substr(256 * 1024);
+    }
+    SUBCASE("fully read malformed metadata is Invalid") {
+        steam.files["save_0.json.meta"] = "v2,262163,2,../../foreign";
+        expected = CloudReadState::Invalid; error = CloudReadError::MalformedMetadata;
+    }
+    SUBCASE("short metadata is not a parsed complete manifest") {
+        steam.shortReadName = "save_0.json.meta";
+        expected = CloudReadState::Failed; error = CloudReadError::Truncated;
+    }
+    SUBCASE("short generation chunk is not Present") {
+        for (const auto& file : steam.files)
+            if (file.first.find(".chunk000") != std::string::npos) steam.shortReadName = file.first;
+        REQUIRE_FALSE(steam.shortReadName.empty());
+        expected = CloudReadState::Failed; error = CloudReadError::Truncated;
+    }
+    SUBCASE("head changes at an actual SDK read boundary") {
+        replacementHead = steam.files.at("save_0.json.meta");
+        REQUIRE_FALSE(replacementHead.empty());
+        replacementHead.back() = replacementHead.back() == '0' ? '1' : '0';
+        steam.afterRead = [&](const std::string& name) {
+            if (name.find(".chunk000") != std::string::npos)
+                steam.files["save_0.json.meta"] = replacementHead;
+        };
+        expected = CloudReadState::Failed; error = CloudReadError::ChangedDuringRead;
+    }
+    const auto original = steam.files;
+    steam.resetCounts();
+    const auto snapshot = provider.readSnapshot(CloudSide::Cloud, "save_0.json");
+    CHECK(snapshot.state == expected);
+    CHECK(snapshot.error == error);
+    u26CheckUnversioned(snapshot);
+    if (expected == CloudReadState::Present) {
+        CHECK(bool(snapshot.bytes == payload));
+        CHECK(snapshot.observedBytes == payload.size());
+    } else {
+        CHECK(snapshot.bytes.empty());
+    }
+    CHECK(steam.writes == 0);
+    CHECK(steam.deletes == 0);
+    if (replacementHead.empty()) {
+        CHECK(steam.files == original);
+    } else {
+        CHECK(steam.files["save_0.json.meta"] == replacementHead);
+        CHECK(steam.files.size() == original.size());
+    }
+}
+
+TEST_CASE("U26 cloud snapshot: optional legacy and conditional capabilities are explicit") {
+    SingleReadCloudProvider legacy;
+    ISaveProvider* old = &legacy;
+    CHECK(dynamic_cast<ICloudSaveSnapshotTransport*>(old) == nullptr);
+    CHECK(legacy.localReads == 0);
+    CHECK(legacy.cloudReads == 0);
+    CHECK_FALSE(legacy.unstagedAccess);
+    U26SnapshotSteam steam;
+    CloudSaveProvider cloud(&steam);
+    U26SnapshotHttpServer server(U26SnapshotHttpServer::Mode::Present);
+    HttpCloudSaveProvider http(server.endpoint(), 500);
+    for (const auto side : {CloudSide::Local, CloudSide::Cloud}) {
+        CHECK(cloud.conditionalWriteSupport(side) == CloudConditionalWriteSupport::Unsupported);
+        CHECK(http.conditionalWriteSupport(side) == CloudConditionalWriteSupport::Unsupported);
+    }
+    CHECK(steam.probes == 0);
+    CHECK(steam.reads == 0);
+    CHECK(steam.writes == 0);
+    CHECK(steam.deletes == 0);
+    CHECK(server.gets.load() == 0);
+    CHECK(server.writes.load() == 0);
+    CHECK(server.deletes.load() == 0);
+    const CloudSnapshot noCapability;
+    CHECK(noCapability.state == CloudReadState::Unsupported);
+    CHECK(noCapability.bytes.empty());
+}
+
+TEST_CASE("U26 cloud snapshot: cloud keys and endpoint configuration fail closed") {
+    U26SnapshotSteam steam;
+    CloudSaveProvider cloud(&steam);
+    U26SnapshotHttpServer server(U26SnapshotHttpServer::Mode::Present);
+    HttpCloudSaveProvider http(server.endpoint(), 500);
+    for (const auto& key : std::array<std::string, 4>{"", ".", "..", std::string("save_0.json\0tail", 16)}) {
+        for (ICloudSaveSnapshotTransport* transport :
+             std::array<ICloudSaveSnapshotTransport*, 2>{&cloud, &http}) {
+            u26CheckReadFailure(transport->readSnapshot(CloudSide::Cloud, key),
+                                CloudReadState::Invalid, CloudReadError::InvalidPath);
+        }
+    }
+    HttpCloudSaveProvider invalid("file:///not-an-http-endpoint");
+    u26CheckReadFailure(invalid.readSnapshot(CloudSide::Cloud, "save_0.json"),
+                        CloudReadState::Invalid, CloudReadError::InvalidEndpoint);
+#ifndef CPPHTTPLIB_OPENSSL_SUPPORT
+    auto endpoint = server.endpoint();
+    endpoint.replace(0, 4, "https");
+    HttpCloudSaveProvider unsupportedTls(endpoint, 500);
+    u26CheckReadFailure(unsupportedTls.readSnapshot(CloudSide::Cloud, "save_0.json"),
+                        CloudReadState::Unsupported, CloudReadError::UnsupportedTransport);
+#endif
+    CHECK(steam.probes == 0);
+    CHECK(steam.reads == 0);
+    CHECK(steam.writes == 0);
+    CHECK(steam.deletes == 0);
+    CHECK(server.gets.load() == 0);
+    CHECK(server.redirectGets.load() == 0);
+    CHECK(server.writes.load() == 0);
+    CHECK(server.deletes.load() == 0);
 }

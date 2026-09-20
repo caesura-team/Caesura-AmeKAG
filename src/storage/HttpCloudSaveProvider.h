@@ -10,12 +10,14 @@
 #pragma once
 #include "api/ISaveProvider.h"
 #include "api/ICloudSaveTransport.h"
+#include "api/ICloudSaveSnapshotTransport.h"
 #include <memory>
 #include <string>
 
 namespace Caesura {
 
-class HttpCloudSaveProvider final : public ISaveProvider, public ICloudSaveTransport {
+class HttpCloudSaveProvider final : public ISaveProvider, public ICloudSaveTransport,
+                                   public ICloudSaveSnapshotTransport {
 public:
     // endpoint may be http:// or https://; bearerToken (optional) is sent as
     // an Authorization header on every cloud request (ST-2).
@@ -35,6 +37,9 @@ public:
     bool writeLocalFile(const std::string& slotPath, const std::string& bytes) override;
     std::string readCloudFile(const std::string& slotPath) override;
     bool writeCloudFile(const std::string& slotPath, const std::string& bytes) override;
+
+    CloudSnapshot readSnapshot(CloudSide side, const std::string& slotPath) override;
+    CloudConditionalWriteSupport conditionalWriteSupport(CloudSide side) const override;
 
 private:
     // Basename only: remote keys must never contain path separators.

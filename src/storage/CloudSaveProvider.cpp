@@ -1,6 +1,7 @@
 // CloudSaveProvider: opaque save bytes over the Steam I/O boundary.
 #include "CloudSaveProvider.h"
 #include "LocalFileSaveProvider.h"
+#include "CloudSaveSnapshot.h"
 #include "../steam/api/ISteamBackend.h"
 #include "../debug/api/DebugLog.h"
 #include <charconv>
@@ -124,6 +125,83 @@ bool selectGeneration(ISteamBackend& steam, const std::string& path,
 } // namespace
 
 CloudSaveProvider::CloudSaveProvider(ISteamBackend* steam) : m_steam(steam) {}
+
+CloudSnapshot CloudSaveProvider::readSnapshot(CloudSide side, const std::string& slotPath) {
+    if (side == CloudSide::Local) return detail::readLocalCloudSnapshot(slotPath);
+    CloudSnapshot snapshot;
+    auto fail = [&](CloudReadState state, CloudReadError error) {
+        snapshot.state = state;
+        snapshot.error = error;
+        snapshot.bytes.clear();
+        return snapshot;
+    };
+    const std::string path = cloudKey(slotPath);
+    if (slotPath.find('\0') != std::string::npos || path.empty() || path == "." || path == "..")
+        return fail(CloudReadState::Invalid, CloudReadError::InvalidPath);
+    if (!m_steam || !m_steam->isAvailable())
+        return fail(CloudReadState::Unavailable, CloudReadError::BackendUnavailable);
+
+    // Size/exists cannot distinguish remote absence from a failed SDK query.
+    // Exact reads and repeat size observations detect changes, not atomicity.
+    auto read = [&](const std::string& name, int32_t size, std::string& bytes,
+                    bool payload) -> CloudReadError {
+        if (m_steam->cloudFileSize(name.c_str()) != size)
+            return CloudReadError::ChangedDuringRead;
+        bytes.assign(static_cast<size_t>(size), '\0');
+        const int32_t count = m_steam->cloudRead(name.c_str(), bytes.data(), size);
+        if (payload && count > 0)
+            snapshot.observedBytes += static_cast<uint64_t>((std::min)(count, size));
+        if (count != size) return CloudReadError::Truncated;
+        if (m_steam->cloudFileSize(name.c_str()) != size)
+            return CloudReadError::ChangedDuringRead;
+        return CloudReadError::None;
+    };
+    const std::string headName = path + ".meta";
+    if (m_steam->cloudFileExists(headName.c_str())) {
+        const int32_t headSize = m_steam->cloudFileSize(headName.c_str());
+        if (headSize <= 0)
+            return fail(CloudReadState::Failed, CloudReadError::IndeterminateSize);
+        if (headSize > kMaxMetadataSize)
+            return fail(CloudReadState::Invalid, CloudReadError::TooLarge);
+        std::string head;
+        auto error = read(headName, headSize, head, false);
+        if (error != CloudReadError::None) return fail(CloudReadState::Failed, error);
+        ChunkManifest manifest;
+        if (!parseManifest(head, manifest))
+            return fail(CloudReadState::Invalid, CloudReadError::MalformedMetadata);
+        snapshot.bytes.reserve(static_cast<size_t>(manifest.totalSize));
+        for (int32_t index = 0; index < manifest.chunks; ++index) {
+            const int32_t expected = (std::min)(kChunkSize, manifest.totalSize - index * kChunkSize);
+            std::string chunk;
+            error = read(chunkName(path, manifest, index), expected, chunk, true);
+            if (error != CloudReadError::None) return fail(CloudReadState::Failed, error);
+            snapshot.bytes += chunk;
+        }
+        std::string finalHead;
+        error = read(headName, headSize, finalHead, false);
+        if (error != CloudReadError::None) return fail(CloudReadState::Failed, error);
+        if (head != finalHead)
+            return fail(CloudReadState::Failed, CloudReadError::ChangedDuringRead);
+    } else {
+        if (!m_steam->cloudFileExists(path.c_str()))
+            return fail(CloudReadState::Unavailable, CloudReadError::IndeterminateMissing);
+        const int32_t size = m_steam->cloudFileSize(path.c_str());
+        if (size <= 0)
+            return fail(CloudReadState::Failed, CloudReadError::IndeterminateSize);
+        if (size > kMaxChunkedSize)
+            return fail(CloudReadState::Invalid, CloudReadError::TooLarge);
+        const auto error = read(path, size, snapshot.bytes, true);
+        if (error != CloudReadError::None) return fail(CloudReadState::Failed, error);
+        if (m_steam->cloudFileExists(headName.c_str()))
+            return fail(CloudReadState::Failed, CloudReadError::ChangedDuringRead);
+    }
+    snapshot.state = CloudReadState::Present;
+    return snapshot;
+}
+
+CloudConditionalWriteSupport CloudSaveProvider::conditionalWriteSupport(CloudSide) const {
+    return CloudConditionalWriteSupport::Unsupported;
+}
 
 // Steam Remote Storage is flat: caller directory prefixes never enter keys.
 std::string CloudSaveProvider::cloudKey(const std::string& slotPath) {

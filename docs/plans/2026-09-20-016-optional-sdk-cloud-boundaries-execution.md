@@ -64,3 +64,14 @@ SDK ON 输入锁固定本机已有 Steam SDK、Cubism Native-5-r.5 的真实头�
 HTTP实际73/73，package-web-ok/artifacts两项仍NOT_RUN，未把它计成75；本轮SDK OFF验证不新增Web发布证明。HTTP PID17572、creation134343322564789093，受控STOPPED actualexit1、无超时强杀且cleanup COMPLETE，审计时精确PID不存在。顶层11项runner记录仅提供exitcode，不补造每个子进程PID或原件未表达的清理声明。审计位于u26-cloud-chunks/full-debug-cfa46876-01，MD摘要ac1d64d5251879c4a29fd1f33dc50bac7bc214ac32a7289d0d350a477f9ca393、JSON aa34223d1815de08b2da63745a26f82767b1d6714b63be8a2c7342b3abd6d7c4、freeze10d758cde175d9e2dea9c37a85943f5f795f7695208ca37d895fb456ef72a534。
 
 SDK ON的两个已链接测试仍仅证明未初始化适配器合同；本次OFF全量通过不提升SDK账号、模型、动作、GPU或真实服务状态。云分叉保全与typed snapshot transport继续按既有设计推进，普通HTTP PUT/Steam FileWrite没有已证明CAS，不作为安全条件发布能力。
+
+
+## 六态只读快照及 Windows/Linux 回归（2026-09-20）
+
+新增可选 ICloudSaveSnapshotTransport 接口，明确 Present、Missing、Unavailable、Failed、Invalid、Unsupported；只有 Present 暴露完整字节，空文件与不存在分开。Local 以实际句柄/描述符核对路径、普通文件、限额和前后身份；HTTP 使用真实流接收限制及完整响应状态分类；Steam 对无法证明的缺失和零长度保持不确定，短读或 head 变化不返回部分载荷。三个旧定向复制入口不变，当前 conditional-write 能力均为 Unsupported，没有把 ETag、时间戳或 generation 当成 CAS。
+
+首轮 Windows 真实 RED 为 9 方法 1 通过、8 失败，448 断言中 122 失败；源码实现后同九方法 9/9、448/448，七文件邻近 146/146、3862/3862。Windows GREEN 原报告 phase-a-run-green-01.json 摘要 3a4d8c97406e615b7ad21b717571dc16d1c24410db2afe59056840d3f1bedfca。随后本机 WSL 实际配置并构建 CaesuraTests，九方法 9/9、439/439，邻近 144/144、3840/3840；OS条件分支导致计数差异，过滤未选中不作为完整用例跳过。Linux 原报告 linux-green-02.json 摘要 65ea8990c63c6f4788cecdb7b2aac1eb19b24d9b3faf681599cf41fa4b1a462e，四条命令均 exit0、无超时/强杀、cleanup COMPLETE。
+
+两平台执行锁定相同八文件，HEAD60dbbca9 上的 dirty fingerprint b441a8faec35143c3953710b048993af3109e991a8aa22ad50c105f61be05d4a 前后一致。Linux 使用 CMake3.28.3、GCC15.2、SDL3.4.2、OpenSSL3.5.5，属于本机 SDK OFF 定向证据；原 ELF 摘要 a2035962e4a4e81c30e344a207d3bebe54532ea0078c915a55898330ca7cc77b 来自执行时记录。后续只读复核发现 WSL boot_id 已变化，原 /tmp 构建目录不再存在，不能再次重哈希该 ELF 或内层控制文件；D盘原始日志、外层 owned 收据及八源文件已重核。没有因此重跑定向测试或改写原成功记录，下一次 Linux 构建需保存在持久目录。
+
+独立审查未发现可行动缺陷，independent-review-01.md 摘要 5ca229c081922541a73b621758783703e5ec55018ac210615ed08179d3a6d086；JSON cae6a514b431f93b8204efbe36b397419122b60cc006d88aeb9fc8ab8857fdc0。原25方法完整保留，只新增9方法，六native profile C++最低发现数随之增加9；完整 Debug/C++/Lua/CTest仍需在本阶段干净源码上重新执行。路径替换的全部交错、真实HTTPS/压缩响应、Steam账号和macOS均未由此验证；共同祖先、双方持久保全、冲突日志及恢复继续推进，U26未完成。

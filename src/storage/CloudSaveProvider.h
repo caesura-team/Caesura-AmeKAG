@@ -3,12 +3,14 @@
 #pragma once
 #include "api/ISaveProvider.h"
 #include "api/ICloudSaveTransport.h"
+#include "api/ICloudSaveSnapshotTransport.h"
 #include <cstdint>  // fixed-width types (GCC strict)
 
 namespace Caesura {
 class ISteamBackend;
 
-class CloudSaveProvider : public ISaveProvider, public ICloudSaveTransport {
+class CloudSaveProvider : public ISaveProvider, public ICloudSaveTransport,
+                          public ICloudSaveSnapshotTransport {
 public:
     explicit CloudSaveProvider(ISteamBackend* steam);
     ~CloudSaveProvider() override = default;
@@ -32,6 +34,9 @@ public:
     bool writeLocalFile(const std::string& slotPath, const std::string& bytes) override;
     std::string readCloudFile(const std::string& slotPath) override;
     bool writeCloudFile(const std::string& slotPath, const std::string& bytes) override;
+
+    CloudSnapshot readSnapshot(CloudSide side, const std::string& slotPath) override;
+    CloudConditionalWriteSupport conditionalWriteSupport(CloudSide side) const override;
 
 private:
     // Flat cloud key for a slot path (directory component stripped).

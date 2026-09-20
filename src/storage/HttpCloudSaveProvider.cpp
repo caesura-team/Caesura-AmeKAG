@@ -2,6 +2,9 @@
 // exposed to every module via CaesarBuildOptions).
 #include "HttpCloudSaveProvider.h"
 #include "LocalFileSaveProvider.h"
+#include "CloudSaveSnapshot.h"
+#include <algorithm>
+#include <charconv>
 #include <httplib.h>
 #include <cstdio>
 #include <memory>
@@ -14,6 +17,10 @@ HttpCloudSaveProvider::HttpCloudSaveProvider(std::string endpoint, int timeoutMs
     , m_timeoutMs(timeoutMs > 0 ? timeoutMs : 8000)
     , m_bearerToken(std::move(bearerToken))
     , m_local(std::make_unique<LocalFileSaveProvider>()) {}
+
+CloudConditionalWriteSupport HttpCloudSaveProvider::conditionalWriteSupport(CloudSide) const {
+    return CloudConditionalWriteSupport::Unsupported;
+}
 
 std::string HttpCloudSaveProvider::safeName(const std::string& slotPath) {
     // Strip any directory component: "saves/slot_3.json" -> "slot_3.json".
@@ -109,6 +116,111 @@ std::unique_ptr<httplib::Client> makeClient(const std::string& endpoint,
 }
 
 } // namespace
+
+CloudSnapshot HttpCloudSaveProvider::readSnapshot(CloudSide side, const std::string& slotPath) {
+    if (side == CloudSide::Local) return detail::readLocalCloudSnapshot(slotPath);
+    CloudSnapshot snapshot;
+    auto fail = [&](CloudReadState state, CloudReadError error) {
+        snapshot.state = state;
+        snapshot.error = error;
+        snapshot.bytes.clear();
+        return snapshot;
+    };
+    const auto name = safeName(slotPath);
+    if (slotPath.find('\0') != std::string::npos || name.empty() || name == "." || name == "..")
+        return fail(CloudReadState::Invalid, CloudReadError::InvalidPath);
+
+    // The legacy endpoint parser uses atoi; validate the whole authority here
+    // without changing the old transport's parsing or copying contract.
+    std::string host, prefix;
+    int port = 0;
+    bool tls = false;
+    if (std::any_of(m_endpoint.begin(), m_endpoint.end(), [](unsigned char c) {
+            return c <= 32 || c == 127 || c == '\\' || c == '?' || c == '#' || c == '@';
+        }) || (m_endpoint.rfind("http://", 0) != 0 && m_endpoint.rfind("https://", 0) != 0))
+        return fail(CloudReadState::Invalid, CloudReadError::InvalidEndpoint);
+    const auto authorityStart = m_endpoint.find("://") + 3;
+    const auto authorityEnd = m_endpoint.find('/', authorityStart);
+    const auto authority = m_endpoint.substr(authorityStart, authorityEnd - authorityStart);
+    const auto colon = authority.find(':');
+    if (colon != std::string::npos) {
+        const auto text = authority.substr(colon + 1);
+        int parsed = 0;
+        const auto result = std::from_chars(text.data(), text.data() + text.size(), parsed);
+        if (text.empty() || !std::all_of(text.begin(), text.end(), [](char c) { return c >= '0' && c <= '9'; }) ||
+            result.ec != std::errc{} || result.ptr != text.data() + text.size() || parsed < 1 || parsed > 65535)
+            return fail(CloudReadState::Invalid, CloudReadError::InvalidEndpoint);
+    }
+    if (!splitEndpoint(m_endpoint, host, port, prefix, tls))
+        return fail(CloudReadState::Invalid, CloudReadError::InvalidEndpoint);
+#ifndef CPPHTTPLIB_OPENSSL_SUPPORT
+    if (tls) return fail(CloudReadState::Unsupported, CloudReadError::UnsupportedTransport);
+#endif
+    auto client = makeClient(m_endpoint, m_timeoutMs, m_bearerToken);
+    if (!client || !client->is_valid())
+        return fail(CloudReadState::Invalid, CloudReadError::InvalidEndpoint);
+    client->set_follow_location(false);
+    client->set_max_timeout(m_timeoutMs);
+    const int connectMs = (std::min)(m_timeoutMs, 2000);
+    client->set_connection_timeout(connectMs / 1000, (connectMs % 1000) * 1000);
+
+    // Encode the single flat key, so '?'/'#'/'%' cannot become URL syntax.
+    std::string encodedName;
+    constexpr char hex[] = "0123456789ABCDEF";
+    for (const unsigned char c : name) {
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+            (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~')
+            encodedName += static_cast<char>(c);
+        else {
+            encodedName += '%'; encodedName += hex[c >> 4]; encodedName += hex[c & 15];
+        }
+    }
+    bool tooLarge = false;
+    bool malformedFraming = false;
+    // The streaming callback owns the cap. httplib's fixed-size decoder feeds
+    // it without allocating a full body; its generic read error would otherwise
+    // erase the distinction between oversized and truncated chunk streams.
+    auto response = client->Get(prefix + "/" + encodedName,
+        [&](const httplib::Response& headers) {
+            snapshot.httpStatus = headers.status;
+            const auto count = headers.get_header_value_count("Content-Length");
+            const auto transfers = headers.get_header_value_count("Transfer-Encoding");
+            if (count > 1 || transfers > 1 || (transfers && count) ||
+                (transfers && !httplib::detail::case_ignore::equal(
+                    headers.get_header_value("Transfer-Encoding"), "chunked"))) {
+                malformedFraming = true; return false;
+            }
+            if (count == 1) {
+                const auto text = headers.get_header_value("Content-Length");
+                uint64_t length = 0;
+                const auto parsed = std::from_chars(text.data(), text.data() + text.size(), length);
+                if (text.empty() || !std::all_of(text.begin(), text.end(), [](char c) { return c >= '0' && c <= '9'; }) ||
+                    parsed.ec != std::errc{} || parsed.ptr != text.data() + text.size()) {
+                    malformedFraming = true; return false;
+                }
+                if (length > kMaxCloudPayload) { tooLarge = true; return false; }
+            }
+            return true;
+        },
+        [&](const char* bytes, size_t count) {
+            if (count > kMaxCloudPayload - snapshot.bytes.size()) { tooLarge = true; return false; }
+            snapshot.bytes.append(bytes, count);
+            snapshot.observedBytes += count;
+            return true;
+        });
+    if (tooLarge) return fail(CloudReadState::Invalid, CloudReadError::TooLarge);
+    if (malformedFraming) return fail(CloudReadState::Failed, CloudReadError::Io);
+    if (!response) {
+        if (snapshot.httpStatus == 0)
+            return fail(CloudReadState::Unavailable, CloudReadError::TransportUnavailable);
+        return fail(CloudReadState::Failed, CloudReadError::Truncated);
+    }
+    snapshot.httpStatus = response->status;
+    if (response->status == 404) return fail(CloudReadState::Missing, CloudReadError::None);
+    if (response->status != 200) return fail(CloudReadState::Failed, CloudReadError::HttpStatus);
+    snapshot.state = CloudReadState::Present;
+    return snapshot;
+}
 
 bool HttpCloudSaveProvider::httpPut(const std::string& name,
                                     const std::string& body) {
