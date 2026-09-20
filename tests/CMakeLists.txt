@@ -551,7 +551,7 @@ if(Python3_EXECUTABLE)
                               package_runtime web_package_contract package_build_metadata
                               package_validation_runner native_package_runtime
                               web_package_runtime package_containers appimage_build_contract ci_package_lane
-                              package_runtime_install android_package_contract android_validation)
+                              package_runtime_install android_package_contract android_validation android_output_copy)
         add_test(
             NAME CaesuraPackage_${_package_contract}
             COMMAND ${CMAKE_COMMAND} -E env

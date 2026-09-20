@@ -276,48 +276,58 @@ endif()
 
 
 # Copy scripts to each config output directory
-add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-    "${CMAKE_SOURCE_DIR}/scripts"
-    "$<TARGET_FILE_DIR:${PROJECT_NAME}>/scripts"
-    COMMENT "Copying scripts to output directory..."
-)
-
-# Copy demo assets to output directory (separated from engine source)
-add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-    "${CMAKE_SOURCE_DIR}/demo"
-    "$<TARGET_FILE_DIR:${PROJECT_NAME}>/demo"
-    COMMENT "Copying demo to output directory..."
-)
-
-# Copy engine assets (fonts, etc.) to output directory
-add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-    "${CMAKE_SOURCE_DIR}/assets"
-    "$<TARGET_FILE_DIR:${PROJECT_NAME}>/assets"
-    COMMENT "Copying assets to output directory..."
-)
-
-# Copy the prebuilt web player so the editor package/web endpoint and the
-# HTTP smoke can assemble a site from the output dir (same pattern as demo).
-if(EXISTS "${CMAKE_SOURCE_DIR}/web/dist/index.html")
+# Android assets are selected and staged by the packaging driver. Desktop
+# output copies must not consume ignored web builds or local projects.
+if(NOT ANDROID)
     add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/web/dist"
-        "$<TARGET_FILE_DIR:${PROJECT_NAME}>/web/dist"
-        COMMENT "Copying web player to output directory..."
+        "${CMAKE_SOURCE_DIR}/scripts"
+        "$<TARGET_FILE_DIR:${PROJECT_NAME}>/scripts"
+        COMMENT "Copying scripts to output directory..."
+        VERBATIM
     )
-endif()
 
-# Copy PM-created projects to output (may be empty at first)
-file(MAKE_DIRECTORY "${CMAKE_SOURCE_DIR}/projects")
-add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-    "${CMAKE_SOURCE_DIR}/projects"
-    "$<TARGET_FILE_DIR:${PROJECT_NAME}>/projects"
-    COMMENT "Copying projects to output directory..."
-)
+    # Copy demo assets to output directory (separated from engine source)
+    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/demo"
+        "$<TARGET_FILE_DIR:${PROJECT_NAME}>/demo"
+        COMMENT "Copying demo to output directory..."
+        VERBATIM
+    )
+
+    # Copy engine assets (fonts, etc.) to output directory
+    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/assets"
+        "$<TARGET_FILE_DIR:${PROJECT_NAME}>/assets"
+        COMMENT "Copying assets to output directory..."
+        VERBATIM
+    )
+
+    # Copy the prebuilt web player so the editor package/web endpoint and the
+    # HTTP smoke can assemble a site from the output dir (same pattern as demo).
+    if(EXISTS "${CMAKE_SOURCE_DIR}/web/dist/index.html")
+        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_SOURCE_DIR}/web/dist"
+            "$<TARGET_FILE_DIR:${PROJECT_NAME}>/web/dist"
+            COMMENT "Copying web player to output directory..."
+            VERBATIM
+        )
+    endif()
+
+    # Copy PM-created projects to output (may be empty at first)
+    file(MAKE_DIRECTORY "${CMAKE_SOURCE_DIR}/projects")
+    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/projects"
+        "$<TARGET_FILE_DIR:${PROJECT_NAME}>/projects"
+        COMMENT "Copying projects to output directory..."
+        VERBATIM
+    )
+
+endif()
 
 # -- Steam (optional)
 if(CAESURA_HAS_STEAM)
