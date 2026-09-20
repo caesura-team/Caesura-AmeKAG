@@ -101,7 +101,7 @@ class AndroidDriverTests(unittest.TestCase):
         self.tools = {}
         roles = {'python': 'python', 'git': 'git', 'cmake': 'cmake', 'ninja': 'ninja',
                  'java': 'jdk', 'keytool': 'jdk', 'jarsigner': 'jdk', 'aapt2': 'sdk',
-                 'zipalign': 'sdk', 'apksigner_jar': 'sdk', 'clang': 'ndk', 'readelf': 'ndk'}
+                 'zipalign': 'sdk', 'apksigner_jar': 'sdk', 'clang': 'ndk', 'readelf': 'ndk', 'bundletool_jar': 'bundletool'}
         for name in set(roles.values()) | {'gradle', 'sdl', 'openssl'}:
             (self.root / 'tools' / name).mkdir(parents=True)
         for role, component in roles.items():
@@ -129,12 +129,12 @@ class AndroidDriverTests(unittest.TestCase):
         for component in set(roles.values()) | set(extra):
             if component not in self.components:
                 self.components[component] = inventory(self.root / 'tools' / component, ['.'])
-        self.toolchain = write_json(self.root / 'toolchain.json', dict(schema='caesura.android-toolchain.v1', components=self.components, tools=self.tools))
+        self.toolchain = write_json(self.root / 'toolchain.json', dict(schema='caesura.android-toolchain.v2', components=self.components, tools=self.tools))
         self.seed = self.root / 'seed'
         put(self.seed / 'caches/modules-2/files-2.1/example/agp.jar', b'fixture dependency')
         put(self.seed / 'verification-metadata.xml', b'<verification-metadata/>')
         self.dependencies = write_json(self.root / 'dependencies.json', dict(schema='caesura.android-dependencies.v1', inventory=inventory(self.seed, ['.'])))
-        self.value = dict(schema='caesura.android-validation-inputs.v1', repo=str(self.repo), source_sha=self.head,
+        self.value = dict(schema='caesura.android-validation-inputs.v2', repo=str(self.repo), source_sha=self.head,
                           configuration='Release', abi='arm64-v8a', min_sdk=24, compile_sdk=35, target_sdk=35,
                           stl='c++_static', package_name='com.caesura.app', version_name='1.0.1', version_code=1,
                           game_relative_path='tests/projects/first_vn', signing='ephemeral-test',
@@ -233,6 +233,10 @@ class AndroidDriverTests(unittest.TestCase):
             target = Path(argv[argv.index('-signedjar') + 1])
             shutil.copyfile(argv[-2], target)
             rewrite_zip(target, SIGNATURE_FIXTURE)
+        elif name == 'verify-bundletool_version':
+            return '1.17.1\n', 0
+        elif name == 'verify-aab_manifest':
+            return '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.caesura.app" android:versionCode="1" android:versionName="1.0.1"><uses-sdk android:minSdkVersion="24" android:targetSdkVersion="35"/></manifest>\n', 0
         elif name == 'verify-aapt2':
             return "package: name='com.caesura.app' versionCode='1' versionName='1.0.1'\nsdkVersion:'24'\ntargetSdkVersion:'35'\nnative-code: 'arm64-v8a'\n", 0
         elif name == 'verify-apksigner':

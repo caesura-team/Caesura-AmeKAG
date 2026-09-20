@@ -30,12 +30,12 @@ from package_runtime import run_runtime_command
 from package_verification import _name, _sha256_file, prepare_package, verify_stable
 from verify_execution_bundle import _no_links
 
-SCHEMA = 'caesura.android-validation.v1'
-INPUT_SCHEMA = 'caesura.android-validation-inputs.v1'
-COMPONENTS = {'python', 'git', 'cmake', 'ninja', 'jdk', 'gradle', 'ndk', 'sdk', 'sdl', 'openssl'}
+SCHEMA = 'caesura.android-validation.v2'
+INPUT_SCHEMA = 'caesura.android-validation-inputs.v2'
+COMPONENTS = {'python', 'git', 'cmake', 'ninja', 'jdk', 'gradle', 'ndk', 'sdk', 'sdl', 'openssl', 'bundletool'}
 ROLES = dict(python='python', git='git', cmake='cmake', ninja='ninja', java='jdk',
              keytool='jdk', jarsigner='jdk', aapt2='sdk', zipalign='sdk', apksigner_jar='sdk',
-             clang='ndk', readelf='ndk')
+             clang='ndk', readelf='ndk', bundletool_jar='bundletool')
 NDK = '27.3.13750724'
 SIGNER_NAME = 'CAESURA'
 JAR_MANIFEST = 'META-INF/MANIFEST.MF'
@@ -137,7 +137,7 @@ def _covered(component, name):
 
 def _toolchain(value):
     _keys(value, ('schema', 'components', 'tools'), 'Invalid toolchain fields')
-    need(value['schema'] == 'caesura.android-toolchain.v1', 'Invalid toolchain schema')
+    need(value['schema'] == 'caesura.android-toolchain.v2', 'Invalid toolchain schema')
     _keys(value['components'], COMPONENTS, 'Exact toolchain component set required')
     components = {name: _inventory(item) for name, item in value['components'].items()}
     _keys(value['tools'], ROLES, 'Exact launcher set required')
@@ -754,7 +754,7 @@ def run_android_validation(request_path, request_sha256, work_dir, *, runner=Non
                   stage='inputs', work=str(work), receipt_path=str(receipt), commands=[], errors=[], private_cleanup='NOT_CREATED',
                   transport='fixture' if runner is not None else 'local-owned-tools',
                   limitations=['No hosted attestation', 'Prebuilt SDL/OpenSSL compilation provenance NOT_VERIFIED',
-                               'AAB manifest semantics NOT_VERIFIED', 'Host OS/runtime environment is not hermetic'])
+                               'AAB manifest verification covers base identity/version/SDK only', 'Host OS/runtime environment is not hermetic'])
     try:
         value = _request(load(request_path, request_sha256))
         report.update(inputs=value, request=lock(request_path))

@@ -35,11 +35,13 @@ class AndroidPackageTests(unittest.TestCase):
    abi='arm64-v8a',min_sdk=24,target_sdk=35,certificate_sha256='b'*64,
    required_apk_entries={k:hashed(v) for k,v in self.apk_entries.items()},required_aab_entries={k:hashed(v) for k,v in self.aab_entries.items()})
   self.tools={}
-  for name in ('java','keytool','jarsigner','aapt2','zipalign','apksigner_jar'):
+  for name in ('java','keytool','jarsigner','aapt2','zipalign','apksigner_jar','bundletool_jar'):
    path=self.root/(name+'.bin');path.write_bytes(('synthetic locked '+name).encode());self.tools[name]=dict(path=str(path),sha256=digest(path))
   self.output=dict(aapt2="package: name='com.caesura.app' versionCode='1' versionName='1.0.1'\nsdkVersion:'24'\ntargetSdkVersion:'35'\nnative-code: 'arm64-v8a'\n",
    zipalign='Verification successful\n',apksigner='Verifies\nNumber of signers: 1\nSigner #1 certificate SHA-256 digest: '+'b'*64+'\n',
    jarsigner=JAR,keytool='Signer #1:\nCertificate #1:\nSHA256: '+':'.join(['BB']*32)+'\n')
+  self.output['bundletool_version']='1.17.1\n'
+  self.output['aab_manifest']='<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.caesura.app" android:versionCode="1" android:versionName="1.0.1"><uses-sdk android:minSdkVersion="24" android:targetSdkVersion="35"/></manifest>\n'
   self.codes={'jarsigner':4};self.hook=None;self.calls=[]
   self.child=self.root/'synthetic_tool.py';self.child.write_text('import sys\nprint(sys.argv[1],end="")\nraise SystemExit(int(sys.argv[2]))\n')
   self.pack()
@@ -49,7 +51,8 @@ class AndroidPackageTests(unittest.TestCase):
     for name,data in entries.items():z.writestr(name,data)
  def runner(self,argv,**kw):
   role=next(k for k,v in self.tools.items() if v['path']==argv[0])
-  if role=='java':role='apksigner'
+  if role=='java':
+   role='aab_manifest' if 'dump' in argv else ('bundletool_version' if argv[-1]=='version' else 'apksigner')
   self.calls.append((role,argv,kw['env']))
   if self.hook:self.hook(role)
   return run_runtime_command([str(Path(sys.executable).resolve()),str(self.child),self.output[role],str(self.codes.get(role,0))],**kw)
@@ -64,8 +67,8 @@ class AndroidPackageTests(unittest.TestCase):
    result=self.call()
   self.assertEqual(result['status'],'FIXTURE_PACKAGE_VERIFIED');self.assertFalse(result['release_ready'])
   self.assertEqual(result['source_provenance'],'NOT_VERIFIED');self.assertEqual(result['runtime'],'NOT_RUN')
-  self.assertEqual(result['scopes']['aab_manifest_semantics'],'NOT_VERIFIED')
-  self.assertEqual(len(self.calls),5);self.assertEqual(contract.verify_android_package_stable(result)['status'],'ANDROID_PACKAGE_STABLE')
+  self.assertEqual(result['scopes']['aab_manifest_semantics'],'BASE_IDENTITY_VERSION_SDK_VERIFIED')
+  self.assertEqual(len(self.calls),7);self.assertEqual(contract.verify_android_package_stable(result)['status'],'ANDROID_PACKAGE_STABLE')
   self.assertEqual(digest(result['receipt_path']),result['receipt_sha256'])
   for _,_,env in self.calls:
    self.assertNotIn('JAVA_TOOL_OPTIONS',env);self.assertNotIn('GITHUB_TOKEN',env);self.assertNotIn('PYTHONPATH',env)
@@ -205,5 +208,62 @@ class AndroidPackageTests(unittest.TestCase):
   self.assertEqual(code,1);self.assertEqual(json.loads(capture.getvalue())['status'],'FAIL')
   result=json.loads((work/'android-package.json').read_text());self.assertEqual(result['stage'],'aapt2')
   run=json.loads((work/'aapt2-process'/'run.json').read_text());self.assertEqual(run['status'],'TIMED_OUT');self.assertEqual(run['owned_tree_cleanup'],'COMPLETE')
+
+ def test_aab_dump_is_required_and_uses_the_final_locked_bundle(self):
+  result=self.call()
+  self.assertEqual(result['scopes']['aab_manifest_semantics'],'BASE_IDENTITY_VERSION_SDK_VERIFIED')
+  self.assertEqual(result.get('aab_manifest'),{k:self.expected[k] for k in ('package_name','version_name','version_code','min_sdk','target_sdk')})
+  selected=[args for name,args,_ in self.calls if name=='aab_manifest']
+  self.assertEqual(len(selected),1)
+  if selected:
+   self.assertEqual(selected[0][-4:],['dump','manifest','--bundle='+str(self.aab),'--module=base'])
+ def test_wrong_aab_identity_is_rejected_by_package_verification(self):
+  original=self.output['aab_manifest']
+  for old,new in [('com.caesura.app','com.other.app'),('versionCode="1"','versionCode="2"'),('versionName="1.0.1"','versionName="1.0.2"'),('minSdkVersion="24"','minSdkVersion="25"'),('targetSdkVersion="35"','targetSdkVersion="36"')]:
+   self.output['aab_manifest']=original.replace(old,new)
+   with self.subTest(field=old),self.assertRaises(ValueError):self.call()
+ def test_bundletool_failure_or_wrong_version_cannot_pass_package(self):
+  for phase in ['bundletool_version','aab_manifest']:
+   self.codes[phase]=1
+   with self.subTest(phase=phase),self.assertRaises(ValueError):self.call()
+   self.codes.pop(phase)
+  self.output['bundletool_version']='1.17.2\n'
+  with self.assertRaises(ValueError):self.call()
+ def test_bad_aab_xml_cannot_pass_package(self):
+  self.output['aab_manifest']='<manifest/>'
+  with self.assertRaises(ValueError):self.call()
+
+class AabManifestTests(unittest.TestCase):
+ def setUp(self):
+  self.expected=dict(package_name='com.caesura.app',version_name='1.0.1',version_code=1,min_sdk=24,target_sdk=35)
+  # Synthetic XML shaped like the independently retained bundletool 1.17.1 dump.
+  # This unit fixture does not prove protobuf decoding or actual bundle identity.
+  self.xml='<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.caesura.app" android:versionCode="1" android:versionName="1.0.1"><uses-sdk android:minSdkVersion="24" android:targetSdkVersion="35"/><application android:label="@string/app_name"/></manifest>'
+ def test_base_identity_version_sdk_are_observed(self):
+  self.assertEqual(contract._aab_manifest(self.xml,self.expected),self.expected)
+ def test_namespace_alias_and_unrelated_attributes_preserve_identity(self):
+  xml=self.xml.replace('xmlns:android=','xmlns:a=').replace('android:', 'a:').replace('<application ', '<application ignored="kept" ')
+  self.assertEqual(contract._aab_manifest(xml,self.expected),self.expected)
+ def test_each_manifest_identity_mismatch_is_rejected(self):
+  for old,new in [('com.caesura.app','com.foreign.app'),('versionCode="1"','versionCode="2"'),('versionName="1.0.1"','versionName="1.0.2"'),('minSdkVersion="24"','minSdkVersion="25"'),('targetSdkVersion="35"','targetSdkVersion="36"')]:
+   with self.subTest(field=old),self.assertRaises(ValueError):contract._aab_manifest(self.xml.replace(old,new),self.expected)
+ def test_absent_duplicate_nested_or_foreign_sdk_are_rejected(self):
+  sdk='<uses-sdk android:minSdkVersion="24" android:targetSdkVersion="35"/>'
+  for replacement in ['',sdk+sdk,'<application>'+sdk+'</application>',sdk.replace('uses-sdk','foreign:uses-sdk').replace(' android:min',' xmlns:foreign="urn:foreign" android:min')]:
+   with self.subTest(replacement=replacement),self.assertRaises(ValueError):contract._aab_manifest(self.xml.replace(sdk,replacement),self.expected)
+ def test_missing_or_wrong_attribute_namespace_is_rejected(self):
+  for xml in [self.xml.replace('http://schemas.android.com/apk/res/android','urn:wrong'),self.xml.replace(' android:versionCode="1"',''),self.xml.replace('android:minSdkVersion','minSdkVersion'),self.xml.replace(' package="com.caesura.app"','')]:
+   with self.subTest(xml=xml),self.assertRaises(ValueError):contract._aab_manifest(xml,self.expected)
+ def test_numeric_references_codenames_and_major_version_do_not_pass(self):
+  for value in ['@integer/version','true','1.0','+1','-1','2147483648','١']:
+   with self.subTest(value=value),self.assertRaises(ValueError):contract._aab_manifest(self.xml.replace('versionCode="1"','versionCode="'+value+'"'),self.expected)
+  for xml in [self.xml.replace('minSdkVersion="24"','minSdkVersion="VanillaIceCream"'),self.xml.replace('versionCode="1"','versionCode="1" android:versionCodeMajor="1"')]:
+   with self.subTest(xml=xml),self.assertRaises(ValueError):contract._aab_manifest(xml,self.expected)
+ def test_malformed_wrong_root_duplicate_attributes_and_entities_rejected(self):
+  cases=['',self.xml[:-10],self.xml.replace('manifest','not_manifest'),self.xml.replace('package="com.caesura.app"','package="com.caesura.app" package="com.caesura.app"'),'<wrapper>'+self.xml+'</wrapper>',self.xml.replace('<manifest','<manifest xmlns="urn:foreign"',1),'<!DOCTYPE manifest [<!ENTITY p "com.caesura.app">]>'+self.xml.replace('com.caesura.app','&p;')]
+  for xml in cases:
+   with self.subTest(xml=xml),self.assertRaises(ValueError):contract._aab_manifest(xml,self.expected)
+ def test_bounded_xml_does_not_accept_oversized_output(self):
+  with self.assertRaises(ValueError):contract._aab_manifest(self.xml+' '*(1024*1024),self.expected)
 
 if __name__=='__main__':unittest.main(verbosity=2)

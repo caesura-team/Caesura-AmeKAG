@@ -1,10 +1,10 @@
 # U24 Android 构建与包验证执行记录
 
-本记录属于当前唯一运行时可靠性计划的U24。第五次真实执行已通过受控NDK Release编译、ELF检查、Gradle打包、zipalign、APK/AAB临时测试签名和最终包字节验证，独立审计无可行动发现。当前adb查询无连接设备，安装与设备运行仍为NOT_RUN；AAB base manifest关键字段已另行真实读取核对，但尚未接入包验证器必需门禁；正式发布签名未建立。第四次签名失败和之前失败原件继续保留，整个U24及发布状态不因本地自动部分通过而关闭。
+本记录属于当前唯一运行时可靠性计划的U24。第五次真实执行已通过受控NDK Release编译、ELF检查、Gradle打包、zipalign、APK/AAB临时测试签名和最终包字节验证，独立审计无可行动发现。AAB base manifest的身份、版本与SDK五字段现已接入v2包验证器必需门禁，并对第五次保留的最终签名字节实际验证通过；新v2完整driver的实际重新构建仍待独立执行。最近一次adb查询无连接设备，安装与设备运行仍为NOT_RUN；正式发布签名未建立。第四次签名失败和之前失败原件继续保留，整个U24及发布状态不因本地自动部分通过而关闭。
 
 ## 已实现的合同
 
-`scripts/android_package_contract.py` 接收外部锁定的APK/AAB摘要、源码/版本/SDK/ABI、预期测试证书及工具摘要，检查实际ZIP路径与文件、AArch64 ELF、原生库/资产字节并调用选定工具验证。额外native feature库和错误ABI拒绝；AAB语义manifest和构建来源不由这一层自行认证。签名工具及其他边界替身始终明确标为fixture，不生成设备运行证据。
+`scripts/android_package_contract.py` 接收外部锁定的APK/AAB摘要、源码/版本/SDK/ABI、预期测试证书及工具摘要，检查实际ZIP路径与文件、AArch64 ELF、原生库/资产字节并调用选定工具验证。额外native feature库和错误ABI拒绝；AAB base身份/版本/SDK五字段由锁定的bundletool实际读取，其他模块语义及构建来源不由这一层自行认证。签名工具及其他边界替身始终明确标为fixture，不生成设备运行证据。
 
 `scripts/run_android_validation.py` 接收外部请求摘要、干净源码提交、完整选定工具/依赖清单，在新的仓外独占工作目录执行native编译、全新资产staging、offline Gradle、临时TEST签名和最终包验证。配置固定Release/arm64-v8a、JDK17、Gradle8.9、NDK27.3、minSDK24、compile/target35、build-tools34；版本与项目一致。实际CMake cache/compile命令、JNI ELF依赖及最终字节都有检查。所有子进程使用既有owned-process控制，第一次失败保留，不捡旧产物、不自动重试。
 
@@ -136,3 +136,13 @@ APK250项、AAB255项业务文件与原未签名包逐项字节一致，每种�
 执行前先实际读取工具version/help，固定已有Gradle cache中的17个JAR classpath文件，前后重哈希一致；不是新下载standalone发行包。原声明JDK release/bin/lib/conf共163文件逐字节匹配，原AAB、完整validation收据、选定输入及clean源码前后不变。首次只读wrapper误把整个492文件JDK与163文件运行时选择比较，在任何dump命令前失败；核对extra329、原集合missing0/changed0后按原paths修正新wrapper，旧错误保留。唯一实际dump命令成功，没有覆盖产品失败。
 
 证据u24-aab-manifest-01/manifest-observation-02.json摘要c5b87556ab49ba720c9ddf2c701e01a4de293afc7de618e80db7eb3517b5dbbe，readback-01.md摘要793564daae320db47f40bab67cdb869cffccd0ec0b10a787568b33ea182dceac。此为已有最终AAB base模块身份/版本/SDK字段的补充观察，原package收据的历史STRUCTURE_ONLY范围保持；新必需门禁尚未接线，不扩展为其他模块、重新签名/签名信任、APK生成、安装或设备运行。官方工具背景见https://developer.android.com/tools/bundletool，确切命令以本轮实际help dump为依据。
+
+## AAB base manifest 接入 v2 必需门禁
+
+包合同、driver输入/收据及toolchain现明确升级为v2，新增必需的bundletool组件与JAR角色。实际调用锁定Java和bundletool1.17.1，先核对版本，再对最终签名AAB执行`dump manifest --module=base`；版本错误、工具失败、XML畸形或五字段不符均拒绝，没有结构检查降级路径。解析器限制1MiB，拒绝DTD/entity声明，要求唯一直接uses-sdk、正确Android属性命名空间与有界ASCII整数。接受范围精确为base package/versionName/versionCode/minSdk/targetSdk；不会据此认证其他模块或设备行为。
+
+8个解析器方法先取得32个真实失败断言，4个管线方法先取得10个真实失败断言，修正后完整Windows包合同32/32、39.083秒，driver49/49、234.791秒；WSL同源分别32/32、20.302秒与47/47、84.273秒，全部0失败0跳过、exit0、无超时/强杀、owned cleanup COMPLETE。两个driver数量差异仍来自原有Windows专用注册，旧方法没有删除。Windows收据`integration-green-01.json`摘要1f5909ba1fe34b95ecbda4393c2a97468aa36db03df1022a773d358a5222a043；WSL收据`integration-wsl-green-01.json`摘要7a01ce618c6638e790d84961b27d7ffcccea78a81adab54d0ddf50a1d5ba860f。首份解析器RED原stderr使用GB18030，wrapper在已保存真实exit1收据后按UTF-8回读失败；后续按原编码核验，未重跑或覆盖原RED，之后子进程显式UTF-8。
+
+从官方bundletool1.17.1 release选取standalone JAR，32,456,876字节、SHA256 45881ead13388872d82c4255b195488b7fc33f2cac5a9a977b0afc5e92367592；这是本地下载字节锁，不能冒称官方发布摘要。实际version及base dump均exit0，与原17JAR读取所得XML逐字节相同。新的仓外`D:/caesura-u24-aab-final-06`验证原第五次同字节APK/AAB，七个命令中六个exit0、jarsigner保留仅自签测试身份的exit4，全部正常cleanup。新`android-package.json`摘要8aa6bb06b878a0afa72dae7a92ed19baf64c6bcf855b99ee588c661790da3b2b，AAB语义范围为`BASE_IDENTITY_VERSION_SDK_VERIFIED`；外层观察收据摘要7d2e3faf18a84983011123ca648f9cca3d12d107cf75ba8e3606399f7f3225bf。该次没有重新编译或签名，原第五次v1收据仍保持原范围与原SHA。
+
+独立只读审查重哈希576份唯一文件、507322788字节，覆盖四份源码、最终包及展开清单、七工具、原始命令/进程证据和旧第五次收据，无可行动发现。`u24-aab-manifest-01/independent-review-01.md`摘要ef013126410ff77d06af32f6824be4f6c7de2c9c0b1aac984b3ae87b19d8c8ed，JSON摘要a2447aac43129fe6f2c899acbb1430e91942717d9dc5f2540e191fbc870ac689。已在独占`D:/caesura-u24-inputs-02`准备v2工具选择，保留原组件清单并添加普通JAR字节；新完整driver必须针对下一干净提交重新检查全部输入并实际构建，不能把本轮FIXTURE_ONLY套件或旧包新checker结果当作新构建证据。设备与正式发布范围保持未完成。

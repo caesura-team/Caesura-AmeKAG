@@ -2,20 +2,21 @@
 """Verify final Android archive bytes and test signatures; never prove device execution.
 
 Expected context/tool digests are caller-controlled assertions, not build provenance.
-Only the six selected launcher/JAR files are locked here. The calling build driver
+Only the seven selected launcher/JAR files are locked here. The calling build driver
 must also lock JDK/SDK runtime dependencies and the compiler/source inventories.
 Injected runners are fixtures regardless of their returned status.
 """
 from __future__ import annotations
 import argparse,copy,hashlib,json,math,os,re,stat,struct,subprocess,zipfile
 from pathlib import Path
+import xml.etree.ElementTree as ET
 from ci_package_lane import _new_work
 from package_runtime import run_runtime_command
 from package_verification import _name,_sha256_file,prepare_package,verify_stable
 from verify_execution_bundle import _no_links
 
-SCHEMA='caesura.android-package-contract.v1'
-TOOL_NAMES={'java','keytool','jarsigner','aapt2','zipalign','apksigner_jar'}
+SCHEMA='caesura.android-package-contract.v2'
+TOOL_NAMES={'java','keytool','jarsigner','aapt2','zipalign','apksigner_jar','bundletool_jar'}
 MAX_JSON=1024*1024
 MAX_OUTPUT=4*1024*1024
 MAX_ARCHIVE=2*1024**3
@@ -78,7 +79,7 @@ def _expected(value):
         if name.startswith(('base/lib/','base/assets/')):_need(name[5:] in apk,'AAB content has no corresponding APK requirement')
     return copy.deepcopy(value)
 def _tools(value):
-    _need(type(value) is dict and set(value)==TOOL_NAMES,'Six exact tool locks required')
+    _need(type(value) is dict and set(value)==TOOL_NAMES,'Seven exact tool locks required')
     result={}
     for key,lock in value.items():
         _need(type(lock) is dict and set(lock)=={'path','sha256'},'Invalid tool lock')
@@ -134,6 +135,29 @@ def _manifest(text,expected):
         _need(re.findall(r"^"+field+r":'([^']+)'\s*$",text,re.M)==[str(expected[key])],'Actual APK '+field+' differs')
     rows=re.findall(r'^native-code:([^\r\n]*)$',text,re.M)
     _need(len(rows)==1 and re.findall(r"'([^']+)'",rows[0])==[expected['abi']],'Actual APK manifest ABI differs')
+def _aab_manifest(text,expected):
+    """Observe only base package/version/SDK identity, never delivery or device support."""
+    _need(type(text) is str and 0<len(text.encode('utf-8'))<=MAX_JSON,'AAB manifest XML exceeds limit')
+    _need('<!DOCTYPE' not in text and '<!ENTITY' not in text,'AAB manifest XML declarations are unsupported')
+    try:root=ET.fromstring(text)
+    except ET.ParseError as error:raise AndroidPackageError('Malformed AAB manifest XML') from error
+    _need(root.tag=='manifest','Actual AAB manifest root differs')
+    android='{http://schemas.android.com/apk/res/android}'
+    sdk=root.findall('uses-sdk')
+    _need(len(sdk)==1,'Actual AAB requires one base uses-sdk element')
+    def number(element,name):
+        value=element.get(android+name)
+        _need(type(value) is str and re.fullmatch('[0-9]{1,10}',value) is not None,'Actual AAB '+name+' is not a numeric value')
+        result=int(value)
+        _need(0<result<2**31,'Actual AAB '+name+' exceeds supported range')
+        return result
+    _need(root.get(android+'versionCodeMajor') in (None,'0'),'Actual AAB major version code is unsupported')
+    observed=dict(package_name=root.get('package'),version_name=root.get(android+'versionName'),
+                  version_code=number(root,'versionCode'),min_sdk=number(sdk[0],'minSdkVersion'),
+                  target_sdk=number(sdk[0],'targetSdkVersion'))
+    _need(observed=={key:expected[key] for key in observed},'Actual AAB base manifest identity/version/SDK differs')
+    return observed
+
 def _jar_verdict(code,text):
     lines=[line.strip() for line in text.splitlines()]
     _need(code in (0,4),'AAB jarsigner verification failed')
@@ -230,6 +254,13 @@ def verify_android_package(*,apk_path,apk_sha256,aab_path,aab_sha256,expected,to
         tool=lambda name:tools[name]['path']
         _,text=command('aapt2',[tool('aapt2'),'dump','badging',str(apk)]);_manifest(text,expected)
         report['scopes']['apk_manifest_semantics']='VERIFIED'
+        bundletool=[tool('java'),'-Duser.language=en','-Duser.country=US','-Dfile.encoding=UTF-8',
+                    '-Duser.home='+str(work),'-jar',tool('bundletool_jar')]
+        _,text=command('bundletool_version',[*bundletool,'version'])
+        _need(text.strip()=='1.17.1','Actual bundletool version differs')
+        _,text=command('aab_manifest',[*bundletool,'dump','manifest','--bundle='+str(aab),'--module=base'])
+        report['aab_manifest']=_aab_manifest(text,expected)
+        report['scopes']['aab_manifest_semantics']='BASE_IDENTITY_VERSION_SDK_VERIFIED'
         command('zipalign',[tool('zipalign'),'-c','-v','4',str(apk)])
         _,text=command('apksigner',[tool('java'),'-Duser.language=en','-Duser.country=US','-Dfile.encoding=UTF-8','-Duser.home='+str(work),'-jar',tool('apksigner_jar'),'verify','--verbose','--print-certs',str(apk)])
         certs=re.findall(r'^Signer #1 certificate SHA-256 digest: ([0-9a-fA-F]{64})\s*$',text,re.M)
@@ -242,7 +273,7 @@ def verify_android_package(*,apk_path,apk_sha256,aab_path,aab_sha256,expected,to
         certs=re.findall(r'^\s*SHA256: ([0-9A-Fa-f:]+)\s*$',text,re.M)
         _need(signers==['1'] and len(certs)==1 and certs[0].replace(':','').lower()==expected['certificate_sha256'],'Actual AAB certificate differs')
         report.update(stage='stability',apk_signature='VERIFIED_TEST_CERTIFICATE',certificate_sha256=expected['certificate_sha256'],
-                      aab_manifest_semantics='STRUCTURE_AND_EXTERNALLY_LOCKED_BYTES_ONLY')
+                      aab_manifest_semantics='BASE_IDENTITY_VERSION_SDK_VERIFIED')
         report['scopes']['signatures']='VERIFIED_TEST_CERTIFICATE'
         _check_files(report)
         report.update(status='FIXTURE_PACKAGE_VERIFIED' if fixture or runner else 'ANDROID_PACKAGE_VERIFIED',stage='complete')
