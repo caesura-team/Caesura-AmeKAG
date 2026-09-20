@@ -157,3 +157,22 @@ APK250项、AAB255项业务文件与原未签名包逐项字节一致，每种�
 最小修复在Android条件下停用scripts/demo/assets/web/projects桌面输出复制，Android最终资产仍由受控stage选择。新增真实CMake回归以LANGUAGES NONE/custom target执行维护区段，只替换无二进制custom target的输出目录表达式；明确不作为NDK构建证据。Windows首轮因默认NMake缺少工具失败、第二轮有一个夹具路径过长错误，均保留；缩短独占夹具名并明确选择已安装Ninja后，实际RED为两项Android复制错误、桌面正控通过。首次WSL绿色尝试暴露旧复制命令未转义带括号路径，随后五条复制命令加VERBATIM；最终Windows/WSL各3/3通过，实际configure/build原日志全部保存，原测试断言不改。
 
 root-review-01.json摘要ad066c318d9a54335805802ce4b3a5551b31e7183c35831ff81b991d57612a0e核对25项原流/命令清单；新suite注册到CTest，六native profile最低CTest发现数59→60。接下来新干净提交必须重新实际NDK编译/Gradle打包/测试签名与最终v2检查，直接核对native没有这些桌面复制目录；旧07成功不替代修复后验证。设备、安装、运行、正式身份签名及商店仍NOT_RUN。
+
+## 第八次完整 Android 执行与修复后 Debug 门禁
+
+干净源码 `aacc821a78b7ebf3c5761cfd8c736a729b2fc95e` 在新目录 `D:/caesura-u24-android-aacc821a-08` 完成实际 Release arm64-v8a/API24 编译、offline Gradle APK/AAB 打包、测试签名及 v2 最终检查。请求摘要 `38e54076eef72a8ad1630d0d079ff20e6f99ec57ee7f226ba5cba8dcb9c09ea1`，原 driver 收据摘要 `1d752aebaf9d1bb03235dc59517eba3891aa4eef2e115a79f6af1f933c44939f`，结果 `ANDROID_VALIDATION_VERIFIED`、errors 为空。原源码前后均 clean，fingerprint `ff862e4ba38efc26f104077c3ace574acccf409619563710126d13ae2df37ca5` 相同。16 条 driver 命令和最终 checker 七条命令全部有原始日志与进程身份；22 条退出0，jarsigner 保留仅测试自签证书的退出4。全部 owned cleanup COMPLETE，无 timeout/forced kill；私密签名目录已不存在。
+
+| 最终产物 | 字节数 | SHA256 |
+| --- | ---: | --- |
+| APK | 125059538 | `8ccd3a72d56fdb140fce9a880487194fa021d5d891e9b1416b4c1a9ad1c27b70` |
+| AAB | 56692180 | `d4aa0221f1f97e4f55befd9395121af79f5bfe857a4f9fdfe1a739989d683ea6` |
+
+真实 native 输出中 scripts/demo/assets/web/projects 五个目录都不存在；原 build.ninja 与完整 verbose 编译日志均无 copy_directory，只有锁定 SDL 的 copy_if_different。最终 APK 253、AAB 258 个 ZIP 文件均直接流式重读，prepared 与签名前后完整业务集合闭合；各包245个 assets/JNI 成员对应本轮 stage，JNI 摘要 `70158c0d6b174e769e83badba233e79ef836c53e7878e570c0b1db4d9dc510ba`。原 Gradle 为53秒、54项全部执行。实际 bundletool base manifest 的五项身份/版本/SDK字段通过；apksigner v2/v3 通过、v1=false。jarsigner 自签信任链错误仍明确保留，不升级为生产签名信任。
+
+独立只读审计重新读取101486份唯一文件、10603238262字节，核对全部6491条声明源路径、11个组件、619个依赖 seed 文件、最终包及原命令。原24个PID均已不存在，未为审计重跑产品命令。报告 `u24-aab-manifest-01/actual-driver-08-independent-review.md` 摘要 `b97a98d3ff782f61705aef8ae3c44b6683a51c7b226df5d87b291fb167770bdf`，JSON `bc09a16182d609b83a54677b07a351b7249df34a036587317864eeb3a0c21921`，freeze `12721204e0a09d4c45d0285d1a6d2802ac2035a7b57f14bb83dac19cc94a5127`。root 全文读回并重核12项审计输出/原收据，记录摘要 `87b703e957f6181e17d9acf8ae910d1103e1ec4ea91e55f2db0947cab27f0cfc`；没有把独立审计的全量扫描再算一次。
+
+审计另发现 Android08 完成后创建的五个 scripts/__pycache__ 文件；它们的观察创建时间为01:35–01:36 UTC，晚于原收据01:13:30 UTC。未追踪实际写入者，不能仅凭时序认定来源。首轮严格枚举因此失败，原审计失败与五文件身份保留；随后审计将它们单列为 POSTRUN_SOURCE_DRIFT，全部声明源字节仍一致，当前物理输入集合不再与08相等。缓存未移动或删除，未来新构建仍须通过原严格输入门禁。这项后续变化不证明已完成08消费了这些缓存，也不修改08历史收据。
+
+同一干净源码的独立 Windows Debug 完整验证 `cbe3eea1-e9ca-4a4e-b7df-d5c8f689a52b` 已完成：完整构建退出0，C++1415/1415、427088断言、0失败0跳过；Lua147/147与56/56；CTest发现60，59通过、0失败、1项可选 CaesuraHeadlessAiSmoke 跳过。runner/process/evidence/adversarial、耦合与测试注册全部通过，execute/collect/strict 均退出0且 owned cleanup COMPLETE。root 重核49项原引用、82265352字节；`u24-output-copy-full-01/root-review-01.json` 摘要 `99894de8238f4f3e5cfb53f736a130e60f8f949bdcdaab4b612dda796a680b38`，manifest `52f8810a496ced47a9de39f9e32f46155ff27870afad541a1c792d2e0ecc275f`。这次完整 profile 不包含独立 HTTP smoke，先前75项 HTTP 证据仍按原源码和范围保存。
+
+2026-09-20 01:39:47 UTC 的独立只读 `adb devices -l` 实际退出0且列表为空，记录 `u24-device-query-01/query.json` 摘要 `5c12d36bdf7eb1a7983daea1cfb1161bd55f339622227efdf4080a688226d29e`。该 PATH 中的 adb 并非编译所选工具链的一部分。当前 compile/package/test-signature 自动链路有实际证据，install/runtime/device 仍 NOT_RUN，须有已授权、可连接的设备后执行；`release_ready=false`，预编译 SDL/OpenSSL 的上游编译来源未认证，无商店或正式签名交付结论。上述证据属于 aacc821a，后续文档提交不冒称已重新构建。
