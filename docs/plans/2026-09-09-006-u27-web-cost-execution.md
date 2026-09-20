@@ -150,3 +150,16 @@ RPC DTO新增jobs、async_loader、host、audio四组38字段，两个transport�
 随后对同源同binary执行一次真实HTTP和一次stdio main smoke，分别独占进程和目录。HTTP `--editor`实际返回Device音频supported/running，全部字段及类型满足合同，owner帧从0增至3；PID6476、creation134343374525878081、受控STOPPED实际exit1、无超时强杀、cleanup COMPLETE且监听消失。stdio `--headless`实际返回Null音频unsupported/unknown，帧从1增至5；Engine PID11184、creation134343375107010412收到stop后退出0，stdout reader完成；其独占Python控制器PID3052也exit0且整个owned树清理完成。没有用HTTP受控退出1冒充正常退出0，也没有把Null计数当真实设备负载。
 
 两路径锁定21份源码/helper、368份运行输入56727456字节、请求和原构建收据，前后全部匹配。根代理复算各自14/18份原始证据并解析真实请求/响应，`main-smoke-01/root-review-01.json`摘要6278ab2b6dd6634796ae819bb9a44908e5a56e6785cec2fa25c8ec705072138a；没有剩余可行动发现。实际main未注入uint64极值，极值精确序列化证据来自独立transport回归。以上不证明物理可听输出、GPU fence、普通SDL事件所有权完整、一小时真实后端长跑或完整合并门禁。Renderer资源与独立在途截图callback债务仍继续按既定计划实现。
+
+
+## 入口边界回归修复与新 main 复验
+
+干净 77f7c0d3 完整 Windows Debug 运行 75b3db72-de10-436f-8696-981d6b8c3ef2 未通过：1454 个 C++ 用例中 1453 通过、1 失败、0 skipped，432335 断言中 1 失败。唯一失败为原有 Main entry point uses texture manager interface，禁止 main 直接 include di/BackendRegistry.h；CTest 同一用例对应失败，57 pass、1 fail、1 可选 AI 服务跳过。Lua 147+56 全部通过。原失败收据、collector/strict 非零及原测试正文保留，root-review SHA256 9803308be6222d854c9f558d85f89cc8091fd98e103f645d7f190447f625a2a0。
+
+修复将后端快照读取移入 entry/RuntimeStats.cpp，main 在原 owner executor 中接收值聚合并执行原序列化映射。entry 仍只依赖既有 API，未新增 RPC 依赖；四快照各读取一次，无帧推进/混音/排空。原 source encoding 测试逐字节不变。新增四方法覆盖全部字段值拷贝、缺后端、实际 owner pump 及真实 Job 回调重入完成债务。
+
+实际重建 CaesuraTests 和 CaesuraAmeKAG 后，新增四方法及原入口约束共 5/5、109 断言通过，三文件 RPC 相邻 90/90、3286 断言通过；1453/1368 分别是过滤未选中。源码 fingerprint a89b34e38277137892ac0eb4a828725f175d2435ccb95ff0b8aa674626629a35 首尾相同，17 个源码锁、六份原始流重读相符。main SHA256 225004739490bd6d4a377af4d97fffdd05f8336bb2de8bbe07e37344c23025b4，tests SHA256 bab7bd5a2ea55e1a354787abfe1deb283b95be3f37cc13293e4235bea6b0ac43；所有命令 exit0、无超时强杀、cleanup COMPLETE。
+
+新二进制执行 main-smoke-02：HTTP PID23028/creation134343408124868258，Device 模式、owner 帧0→3，受控STOPPED实际exit1且监听已释放；stdio Engine PID18652/creation134343408710021116，Null模式、帧1→5，stop响应后exit0，reader已join，控制器PID12284也exit0。30个源码/helper锁和390份运行输入首尾相符。根代理重读两条路径14/18份原始文件及响应，root-review-01.json SHA256 0efb5eb8a24ed6c3e48f1175971cc437d61f588de4c80501b2c96c0ca9d0e463；新请求SHA256 7e7221bfd3c6554681954749e790f15b690136eae9c0fc377d37ec93cecab151。没有把旧 main smoke 当作入口修复后的证据。
+
+六个 C++ profile 的发现底线同步增加本批43方法（39快照/RPC+4入口回归）；这是最低发现合同，不是声称已在所有平台执行。后续干净完整门禁继续运行；Renderer资源、独立截图回调债务和一小时真实后端长跑仍未完成。

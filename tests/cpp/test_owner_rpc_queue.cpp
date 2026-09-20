@@ -540,3 +540,244 @@ TEST_CASE("U27 OwnerRpc stats: timeout and closed intake never manufacture zero 
         CHECK(reads == 0);
     }
 }
+
+// Actual entry collector wiring. Controlled interfaces carry sentinel values;
+// they are not proof of a real audio/device workload or global idle.
+#include "entry/RuntimeStats.h"
+#include "audio/NullAudioBackend.h"
+#include "mocks/NullJobSystem.h"
+#include <limits>
+#include <type_traits>
+
+namespace {
+struct RuntimeStatsReads {
+    const std::thread::id owner = std::this_thread::get_id();
+    mutable std::atomic<int> reads{0};
+    mutable std::atomic<bool> ownerOnly{true};
+    std::atomic<int> mutations{0};
+    void read() const {
+        ++reads;
+        if (std::this_thread::get_id() != owner) ownerOnly = false;
+    }
+};
+
+class RuntimeStatsJobProbe final : public NullJobSystem {
+public:
+    JobSystemSnapshot current;
+    RuntimeStatsReads calls;
+    JobSystemSnapshot getSnapshot() const override { calls.read(); return current; }
+    void init() override { ++calls.mutations; }
+    void shutdown() override { ++calls.mutations; }
+    void pollMainThreadJobs() override { ++calls.mutations; }
+    void waitIdle() override { ++calls.mutations; }
+};
+
+class RuntimeStatsLoaderProbe final : public IAsyncLoader {
+public:
+    AsyncLoaderSnapshot current;
+    RuntimeStatsReads calls;
+    void init() override { ++calls.mutations; }
+    void shutdown() override { ++calls.mutations; }
+    int enqueue(const std::string&, const std::string&) override { ++calls.mutations; return 0; }
+    void cancelAll() override { ++calls.mutations; }
+    bool poll() override { ++calls.mutations; return false; }
+    std::vector<CompletedLoad> drainCompleted() override { ++calls.mutations; return {}; }
+    bool isCurrent(const CompletedLoad&) const override { return false; }
+    int pendingCount() const override { return 0; }
+    bool isRunning() const override { return false; }
+    AsyncLoaderSnapshot getSnapshot() const override { calls.read(); return current; }
+};
+
+class RuntimeStatsAudioProbe final : public NullAudioBackend {
+public:
+    AudioBackendSnapshot current;
+    RuntimeStatsReads calls;
+    AudioBackendSnapshot getSnapshot() override { calls.read(); return current; }
+    bool init() override { ++calls.mutations; return false; }
+    void shutdown() override { ++calls.mutations; }
+    void update(float) override { ++calls.mutations; }
+    void flushWaveCache() override { ++calls.mutations; }
+    unsigned int consumeVoiceCompletions() override { ++calls.mutations; return 0; }
+};
+
+class RuntimeStatsHostProbe final : public IEngineHostSnapshot {
+public:
+    EngineHostSnapshot current;
+    RuntimeStatsReads calls;
+    EngineHostSnapshot getHostSnapshot() const override { calls.read(); return current; }
+};
+
+class RuntimeStatsRegistryScope {
+public:
+    RuntimeStatsRegistryScope(IJobSystem* jobs, IAsyncLoader* loader, IAudioBackend* audio)
+        : registry(BackendRegistry::instance()), oldJobs(registry.getJobSystem()),
+          oldLoader(registry.getAsyncLoader()), oldAudio(registry.getAudioBackend()) {
+        registry.setJobSystem(jobs);
+        registry.setAsyncLoader(loader);
+        registry.setAudioBackend(audio);
+    }
+    ~RuntimeStatsRegistryScope() {
+        registry.setJobSystem(oldJobs);
+        registry.setAsyncLoader(oldLoader);
+        registry.setAudioBackend(oldAudio);
+    }
+private:
+    BackendRegistry& registry;
+    IJobSystem* oldJobs;
+    IAsyncLoader* oldLoader;
+    IAudioBackend* oldAudio;
+};
+} // namespace
+
+TEST_CASE("U27 Entry stats: registered interfaces are copied once without consuming state") {
+    RuntimeStatsJobProbe jobs;
+    RuntimeStatsLoaderProbe loader;
+    RuntimeStatsAudioProbe audio;
+    RuntimeStatsHostProbe host;
+    RuntimeStatsRegistryScope registration(&jobs, &loader, &audio);
+    constexpr uint64_t big = 9007199254740993ULL;
+    constexpr uint64_t maximum = std::numeric_limits<uint64_t>::max();
+    jobs.current = {true, false, big, big + 1, maximum};
+    loader.current = {true, true, big + 2, big + 3, big + 4, big + 5, maximum};
+    host.current = {true, true, true, false, static_cast<AsyncHostDelivery>(777), true,
+        maximum, big + 6, big + 7, big + 8, true, big + 9, big + 10, 1};
+    audio.current = {true, true, static_cast<AudioOutputMode>(777), big + 11, big + 12,
+        big + 13, big + 14, big + 15, big + 16, big + 17, big + 18, maximum};
+    const auto first = captureRuntimeStats(host);
+    static_assert(std::is_same_v<decltype(first.jobs.workerPending), uint64_t>);
+    static_assert(std::is_same_v<decltype(first.asyncLoader.cacheBytes), uint64_t>);
+    static_assert(std::is_same_v<decltype(first.host.completedOwnerFrames), uint64_t>);
+    static_assert(std::is_same_v<decltype(first.audio.restoredSources), uint64_t>);
+    CHECK(first.jobs.supported);
+    CHECK_FALSE(first.jobs.running);
+    CHECK(first.jobs.workerPending == big);
+    CHECK(first.jobs.queuedCompletions == big + 1);
+    CHECK(first.jobs.dispatchingCompletions == maximum);
+    CHECK(first.asyncLoader.supported);
+    CHECK(first.asyncLoader.running);
+    CHECK(first.asyncLoader.pendingWaiters == big + 2);
+    CHECK(first.asyncLoader.inflightKeys == big + 3);
+    CHECK(first.asyncLoader.completedBuffered == big + 4);
+    CHECK(first.asyncLoader.cacheEntries == big + 5);
+    CHECK(first.asyncLoader.cacheBytes == maximum);
+    CHECK(first.host.supported);
+    CHECK(first.host.initialized);
+    CHECK(first.host.running);
+    CHECK_FALSE(first.host.luaPaused);
+    CHECK(static_cast<int>(first.host.delivery) == 777);
+    CHECK(first.host.asyncOwnershipComplete); // Raw copy; main's existing mapping decides completeness.
+    CHECK(first.host.completedOwnerFrames == maximum);
+    CHECK(first.host.deferredAsyncPayloads == big + 6);
+    CHECK(first.host.drainingAsyncPayloads == big + 7);
+    CHECK(first.host.dispatchingAsyncPayloads == big + 8);
+    CHECK(first.host.audioCompletionTrackingSupported);
+    CHECK(first.host.audioCompletionsPending == big + 9);
+    CHECK(first.host.audioCompletionsActive == big + 10);
+    CHECK(first.host.audioCompletionOwnerRefs == 1);
+    CHECK(first.audio.supported);
+    CHECK(first.audio.running);
+    CHECK(static_cast<int>(first.audio.outputMode) == 777);
+    CHECK(first.audio.liveVoices == big + 11);
+    CHECK(first.audio.busVoices == big + 12);
+    CHECK(first.audio.sessionHandles == big + 13);
+    CHECK(first.audio.retiringBGM == big + 14);
+    CHECK(first.audio.retiringVoice == big + 15);
+    CHECK(first.audio.waveCacheEntries == big + 16);
+    CHECK(first.audio.rawCacheEntries == big + 17);
+    CHECK(first.audio.voiceCompletionsPending == big + 18);
+    CHECK(first.audio.restoredSources == maximum);
+    for (const auto* calls : {&jobs.calls, &loader.calls, &host.calls, &audio.calls}) {
+        CHECK(calls->reads.load() == 1);
+        CHECK(calls->ownerOnly.load());
+        CHECK(calls->mutations.load() == 0);
+    }
+    jobs.current = {};
+    loader.current = {};
+    host.current = {};
+    audio.current = {};
+    const auto second = captureRuntimeStats(host);
+    CHECK_FALSE(second.jobs.supported);
+    CHECK_FALSE(second.asyncLoader.supported);
+    CHECK_FALSE(second.host.supported);
+    CHECK_FALSE(second.audio.supported);
+    CHECK(first.jobs.workerPending == big);
+    CHECK(first.asyncLoader.cacheBytes == maximum);
+    CHECK(first.host.completedOwnerFrames == maximum);
+    CHECK(first.audio.restoredSources == maximum);
+    for (const auto* calls : {&jobs.calls, &loader.calls, &host.calls, &audio.calls})
+        CHECK(calls->reads.load() == 2);
+}
+
+TEST_CASE("U27 Entry stats: missing backends stay unsupported while host is still observed") {
+    RuntimeStatsHostProbe host;
+    host.current.supported = true;
+    host.current.completedOwnerFrames = 4294967301ULL;
+    RuntimeStatsRegistryScope registration(nullptr, nullptr, nullptr);
+    const auto result = captureRuntimeStats(host);
+    CHECK_FALSE(result.jobs.supported);
+    CHECK_FALSE(result.asyncLoader.supported);
+    CHECK_FALSE(result.audio.supported);
+    CHECK(result.audio.outputMode == AudioOutputMode::Unknown);
+    CHECK(result.host.supported);
+    CHECK(result.host.completedOwnerFrames == 4294967301ULL);
+    CHECK(host.calls.reads.load() == 1);
+}
+
+TEST_CASE("U27 Entry stats: actual owner queue invokes the collector only after owner pump") {
+    RuntimeStatsJobProbe jobs;
+    RuntimeStatsLoaderProbe loader;
+    RuntimeStatsAudioProbe audio;
+    RuntimeStatsHostProbe host;
+    RuntimeStatsRegistryScope registration(&jobs, &loader, &audio);
+    Events events;
+    std::vector<RuntimeStatsSnapshot> captured;
+    OwnerRpcQueue queue([&](const RpcRequest&) {
+        captured.push_back(captureRuntimeStats(host));
+        return ok();
+    }, [&](const auto& event) { events.add(event); });
+    Caller caller(queue, RpcRequest{RpcStatsRequest{}});
+    REQUIRE(events.wait(Phase::Accepted, "stats"));
+    for (const auto* calls : {&jobs.calls, &loader.calls, &host.calls, &audio.calls})
+        CHECK(calls->reads.load() == 0);
+    queue.pump();
+    CHECK(caller.finish().status == RpcReplyStatus::Ok);
+    REQUIRE(captured.size() == 1);
+    for (const auto* calls : {&jobs.calls, &loader.calls, &host.calls, &audio.calls}) {
+        CHECK(calls->reads.load() == 1);
+        CHECK(calls->ownerOnly.load());
+        CHECK(calls->mutations.load() == 0);
+    }
+    queue.close();
+}
+
+TEST_CASE("U27 Entry stats: real Job callback debt remains in returned copy until unwind") {
+    EngineConfig config;
+    config.headless = true;
+    Engine engine(std::move(config));
+    REQUIRE(engine.init());
+    auto* jobs = BackendRegistry::instance().getJobSystem();
+    REQUIRE(jobs != nullptr);
+    REQUIRE(jobs->getSnapshot().supported);
+    std::atomic<bool> bodyRan{false};
+    bool callbackRan = false;
+    RuntimeStatsSnapshot during;
+    REQUIRE(jobs->submit([&] { bodyRan = true; }, JobPriority::Normal, [&] {
+        during = captureRuntimeStats(engine);
+        callbackRan = true;
+    }) != 0);
+    jobs->waitIdle();
+    CHECK(bodyRan.load());
+    CHECK_FALSE(callbackRan);
+    const auto before = captureRuntimeStats(engine);
+    CHECK(before.jobs.queuedCompletions == 1);
+    jobs->pollMainThreadJobs();
+    REQUIRE(callbackRan);
+    CHECK(during.jobs.dispatchingCompletions == 1);
+    CHECK(during.host.supported);
+    CHECK(during.host.initialized);
+    CHECK_FALSE(during.audio.supported); // Headless Null audio is not real audio evidence.
+    const auto after = captureRuntimeStats(engine);
+    CHECK(after.jobs.dispatchingCompletions == 0);
+    CHECK(during.jobs.dispatchingCompletions == 1);
+    engine.shutdown();
+}

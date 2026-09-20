@@ -9,7 +9,6 @@ extern "C" {
 }
 #include "render/BgfxRenderDevice.h"
 #include "di/api/ITextureBudget.h"
-#include "di/BackendRegistry.h"
 #include "resource/api/IAsyncLoader.h"
 #include "audio/api/IAudioBackend.h"
 #include "entry/api/IEngineHostSnapshot.h"
@@ -22,6 +21,7 @@ extern "C" {
 #include "script/vm/LuaManager.h"
 #include "script/vm/ManagedCoroutine.h"
 #include "entry/Engine.h"
+#include "entry/RuntimeStats.h"
 #include "rpc/OwnerRpcQueue.h"
 #include "CaesuraCapabilityBuild.h"
 #include "debug/DebugProtocol.h"
@@ -501,17 +501,17 @@ private:
                 // execute() is called only by OwnerRpcQueue's owner executor.
                 // Copy each observer once; transports never access these backends.
                 // Independent worker/mixer phases are not one atomic idle sample.
-                auto& registry = Caesura::BackendRegistry::instance();
-                if (auto* jobs = registry.getJobSystem()) {
-                    const auto snapshot = jobs->getSnapshot();
+                const auto observed = Caesura::captureRuntimeStats(m_engine);
+                {
+                    const auto& snapshot = observed.jobs;
                     stats.jobs.supported = snapshot.supported;
                     stats.jobs.running = snapshot.running;
                     stats.jobs.workerPending = snapshot.workerPending;
                     stats.jobs.queuedCompletions = snapshot.queuedCompletions;
                     stats.jobs.dispatchingCompletions = snapshot.dispatchingCompletions;
                 }
-                if (auto* loader = registry.getAsyncLoader()) {
-                    const auto snapshot = loader->getSnapshot();
+                {
+                    const auto& snapshot = observed.asyncLoader;
                     stats.asyncLoader.supported = snapshot.supported;
                     stats.asyncLoader.running = snapshot.running;
                     stats.asyncLoader.pendingWaiters = snapshot.pendingWaiters;
@@ -520,8 +520,7 @@ private:
                     stats.asyncLoader.cacheEntries = snapshot.cacheEntries;
                     stats.asyncLoader.cacheBytes = snapshot.cacheBytes;
                 }
-                const Caesura::IEngineHostSnapshot& hostObserver = m_engine;
-                const auto host = hostObserver.getHostSnapshot();
+                const auto& host = observed.host;
                 stats.host.supported = host.supported;
                 stats.host.initialized = host.initialized;
                 stats.host.running = host.running;
@@ -546,8 +545,8 @@ private:
                 stats.host.audioCompletionsPending = host.audioCompletionsPending;
                 stats.host.audioCompletionsActive = host.audioCompletionsActive;
                 stats.host.audioCompletionOwnerRefs = host.audioCompletionOwnerRefs;
-                if (auto* audio = registry.getAudioBackend()) {
-                    const auto snapshot = audio->getSnapshot();
+                {
+                    const auto& snapshot = observed.audio;
                     stats.audio.supported = snapshot.supported;
                     stats.audio.running = snapshot.running;
                     switch (snapshot.outputMode) {

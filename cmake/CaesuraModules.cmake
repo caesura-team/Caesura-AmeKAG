@@ -420,6 +420,7 @@ add_library(CaesuraEntry STATIC
     src/entry/Engine_LuaRegistry.cpp
     src/entry/StartupScripts.cpp
     src/entry/StartupValidation.cpp
+    src/entry/RuntimeStats.cpp
     src/entry/ErrorUI.cpp
 )
 add_library(Caesura::Entry ALIAS CaesuraEntry)
