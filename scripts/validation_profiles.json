@@ -44,7 +44,7 @@
           "id": "cpp",
           "parser": "doctest",
           "required": true,
-          "min_discovered": 1434,
+          "min_discovered": 1440,
           "allowed_skips": [],
           "command": [
             "{cpp_binary}",
@@ -216,7 +216,7 @@
           "id": "cpp",
           "parser": "doctest",
           "required": true,
-          "min_discovered": 1434,
+          "min_discovered": 1440,
           "allowed_skips": [],
           "command": [
             "{cpp_binary}",
@@ -388,7 +388,7 @@
           "id": "cpp",
           "parser": "doctest",
           "required": true,
-          "min_discovered": 1390,
+          "min_discovered": 1396,
           "allowed_skips": [],
           "command": [
             "{cpp_binary}",
@@ -560,7 +560,7 @@
           "id": "cpp",
           "parser": "doctest",
           "required": true,
-          "min_discovered": 1390,
+          "min_discovered": 1396,
           "allowed_skips": [],
           "command": [
             "{cpp_binary}",
@@ -732,7 +732,7 @@
           "id": "cpp",
           "parser": "doctest",
           "required": true,
-          "min_discovered": 1277,
+          "min_discovered": 1283,
           "allowed_skips": [],
           "command": [
             "{cpp_binary}",
@@ -904,7 +904,7 @@
           "id": "cpp",
           "parser": "doctest",
           "required": true,
-          "min_discovered": 1277,
+          "min_discovered": 1283,
           "allowed_skips": [],
           "command": [
             "{cpp_binary}",

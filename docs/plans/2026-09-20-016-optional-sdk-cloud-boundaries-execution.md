@@ -75,3 +75,30 @@ SDK ON的两个已链接测试仍仅证明未初始化适配器合同；本次OF
 两平台执行锁定相同八文件，HEAD60dbbca9 上的 dirty fingerprint b441a8faec35143c3953710b048993af3109e991a8aa22ad50c105f61be05d4a 前后一致。Linux 使用 CMake3.28.3、GCC15.2、SDL3.4.2、OpenSSL3.5.5，属于本机 SDK OFF 定向证据；原 ELF 摘要 a2035962e4a4e81c30e344a207d3bebe54532ea0078c915a55898330ca7cc77b 来自执行时记录。后续只读复核发现 WSL boot_id 已变化，原 /tmp 构建目录不再存在，不能再次重哈希该 ELF 或内层控制文件；D盘原始日志、外层 owned 收据及八源文件已重核。没有因此重跑定向测试或改写原成功记录，下一次 Linux 构建需保存在持久目录。
 
 独立审查未发现可行动缺陷，independent-review-01.md 摘要 5ca229c081922541a73b621758783703e5ec55018ac210615ed08179d3a6d086；JSON cae6a514b431f93b8204efbe36b397419122b60cc006d88aeb9fc8ab8857fdc0。原25方法完整保留，只新增9方法，六native profile C++最低发现数随之增加9；完整 Debug/C++/Lua/CTest仍需在本阶段干净源码上重新执行。路径替换的全部交错、真实HTTPS/压缩响应、Steam账号和macOS均未由此验证；共同祖先、双方持久保全、冲突日志及恢复继续推进，U26未完成。
+
+
+## Typed snapshot 干净完整 Debug 门禁
+
+干净提交 a1a516cb37da0e792bc67242886d6a18d4362174 的 windows-debug run 36276871-eed6-4b67-96dd-99affa4d53b8 于 2026-09-20 实际完成：全量 Debug build exit0，C++ 1434/1434、427727断言、0failed/0skipped，Lua 147/147 + 56/56；CTest发现57项，56通过、0失败、1项CaesuraHeadlessAiSmoke按既定可选服务规则跳过。其余验证器、耦合与测试注册检查通过，执行器、collector、strict verifier均exit0且owned cleanup COMPLETE，无超时强杀。
+
+源码fingerprint 5d45569116b871012bc55f90b050039f5ba9a204dba73973153ebda332bb3223及fixture SHA256首尾不变。根代理重新读取49份bundle/outer原始引用共82980124字节，全部hash一致；原run SHA256 e2a050f43400dee2f9cb395bf92e761eaf594722a8c38ee0ea30c4bd9699b89c，manifest 5691a0155d2eb30ef34b436c494b22c76846c56e9687019693eb67cc509c3afe，root-review-01.json ead1f7294ec0b5ce55b1640a06655369f137c59156d5c48aefcae357017114cc。此profile不包含独立HTTP transport smoke；不把可选服务跳过称作执行通过。
+
+此结果验证本次只读typed snapshot增量，未关闭冲突记录保存、恢复协调器、真实SDK账号/模型生命周期等U26剩余工作；下一切片以不可变本地记录及实际写入故障回归继续。
+
+
+## 冲突保全 B1 首次真实 RED
+
+内部 CloudConflictStore 三方法暂为空返回，原34个cloud测试方法原字节保持并追加6方法。主代理对冻结四文件实际编译成功，6方法全部失败：307断言中273通过34失败，1434个原方法过滤未选中。全部失败只在预期状态与record缺失的三个目标断言位置；真实Crypto/SaveManager生成并load的CAES A/B/C、文件及HTTP/Steam snapshot前提通过。源码fingerprint0a061d082aa26a8d3feaa92f9e4ff746045f710aea3087ad24007b9ea0e495c0首尾一致，命令无超时强杀且cleanup COMPLETE。原run SHA256 127d0316b0f2ccf71a09c013719a3011df18a139f6e5cceb6288806b112840be，root-red-review-01.json 89a6e1f2958f5f47aeaecdc2be67ab79ce906006d6f00be4a02a40b1b139f83d；binary03835c44fb8ede2c673861e15adfcce56d5f85246d0d7982114449a9c4a5a5e9。
+
+预提交24格失败矩阵在本次RED因无法建立基准而尚未运行，不能将其注册数当覆盖。实现后需要实际逐格hook命中及不改旧记录的GREEN。新对象重开磁盘与真实child重启、提交后Indeterminate及远端CAS仍分别记录；B1只保存不透明原始字节，不凭本地记录宣称CAES语义校验或同步提交成功。
+
+
+## 冲突保全 B1 Windows/Linux GREEN 与独立审查（2026-09-22）
+
+CloudConflictStore 现已实现 owner 限定的不可变本地观察记录：在新目录保留 base/local/cloud 原始字节，以最后原子发布的 manifest 封闭记录；使用显式外部 manifest SHA 和同 context 基准，不自动选择最新记录、不调用远端写入。输入和目录扫描受配额限制，失败保留已有记录及未完成目录，不自动删除。manifest 发布后的复验失败返回 Indeterminate 并保留 candidateRef；此分支尚无实际提交后故障证据。
+
+在 a1a516cb 上的冻结 dirty fingerprint e727f5e4de00bff5f81e54892f664934820e830b24d2a2a4e2917cf4f19e291c，Windows 实际 Debug 定向六方法 6/6、1673/1673 断言，相邻 101/101、3612/3612；Linux 实际重新配置、构建后，同六方法 6/6、1673/1673，相邻 150/150、5513/5513。四角色乘六个预提交 writer checkpoint 共24格均真实执行并核对命中及旧记录不变。相邻套件包含新六方法，不能将两行相加作为独立发现数；过滤未选中不等于完整套件跳过。所有命令正常退出0、owned cleanup COMPLETE、无超时强杀。
+
+主代理原始复核 phase-b-root-green-review-01.json SHA256 bc11c8ce5166f98bd5eb28001aeaedd69c9962fd2651d882ea29fd8d87a76f58。独立只读审查完整读取实现、六组测试、typed reader 和原子 writer，重核14项源码锁及39项源码/证据引用，在 B1 合同内未发现可行动缺陷；review-01.md SHA256 8ecd2c2370175ebdc5ad62ed2a5dcf157ae6cf69a2cb9345777a21c5f36bb24e，JSON 4248af1e98ff6159ed48a4403ca980395120deda8c2075facf0cfd95c88c7470。Windows 二进制 efb39890609338af12696d83a0810b65358fe6d93246ccac0122bf6ca66399a3；Linux /var/tmp 持久构建二进制 faf072f18b6d295f69aa3e7b23db12252a0b4583c83fec95492f1fd93576a94b，9月22日只读重哈希均匹配。
+
+原34个cloud测试正文保留并新增六方法；六 native profile 的 cpp 最低发现数按 id 各增加6，其他阈值不变。当前源码仍须完整 Debug/C++/Lua/CTest 门禁。此批证明不透明字节保全与预提交失败，不证明 CAES 当前 key/policy/envelope 有效性、账户身份、远端 CAS、SaveManager 恢复协调、真实独立进程重启、提交后故障或掉电持久性。路径攻击、非 ASCII root、碰撞耗尽、线程/重入和部分扫描边界也未由本批实际运行，U26继续推进。

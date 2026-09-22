@@ -4,6 +4,8 @@
 #include "TestPaths.h"
 #include "storage/SaveManager.h"
 #include "storage/AtomicSaveFile.h"
+#include "storage/CloudConflictStore.h"
+#include <utility>
 #include "storage/HttpCloudSaveProvider.h"
 #include "storage/CloudSaveProvider.h"
 #include "storage/api/ISaveProvider.h"
@@ -1533,4 +1535,649 @@ TEST_CASE("U26 cloud snapshot: cloud keys and endpoint configuration fail closed
     CHECK(server.redirectGets.load() == 0);
     CHECK(server.writes.load() == 0);
     CHECK(server.deletes.load() == 0);
+}
+
+// U26 conflict store: real opaque records; no provider or store verdict mocks.
+namespace {
+using U26Store = detail::CloudConflictStore;
+using U26StoreCode = detail::ConflictStoreCode;
+using U26RecordKind = detail::ConflictRecordKind;
+
+bool u26ConflictSameBytes(const std::string& a, const std::string& b) {
+    return a == b; // Keep raw payloads out of failed-assertion diagnostics.
+}
+
+bool u26ConflictHex(const std::string& value, size_t length) {
+    return value.size() == length && std::all_of(value.begin(), value.end(), [](char c) {
+        return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
+    });
+}
+
+bool u26ConflictSameRef(const detail::ConflictRecordRef& a,
+                        const detail::ConflictRecordRef& b) {
+    return a.id == b.id && a.manifestSha256 == b.manifestSha256;
+}
+
+const char* u26ConflictKindName(U26RecordKind kind) {
+    switch (kind) {
+        case U26RecordKind::EqualObserved: return "equal_observed";
+        case U26RecordKind::LocalChanged: return "local_changed";
+        case U26RecordKind::CloudChanged: return "cloud_changed";
+        case U26RecordKind::Conflict: return "conflict";
+        case U26RecordKind::DivergedWithoutBase: return "diverged_without_base";
+    }
+    return "invalid";
+}
+
+std::string u26ConflictSha(const std::string& bytes) {
+    auto* crypto = BackendRegistry::instance().getCryptoEngine();
+    REQUIRE(crypto != nullptr);
+    std::array<uint8_t, 32> digest{};
+    crypto->sha256(reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size(),
+                   digest.data(), digest.size());
+    constexpr char hex[] = "0123456789abcdef";
+    std::string result;
+    for (const auto byte : digest) {
+        result += hex[byte >> 4];
+        result += hex[byte & 15];
+    }
+    return result;
+}
+
+std::map<std::string, std::string> u26ConflictTree(const std::filesystem::path& root) {
+    std::map<std::string, std::string> result;
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(root)) {
+        const auto relative = entry.path().lexically_relative(root).generic_string();
+        const auto state = entry.symlink_status();
+        if (std::filesystem::is_symlink(state))
+            result[relative] = "L:" + std::filesystem::read_symlink(entry.path()).generic_string();
+        else if (std::filesystem::is_directory(state)) result[relative] = "D:";
+        else if (std::filesystem::is_regular_file(state))
+            result[relative] = "F:" + cloudFileBytes(entry.path());
+        else result[relative] = "S:";
+    }
+    return result;
+}
+
+struct U26ConflictFixture {
+    CloudCryptoRegistration crypto;
+    TestPaths::ScopedTempDir temporary{"u26_conflict_store"};
+    std::filesystem::path root = std::filesystem::canonical(temporary.path());
+    std::filesystem::path records = root / "preserved";
+    std::filesystem::path slot = root / "save_3.json";
+    EncryptedCloudServer server;
+    HttpCloudSaveProvider transport{server.endpoint(), 1000};
+    SaveManager manager;
+    std::array<uint8_t, 32> key{};
+    std::string a, b, c, currentLocal, currentCloud;
+
+    U26ConflictFixture() {
+        REQUIRE(std::filesystem::create_directory(records));
+        manager.init(TestPaths::withTrailingSeparator(root));
+        for (size_t i = 0; i < key.size(); ++i) key[i] = static_cast<uint8_t>(i + 1);
+        manager.setEncryptionKey(key.data());
+        manager.setEncryptionPolicy(SaveEncryptionPolicy::RequireEncrypted);
+        a = makeEnvelope(1, 'A');
+        b = makeEnvelope(2, 'B');
+        c = makeEnvelope(3, 'C');
+        REQUIRE_FALSE(u26ConflictSameBytes(a, b));
+        REQUIRE_FALSE(u26ConflictSameBytes(a, c));
+        REQUIRE_FALSE(u26ConflictSameBytes(b, c));
+        setSides(a, a);
+    }
+
+    detail::ConflictStoreContext context() const {
+        return {"0123456789abcdef0123456789abcdef", 3, 1};
+    }
+
+    std::string makeEnvelope(int chapter, char fill) {
+        // More than one real AtomicSaveFile chunk; no guessed WriteProgress.
+        const json data = {{"chapter", chapter}, {"opaque_test_data", std::string(70000, fill)}};
+        REQUIRE(manager.save(3, data, "conflict-fixture", chapter));
+        const auto bytes = cloudFileBytes(slot);
+        REQUIRE(bytes.size() > 64u * 1024u);
+        REQUIRE(bytes.substr(0, 4) == "CAES");
+        CHECK(manager.load(3) == data);
+        return bytes;
+    }
+
+    void setSides(const std::string& local, const std::string& cloud) {
+        replaceCloudFileBytes(slot, local);
+        server.replaceBytes(cloud); // Actual loopback server I/O boundary only.
+        currentLocal = local;
+        currentCloud = cloud;
+    }
+
+    std::pair<CloudSnapshot, CloudSnapshot> capture() {
+        auto local = transport.readSnapshot(CloudSide::Local, u26SnapshotPath(slot));
+        auto cloud = transport.readSnapshot(CloudSide::Cloud, u26SnapshotPath(slot));
+        REQUIRE(local.state == CloudReadState::Present);
+        REQUIRE(cloud.state == CloudReadState::Present);
+        REQUIRE(local.error == CloudReadError::None);
+        REQUIRE(cloud.error == CloudReadError::None);
+        REQUIRE(u26ConflictSameBytes(local.bytes, currentLocal));
+        REQUIRE(u26ConflictSameBytes(cloud.bytes, currentCloud));
+        return {std::move(local), std::move(cloud)};
+    }
+
+    void checkSources() {
+        CHECK(u26ConflictSameBytes(cloudFileBytes(slot), currentLocal));
+        CHECK(u26ConflictSameBytes(server.bytes(), currentCloud));
+        CHECK(server.writes() == 0);
+        CHECK(transport.conditionalWriteSupport(CloudSide::Local) ==
+              CloudConditionalWriteSupport::Unsupported);
+        CHECK(transport.conditionalWriteSupport(CloudSide::Cloud) ==
+              CloudConditionalWriteSupport::Unsupported);
+    }
+};
+
+void u26ConflictCheckRecord(const detail::ConflictStoreResult& result,
+                            U26StoreCode code, U26RecordKind kind,
+                            const std::string& local, const std::string& cloud,
+                            const std::optional<std::string>& base = std::nullopt) {
+    CHECK(result.code == code);
+    REQUIRE(result.record.has_value());
+    const auto& record = *result.record;
+    CHECK(record.kind == kind);
+    CHECK(u26ConflictHex(record.ref.id, 32));
+    CHECK(u26ConflictHex(record.ref.manifestSha256, 64));
+    CHECK(u26ConflictSameBytes(record.localBytes, local));
+    CHECK(u26ConflictSameBytes(record.cloudBytes, cloud));
+    CHECK(record.baseBytes.has_value() == base.has_value());
+    CHECK(record.baseRef.has_value() == base.has_value());
+    if (base && record.baseBytes)
+        CHECK(u26ConflictSameBytes(*record.baseBytes, *base));
+    if (code == U26StoreCode::Preserved) {
+        CHECK(result.operationId == record.ref.id);
+        REQUIRE(result.candidateRef.has_value());
+        CHECK(u26ConflictSameRef(*result.candidateRef, record.ref));
+    }
+}
+
+detail::ConflictRecordRef u26ConflictSeedBase(U26ConflictFixture& fixture, U26Store& store) {
+    fixture.setSides(fixture.a, fixture.a);
+    const auto sides = fixture.capture();
+    const auto result = store.preserve(fixture.context(), sides.first, sides.second);
+    u26ConflictCheckRecord(result, U26StoreCode::Preserved, U26RecordKind::EqualObserved,
+                           fixture.a, fixture.a);
+    REQUIRE(result.record.has_value());
+    return result.record->ref;
+}
+
+void u26ConflictCheckManifest(const std::filesystem::path& root,
+                              const detail::PreservedConflictRecord& record) {
+    const auto directory = root / record.ref.id;
+    const auto raw = cloudFileBytes(directory / "manifest.json");
+    CHECK(raw.size() <= 16u * 1024u);
+    CHECK(u26ConflictSha(raw) == record.ref.manifestSha256);
+    const auto manifest = json::parse(raw);
+    REQUIRE(manifest.is_object());
+    CHECK(manifest.size() == 8);
+    for (const auto* key : {"schema_version", "id", "context", "kind", "envelope_validation",
+                            "revision_kind", "base_ref", "payloads"})
+        REQUIRE(manifest.contains(key));
+    CHECK(manifest.at("schema_version") == 1);
+    CHECK(manifest.at("id") == record.ref.id);
+    CHECK(manifest.at("kind") == u26ConflictKindName(record.kind));
+    CHECK(manifest.at("envelope_validation") == "NOT_CHECKED");
+    CHECK(manifest.at("revision_kind") == "none");
+    const auto& context = manifest.at("context");
+    CHECK(context.size() == 3);
+    CHECK(context.at("scope_id") == record.context.scopeId);
+    CHECK(context.at("slot") == record.context.slot);
+    CHECK(context.at("policy_epoch") == record.context.policyEpoch);
+    CHECK(manifest.at("base_ref").is_null() == !record.baseRef.has_value());
+    if (record.baseRef) {
+        CHECK(manifest.at("base_ref").size() == 2);
+        CHECK(manifest.at("base_ref").at("id") == record.baseRef->id);
+        CHECK(manifest.at("base_ref").at("manifest_sha256") == record.baseRef->manifestSha256);
+    }
+    const auto& payloads = manifest.at("payloads");
+    CHECK(payloads.size() == (record.baseBytes ? 3 : 2));
+    for (const auto* role : {"local", "cloud", "base"}) {
+        if (std::string(role) == "base" && !record.baseBytes) {
+            CHECK_FALSE(payloads.contains(role));
+            continue;
+        }
+        const auto& bytes = std::string(role) == "local" ? record.localBytes :
+            std::string(role) == "cloud" ? record.cloudBytes : *record.baseBytes;
+        const auto& payload = payloads.at(role);
+        CHECK(payload.size() == 3);
+        CHECK(payload.at("state") == "present");
+        CHECK(payload.at("size") == bytes.size());
+        CHECK(payload.at("sha256") == u26ConflictSha(bytes));
+        CHECK(u26ConflictSameBytes(cloudFileBytes(directory / (std::string(role) + ".bin")), bytes));
+    }
+}
+
+void u26ConflictCheckNoAttempt(const detail::ConflictStoreResult& result,
+                               U26StoreCode code, const std::filesystem::path& root,
+                               const std::map<std::string, std::string>& before) {
+    CHECK(result.code == code);
+    CHECK(result.operationId.empty());
+    CHECK_FALSE(result.candidateRef.has_value());
+    CHECK_FALSE(result.record.has_value());
+    CHECK(u26ConflictTree(root) == before);
+}
+
+struct U26ConflictFailWrite {
+    detail::SaveWriteStage target;
+    size_t role = 0;
+    size_t opened = 0;
+    size_t fired = 0;
+    std::filesystem::path storeRoot;
+    bool ownedPath = true;
+    std::string preparedManifestAtReplace{};
+
+    static bool checkpoint(detail::SaveWriteStage stage, const std::filesystem::path& temporary,
+                           void* context) {
+        auto& self = *static_cast<U26ConflictFailWrite*>(context);
+        self.ownedPath = self.ownedPath && temporary.parent_path().parent_path() == self.storeRoot;
+        if (stage == detail::SaveWriteStage::CreateTemporary) ++self.opened;
+        if (self.opened == self.role && stage == self.target) {
+            if (self.ownedPath && self.role == 4 && stage == detail::SaveWriteStage::Replace)
+                self.preparedManifestAtReplace = cloudFileBytes(temporary);
+            ++self.fired;
+            return false;
+        }
+        return true;
+    }
+};
+} // namespace
+
+TEST_CASE("U26 conflict store: equal observation reopens exact opaque bytes") {
+    U26ConflictFixture fixture;
+    const auto context = fixture.context();
+    detail::ConflictRecordRef reference;
+    {
+        U26Store store(fixture.records);
+        reference = u26ConflictSeedBase(fixture, store);
+    }
+    U26Store reopened(fixture.records);
+    const auto record = reopened.readRecord(context, reference);
+    u26ConflictCheckRecord(record, U26StoreCode::Complete, U26RecordKind::EqualObserved,
+                           fixture.a, fixture.a);
+    REQUIRE(record.record.has_value());
+    u26ConflictCheckManifest(fixture.records, *record.record);
+    const auto manifestPath = fixture.records / reference.id / "manifest.json";
+    const auto rawManifest = cloudFileBytes(manifestPath);
+    CHECK(u26ConflictSha(rawManifest) == reference.manifestSha256);
+    const auto manifest = json::parse(rawManifest);
+    CHECK(manifest.at("envelope_validation") == "NOT_CHECKED");
+    CHECK(manifest.at("revision_kind") == "none");
+    CHECK(manifest.at("context").at("scope_id") == context.scopeId);
+    CHECK(manifest.at("context").at("slot") == context.slot);
+    CHECK(manifest.at("context").at("policy_epoch") == context.policyEpoch);
+    const auto listed = reopened.listRecords(context);
+    CHECK(listed.code == U26StoreCode::Complete);
+    REQUIRE(listed.completeRecords.size() == 1);
+    CHECK(u26ConflictSameRef(listed.completeRecords.front(), reference));
+    CHECK(listed.incompleteRecords == 0);
+    CHECK(listed.invalidRecords == 0);
+    fixture.checkSources();
+
+    // A new store object is not a new process; this tests actual disk readback.
+    // Complete empty opaque observations are retained without claiming CAES validity.
+    fixture.setSides("", "");
+    const auto empty = fixture.capture();
+    const auto savedEmpty = reopened.preserve(context, empty.first, empty.second);
+    u26ConflictCheckRecord(savedEmpty, U26StoreCode::Preserved, U26RecordKind::EqualObserved, "", "");
+    fixture.checkSources();
+}
+
+TEST_CASE("U26 conflict store: explicit equal base preserves all fork bytes") {
+    U26ConflictFixture fixture;
+    U26Store store(fixture.records);
+    const auto base = u26ConflictSeedBase(fixture, store);
+    const auto baseTree = u26ConflictTree(fixture.records / base.id);
+    struct Case { const std::string* local; const std::string* cloud; U26RecordKind kind; bool withBase; };
+    const std::array<Case, 5> cases{{
+        {&fixture.b, &fixture.c, U26RecordKind::Conflict, true},
+        {&fixture.b, &fixture.a, U26RecordKind::LocalChanged, true},
+        {&fixture.a, &fixture.c, U26RecordKind::CloudChanged, true},
+        {&fixture.b, &fixture.b, U26RecordKind::EqualObserved, true},
+        {&fixture.b, &fixture.c, U26RecordKind::DivergedWithoutBase, false}
+    }};
+    std::vector<std::string> ids{base.id};
+    for (const auto& item : cases) {
+        INFO("kind=", static_cast<int>(item.kind), " base=", item.withBase);
+        fixture.setSides(*item.local, *item.cloud);
+        const auto sides = fixture.capture();
+        const auto expectedBase = item.withBase ? std::optional<detail::ConflictRecordRef>(base) : std::nullopt;
+        const auto expectedBytes = item.withBase ? std::optional<std::string>(fixture.a) : std::nullopt;
+        const auto result = store.preserve(fixture.context(), sides.first, sides.second, expectedBase);
+        u26ConflictCheckRecord(result, U26StoreCode::Preserved, item.kind,
+                               *item.local, *item.cloud, expectedBytes);
+        REQUIRE(result.record.has_value());
+        u26ConflictCheckManifest(fixture.records, *result.record);
+        CHECK(std::find(ids.begin(), ids.end(), result.record->ref.id) == ids.end());
+        ids.push_back(result.record->ref.id);
+        U26Store reopened(fixture.records);
+        const auto loaded = reopened.readRecord(fixture.context(), result.record->ref);
+        u26ConflictCheckRecord(loaded, U26StoreCode::Complete, item.kind,
+                               *item.local, *item.cloud, expectedBytes);
+        CHECK(u26ConflictTree(fixture.records / base.id) == baseTree);
+        fixture.checkSources();
+    }
+    // Same actual game data saved again is still a distinct raw observation.
+    const auto sameGameData = fixture.makeEnvelope(2, 'B');
+    REQUIRE_FALSE(u26ConflictSameBytes(sameGameData, fixture.b));
+    fixture.setSides(fixture.b, sameGameData);
+    const auto nonceSides = fixture.capture();
+    const auto nonceRecord = store.preserve(fixture.context(), nonceSides.first, nonceSides.second, base);
+    u26ConflictCheckRecord(nonceRecord, U26StoreCode::Preserved, U26RecordKind::Conflict,
+                           fixture.b, sameGameData, fixture.a);
+    fixture.checkSources();
+    const auto listed = store.listRecords(fixture.context());
+    CHECK(listed.code == U26StoreCode::Complete);
+    CHECK(listed.completeRecords.size() == 7);
+    CHECK(listed.incompleteRecords == 0);
+    CHECK(listed.invalidRecords == 0);
+}
+
+TEST_CASE("U26 conflict store: incomplete reads cannot establish or replace a base") {
+    U26ConflictFixture fixture;
+    U26Store store(fixture.records);
+    const auto sides = fixture.capture();
+    const auto emptyTree = u26ConflictTree(fixture.records);
+    // These three states come from the actual production HTTP reader.
+    for (const auto mode : {U26SnapshotHttpServer::Mode::Missing,
+                           U26SnapshotHttpServer::Mode::ServerError,
+                           U26SnapshotHttpServer::Mode::ShortFixed}) {
+        U26SnapshotHttpServer server(mode);
+        HttpCloudSaveProvider transport(server.endpoint(), 500);
+        const auto observed = transport.readSnapshot(CloudSide::Cloud, "save_0.json");
+        REQUIRE(observed.state != CloudReadState::Present);
+        REQUIRE(observed.bytes.empty());
+        u26ConflictCheckNoAttempt(store.preserve(fixture.context(), sides.first, observed),
+                                  U26StoreCode::InspectionIncomplete, fixture.records, emptyTree);
+        CHECK(server.gets.load() == 1);
+        CHECK(server.writes.load() == 0);
+        CHECK(server.deletes.load() == 0);
+    }
+    // These are deliberately value-boundary controls, not extra HTTP evidence.
+    for (auto state : {CloudReadState::Missing, CloudReadState::Unavailable,
+                       CloudReadState::Failed, CloudReadState::Invalid, CloudReadState::Unsupported}) {
+        CloudSnapshot absent;
+        absent.state = state;
+        if (state == CloudReadState::Unavailable) absent.error = CloudReadError::BackendUnavailable;
+        if (state == CloudReadState::Failed) absent.error = CloudReadError::Io;
+        if (state == CloudReadState::Invalid) absent.error = CloudReadError::InvalidPath;
+        u26ConflictCheckNoAttempt(store.preserve(fixture.context(), sides.first, absent),
+                                  U26StoreCode::InspectionIncomplete, fixture.records, emptyTree);
+        absent.bytes = "unusable partial";
+        u26ConflictCheckNoAttempt(store.preserve(fixture.context(), sides.first, absent),
+                                  U26StoreCode::InvalidInput, fixture.records, emptyTree);
+    }
+    for (int variant = 0; variant < 4; ++variant) {
+        auto context = fixture.context();
+        if (variant == 0) context.scopeId = "../foreign";
+        if (variant == 1) context.scopeId.clear();
+        if (variant == 2) context.slot = 100;
+        if (variant == 3) context.policyEpoch = 0;
+        u26ConflictCheckNoAttempt(store.preserve(context, sides.first, sides.second),
+                                  U26StoreCode::InvalidInput, fixture.records, emptyTree);
+    }
+    for (int variant = 0; variant < 3; ++variant) {
+        auto invalid = sides.second;
+        if (variant == 0) invalid.state = static_cast<CloudReadState>(999);
+        if (variant == 1) invalid.error = CloudReadError::Io;
+        if (variant == 2) {
+            invalid.revisionKind = CloudRevisionKind::BackendOpaque;
+            invalid.revision = "not-a-proven-conditional-write-capability";
+        }
+        u26ConflictCheckNoAttempt(store.preserve(fixture.context(), sides.first, invalid),
+                                  U26StoreCode::InvalidInput, fixture.records, emptyTree);
+    }
+    const auto base = u26ConflictSeedBase(fixture, store);
+    const auto before = u26ConflictTree(fixture.records);
+    for (int variant = 0; variant < 4; ++variant) {
+        auto context = fixture.context();
+        auto reference = base;
+        if (variant == 0) context.scopeId = "11111111111111111111111111111111";
+        if (variant == 1) ++context.policyEpoch;
+        if (variant == 2) context.slot = 4;
+        if (variant == 3) reference.manifestSha256[0] = reference.manifestSha256[0] == 'a' ? 'b' : 'a';
+        u26ConflictCheckNoAttempt(store.preserve(context, sides.first, sides.second, reference),
+                                  U26StoreCode::InvalidInput, fixture.records, before);
+    }
+    const auto restored = store.readRecord(fixture.context(), base);
+    u26ConflictCheckRecord(restored, U26StoreCode::Complete, U26RecordKind::EqualObserved, fixture.a, fixture.a);
+    fixture.setSides(fixture.b, fixture.c);
+    const auto fork = fixture.capture();
+    const auto nonEqual = store.preserve(fixture.context(), fork.first, fork.second, base);
+    u26ConflictCheckRecord(nonEqual, U26StoreCode::Preserved, U26RecordKind::Conflict,
+                           fixture.b, fixture.c, fixture.a);
+    REQUIRE(nonEqual.record.has_value());
+    const auto withConflict = u26ConflictTree(fixture.records);
+    u26ConflictCheckNoAttempt(store.preserve(fixture.context(), fork.first, fork.second, nonEqual.record->ref),
+                              U26StoreCode::InvalidInput, fixture.records, withConflict);
+    fixture.checkSources();
+}
+
+TEST_CASE("U26 conflict store: each precommit failure preserves previous records") {
+    U26ConflictFixture fixture;
+    U26Store store(fixture.records);
+    const auto base = u26ConflictSeedBase(fixture, store);
+    fixture.setSides(fixture.b, fixture.c);
+    const auto sides = fixture.capture();
+    const auto prior = store.preserve(fixture.context(), sides.first, sides.second, base);
+    u26ConflictCheckRecord(prior, U26StoreCode::Preserved, U26RecordKind::Conflict,
+                           fixture.b, fixture.c, fixture.a);
+    REQUIRE(prior.record.has_value());
+    const auto baseTree = u26ConflictTree(fixture.records / base.id);
+    const auto priorTree = u26ConflictTree(fixture.records / prior.record->ref.id);
+    const std::array<detail::SaveWriteStage, 6> stages{{
+        detail::SaveWriteStage::CreateTemporary, detail::SaveWriteStage::Write,
+        detail::SaveWriteStage::WriteProgress, detail::SaveWriteStage::Flush,
+        detail::SaveWriteStage::Close, detail::SaveWriteStage::Replace
+    }};
+    uint64_t incomplete = 0;
+    // Fixed role order is base, local, cloud, manifest; all are nonempty.
+    for (size_t role = 1; role <= 4; ++role) {
+        for (const auto stage : stages) {
+            INFO("role=", role, " stage=", static_cast<int>(stage));
+            U26ConflictFailWrite failure{stage, role, 0, 0, fixture.records, true};
+            detail::ConflictStoreResult result;
+            {
+                detail::ScopedSaveWriteTestHook hook({&U26ConflictFailWrite::checkpoint, &failure});
+                result = store.preserve(fixture.context(), sides.first, sides.second, base);
+            }
+            CHECK(failure.fired == 1);
+            CHECK(failure.opened == role);
+            CHECK(failure.ownedPath);
+            CHECK(result.code == U26StoreCode::PublicationFailed);
+            CHECK_FALSE(result.record.has_value());
+            REQUIRE(u26ConflictHex(result.operationId, 32));
+            CHECK_FALSE(std::filesystem::exists(fixture.records / result.operationId / "manifest.json"));
+            CHECK(u26ConflictTree(fixture.records / base.id) == baseTree);
+            CHECK(u26ConflictTree(fixture.records / prior.record->ref.id) == priorTree);
+            U26Store reopened(fixture.records);
+            const auto listed = reopened.listRecords(fixture.context());
+            CHECK(listed.code == U26StoreCode::Complete);
+            CHECK(listed.completeRecords.size() == 2);
+            ++incomplete;
+            CHECK(listed.incompleteRecords == incomplete);
+            CHECK(listed.invalidRecords == 0);
+            fixture.checkSources();
+        }
+    }
+    CHECK(incomplete == 24);
+    const auto next = store.preserve(fixture.context(), sides.first, sides.second, base);
+    u26ConflictCheckRecord(next, U26StoreCode::Preserved, U26RecordKind::Conflict,
+                           fixture.b, fixture.c, fixture.a);
+    fixture.checkSources();
+}
+
+TEST_CASE("U26 conflict store: publication and reopen validate the full record closure") {
+    U26ConflictFixture fixture;
+    U26Store store(fixture.records);
+    const auto base = u26ConflictSeedBase(fixture, store);
+    fixture.setSides(fixture.b, fixture.c);
+    const auto sides = fixture.capture();
+    struct CorruptEarlierPayload {
+        std::filesystem::path root;
+        size_t opened = 0;
+        bool changed = false;
+        bool ownedPath = true;
+        static bool checkpoint(detail::SaveWriteStage stage, const std::filesystem::path& temporary,
+                               void* context) {
+            auto& self = *static_cast<CorruptEarlierPayload*>(context);
+            if (stage == detail::SaveWriteStage::CreateTemporary) ++self.opened;
+            if (self.opened == 3 && stage == detail::SaveWriteStage::WriteProgress && !self.changed) {
+                self.ownedPath = temporary.parent_path().parent_path() == self.root;
+                if (!self.ownedPath) return false;
+                const auto local = temporary.parent_path() / "local.bin";
+                auto bytes = cloudFileBytes(local);
+                if (bytes.empty()) return false;
+                bytes.back() ^= 1;
+                replaceCloudFileBytes(local, bytes);
+                self.changed = true;
+            }
+            return true;
+        }
+    } corruption{fixture.records};
+    detail::ConflictStoreResult refused;
+    {
+        detail::ScopedSaveWriteTestHook hook({&CorruptEarlierPayload::checkpoint, &corruption});
+        refused = store.preserve(fixture.context(), sides.first, sides.second, base);
+    }
+    CHECK(corruption.changed);
+    CHECK(corruption.ownedPath);
+    CHECK(refused.code == U26StoreCode::PublicationFailed);
+    CHECK_FALSE(refused.record.has_value());
+    REQUIRE(u26ConflictHex(refused.operationId, 32));
+    CHECK_FALSE(std::filesystem::exists(fixture.records / refused.operationId / "manifest.json"));
+
+    const auto saved = store.preserve(fixture.context(), sides.first, sides.second, base);
+    u26ConflictCheckRecord(saved, U26StoreCode::Preserved, U26RecordKind::Conflict,
+                           fixture.b, fixture.c, fixture.a);
+    REQUIRE(saved.record.has_value());
+    u26ConflictCheckManifest(fixture.records, *saved.record);
+    const auto ref = saved.record->ref;
+    const auto directory = fixture.records / ref.id;
+    const auto manifestPath = directory / "manifest.json";
+    const auto manifestBytes = cloudFileBytes(manifestPath);
+    REQUIRE(u26ConflictSha(manifestBytes) == ref.manifestSha256);
+    for (const auto* name : {"base.bin", "local.bin", "cloud.bin"}) {
+        const auto path = directory / name;
+        const auto original = cloudFileBytes(path);
+        REQUIRE_FALSE(original.empty());
+        auto altered = original;
+        altered.back() ^= 1;
+        replaceCloudFileBytes(path, altered);
+        U26Store reopened(fixture.records);
+        const auto invalid = reopened.readRecord(fixture.context(), ref);
+        CHECK(invalid.code == U26StoreCode::InvalidRecord);
+        CHECK_FALSE(invalid.record.has_value());
+        replaceCloudFileBytes(path, original);
+        REQUIRE(std::filesystem::remove(path));
+        const auto missing = reopened.readRecord(fixture.context(), ref);
+        CHECK(missing.code == U26StoreCode::InvalidRecord);
+        CHECK_FALSE(missing.record.has_value());
+        REQUIRE(std::filesystem::create_directory(path));
+        const auto nonRegular = reopened.readRecord(fixture.context(), ref);
+        CHECK(nonRegular.code == U26StoreCode::InvalidRecord);
+        CHECK_FALSE(nonRegular.record.has_value());
+        REQUIRE(std::filesystem::remove(path));
+        replaceCloudFileBytes(path, original);
+    }
+    for (int variant = 0; variant < 10; ++variant) {
+        INFO("manifest mutation=", variant);
+        auto manifest = json::parse(manifestBytes);
+        if (variant == 0) manifest["schema_version"] = 999;
+        if (variant == 1) manifest["extra_field"] = "refuse unknown schema fields";
+        if (variant == 2) manifest["payloads"]["local"]["file"] = "../outside.bin";
+        if (variant == 3) manifest["payloads"]["local"]["size"] = fixture.b.size() + 1;
+        if (variant == 4) manifest["kind"] = "equal_observed"; // B != C.
+        if (variant == 5) manifest["base_ref"]["id"] = "../foreign";
+        if (variant == 7) manifest["payloads"]["local"]["size"] = -1;
+        if (variant == 8) manifest["payloads"]["local"]["size"] = 1.5;
+        if (variant == 9) manifest["context"]["policy_epoch"] = "1";
+        auto altered = manifest.dump();
+        if (variant == 6) altered.insert(1, "\"schema_version\":1,");
+        replaceCloudFileBytes(manifestPath, altered);
+        auto testReference = ref;
+        testReference.manifestSha256 = u26ConflictSha(altered);
+        U26Store reopened(fixture.records);
+        const auto invalid = reopened.readRecord(fixture.context(), testReference);
+        CHECK(invalid.code == U26StoreCode::InvalidRecord);
+        CHECK_FALSE(invalid.record.has_value());
+        // Original external hash must also continue to reject altered bytes.
+        CHECK(reopened.readRecord(fixture.context(), ref).code == U26StoreCode::InvalidRecord);
+        replaceCloudFileBytes(manifestPath, manifestBytes);
+    }
+    const auto restored = store.readRecord(fixture.context(), ref);
+    u26ConflictCheckRecord(restored, U26StoreCode::Complete, U26RecordKind::Conflict,
+                           fixture.b, fixture.c, fixture.a);
+    fixture.checkSources();
+}
+
+TEST_CASE("U26 conflict store: capacity and incomplete recovery never evict originals") {
+    U26ConflictFixture fixture;
+    U26Store store(fixture.records);
+    const auto sides = fixture.capture();
+    const auto emptyTree = u26ConflictTree(fixture.records);
+    {
+        struct RestoreCrypto {
+            carc::ICryptoEngine* previous = BackendRegistry::instance().getCryptoEngine();
+            RestoreCrypto() { BackendRegistry::instance().setCryptoEngine(nullptr); }
+            ~RestoreCrypto() { BackendRegistry::instance().setCryptoEngine(previous); }
+        } removed;
+        u26ConflictCheckNoAttempt(store.preserve(fixture.context(), sides.first, sides.second),
+                                  U26StoreCode::CryptoUnavailable, fixture.records, emptyTree);
+    }
+    // Real production Steam snapshot larger than local store's explicit cap.
+    U26SnapshotSteam sdk;
+    sdk.files["save_0.json"] = std::string(10u * 1024u * 1024u + 1u, 'L');
+    CloudSaveProvider cloud(&sdk);
+    const auto large = cloud.readSnapshot(CloudSide::Cloud, "save_0.json");
+    REQUIRE(large.state == CloudReadState::Present);
+    REQUIRE(large.bytes.size() == 10u * 1024u * 1024u + 1u);
+    u26ConflictCheckNoAttempt(store.preserve(fixture.context(), sides.first, large),
+                              U26StoreCode::CapacityExceeded, fixture.records, emptyTree);
+    CHECK(sdk.writes == 0);
+    CHECK(sdk.deletes == 0);
+    CHECK(cloud.conditionalWriteSupport(CloudSide::Cloud) == CloudConditionalWriteSupport::Unsupported);
+    const auto base = u26ConflictSeedBase(fixture, store);
+    const auto priorTree = u26ConflictTree(fixture.records);
+    U26Store countLimited(fixture.records, {1, 256u * 1024u * 1024u});
+    u26ConflictCheckNoAttempt(countLimited.preserve(fixture.context(), sides.first, sides.second),
+                              U26StoreCode::CapacityExceeded, fixture.records, priorTree);
+    U26Store bytesLimited(fixture.records, {128, 1});
+    u26ConflictCheckNoAttempt(bytesLimited.preserve(fixture.context(), sides.first, sides.second),
+                              U26StoreCode::CapacityExceeded, fixture.records, priorTree);
+    fixture.setSides(fixture.b, fixture.c);
+    const auto fork = fixture.capture();
+    U26ConflictFailWrite failure{detail::SaveWriteStage::Replace, 4, 0, 0, fixture.records, true};
+    detail::ConflictStoreResult pending;
+    {
+        detail::ScopedSaveWriteTestHook hook({&U26ConflictFailWrite::checkpoint, &failure});
+        pending = store.preserve(fixture.context(), fork.first, fork.second, base);
+    }
+    CHECK(failure.fired == 1);
+    CHECK(failure.ownedPath);
+    CHECK(pending.code == U26StoreCode::PublicationFailed);
+    REQUIRE(pending.candidateRef.has_value()); // Exact manifest prepared before Replace.
+    CHECK(pending.candidateRef->id == pending.operationId);
+    CHECK(u26ConflictHex(pending.candidateRef->manifestSha256, 64));
+    REQUIRE_FALSE(failure.preparedManifestAtReplace.empty());
+    CHECK(pending.candidateRef->manifestSha256 == u26ConflictSha(failure.preparedManifestAtReplace));
+    U26Store reopened(fixture.records);
+    const auto incomplete = reopened.readRecord(fixture.context(), *pending.candidateRef);
+    CHECK(incomplete.code == U26StoreCode::Incomplete);
+    CHECK_FALSE(incomplete.record.has_value());
+    const auto beforeList = u26ConflictTree(fixture.records);
+    const auto listed = reopened.listRecords(fixture.context());
+    CHECK(listed.code == U26StoreCode::Complete);
+    CHECK(listed.completeRecords.size() == 1);
+    CHECK(listed.incompleteRecords == 1);
+    CHECK(listed.invalidRecords == 0);
+    CHECK(u26ConflictTree(fixture.records) == beforeList);
+    U26Store incompleteCounts(fixture.records, {2, 256u * 1024u * 1024u});
+    u26ConflictCheckNoAttempt(incompleteCounts.preserve(fixture.context(), fork.first, fork.second, base),
+                              U26StoreCode::CapacityExceeded, fixture.records, beforeList);
+    const auto restored = reopened.readRecord(fixture.context(), base);
+    u26ConflictCheckRecord(restored, U26StoreCode::Complete, U26RecordKind::EqualObserved, fixture.a, fixture.a);
+    fixture.checkSources();
 }
