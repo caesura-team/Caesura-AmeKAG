@@ -16,7 +16,7 @@ FLAGS = {
     "render.screenshots.supported": True,
 }
 MODES = {"host.delivery": "DirectDrain", "audio.outputMode": "Device",
-         "render.backendKind": "GraphicsApi", "render.backendName": "Direct3D11"}
+         "render.backendKind": "GraphicsApi", "render.backendName": "Direct3D 11"}
 DEBTS = (
     "jobs.workerPending", "jobs.queuedCompletions", "jobs.dispatchingCompletions",
     "async.pendingWaiters", "async.inflightKeys", "async.completedBuffered",

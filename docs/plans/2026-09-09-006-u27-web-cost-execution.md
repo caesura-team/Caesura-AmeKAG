@@ -207,3 +207,19 @@ Entry通过BackendRegistry取得renderer并恰好读取一次owned snapshot；ma
 root重算红绿原流、源锁及保存的源码，确认测试正文未变；`quiet-root-review-01.json` SHA256 `99ab642916094a6562788e1490c72dab2b2e7fad9fa49be4b3cc79e2de16d978`。新增CTest入口实际执行通过，Debug实际发现60项；六桌面profile按ctest id将最低发现数59提升至60。注册脚本第一次调用路径错误，原exit2保留；改用现有 `tests/scripts/check_test_coverage.py` 后204 Lua/94 C++文件全部注册，属于注册完整性而非覆盖率。`quiet-registration-02/run.json` SHA256 `7ed16fdd7e5428dcd46a48f6ddb2dd76bc4a86220b4ef16ae8dba8241221869f`，configure/discovery/CTest/注册检查退出0，源码首尾稳定。
 
 本批输入是手工构造的观测fixture，不是原生后端或长跑证明。实际workload探针、逐周期进度/身份/时长验证、真实资源与阻塞任务负控、短跑和连续一小时运行仍待完成，不能用静止点检查器通过替代U27验收。
+
+### 2026-09-24 — 真实循环诊断与两处生产缺陷修复
+
+新增 opt-in `CaesuraEngineSoakProbe`，在隐藏的真实 SDL HWND、Direct3D 11、静音 Device 音频和正常 Engine owner loop / DirectDrain 下运行固定有限资源。每轮实际渲染图片与中英文文字、加密保存、改变页面、加载并恢复整帧、异步完成与八项取消、显式 voice 中断及自然完成、两次 runner 回滚，再销毁瞬态纹理/RTT并观察静止点。输入复制到新的仓外目录，原日志及失败不覆盖。探针完成只代表循环执行结束，验收仍由外部检查器判定；没有把这些 opt-in GPU/Device 探针注册为无设备 CTest 的自动通过项。
+
+初次运行暴露 checker fixture 对 bgfx 名称的错误假设：真实名称是 `Direct3D 11`，而非 `Direct3D11`。先改 fixture 在旧 checker 取得4项失败，再同步名称后14项通过；测试方法正文和数字预算不变。
+
+真实 Device voice 随后触发十秒 watchdog。定位到 `SoLoud::init` 第四参数原来传入2，实际是设备缓冲大小，第五参数才是双声道。交错2/AUTO/2/AUTO四个独立实际 WinMM 进程中，小缓冲均在两秒后仍未自然结束、source clock仅约0.00744秒；AUTO均自然结束。生产 backend 的同一冻结80 ms WAV及同一 probe 在修复前退出1、自然完成0、live/session均1；仅将 Device 缓冲参数改为库的 AUTO 默认后退出0，0.12613秒观察到一次自然完成、live/session均0且重复consume为0。ManualMix/Software的2048参数保持。WinMM的 `reported_buffer_size` 从4变为8192，是后端报告值，不能通称每声道帧数；这些观察不证明物理可听输出。根复核 `device-clock-root-review-01.json` SHA256 `4c9d7f5d0a2c63924bfdfae19fb455674c47dee027308b6ad71840cbd93c6518`。
+
+音频修复后第一个完整循环通过，第二轮命中已释放的纯色纹理ID：`createSolidTexture` 从 `m_solidCache` 返回旧ID2，`isValid`为false。`destroyTexture`已清理普通路径映射但未清理颜色映射；最小修复只删除指向被销毁ID的颜色条目，保留其他live颜色的去重。保存的原探针和工作负载字节相同，修复后的 `native-diagnostic-06` 完成22轮，证实该失效ID问题已消失。
+
+根审计没有把06的进程退出0升级为验收成功：原静止点检查器拒绝第21/22轮，纹理分别27/28，对比预热26；逻辑纹理字节每轮增长9216。源码追踪确认是新夹具丢弃异步回调交付的纹理ID，未执行显式释放；同步页面缓存与异步上传是独立资源。此项修正仅在夹具保存/释放回调ID，不扩写生产代码，也不放宽预算。06原始run保留，`root-review-01.json`明确为QUIET_REJECTED，摘要 `7530b2c220162614daa99e3ef15e824ed99ca395bd4564a27ea202ad55affb58`。
+
+修正后的 `native-diagnostic-07` 源码/输入/实际binary首尾稳定，22轮全部执行，20轮预热后两轮正式测量仅1.30744秒，静止点检查无错误；GPU纹理基线6、逻辑纹理18432字节。66张640×360 PNG逐一解码、摘要及背景像素复核，各轮A与恢复后的整帧RGBA完全相同且与B不同；实际截图可见中英文文字。root审计摘要 `aae2c48b0b21f03e28934d07e096ceed67b6823d27d4c4a38ffdad4582c8be5e`，原run摘要 `b505ad456ae2d9910f94159f3613034afda6c23f11609b228d8b9d8de1df9e22`。所有本轮正常结束命令均保留PID/creation、原始流摘要及owned cleanup COMPLETE，无超时强杀；早期watchdog与构造失败保持FAIL。
+
+本次主代理按caesura-review核对修复的缓存所有权、SoLoud参数位置、注册表访问和夹具释放；子代理额度不可用，未伪称独立子代理审查。没有新增公共接口签名、后端单例入口或跨模块依赖，耦合检查通过。行/分支覆盖率未测量，真实D3D11/WinMM之外的后端未测量。后续冻结提交的完整Debug门禁单独记录；正式维护的时长/事件验收入口、上下文重建、跨进程冷恢复、主动资源/阻塞/坏档/时限负控、>=120秒短跑和>=3600秒长跑继续未完成，U27整体保持未完成。

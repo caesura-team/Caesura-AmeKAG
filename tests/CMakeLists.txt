@@ -243,6 +243,14 @@ if(Python3_EXECUTABLE)
         add_executable(CaesuraScreenshotGpuProbe probes/screenshot_gpu_probe.cpp)
         target_link_libraries(CaesuraScreenshotGpuProbe PRIVATE Caesura::Engine)
         add_dependencies(CaesuraScreenshotGpuProbe CaesuraTests)
+
+        # Opt-in real D3D11/Device workload; a headless CTest must not claim it ran.
+        add_executable(CaesuraEngineSoakProbe probes/engine_soak_probe.cpp)
+        target_link_libraries(CaesuraEngineSoakProbe PRIVATE Caesura::Engine psapi)
+        add_dependencies(CaesuraEngineSoakProbe CaesuraTests)
+        add_executable(CaesuraAudioDeviceClockProbe probes/audio_device_clock_probe.cpp)
+        target_link_libraries(CaesuraAudioDeviceClockProbe PRIVATE Caesura::Engine)
+        add_dependencies(CaesuraAudioDeviceClockProbe CaesuraTests)
         # Full U16 D3D11/OpenGL matrix is opt-in; the Python driver owns scope.
         add_executable(CaesuraRenderContractProbe probes/render_contract_probe.cpp)
         target_link_libraries(CaesuraRenderContractProbe PRIVATE Caesura::Engine bcrypt)

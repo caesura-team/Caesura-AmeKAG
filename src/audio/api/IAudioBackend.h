@@ -68,7 +68,7 @@ public:
     virtual unsigned int playBGM(const std::string& file, float fadeTime = 1.0f) = 0;
     virtual void stopBGM(float fadeTime = 1.0f) = 0;
 
-    // -- VOICE bus: voice lines with absolute interrupt --------------------
+    // -- VOICE bus: voice playback and explicit session interruption ------
     virtual unsigned int playVoice(const std::string& file) = 0;
     virtual void stopVoice() = 0;
 

@@ -26,7 +26,7 @@ def measured():
                   "retiringBGM": 0, "retiringVoice": 0, "waveCacheEntries": 2,
                   "rawCacheEntries": 0, "voiceCompletionsPending": 0, "restoredSources": 0},
         "render": {"supported": True, "contextInitialized": True, "renderingAvailable": True,
-                   "resourceCountsAvailable": True, "backendKind": "GraphicsApi", "backendName": "Direct3D11",
+                   "resourceCountsAvailable": True, "backendKind": "GraphicsApi", "backendName": "Direct3D 11",
                    "contextGeneration": 7, "captureSubmissionFrame": 2000,
                    "screenshotOwnershipComplete": True, "screenshotReadbackTrackingSupported": True,
                    "screenshotReadbacksOutstanding": 0,

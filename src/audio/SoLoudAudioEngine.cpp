@@ -149,7 +149,10 @@ bool SoLoudAudioEngine::init(){
         SoLoud::Soloud::CLIP_ROUNDOFF,
         manual ? SoLoud::Soloud::NULLDRIVER : SoLoud::Soloud::AUTO,
         manual ? 48000 : SoLoud::Soloud::AUTO,
-        manual ? 2048 : 2,
+        // This argument is the device buffer size, not the stereo channel
+        // count below. A two-frame WinMM buffer advances far slower than the
+        // device clock; let each physical backend select its supported default.
+        manual ? 2048 : SoLoud::Soloud::AUTO,
         2
     );
     if (res != SoLoud::SO_NO_ERROR) {
