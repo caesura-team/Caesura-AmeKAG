@@ -442,3 +442,11 @@ macOS Package作业107277833793留下两次真实安装收据（TGZ与DragNDrop�
 根运行证据复核SHA256 `5398cb0e1748963dff2fd2c30e28f39a35bb6ac9e7c30dd5c5e8801642a05b5f`；最终包复核 `transfer-03/root-final-package-review-01.json` SHA256 `38d829a1b9602c48cefae3b49f0abf117d5170414ec49f958fb05bbc3617c67c`。两次审查脚本错误分别为把lua目录计入可执行集合、误要求仅负责提取的container收据accepted=true，修正依据实际schema；原脚本保留，产品验证器及原收据不改写。
 
 据此关闭本候选已确认的Mac绝对Homebrew运行依赖P1及Python缓存污染；这不追溯修复旧包，也不证明任意干净Mac或物理声音。音频为Software，物理输出NOT_RUN；签名为ad-hoc，未做Developer ID、公证或商店上传。PR仍为draft，TaotianZhufang审查待完成，尚未合并；最新其他平台门禁全绿不等于本段对其所有最终字节进行过同样独审。U23聚合、其余计划项与候选范围验收继续进行。
+
+### 文档后继 CI 暴露的 Mac shell 夹具前提（2026-09-24）
+
+推送文档后继8c3fd2be后，run35899327845的macOS Clang作业107311159389在CTest失败：51项中仅`CaesuraPackage_package_runtime`失败，其39方法中`test_launch_script_change_after_exec_is_not_accepted`在进入脚本篡改阶段前出错。实际libproc观察PID21184/creation1790186811:936927映像为`/bin/bash`，夹具shebang与冻结contract却声明`/bin/sh`；生产精确映像拒绝正确触发，LAUNCH_FAILED、actualexit-15、cleanup COMPLETE，未发布process.json。原job日志SHA256为`9ce8349645bd4a630ddfa9c96f8ba6dd4da5a997849e30cd119430246420126f`。Mac Package因上游失败跳过；原de70包的通过证据保留，但不据此接受8c当前候选。
+
+修改仅在实际进程测试夹具：Mac显式使用`#!/bin/bash`，Linux继续`#!/bin/sh`；脚本篡改测试保留既有shebang，只改正文。新增POSIX屏障正控在shell真正存活时读取OS映像并核对声明，确认最终身份尚未发布，然后释放shell进入Python，验证相同PID/creation、正确最终映像、正常退出和完整清理。所有旧测试方法保留，原脚本篡改测试的assert调用树完全一致；生产package_runtime.py未改变，没有加入shell别名白名单或放宽映像匹配。新屏障自己的观测期限4秒用于两次明确握手，旧测试0.5秒期限保持。
+
+实际Windows35/35、WSL Linux41/41通过，源码首尾稳定、两条owned命令退出0，无超时强杀，cleanup COMPLETE。根审计`u22-shell-fixture-01/root-review-01.json` SHA256为`bc68bff7847567ed8e36f33d97c92201908fb089eb866afa94d30353e6ec2cce`，原run为`ad8968594e184bdf825646113d7750badba230c390d5e9a806b4fa1036a01551`。辅助审计先遇到WSL混合编码原流及Windows CRLF，再改用原始ASCII字节标记检查；原流/失败脚本保留，测试未重跑。新Mac实际屏障及完整CI仍须验证，不能从Windows/Linux结果宣称Mac已通过。
