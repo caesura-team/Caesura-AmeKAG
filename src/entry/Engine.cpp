@@ -1251,13 +1251,32 @@ void Engine::processEvents() {
         }
     }
 
-    // Headless/Editor mode: no SDL event loop -- deliver completed async
-    // loads directly (texture upload + Lua callback) instead of queueing
-    // SDL events that nothing would ever consume.
+    // Headless/editor loads complete directly on the owner thread, without
+    // forwarding SDL input to a game. The editor still owns an SDL window:
+    // SDL's POSIX signal handlers turn SIGTERM/SIGINT into queued quit events,
+    // which require an event pump before they can stop the editor loop.
     if (m_config.headless || m_config.editorMode) {
         for (auto& c : m_asyncLoader->drainCompleted()) {
             dispatchAsyncLoad(std::make_unique<CompletedLoad>(std::move(c)));
             if (m_shutdownComplete) return;
+        }
+        if (m_config.editorMode) {
+            SDL_PumpEvents();
+            // Discard ordinary editor-window input so it cannot fill the SDL
+            // queue and prevent a later quit from being enqueued. Drain only
+            // this snapshot: continuous producers must not starve owner work.
+            int remaining = SDL_PeepEvents(nullptr, 0, SDL_PEEKEVENT, SDL_EVENT_FIRST, SDL_EVENT_LAST);
+            while (remaining > 0) {
+                SDL_Event events[64];
+                const int count = SDL_PeepEvents(events, remaining < 64 ? remaining : 64,
+                                                SDL_GETEVENT, SDL_EVENT_FIRST, SDL_EVENT_LAST);
+                if (count <= 0) break;
+                remaining -= count;
+                for (int i = 0; i < count; ++i) {
+                    if (events[i].type == SDL_EVENT_QUIT) m_running = false;
+                }
+            }
+            if (!m_running) return;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(16));
         return;

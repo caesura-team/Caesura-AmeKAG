@@ -5,6 +5,7 @@
 #include <soloud_bus.h>
 #include <soloud_wav.h>
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <unordered_map>
 #include <list>
@@ -23,8 +24,21 @@ namespace Caesura {
 
 class SoLoudAudioEngine : public IAudioBackend, public IAudioRestore {
 public:
-    enum class OutputMode { Device, ManualMix };
+    enum class OutputMode { Device, ManualMix, Software };
     // ManualMix uses the actual SoLoud mixer, advanced explicitly by its host.
+    // Software uses that mixer with an update-driven discard sink; no device.
+    struct SoftwareMixStats {
+        uint64_t frames = 0;
+        uint64_t samples = 0;
+        uint64_t nonzeroSamples = 0;
+        uint64_t nonfiniteSamples = 0;
+        float peak = 0;
+        double absoluteEnergy = 0;
+        bool saturated = false;
+    };
+    // Owner-thread observations of actual discarded PCM. Retained on shutdown,
+    // reset by the next init; never evidence of a physical audio device.
+    SoftwareMixStats softwareMixStats() const { return m_softwareMixStats; }
     explicit SoLoudAudioEngine(OutputMode outputMode = OutputMode::Device)
         : m_outputMode(outputMode) {}
     ~SoLoudAudioEngine() override;
@@ -103,6 +117,9 @@ private:
     void stopRetiringHandles(std::vector<SoLoud::handle>& retiringHandles);
 
     const OutputMode m_outputMode;
+    SoftwareMixStats m_softwareMixStats;
+    double m_softwareFractionalFrames = 0;
+    bool m_softwareSuspended = false;
     SoLoud::Soloud m_soloud;
     SoLoud::Bus    m_bgmBus;
     SoLoud::Bus    m_voiceBus;

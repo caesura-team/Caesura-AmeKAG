@@ -7,11 +7,141 @@
 #include "../src/render/NullRenderDevice.h"
 #include "../src/audio/NullAudioBackend.h"
 #include "../src/platform/NullPlatformBackend.h"
+#include "../src/render/NullGpuMonitor.h"
+#include "../src/script/vm/LuaManager.h"
+#include "../src/input/InputRouter.h"
 #include "../src/minigame/NullMiniGameBackend.h"
 #include <memory>
 #include <utility>
 
+extern "C" {
+#include <lua.h>
+}
+
 using namespace Caesura;
+
+namespace {
+struct ScopedEditorEvents {
+    ScopedEditorEvents() { REQUIRE(SDL_InitSubSystem(SDL_INIT_EVENTS)); }
+    ~ScopedEditorEvents() {
+        SDL_FlushEvents(SDL_EVENT_FIRST, SDL_EVENT_LAST);
+        SDL_QuitSubSystem(SDL_INIT_EVENTS);
+    }
+};
+
+EngineConfig editorEventConfig(bool editor) {
+    EngineConfig cfg;
+    cfg.headless = true;
+    cfg.editorMode = editor;
+    cfg.render = new NullRenderDevice();
+    cfg.audio = new NullAudioBackend();
+    cfg.platform = new NullPlatformBackend();
+    cfg.gpuMonitor = new NullGpuMonitor();
+    return cfg;
+}
+}
+
+TEST_CASE("U22 Editor: queued SDL quit stops the owned loop") {
+    ScopedEditorEvents events;
+    Engine engine(editorEventConfig(true));
+    REQUIRE(engine.init());
+    SDL_FlushEvents(SDL_EVENT_FIRST, SDL_EVENT_LAST);
+    int ownerTicks = 0;
+    engine.run([&] {
+        if (++ownerTicks == 1) {
+            SDL_Event event{};
+            event.type = SDL_EVENT_QUIT;
+            REQUIRE(SDL_PushEvent(&event));
+        } else {
+            engine.quit(); // Deterministic failure bound, not the expected stop.
+        }
+    });
+    CHECK(ownerTicks == 1);
+    CHECK_FALSE(SDL_HasEvent(SDL_EVENT_QUIT));
+    engine.shutdown();
+}
+
+TEST_CASE("U22 Editor: pumping quit does not route game input") {
+    ScopedEditorEvents events;
+    Engine engine(editorEventConfig(true));
+    REQUIRE(engine.init());
+    int routed = 0;
+    engine.input().registerKAGCallback([&](const SDL_Event&) { ++routed; });
+    SDL_FlushEvents(SDL_EVENT_FIRST, SDL_EVENT_LAST);
+    int ownerTicks = 0;
+    engine.run([&] {
+        if (++ownerTicks != 1) { engine.quit(); return; }
+        SDL_Event event{};
+        event.type = SDL_EVENT_KEY_DOWN;
+        event.key.key = SDLK_W;
+        event.key.down = true;
+        REQUIRE(SDL_PushEvent(&event));
+        event = {};
+        event.type = SDL_EVENT_QUIT;
+        REQUIRE(SDL_PushEvent(&event));
+    });
+    CHECK(ownerTicks == 1);
+    CHECK(routed == 0);
+    lua_getglobal(engine.lua().state(), "_GAME_KEY_W");
+    CHECK_FALSE(lua_toboolean(engine.lua().state(), -1));
+    lua_pop(engine.lua().state(), 1);
+    engine.shutdown();
+}
+
+TEST_CASE("U22 Editor: pure headless loop leaves the SDL queue alone") {
+    ScopedEditorEvents events;
+    Engine engine(editorEventConfig(false));
+    REQUIRE(engine.init());
+    SDL_FlushEvents(SDL_EVENT_FIRST, SDL_EVENT_LAST);
+    int ownerTicks = 0;
+    engine.run([&] {
+        if (++ownerTicks == 1) {
+            SDL_Event event{};
+            event.type = SDL_EVENT_QUIT;
+            REQUIRE(SDL_PushEvent(&event));
+        } else engine.quit();
+    });
+    CHECK(ownerTicks == 2);
+    CHECK(SDL_HasEvent(SDL_EVENT_QUIT));
+    engine.shutdown();
+}
+
+TEST_CASE("U22 Editor: ordinary SDL events are discarded between owner cycles") {
+    ScopedEditorEvents events;
+    Engine engine(editorEventConfig(true));
+    REQUIRE(engine.init());
+    int routed = 0;
+    engine.input().registerKAGCallback([&](const SDL_Event&) { ++routed; });
+    SDL_FlushEvents(SDL_EVENT_FIRST, SDL_EVENT_LAST);
+    int ownerTicks = 0;
+    engine.run([&] {
+        ++ownerTicks;
+        if (ownerTicks == 2 || ownerTicks == 3) {
+            CHECK_FALSE(SDL_HasEvent(SDL_EVENT_KEY_DOWN));
+            CHECK(routed == 0);
+        }
+        if (ownerTicks <= 2) {
+            for (int i = 0; i < 128; ++i) {
+                SDL_Event event{};
+                event.type = SDL_EVENT_KEY_DOWN;
+                event.key.key = SDLK_W;
+                event.key.down = true;
+                REQUIRE(SDL_PushEvent(&event));
+            }
+        } else if (ownerTicks == 3) {
+            SDL_Event event{};
+            event.type = SDL_EVENT_QUIT;
+            REQUIRE(SDL_PushEvent(&event));
+        } else engine.quit(); // Bound failure if a later quit cannot stop it.
+    });
+    CHECK(ownerTicks == 3);
+    CHECK(routed == 0);
+    lua_getglobal(engine.lua().state(), "_GAME_KEY_W");
+    CHECK_FALSE(lua_toboolean(engine.lua().state(), -1));
+    lua_pop(engine.lua().state(), 1);
+    CHECK_FALSE(SDL_HasEvent(SDL_EVENT_QUIT));
+    engine.shutdown();
+}
 
 // Engine lifecycle integration tests
 

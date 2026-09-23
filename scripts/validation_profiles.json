@@ -1,25 +1,190 @@
 {
   "schema_version": 1,
-  "fixture_paths": ["tests/cpp", "tests/probes", "tests/SyncTestAssets.cmake", "tests/scripts", "tests/audio", "tests/projects", "tests/golden_saves", "tests/headless_save_restore.py", "scripts/kag", "scripts/kag_runner.lua", "scripts/scheduler.lua", "scripts/flow.lua"],
+  "fixture_paths": [
+    "tests/cpp",
+    "tests/probes",
+    "tests/SyncTestAssets.cmake",
+    "tests/scripts",
+    "tests/audio",
+    "tests/projects",
+    "tests/golden_saves",
+    "tests/headless_save_restore.py",
+    "scripts/kag",
+    "scripts/kag_runner.lua",
+    "scripts/scheduler.lua",
+    "scripts/flow.lua"
+  ],
   "profiles": {
     "windows-debug": {
       "platform": "windows",
       "configuration": "Debug",
       "repository": "caesura-team/Caesura-AmeKAG",
       "require_cmake_cache": true,
-      "expected_cache": {"CAESURA_REQUIRE_TEST_PREREQUISITES": "ON"},
+      "expected_cache": {
+        "CAESURA_REQUIRE_TEST_PREREQUISITES": "ON"
+      },
       "checks": [
-        {"id":"build","parser":"exit-code","required":true,"command":["cmake","--build","{build_dir}","--config","{config}","--parallel","4"],"cwd":"{repo}","timeout_seconds":1800},
-        {"id":"cpp","parser":"doctest","required":true,"min_discovered":1404,"allowed_skips":[],"command":["{cpp_binary}","--no-colors"],"cwd":"{test_dir}","binary":"{cpp_binary}","timeout_seconds":600},
-        {"id":"lua-main","parser":"lua","required":true,"min_discovered":147,"allowed_skips":[],"command":["{lua_binary}","tests/scripts/run_lua_tests.lua"],"cwd":"{repo}","binary":"{lua_binary}","timeout_seconds":600},
-        {"id":"lua-orphan","parser":"lua","required":true,"min_discovered":56,"allowed_skips":[],"command":["{lua_binary}","tests/scripts/run_orphan_tests.lua"],"cwd":"{repo}","binary":"{lua_binary}","timeout_seconds":300},
-        {"id":"validation-runner","parser":"unittest","required":true,"min_discovered":17,"allowed_skips":[],"command":["{python}","tests/scripts/test_validation_runner.py"],"cwd":"{repo}","binary":"{python}","timeout_seconds":120},
-        {"id":"validation-process","parser":"unittest","required":true,"min_discovered":7,"allowed_skips":[],"command":["{python}","tests/scripts/test_validation_process.py"],"cwd":"{repo}","binary":"{python}","timeout_seconds":120},
-        {"id":"validation-evidence","parser":"unittest","required":true,"min_discovered":53,"allowed_skips":[],"command":["{python}","tests/scripts/test_validation_evidence.py"],"cwd":"{repo}","binary":"{python}","timeout_seconds":180},
-        {"id":"rc-adversarial","parser":"unittest","required":true,"min_discovered":57,"allowed_skips":[],"command":["{python}","tests/scripts/test_rc_adversarial_mutations.py"],"cwd":"{repo}","binary":"{python}","timeout_seconds":120},
-        {"id":"coupling","parser":"exit-code","required":true,"command":["{python}","scripts/count_coupling.py","--ci"],"cwd":"{repo}","binary":"{python}","timeout_seconds":60},
-        {"id":"test-registration","parser":"exit-code","required":true,"command":["{python}","tests/scripts/check_test_coverage.py"],"cwd":"{repo}","binary":"{python}","timeout_seconds":60},
-        {"id":"ctest","parser":"ctest-junit","required":true,"min_discovered":33,"allowed_skips":["CaesuraHeadlessAiSmoke"],"command":["ctest","--test-dir","{build_dir}","-C","{config}","--output-on-failure","--output-junit","{run_dir}/ctest.xml"],"cwd":"{repo}","report":"{run_dir}/ctest.xml","timeout_seconds":2400}
+        {
+          "id": "build",
+          "parser": "exit-code",
+          "required": true,
+          "command": [
+            "cmake",
+            "--build",
+            "{build_dir}",
+            "--config",
+            "{config}",
+            "--parallel",
+            "4"
+          ],
+          "cwd": "{repo}",
+          "timeout_seconds": 1800
+        },
+        {
+          "id": "cpp",
+          "parser": "doctest",
+          "required": true,
+          "min_discovered": 1415,
+          "allowed_skips": [],
+          "command": [
+            "{cpp_binary}",
+            "--no-colors"
+          ],
+          "cwd": "{test_dir}",
+          "binary": "{cpp_binary}",
+          "timeout_seconds": 600
+        },
+        {
+          "id": "lua-main",
+          "parser": "lua",
+          "required": true,
+          "min_discovered": 147,
+          "allowed_skips": [],
+          "command": [
+            "{lua_binary}",
+            "tests/scripts/run_lua_tests.lua"
+          ],
+          "cwd": "{repo}",
+          "binary": "{lua_binary}",
+          "timeout_seconds": 600
+        },
+        {
+          "id": "lua-orphan",
+          "parser": "lua",
+          "required": true,
+          "min_discovered": 56,
+          "allowed_skips": [],
+          "command": [
+            "{lua_binary}",
+            "tests/scripts/run_orphan_tests.lua"
+          ],
+          "cwd": "{repo}",
+          "binary": "{lua_binary}",
+          "timeout_seconds": 300
+        },
+        {
+          "id": "validation-runner",
+          "parser": "unittest",
+          "required": true,
+          "min_discovered": 17,
+          "allowed_skips": [],
+          "command": [
+            "{python}",
+            "tests/scripts/test_validation_runner.py"
+          ],
+          "cwd": "{repo}",
+          "binary": "{python}",
+          "timeout_seconds": 120
+        },
+        {
+          "id": "validation-process",
+          "parser": "unittest",
+          "required": true,
+          "min_discovered": 11,
+          "allowed_skips": [],
+          "command": [
+            "{python}",
+            "tests/scripts/test_validation_process.py"
+          ],
+          "cwd": "{repo}",
+          "binary": "{python}",
+          "timeout_seconds": 120
+        },
+        {
+          "id": "validation-evidence",
+          "parser": "unittest",
+          "required": true,
+          "min_discovered": 53,
+          "allowed_skips": [],
+          "command": [
+            "{python}",
+            "tests/scripts/test_validation_evidence.py"
+          ],
+          "cwd": "{repo}",
+          "binary": "{python}",
+          "timeout_seconds": 180
+        },
+        {
+          "id": "rc-adversarial",
+          "parser": "unittest",
+          "required": true,
+          "min_discovered": 57,
+          "allowed_skips": [],
+          "command": [
+            "{python}",
+            "tests/scripts/test_rc_adversarial_mutations.py"
+          ],
+          "cwd": "{repo}",
+          "binary": "{python}",
+          "timeout_seconds": 120
+        },
+        {
+          "id": "coupling",
+          "parser": "exit-code",
+          "required": true,
+          "command": [
+            "{python}",
+            "scripts/count_coupling.py",
+            "--ci"
+          ],
+          "cwd": "{repo}",
+          "binary": "{python}",
+          "timeout_seconds": 60
+        },
+        {
+          "id": "test-registration",
+          "parser": "exit-code",
+          "required": true,
+          "command": [
+            "{python}",
+            "tests/scripts/check_test_coverage.py"
+          ],
+          "cwd": "{repo}",
+          "binary": "{python}",
+          "timeout_seconds": 60
+        },
+        {
+          "id": "ctest",
+          "parser": "ctest-junit",
+          "required": true,
+          "min_discovered": 51,
+          "allowed_skips": [
+            "CaesuraHeadlessAiSmoke"
+          ],
+          "command": [
+            "ctest",
+            "--test-dir",
+            "{build_dir}",
+            "-C",
+            "{config}",
+            "--output-on-failure",
+            "--output-junit",
+            "{run_dir}/ctest.xml"
+          ],
+          "cwd": "{repo}",
+          "report": "{run_dir}/ctest.xml",
+          "timeout_seconds": 2400
+        }
       ]
     },
     "windows-release": {
@@ -27,19 +192,171 @@
       "configuration": "Release",
       "repository": "caesura-team/Caesura-AmeKAG",
       "require_cmake_cache": true,
-      "expected_cache": {"CAESURA_REQUIRE_TEST_PREREQUISITES": "ON"},
+      "expected_cache": {
+        "CAESURA_REQUIRE_TEST_PREREQUISITES": "ON"
+      },
       "checks": [
-        {"id":"build","parser":"exit-code","required":true,"command":["cmake","--build","{build_dir}","--config","{config}","--parallel","4"],"cwd":"{repo}","timeout_seconds":1800},
-        {"id":"cpp","parser":"doctest","required":true,"min_discovered":1404,"allowed_skips":[],"command":["{cpp_binary}","--no-colors"],"cwd":"{test_dir}","binary":"{cpp_binary}","timeout_seconds":600},
-        {"id":"lua-main","parser":"lua","required":true,"min_discovered":147,"allowed_skips":[],"command":["{lua_binary}","tests/scripts/run_lua_tests.lua"],"cwd":"{repo}","binary":"{lua_binary}","timeout_seconds":600},
-        {"id":"lua-orphan","parser":"lua","required":true,"min_discovered":56,"allowed_skips":[],"command":["{lua_binary}","tests/scripts/run_orphan_tests.lua"],"cwd":"{repo}","binary":"{lua_binary}","timeout_seconds":300},
-        {"id":"validation-runner","parser":"unittest","required":true,"min_discovered":17,"allowed_skips":[],"command":["{python}","tests/scripts/test_validation_runner.py"],"cwd":"{repo}","binary":"{python}","timeout_seconds":120},
-        {"id":"validation-process","parser":"unittest","required":true,"min_discovered":7,"allowed_skips":[],"command":["{python}","tests/scripts/test_validation_process.py"],"cwd":"{repo}","binary":"{python}","timeout_seconds":120},
-        {"id":"validation-evidence","parser":"unittest","required":true,"min_discovered":53,"allowed_skips":[],"command":["{python}","tests/scripts/test_validation_evidence.py"],"cwd":"{repo}","binary":"{python}","timeout_seconds":180},
-        {"id":"rc-adversarial","parser":"unittest","required":true,"min_discovered":57,"allowed_skips":[],"command":["{python}","tests/scripts/test_rc_adversarial_mutations.py"],"cwd":"{repo}","binary":"{python}","timeout_seconds":120},
-        {"id":"coupling","parser":"exit-code","required":true,"command":["{python}","scripts/count_coupling.py","--ci"],"cwd":"{repo}","binary":"{python}","timeout_seconds":60},
-        {"id":"test-registration","parser":"exit-code","required":true,"command":["{python}","tests/scripts/check_test_coverage.py"],"cwd":"{repo}","binary":"{python}","timeout_seconds":60},
-        {"id":"ctest","parser":"ctest-junit","required":true,"min_discovered":33,"allowed_skips":["CaesuraHeadlessAiSmoke"],"command":["ctest","--test-dir","{build_dir}","-C","{config}","--output-on-failure","--output-junit","{run_dir}/ctest.xml"],"cwd":"{repo}","report":"{run_dir}/ctest.xml","timeout_seconds":2400}
+        {
+          "id": "build",
+          "parser": "exit-code",
+          "required": true,
+          "command": [
+            "cmake",
+            "--build",
+            "{build_dir}",
+            "--config",
+            "{config}",
+            "--parallel",
+            "4"
+          ],
+          "cwd": "{repo}",
+          "timeout_seconds": 1800
+        },
+        {
+          "id": "cpp",
+          "parser": "doctest",
+          "required": true,
+          "min_discovered": 1415,
+          "allowed_skips": [],
+          "command": [
+            "{cpp_binary}",
+            "--no-colors"
+          ],
+          "cwd": "{test_dir}",
+          "binary": "{cpp_binary}",
+          "timeout_seconds": 600
+        },
+        {
+          "id": "lua-main",
+          "parser": "lua",
+          "required": true,
+          "min_discovered": 147,
+          "allowed_skips": [],
+          "command": [
+            "{lua_binary}",
+            "tests/scripts/run_lua_tests.lua"
+          ],
+          "cwd": "{repo}",
+          "binary": "{lua_binary}",
+          "timeout_seconds": 600
+        },
+        {
+          "id": "lua-orphan",
+          "parser": "lua",
+          "required": true,
+          "min_discovered": 56,
+          "allowed_skips": [],
+          "command": [
+            "{lua_binary}",
+            "tests/scripts/run_orphan_tests.lua"
+          ],
+          "cwd": "{repo}",
+          "binary": "{lua_binary}",
+          "timeout_seconds": 300
+        },
+        {
+          "id": "validation-runner",
+          "parser": "unittest",
+          "required": true,
+          "min_discovered": 17,
+          "allowed_skips": [],
+          "command": [
+            "{python}",
+            "tests/scripts/test_validation_runner.py"
+          ],
+          "cwd": "{repo}",
+          "binary": "{python}",
+          "timeout_seconds": 120
+        },
+        {
+          "id": "validation-process",
+          "parser": "unittest",
+          "required": true,
+          "min_discovered": 11,
+          "allowed_skips": [],
+          "command": [
+            "{python}",
+            "tests/scripts/test_validation_process.py"
+          ],
+          "cwd": "{repo}",
+          "binary": "{python}",
+          "timeout_seconds": 120
+        },
+        {
+          "id": "validation-evidence",
+          "parser": "unittest",
+          "required": true,
+          "min_discovered": 53,
+          "allowed_skips": [],
+          "command": [
+            "{python}",
+            "tests/scripts/test_validation_evidence.py"
+          ],
+          "cwd": "{repo}",
+          "binary": "{python}",
+          "timeout_seconds": 180
+        },
+        {
+          "id": "rc-adversarial",
+          "parser": "unittest",
+          "required": true,
+          "min_discovered": 57,
+          "allowed_skips": [],
+          "command": [
+            "{python}",
+            "tests/scripts/test_rc_adversarial_mutations.py"
+          ],
+          "cwd": "{repo}",
+          "binary": "{python}",
+          "timeout_seconds": 120
+        },
+        {
+          "id": "coupling",
+          "parser": "exit-code",
+          "required": true,
+          "command": [
+            "{python}",
+            "scripts/count_coupling.py",
+            "--ci"
+          ],
+          "cwd": "{repo}",
+          "binary": "{python}",
+          "timeout_seconds": 60
+        },
+        {
+          "id": "test-registration",
+          "parser": "exit-code",
+          "required": true,
+          "command": [
+            "{python}",
+            "tests/scripts/check_test_coverage.py"
+          ],
+          "cwd": "{repo}",
+          "binary": "{python}",
+          "timeout_seconds": 60
+        },
+        {
+          "id": "ctest",
+          "parser": "ctest-junit",
+          "required": true,
+          "min_discovered": 51,
+          "allowed_skips": [
+            "CaesuraHeadlessAiSmoke"
+          ],
+          "command": [
+            "ctest",
+            "--test-dir",
+            "{build_dir}",
+            "-C",
+            "{config}",
+            "--output-on-failure",
+            "--output-junit",
+            "{run_dir}/ctest.xml"
+          ],
+          "cwd": "{repo}",
+          "report": "{run_dir}/ctest.xml",
+          "timeout_seconds": 2400
+        }
       ]
     },
     "linux-debug": {
@@ -47,19 +364,171 @@
       "configuration": "Debug",
       "repository": "caesura-team/Caesura-AmeKAG",
       "require_cmake_cache": true,
-      "expected_cache": {"CAESURA_REQUIRE_TEST_PREREQUISITES": "ON"},
+      "expected_cache": {
+        "CAESURA_REQUIRE_TEST_PREREQUISITES": "ON"
+      },
       "checks": [
-        {"id":"build","parser":"exit-code","required":true,"command":["cmake","--build","{build_dir}","--config","{config}","--parallel","4"],"cwd":"{repo}","timeout_seconds":1800},
-        {"id":"cpp","parser":"doctest","required":true,"min_discovered":1364,"allowed_skips":[],"command":["{cpp_binary}","--no-colors"],"cwd":"{test_dir}","binary":"{cpp_binary}","timeout_seconds":600},
-        {"id":"lua-main","parser":"lua","required":true,"min_discovered":147,"allowed_skips":[],"command":["{lua_binary}","tests/scripts/run_lua_tests.lua"],"cwd":"{repo}","binary":"{lua_binary}","timeout_seconds":600},
-        {"id":"lua-orphan","parser":"lua","required":true,"min_discovered":56,"allowed_skips":[],"command":["{lua_binary}","tests/scripts/run_orphan_tests.lua"],"cwd":"{repo}","binary":"{lua_binary}","timeout_seconds":300},
-        {"id":"validation-runner","parser":"unittest","required":true,"min_discovered":17,"allowed_skips":[],"command":["{python}","tests/scripts/test_validation_runner.py"],"cwd":"{repo}","binary":"{python}","timeout_seconds":120},
-        {"id":"validation-process","parser":"unittest","required":true,"min_discovered":6,"allowed_skips":[],"command":["{python}","tests/scripts/test_validation_process.py"],"cwd":"{repo}","binary":"{python}","timeout_seconds":120},
-        {"id":"validation-evidence","parser":"unittest","required":true,"min_discovered":53,"allowed_skips":[],"command":["{python}","tests/scripts/test_validation_evidence.py"],"cwd":"{repo}","binary":"{python}","timeout_seconds":180},
-        {"id":"rc-adversarial","parser":"unittest","required":true,"min_discovered":57,"allowed_skips":[],"command":["{python}","tests/scripts/test_rc_adversarial_mutations.py"],"cwd":"{repo}","binary":"{python}","timeout_seconds":120},
-        {"id":"coupling","parser":"exit-code","required":true,"command":["{python}","scripts/count_coupling.py","--ci"],"cwd":"{repo}","binary":"{python}","timeout_seconds":60},
-        {"id":"test-registration","parser":"exit-code","required":true,"command":["{python}","tests/scripts/check_test_coverage.py"],"cwd":"{repo}","binary":"{python}","timeout_seconds":60},
-        {"id":"ctest","parser":"ctest-junit","required":true,"min_discovered":33,"allowed_skips":["CaesuraHeadlessAiSmoke"],"command":["ctest","--test-dir","{build_dir}","-C","{config}","--output-on-failure","--output-junit","{run_dir}/ctest.xml"],"cwd":"{repo}","report":"{run_dir}/ctest.xml","timeout_seconds":2400}
+        {
+          "id": "build",
+          "parser": "exit-code",
+          "required": true,
+          "command": [
+            "cmake",
+            "--build",
+            "{build_dir}",
+            "--config",
+            "{config}",
+            "--parallel",
+            "4"
+          ],
+          "cwd": "{repo}",
+          "timeout_seconds": 1800
+        },
+        {
+          "id": "cpp",
+          "parser": "doctest",
+          "required": true,
+          "min_discovered": 1371,
+          "allowed_skips": [],
+          "command": [
+            "{cpp_binary}",
+            "--no-colors"
+          ],
+          "cwd": "{test_dir}",
+          "binary": "{cpp_binary}",
+          "timeout_seconds": 600
+        },
+        {
+          "id": "lua-main",
+          "parser": "lua",
+          "required": true,
+          "min_discovered": 147,
+          "allowed_skips": [],
+          "command": [
+            "{lua_binary}",
+            "tests/scripts/run_lua_tests.lua"
+          ],
+          "cwd": "{repo}",
+          "binary": "{lua_binary}",
+          "timeout_seconds": 600
+        },
+        {
+          "id": "lua-orphan",
+          "parser": "lua",
+          "required": true,
+          "min_discovered": 56,
+          "allowed_skips": [],
+          "command": [
+            "{lua_binary}",
+            "tests/scripts/run_orphan_tests.lua"
+          ],
+          "cwd": "{repo}",
+          "binary": "{lua_binary}",
+          "timeout_seconds": 300
+        },
+        {
+          "id": "validation-runner",
+          "parser": "unittest",
+          "required": true,
+          "min_discovered": 17,
+          "allowed_skips": [],
+          "command": [
+            "{python}",
+            "tests/scripts/test_validation_runner.py"
+          ],
+          "cwd": "{repo}",
+          "binary": "{python}",
+          "timeout_seconds": 120
+        },
+        {
+          "id": "validation-process",
+          "parser": "unittest",
+          "required": true,
+          "min_discovered": 6,
+          "allowed_skips": [],
+          "command": [
+            "{python}",
+            "tests/scripts/test_validation_process.py"
+          ],
+          "cwd": "{repo}",
+          "binary": "{python}",
+          "timeout_seconds": 120
+        },
+        {
+          "id": "validation-evidence",
+          "parser": "unittest",
+          "required": true,
+          "min_discovered": 53,
+          "allowed_skips": [],
+          "command": [
+            "{python}",
+            "tests/scripts/test_validation_evidence.py"
+          ],
+          "cwd": "{repo}",
+          "binary": "{python}",
+          "timeout_seconds": 180
+        },
+        {
+          "id": "rc-adversarial",
+          "parser": "unittest",
+          "required": true,
+          "min_discovered": 57,
+          "allowed_skips": [],
+          "command": [
+            "{python}",
+            "tests/scripts/test_rc_adversarial_mutations.py"
+          ],
+          "cwd": "{repo}",
+          "binary": "{python}",
+          "timeout_seconds": 120
+        },
+        {
+          "id": "coupling",
+          "parser": "exit-code",
+          "required": true,
+          "command": [
+            "{python}",
+            "scripts/count_coupling.py",
+            "--ci"
+          ],
+          "cwd": "{repo}",
+          "binary": "{python}",
+          "timeout_seconds": 60
+        },
+        {
+          "id": "test-registration",
+          "parser": "exit-code",
+          "required": true,
+          "command": [
+            "{python}",
+            "tests/scripts/check_test_coverage.py"
+          ],
+          "cwd": "{repo}",
+          "binary": "{python}",
+          "timeout_seconds": 60
+        },
+        {
+          "id": "ctest",
+          "parser": "ctest-junit",
+          "required": true,
+          "min_discovered": 51,
+          "allowed_skips": [
+            "CaesuraHeadlessAiSmoke"
+          ],
+          "command": [
+            "ctest",
+            "--test-dir",
+            "{build_dir}",
+            "-C",
+            "{config}",
+            "--output-on-failure",
+            "--output-junit",
+            "{run_dir}/ctest.xml"
+          ],
+          "cwd": "{repo}",
+          "report": "{run_dir}/ctest.xml",
+          "timeout_seconds": 2400
+        }
       ]
     },
     "linux-release": {
@@ -67,19 +536,171 @@
       "configuration": "Release",
       "repository": "caesura-team/Caesura-AmeKAG",
       "require_cmake_cache": true,
-      "expected_cache": {"CAESURA_REQUIRE_TEST_PREREQUISITES": "ON"},
+      "expected_cache": {
+        "CAESURA_REQUIRE_TEST_PREREQUISITES": "ON"
+      },
       "checks": [
-        {"id":"build","parser":"exit-code","required":true,"command":["cmake","--build","{build_dir}","--config","{config}","--parallel","4"],"cwd":"{repo}","timeout_seconds":1800},
-        {"id":"cpp","parser":"doctest","required":true,"min_discovered":1364,"allowed_skips":[],"command":["{cpp_binary}","--no-colors"],"cwd":"{test_dir}","binary":"{cpp_binary}","timeout_seconds":600},
-        {"id":"lua-main","parser":"lua","required":true,"min_discovered":147,"allowed_skips":[],"command":["{lua_binary}","tests/scripts/run_lua_tests.lua"],"cwd":"{repo}","binary":"{lua_binary}","timeout_seconds":600},
-        {"id":"lua-orphan","parser":"lua","required":true,"min_discovered":56,"allowed_skips":[],"command":["{lua_binary}","tests/scripts/run_orphan_tests.lua"],"cwd":"{repo}","binary":"{lua_binary}","timeout_seconds":300},
-        {"id":"validation-runner","parser":"unittest","required":true,"min_discovered":17,"allowed_skips":[],"command":["{python}","tests/scripts/test_validation_runner.py"],"cwd":"{repo}","binary":"{python}","timeout_seconds":120},
-        {"id":"validation-process","parser":"unittest","required":true,"min_discovered":6,"allowed_skips":[],"command":["{python}","tests/scripts/test_validation_process.py"],"cwd":"{repo}","binary":"{python}","timeout_seconds":120},
-        {"id":"validation-evidence","parser":"unittest","required":true,"min_discovered":53,"allowed_skips":[],"command":["{python}","tests/scripts/test_validation_evidence.py"],"cwd":"{repo}","binary":"{python}","timeout_seconds":180},
-        {"id":"rc-adversarial","parser":"unittest","required":true,"min_discovered":57,"allowed_skips":[],"command":["{python}","tests/scripts/test_rc_adversarial_mutations.py"],"cwd":"{repo}","binary":"{python}","timeout_seconds":120},
-        {"id":"coupling","parser":"exit-code","required":true,"command":["{python}","scripts/count_coupling.py","--ci"],"cwd":"{repo}","binary":"{python}","timeout_seconds":60},
-        {"id":"test-registration","parser":"exit-code","required":true,"command":["{python}","tests/scripts/check_test_coverage.py"],"cwd":"{repo}","binary":"{python}","timeout_seconds":60},
-        {"id":"ctest","parser":"ctest-junit","required":true,"min_discovered":33,"allowed_skips":["CaesuraHeadlessAiSmoke"],"command":["ctest","--test-dir","{build_dir}","-C","{config}","--output-on-failure","--output-junit","{run_dir}/ctest.xml"],"cwd":"{repo}","report":"{run_dir}/ctest.xml","timeout_seconds":2400}
+        {
+          "id": "build",
+          "parser": "exit-code",
+          "required": true,
+          "command": [
+            "cmake",
+            "--build",
+            "{build_dir}",
+            "--config",
+            "{config}",
+            "--parallel",
+            "4"
+          ],
+          "cwd": "{repo}",
+          "timeout_seconds": 1800
+        },
+        {
+          "id": "cpp",
+          "parser": "doctest",
+          "required": true,
+          "min_discovered": 1371,
+          "allowed_skips": [],
+          "command": [
+            "{cpp_binary}",
+            "--no-colors"
+          ],
+          "cwd": "{test_dir}",
+          "binary": "{cpp_binary}",
+          "timeout_seconds": 600
+        },
+        {
+          "id": "lua-main",
+          "parser": "lua",
+          "required": true,
+          "min_discovered": 147,
+          "allowed_skips": [],
+          "command": [
+            "{lua_binary}",
+            "tests/scripts/run_lua_tests.lua"
+          ],
+          "cwd": "{repo}",
+          "binary": "{lua_binary}",
+          "timeout_seconds": 600
+        },
+        {
+          "id": "lua-orphan",
+          "parser": "lua",
+          "required": true,
+          "min_discovered": 56,
+          "allowed_skips": [],
+          "command": [
+            "{lua_binary}",
+            "tests/scripts/run_orphan_tests.lua"
+          ],
+          "cwd": "{repo}",
+          "binary": "{lua_binary}",
+          "timeout_seconds": 300
+        },
+        {
+          "id": "validation-runner",
+          "parser": "unittest",
+          "required": true,
+          "min_discovered": 17,
+          "allowed_skips": [],
+          "command": [
+            "{python}",
+            "tests/scripts/test_validation_runner.py"
+          ],
+          "cwd": "{repo}",
+          "binary": "{python}",
+          "timeout_seconds": 120
+        },
+        {
+          "id": "validation-process",
+          "parser": "unittest",
+          "required": true,
+          "min_discovered": 6,
+          "allowed_skips": [],
+          "command": [
+            "{python}",
+            "tests/scripts/test_validation_process.py"
+          ],
+          "cwd": "{repo}",
+          "binary": "{python}",
+          "timeout_seconds": 120
+        },
+        {
+          "id": "validation-evidence",
+          "parser": "unittest",
+          "required": true,
+          "min_discovered": 53,
+          "allowed_skips": [],
+          "command": [
+            "{python}",
+            "tests/scripts/test_validation_evidence.py"
+          ],
+          "cwd": "{repo}",
+          "binary": "{python}",
+          "timeout_seconds": 180
+        },
+        {
+          "id": "rc-adversarial",
+          "parser": "unittest",
+          "required": true,
+          "min_discovered": 57,
+          "allowed_skips": [],
+          "command": [
+            "{python}",
+            "tests/scripts/test_rc_adversarial_mutations.py"
+          ],
+          "cwd": "{repo}",
+          "binary": "{python}",
+          "timeout_seconds": 120
+        },
+        {
+          "id": "coupling",
+          "parser": "exit-code",
+          "required": true,
+          "command": [
+            "{python}",
+            "scripts/count_coupling.py",
+            "--ci"
+          ],
+          "cwd": "{repo}",
+          "binary": "{python}",
+          "timeout_seconds": 60
+        },
+        {
+          "id": "test-registration",
+          "parser": "exit-code",
+          "required": true,
+          "command": [
+            "{python}",
+            "tests/scripts/check_test_coverage.py"
+          ],
+          "cwd": "{repo}",
+          "binary": "{python}",
+          "timeout_seconds": 60
+        },
+        {
+          "id": "ctest",
+          "parser": "ctest-junit",
+          "required": true,
+          "min_discovered": 51,
+          "allowed_skips": [
+            "CaesuraHeadlessAiSmoke"
+          ],
+          "command": [
+            "ctest",
+            "--test-dir",
+            "{build_dir}",
+            "-C",
+            "{config}",
+            "--output-on-failure",
+            "--output-junit",
+            "{run_dir}/ctest.xml"
+          ],
+          "cwd": "{repo}",
+          "report": "{run_dir}/ctest.xml",
+          "timeout_seconds": 2400
+        }
       ]
     },
     "macos-debug": {
@@ -87,19 +708,171 @@
       "configuration": "Debug",
       "repository": "caesura-team/Caesura-AmeKAG",
       "require_cmake_cache": true,
-      "expected_cache": {"CAESURA_REQUIRE_TEST_PREREQUISITES": "ON"},
+      "expected_cache": {
+        "CAESURA_REQUIRE_TEST_PREREQUISITES": "ON"
+      },
       "checks": [
-        {"id":"build","parser":"exit-code","required":true,"command":["cmake","--build","{build_dir}","--config","{config}","--parallel","4"],"cwd":"{repo}","timeout_seconds":1800},
-        {"id":"cpp","parser":"doctest","required":true,"min_discovered":1251,"allowed_skips":[],"command":["{cpp_binary}","--no-colors"],"cwd":"{test_dir}","binary":"{cpp_binary}","timeout_seconds":600},
-        {"id":"lua-main","parser":"lua","required":true,"min_discovered":147,"allowed_skips":[],"command":["{lua_binary}","tests/scripts/run_lua_tests.lua"],"cwd":"{repo}","binary":"{lua_binary}","timeout_seconds":600},
-        {"id":"lua-orphan","parser":"lua","required":true,"min_discovered":56,"allowed_skips":[],"command":["{lua_binary}","tests/scripts/run_orphan_tests.lua"],"cwd":"{repo}","binary":"{lua_binary}","timeout_seconds":300},
-        {"id":"validation-runner","parser":"unittest","required":true,"min_discovered":17,"allowed_skips":[],"command":["{python}","tests/scripts/test_validation_runner.py"],"cwd":"{repo}","binary":"{python}","timeout_seconds":120},
-        {"id":"validation-process","parser":"unittest","required":true,"min_discovered":6,"allowed_skips":[],"command":["{python}","tests/scripts/test_validation_process.py"],"cwd":"{repo}","binary":"{python}","timeout_seconds":120},
-        {"id":"validation-evidence","parser":"unittest","required":true,"min_discovered":53,"allowed_skips":[],"command":["{python}","tests/scripts/test_validation_evidence.py"],"cwd":"{repo}","binary":"{python}","timeout_seconds":180},
-        {"id":"rc-adversarial","parser":"unittest","required":true,"min_discovered":57,"allowed_skips":[],"command":["{python}","tests/scripts/test_rc_adversarial_mutations.py"],"cwd":"{repo}","binary":"{python}","timeout_seconds":120},
-        {"id":"coupling","parser":"exit-code","required":true,"command":["{python}","scripts/count_coupling.py","--ci"],"cwd":"{repo}","binary":"{python}","timeout_seconds":60},
-        {"id":"test-registration","parser":"exit-code","required":true,"command":["{python}","tests/scripts/check_test_coverage.py"],"cwd":"{repo}","binary":"{python}","timeout_seconds":60},
-        {"id":"ctest","parser":"ctest-junit","required":true,"min_discovered":33,"allowed_skips":["CaesuraHeadlessAiSmoke"],"command":["ctest","--test-dir","{build_dir}","-C","{config}","--output-on-failure","--output-junit","{run_dir}/ctest.xml"],"cwd":"{repo}","report":"{run_dir}/ctest.xml","timeout_seconds":2400}
+        {
+          "id": "build",
+          "parser": "exit-code",
+          "required": true,
+          "command": [
+            "cmake",
+            "--build",
+            "{build_dir}",
+            "--config",
+            "{config}",
+            "--parallel",
+            "4"
+          ],
+          "cwd": "{repo}",
+          "timeout_seconds": 1800
+        },
+        {
+          "id": "cpp",
+          "parser": "doctest",
+          "required": true,
+          "min_discovered": 1258,
+          "allowed_skips": [],
+          "command": [
+            "{cpp_binary}",
+            "--no-colors"
+          ],
+          "cwd": "{test_dir}",
+          "binary": "{cpp_binary}",
+          "timeout_seconds": 600
+        },
+        {
+          "id": "lua-main",
+          "parser": "lua",
+          "required": true,
+          "min_discovered": 147,
+          "allowed_skips": [],
+          "command": [
+            "{lua_binary}",
+            "tests/scripts/run_lua_tests.lua"
+          ],
+          "cwd": "{repo}",
+          "binary": "{lua_binary}",
+          "timeout_seconds": 600
+        },
+        {
+          "id": "lua-orphan",
+          "parser": "lua",
+          "required": true,
+          "min_discovered": 56,
+          "allowed_skips": [],
+          "command": [
+            "{lua_binary}",
+            "tests/scripts/run_orphan_tests.lua"
+          ],
+          "cwd": "{repo}",
+          "binary": "{lua_binary}",
+          "timeout_seconds": 300
+        },
+        {
+          "id": "validation-runner",
+          "parser": "unittest",
+          "required": true,
+          "min_discovered": 17,
+          "allowed_skips": [],
+          "command": [
+            "{python}",
+            "tests/scripts/test_validation_runner.py"
+          ],
+          "cwd": "{repo}",
+          "binary": "{python}",
+          "timeout_seconds": 120
+        },
+        {
+          "id": "validation-process",
+          "parser": "unittest",
+          "required": true,
+          "min_discovered": 6,
+          "allowed_skips": [],
+          "command": [
+            "{python}",
+            "tests/scripts/test_validation_process.py"
+          ],
+          "cwd": "{repo}",
+          "binary": "{python}",
+          "timeout_seconds": 120
+        },
+        {
+          "id": "validation-evidence",
+          "parser": "unittest",
+          "required": true,
+          "min_discovered": 53,
+          "allowed_skips": [],
+          "command": [
+            "{python}",
+            "tests/scripts/test_validation_evidence.py"
+          ],
+          "cwd": "{repo}",
+          "binary": "{python}",
+          "timeout_seconds": 180
+        },
+        {
+          "id": "rc-adversarial",
+          "parser": "unittest",
+          "required": true,
+          "min_discovered": 57,
+          "allowed_skips": [],
+          "command": [
+            "{python}",
+            "tests/scripts/test_rc_adversarial_mutations.py"
+          ],
+          "cwd": "{repo}",
+          "binary": "{python}",
+          "timeout_seconds": 120
+        },
+        {
+          "id": "coupling",
+          "parser": "exit-code",
+          "required": true,
+          "command": [
+            "{python}",
+            "scripts/count_coupling.py",
+            "--ci"
+          ],
+          "cwd": "{repo}",
+          "binary": "{python}",
+          "timeout_seconds": 60
+        },
+        {
+          "id": "test-registration",
+          "parser": "exit-code",
+          "required": true,
+          "command": [
+            "{python}",
+            "tests/scripts/check_test_coverage.py"
+          ],
+          "cwd": "{repo}",
+          "binary": "{python}",
+          "timeout_seconds": 60
+        },
+        {
+          "id": "ctest",
+          "parser": "ctest-junit",
+          "required": true,
+          "min_discovered": 51,
+          "allowed_skips": [
+            "CaesuraHeadlessAiSmoke"
+          ],
+          "command": [
+            "ctest",
+            "--test-dir",
+            "{build_dir}",
+            "-C",
+            "{config}",
+            "--output-on-failure",
+            "--output-junit",
+            "{run_dir}/ctest.xml"
+          ],
+          "cwd": "{repo}",
+          "report": "{run_dir}/ctest.xml",
+          "timeout_seconds": 2400
+        }
       ]
     },
     "macos-release": {
@@ -107,19 +880,171 @@
       "configuration": "Release",
       "repository": "caesura-team/Caesura-AmeKAG",
       "require_cmake_cache": true,
-      "expected_cache": {"CAESURA_REQUIRE_TEST_PREREQUISITES": "ON"},
+      "expected_cache": {
+        "CAESURA_REQUIRE_TEST_PREREQUISITES": "ON"
+      },
       "checks": [
-        {"id":"build","parser":"exit-code","required":true,"command":["cmake","--build","{build_dir}","--config","{config}","--parallel","4"],"cwd":"{repo}","timeout_seconds":1800},
-        {"id":"cpp","parser":"doctest","required":true,"min_discovered":1251,"allowed_skips":[],"command":["{cpp_binary}","--no-colors"],"cwd":"{test_dir}","binary":"{cpp_binary}","timeout_seconds":600},
-        {"id":"lua-main","parser":"lua","required":true,"min_discovered":147,"allowed_skips":[],"command":["{lua_binary}","tests/scripts/run_lua_tests.lua"],"cwd":"{repo}","binary":"{lua_binary}","timeout_seconds":600},
-        {"id":"lua-orphan","parser":"lua","required":true,"min_discovered":56,"allowed_skips":[],"command":["{lua_binary}","tests/scripts/run_orphan_tests.lua"],"cwd":"{repo}","binary":"{lua_binary}","timeout_seconds":300},
-        {"id":"validation-runner","parser":"unittest","required":true,"min_discovered":17,"allowed_skips":[],"command":["{python}","tests/scripts/test_validation_runner.py"],"cwd":"{repo}","binary":"{python}","timeout_seconds":120},
-        {"id":"validation-process","parser":"unittest","required":true,"min_discovered":6,"allowed_skips":[],"command":["{python}","tests/scripts/test_validation_process.py"],"cwd":"{repo}","binary":"{python}","timeout_seconds":120},
-        {"id":"validation-evidence","parser":"unittest","required":true,"min_discovered":53,"allowed_skips":[],"command":["{python}","tests/scripts/test_validation_evidence.py"],"cwd":"{repo}","binary":"{python}","timeout_seconds":180},
-        {"id":"rc-adversarial","parser":"unittest","required":true,"min_discovered":57,"allowed_skips":[],"command":["{python}","tests/scripts/test_rc_adversarial_mutations.py"],"cwd":"{repo}","binary":"{python}","timeout_seconds":120},
-        {"id":"coupling","parser":"exit-code","required":true,"command":["{python}","scripts/count_coupling.py","--ci"],"cwd":"{repo}","binary":"{python}","timeout_seconds":60},
-        {"id":"test-registration","parser":"exit-code","required":true,"command":["{python}","tests/scripts/check_test_coverage.py"],"cwd":"{repo}","binary":"{python}","timeout_seconds":60},
-        {"id":"ctest","parser":"ctest-junit","required":true,"min_discovered":33,"allowed_skips":["CaesuraHeadlessAiSmoke"],"command":["ctest","--test-dir","{build_dir}","-C","{config}","--output-on-failure","--output-junit","{run_dir}/ctest.xml"],"cwd":"{repo}","report":"{run_dir}/ctest.xml","timeout_seconds":2400}
+        {
+          "id": "build",
+          "parser": "exit-code",
+          "required": true,
+          "command": [
+            "cmake",
+            "--build",
+            "{build_dir}",
+            "--config",
+            "{config}",
+            "--parallel",
+            "4"
+          ],
+          "cwd": "{repo}",
+          "timeout_seconds": 1800
+        },
+        {
+          "id": "cpp",
+          "parser": "doctest",
+          "required": true,
+          "min_discovered": 1258,
+          "allowed_skips": [],
+          "command": [
+            "{cpp_binary}",
+            "--no-colors"
+          ],
+          "cwd": "{test_dir}",
+          "binary": "{cpp_binary}",
+          "timeout_seconds": 600
+        },
+        {
+          "id": "lua-main",
+          "parser": "lua",
+          "required": true,
+          "min_discovered": 147,
+          "allowed_skips": [],
+          "command": [
+            "{lua_binary}",
+            "tests/scripts/run_lua_tests.lua"
+          ],
+          "cwd": "{repo}",
+          "binary": "{lua_binary}",
+          "timeout_seconds": 600
+        },
+        {
+          "id": "lua-orphan",
+          "parser": "lua",
+          "required": true,
+          "min_discovered": 56,
+          "allowed_skips": [],
+          "command": [
+            "{lua_binary}",
+            "tests/scripts/run_orphan_tests.lua"
+          ],
+          "cwd": "{repo}",
+          "binary": "{lua_binary}",
+          "timeout_seconds": 300
+        },
+        {
+          "id": "validation-runner",
+          "parser": "unittest",
+          "required": true,
+          "min_discovered": 17,
+          "allowed_skips": [],
+          "command": [
+            "{python}",
+            "tests/scripts/test_validation_runner.py"
+          ],
+          "cwd": "{repo}",
+          "binary": "{python}",
+          "timeout_seconds": 120
+        },
+        {
+          "id": "validation-process",
+          "parser": "unittest",
+          "required": true,
+          "min_discovered": 6,
+          "allowed_skips": [],
+          "command": [
+            "{python}",
+            "tests/scripts/test_validation_process.py"
+          ],
+          "cwd": "{repo}",
+          "binary": "{python}",
+          "timeout_seconds": 120
+        },
+        {
+          "id": "validation-evidence",
+          "parser": "unittest",
+          "required": true,
+          "min_discovered": 53,
+          "allowed_skips": [],
+          "command": [
+            "{python}",
+            "tests/scripts/test_validation_evidence.py"
+          ],
+          "cwd": "{repo}",
+          "binary": "{python}",
+          "timeout_seconds": 180
+        },
+        {
+          "id": "rc-adversarial",
+          "parser": "unittest",
+          "required": true,
+          "min_discovered": 57,
+          "allowed_skips": [],
+          "command": [
+            "{python}",
+            "tests/scripts/test_rc_adversarial_mutations.py"
+          ],
+          "cwd": "{repo}",
+          "binary": "{python}",
+          "timeout_seconds": 120
+        },
+        {
+          "id": "coupling",
+          "parser": "exit-code",
+          "required": true,
+          "command": [
+            "{python}",
+            "scripts/count_coupling.py",
+            "--ci"
+          ],
+          "cwd": "{repo}",
+          "binary": "{python}",
+          "timeout_seconds": 60
+        },
+        {
+          "id": "test-registration",
+          "parser": "exit-code",
+          "required": true,
+          "command": [
+            "{python}",
+            "tests/scripts/check_test_coverage.py"
+          ],
+          "cwd": "{repo}",
+          "binary": "{python}",
+          "timeout_seconds": 60
+        },
+        {
+          "id": "ctest",
+          "parser": "ctest-junit",
+          "required": true,
+          "min_discovered": 51,
+          "allowed_skips": [
+            "CaesuraHeadlessAiSmoke"
+          ],
+          "command": [
+            "ctest",
+            "--test-dir",
+            "{build_dir}",
+            "-C",
+            "{config}",
+            "--output-on-failure",
+            "--output-junit",
+            "{run_dir}/ctest.xml"
+          ],
+          "cwd": "{repo}",
+          "report": "{run_dir}/ctest.xml",
+          "timeout_seconds": 2400
+        }
       ]
     }
   }

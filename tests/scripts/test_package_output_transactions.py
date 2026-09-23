@@ -65,6 +65,11 @@ class OutputTransactions:
                 shutil.copy2(ROOT / "cache/story/story.lua", cache)
         for name in ("fonts", "lang"):
             shutil.copytree(ROOT / "assets" / name, cls.tool / "assets" / name)
+        if cls.kind in ("web", "both"):
+            # The real player's HTML/manifest declare these icons. Keep the
+            # transaction fixture's shared assets valid for offline packaging.
+            for name in ("icon-192.png", "icon-512.png"):
+                shutil.copy2(ROOT / "assets" / name, cls.tool / "assets" / name)
         cls.project = cls.tool / "项目 有空格"
         cls.project.mkdir()
         (cls.project / "caesura.project.json").write_text('{"capabilities":{}}\n', encoding="utf-8")

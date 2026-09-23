@@ -4,8 +4,8 @@
 # Caesura (AmeKAG) — Unified Platform Status Matrix
 
 > **Single Source of Truth**: [`docs/status/platform-matrix.yaml`](platform-matrix.yaml)<br>
-> **Evidence HEAD Commit**: `c637216fb3c350ac9b1f0e2d524f2fc50fb7dedc`<br>
-> **Generated At**: `2026-09-13T02:07:39.941268+00:00`<br>
+> **Evidence HEAD Commit**: `b51e44c1bffc86b094c7ee6a3e245a35048953dc`<br>
+> **Generated At**: `2026-09-23T18:20:26.070080+00:00`<br>
 > **Verification Status**: 100% Evidence-Backed (Zero Undocumented Claims)
 
 ---
@@ -47,12 +47,16 @@
 - **Audio Backend**: `SoLoud (WASAPI / WinMM)`
 - **Toolchain**: `CMake 3.25+ / vcpkg`
 
+#### Gating Boundaries
+
+- **Evidence Scope Gate**: Reviewed at code anchor a4a6a0d1; new build/runtime evidence is only clean 0278910e local Windows Debug. Hosted run 35446845025 executed PR merge 69e07778 (head 0278910e); Windows Debug job 105907137963 and Release job 105907137911 succeeded; Release Package job 105910356512 failed at CLI argument parsing before final-package generation. First-VN, packaging and release rows retain their separately dated historical evidence; no final-package or release acceptance is added. The generated footer remains a historical summary, not a current all-platform gate. U22 a4a6a0d1 adds explicit software audio and package observer/staging fixes; local dirty Debug diagnosis is recorded separately in the U22 execution document. New clean candidate and hosted final-package gates remain pending.
+
 #### Capability Matrix & Evidence
 
 | Capability | Status | Evidence Document | Verification Command / Procedure | Commit | Verified At | Notes |
 |---|:---:|---|---|:---:|:---:|---|
-| **Build** | 🟢 `verified` | [`README.md`](../../README.md) | `cmake --build build --config Debug --parallel` | `3cc9bfb8` | `2026-09-03T17:42:42Z` | CI run 33783878872 (Windows MSVC Debug + Release jobs) green at 3cc9bfb8; local Debug+Release builds remain the prior 62132e78 evidence. |
-| **Runtime** | 🟢 `verified` | [`docs/plans/2026-08-24-027-antigravity-handoff.md`](../../docs/plans/2026-08-24-027-antigravity-handoff.md) | `(cd build/tests/Debug && ./CaesuraTests.exe) && build/lua/Debug/lua.exe tests/scripts/run_lua_tests.lua && build/lua/Debug/lua.exe tests/scripts/run_orphan_tests.lua` | `3cc9bfb8` | `2026-09-03T17:42:42Z` | CI run 33783878872 (Windows MSVC Debug + Release: full test surfaces, ctest, coupling) green at 3cc9bfb8. Local re-measurement on 7935dffb: 1120 doctest cases / 385790 assertions (0 failed, 0 skipped), 143 main Lua suites (0 failed), 25 orphan suites (0 failed; +select->cross-scene [jump] regression as of 2026-08-29), coupling gate PASS, 15/15 ctest targets (CaesuraBuildCli + CaesuraGoldenVn; ctest --test-dir build -N at HEAD b7e1e7ce, 2026-08-29) |
+| **Build** | 🟢 `verified` | [`scripts/validation_profiles.json`](../../scripts/validation_profiles.json) | `cmake --build build/presets/windows-foundation --config Debug --parallel 4` | `0278910e0ff735fda4458a1ffd4386e846ad37ea` | `2026-09-19T13:48:38.861656Z` | Clean local windows-debug run 12183991-ef9b-4bbf-b814-66da967a9f24 at 0278910e: actual build exit 0. Raw receipt: artifacts/validation/u22-foundation/candidate-0278910e-01/run.json, SHA256 0a8e93bef540e755495f13502f9f112e3fca126ee438079d4fa6fdd554a4bb32. This is local Debug only; prior Release evidence remains historical at 3cc9bfb8 (CI33783878872). |
+| **Runtime** | 🟢 `verified` | [`scripts/validation_profiles.json`](../../scripts/validation_profiles.json) | `scripts/run_validation.py windows-debug profile, collect_validation_evidence.py and strict verify_release_candidate.py` | `0278910e0ff735fda4458a1ffd4386e846ad37ea` | `2026-09-19T14:00:53.410554Z` | Clean local windows-debug run 12183991-ef9b-4bbf-b814-66da967a9f24 at 0278910e: runner, collector and strict verifier exit 0; 45 CTest entries, 44 passed, zero failed, only predeclared CaesuraHeadlessAiSmoke skipped. HTTP smoke actually passed. Outcome: artifacts/validation/u22-foundation/candidate-0278910e-01-outcome.json. Not hosted Windows, final-package, First-VN revalidation or release approval; those older rows retain their own commits. |
 | **First Vn** | 🟢 `verified` | [`scripts/verify_first_vn.sh`](../../scripts/verify_first_vn.sh) | `bash scripts/verify_first_vn.sh` | `d406e780` | `2026-08-28T15:15:00Z` | 13/13 user journey checks passed on d406e780 (template, creation, metadata, validation, headless run, choices A/B, save/load, package). Journey starts from a BUILT source tree, not from the released ZIP; the Lua interpreter resolves via the three-level probe (bare-clone safe). |
 | **Packaging** | 🟢 `verified` | [`docs/guides/release-process.md`](../../docs/guides/release-process.md) | `cpack -C Release -G ZIP && bash scripts/verify_release_package.sh (30/30 assertions; incl. out-of-repo, PATH-stripped create/build/run probe, demo/ non-empty; +SDL3 dylib relocatability check added 2026-08-29 — 1 otool scope note on Windows)` | `3cc9bfb8` | `2026-09-03T17:42:42Z` | CPack ZIP builds and the extracted archive boots from its own folder (--frames 60 exits 0). The install-set gaps measured on v1.0.1 (no web-editor/dist, no tools/project_templates, hand-copied steam_api64.dll) were closed in Sprint 4: the install set now ships web-editor/dist, tools/project_templates (5 templates), external/lua (lua_cli product) and steam_api64.dll (OPTIONAL, Steam builds only). Verified by scripts/verify_release_package.sh 30/30 (29 strict + 1 otool scope note since 2026-08-29, when the SDL3 dylib relocatability hard gate was added; Windows has no otool so the check notes instead of asserting) on both Release (sha256 b6a5b93c...) and Debug ZIPs, including an out-of-repo create->build->run probe with lua stripped from PATH and a demo/ non-empty check (2026-08-28). |
 | **Release** | ⏳ `pending` | [`docs/guides/release-validation.md`](../../docs/guides/release-validation.md) | `RC-GO decision gate` | `62132e78` | `2026-08-25T01:57:33Z` | Documentation reference migrated only; status, evidence commit and verification timestamp retain their historical meaning. No platform revalidation or release approval is implied. |
@@ -67,12 +71,16 @@
 - **Audio Backend**: `SoLoud (ALSA / PulseAudio / Null device in CI)`
 - **Toolchain**: `CMake 3.25+ / Ninja`
 
+#### Gating Boundaries
+
+- **Evidence Scope Gate**: Reviewed at code anchor a4a6a0d1; run 35446845025 job 105907138086 at PR merge 69e07778 (head 0278910e) passed Debug build and 45 CTest entries with only the declared AI skip. The job then failed the platform-document drift gate. Package jobs are not accepted and old First-VN/package evidence stays historical. The fixed generated footer count 11/11 is historical and does not describe this run. U22 a4a6a0d1 adds explicit software audio and package observer/staging fixes; local dirty Debug diagnosis is recorded separately in the U22 execution document. New clean candidate and hosted final-package gates remain pending.
+
 #### Capability Matrix & Evidence
 
 | Capability | Status | Evidence Document | Verification Command / Procedure | Commit | Verified At | Notes |
 |---|:---:|---|---|:---:|:---:|---|
-| **Build** | 🟢 `verified` | [`docs/plans/2026-08-22-025-delivery-handoff.md`](../../docs/plans/2026-08-22-025-delivery-handoff.md) | `cmake -B build -S . -DCMAKE_BUILD_TYPE=Debug && cmake --build build -j$(nproc)` | `3cc9bfb8` | `2026-09-03T17:42:42Z` | CI run 33783878872 (Linux GCC job) green at 3cc9bfb8; earlier WSL/local evidence at 806275cf. |
-| **Runtime** | 🟢 `verified` | [`docs/plans/2026-08-22-025-delivery-handoff.md`](../../docs/plans/2026-08-22-025-delivery-handoff.md) | `ctest --test-dir build --output-on-failure` | `3cc9bfb8` | `2026-09-03T17:42:42Z` | CI run 33783878872 (Linux GCC job: ctest + coupling) green at 3cc9bfb8; earlier 11/11 CTest targets on WSL and GitHub Actions Linux CI at 806275cf. |
+| **Build** | 🟢 `verified` | [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) | `cmake -B build -S . -DCMAKE_BUILD_TYPE=Debug -DCAESURA_ENABLE_FFMPEG=OFF -DBX_CONFIG_DEBUG=1 -DCAESURA_REQUIRE_TEST_PREREQUISITES=ON && cmake --build build --config Debug --parallel` | `69e0777810ced7c47aa2378b551b9fee69a3e87c` | `2026-09-19T13:52:24.6899727Z` | Actual Linux Debug build passed in CI run 35446845025, job 105907138086 at PR merge 69e07778 (head 0278910e). The overall job later failed only at the platform-document drift check; this row records build execution, not an accepted final package or all-green CI. Raw log: artifacts/validation/u22-foundation/ci-35446845025-linux-job.log. |
+| **Runtime** | 🟢 `verified` | [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) | `xvfb-run -a -s '-screen 0 1280x720x24' ctest --test-dir build --output-on-failure` | `69e0777810ced7c47aa2378b551b9fee69a3e87c` | `2026-09-19T14:04:07.7345235Z` | CI run 35446845025 job 105907138086 at PR merge 69e07778 (head 0278910e): 45 CTest entries, 44 passed, zero failed, only CaesuraHeadlessAiSmoke skipped. HTTP smoke passed in 8.86 s; native/Web package runtime tests passed. Coupling and test registration gates passed, then generate_platform_status --check failed on the old anchor. Raw log: artifacts/validation/u22-foundation/ci-35446845025-linux-job.log. This does not accept separate final-package jobs or new device/release evidence. |
 | **First Vn** | 🟢 `verified` | [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) | `xvfb-run -a -s '-screen 0 1280x720x24' bash scripts/verify_bundle_boot.sh build/CaesuraAmeKAG first_vn` | `3cc9bfb8` | `2026-09-03T17:42:42Z` | CI run 33783878872 (Linux GCC job runs verify_bundle_boot first_vn + demo steps) green at 3cc9bfb8; earlier 806275cf evidence retained. |
 | **Packaging** | 🟢 `verified` | [`docs/guides/release-process.md`](../../docs/guides/release-process.md) | `CI 'Linux · Package' job: CPack TGZ then verify_release_package.sh on CaesuraAmeKAG-(PROJECT_VERSION)-Linux-x86_64.tar.gz` | `3cc9bfb8` | `2026-09-03T17:42:42Z` | Linux TGZ lane green in run 33783878872 (commit 3cc9bfb8); earlier green at 33193556904 (commit d310747a). verify semantics = 30 items on every lane (count is platform-uniform since 2026-08-29): Linux = 28 strict-PASS + 2 notes (the stripped-PATH probe degrades to a note on POSIX because /usr/bin distro lua cannot be stripped — the true `ran under the PACKAGED lua` assertion still guards the property — plus the SDL3 relocatability scope note, since no otool on Linux); Windows = 29 strict + 1 note; macOS = 29 strict + 1 note with a packaged SDL3 dylib (real otool assertion), 28 strict + 2 notes when statically linked. Channel code chain: 4bc22248 (TGZ lane) + be815fa3 (pgrep -x) + d82a0f72 (probe degradation). |
 | **Release** | ⏳ `pending` | [`docs/guides/release-validation.md`](../../docs/guides/release-validation.md) | `RC-GO decision gate` | `62132e78` | `2026-08-25T01:57:33Z` | Documentation reference migrated only; status, evidence commit and verification timestamp retain their historical meaning. No platform revalidation or release approval is implied. |
@@ -86,6 +94,10 @@
 - **Audio**: `WebAudio API (gain, crossfade, unlock gesture)`
 - **Storage**: `localStorage (JSON envelope)`
 - **Tested Browsers**: `Google Chrome 128+ / Microsoft Edge 128+ (Headless-new CDP)`
+
+#### Gating Boundaries
+
+- **Evidence Scope Gate**: Review anchor refresh only. Capability commits/dates below remain historical. No new Web final-package, browser/device or release acceptance is inferred from native CTest or the anchor. The fixed generated footer count 368 is historical, not a current suite total. U22 a4a6a0d1 adds explicit software audio and package observer/staging fixes; local dirty Debug diagnosis is recorded separately in the U22 execution document. New clean candidate and hosted final-package gates remain pending.
 
 #### Capability Matrix & Evidence
 
@@ -109,6 +121,10 @@
 - **Ndk**: `NDK r27.3.13750724`
 - **Graphics Api**: `OpenGL ES 3.2 (bgfx GLES)`
 - **Audio Backend**: `SoLoud (OpenSLES, 3 buses)`
+
+#### Gating Boundaries
+
+- **Evidence Scope Gate**: Review anchor refresh only. Device, signing, AAB and build evidence below retain their original commits/dates. No Android device or store validation was performed in this update. U22 a4a6a0d1 adds explicit software audio and package observer/staging fixes; local dirty Debug diagnosis is recorded separately in the U22 execution document. New clean candidate and hosted final-package gates remain pending.
 
 #### Capability Matrix & Evidence
 
@@ -134,6 +150,7 @@
 
 #### Gating Boundaries
 
+- **Evidence Scope Gate**: Run 35446845025 job 105907138155 at PR merge 69e07778 (head 0278910e) passed actual HTTP smoke (9.43 s), native runtime tests (34.63 s) and Web runtime tests (26.95 s), but CTest failed one synthetic Framework clock test (30 Python tests, one failure). Test-only fix 28575a16 has local Windows/WSL fixture evidence, not new hosted macOS acceptance. Runtime/release remain pending; no package/device promotion. U22 a4a6a0d1 adds explicit software audio and package observer/staging fixes; local dirty Debug diagnosis is recorded separately in the U22 execution document. New clean candidate and hosted final-package gates remain pending.
 - **Hardware Gate**: Physical Apple Silicon Mac is not present in local dev loop; CI covers compilation and unit tests.
 
 #### Capability Matrix & Evidence
@@ -157,6 +174,7 @@
 
 #### Gating Boundaries
 
+- **Evidence Scope Gate**: Review anchor refresh only. Compile/shader probes and device/credential gates below retain their original commits/dates; no iOS device, TestFlight or release validation was performed. U22 a4a6a0d1 adds explicit software audio and package observer/staging fixes; local dirty Debug diagnosis is recorded separately in the U22 execution document. New clean candidate and hosted final-package gates remain pending.
 - **Hardware Gate**: Physical iPhone/iPad or local Xcode simulator hardware gated.
 - **Credential Gate**: Apple Developer Program signing certificate and provisioning profile required for device install / TestFlight.
 
@@ -181,13 +199,13 @@ All `verified` and `probe` capabilities are anchored by concrete evidence artifa
 
 | Platform | Capability | Status | Anchor Document | Execution Test Command | Commit SHA |
 |---|---|:---:|---|---|:---:|
-| Windows (x64) | Build | 🟢 `verified` | [`README.md`](../../README.md) | `cmake --build build --config Debug --parallel` | `3cc9bfb8` |
-| Windows (x64) | Runtime | 🟢 `verified` | [`docs/plans/2026-08-24-027-antigravity-handoff.md`](../../docs/plans/2026-08-24-027-antigravity-handoff.md) | `(cd build/tests/Debug && ./CaesuraTests.exe) && build/lua/Debug/lua.exe tests/scripts/run_lua_tests.lua && build/lua/Debug/lua.exe tests/scripts/run_orphan_tests.lua` | `3cc9bfb8` |
+| Windows (x64) | Build | 🟢 `verified` | [`scripts/validation_profiles.json`](../../scripts/validation_profiles.json) | `cmake --build build/presets/windows-foundation --config Debug --parallel 4` | `0278910e0ff735fda4458a1ffd4386e846ad37ea` |
+| Windows (x64) | Runtime | 🟢 `verified` | [`scripts/validation_profiles.json`](../../scripts/validation_profiles.json) | `scripts/run_validation.py windows-debug profile, collect_validation_evidence.py and strict verify_release_candidate.py` | `0278910e0ff735fda4458a1ffd4386e846ad37ea` |
 | Windows (x64) | First Vn | 🟢 `verified` | [`scripts/verify_first_vn.sh`](../../scripts/verify_first_vn.sh) | `bash scripts/verify_first_vn.sh` | `d406e780` |
 | Windows (x64) | Packaging | 🟢 `verified` | [`docs/guides/release-process.md`](../../docs/guides/release-process.md) | `cpack -C Release -G ZIP && bash scripts/verify_release_package.sh (30/30 assertions; incl. out-of-repo, PATH-stripped create/build/run probe, demo/ non-empty; +SDL3 dylib relocatability check added 2026-08-29 — 1 otool scope note on Windows)` | `3cc9bfb8` |
 | Windows (x64) | Release | ⏳ `pending` | [`docs/guides/release-validation.md`](../../docs/guides/release-validation.md) | `RC-GO decision gate` | `62132e78` |
-| Linux (x64 / Ubuntu 24.04 / WSL) | Build | 🟢 `verified` | [`docs/plans/2026-08-22-025-delivery-handoff.md`](../../docs/plans/2026-08-22-025-delivery-handoff.md) | `cmake -B build -S . -DCMAKE_BUILD_TYPE=Debug && cmake --build build -j$(nproc)` | `3cc9bfb8` |
-| Linux (x64 / Ubuntu 24.04 / WSL) | Runtime | 🟢 `verified` | [`docs/plans/2026-08-22-025-delivery-handoff.md`](../../docs/plans/2026-08-22-025-delivery-handoff.md) | `ctest --test-dir build --output-on-failure` | `3cc9bfb8` |
+| Linux (x64 / Ubuntu 24.04 / WSL) | Build | 🟢 `verified` | [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) | `cmake -B build -S . -DCMAKE_BUILD_TYPE=Debug -DCAESURA_ENABLE_FFMPEG=OFF -DBX_CONFIG_DEBUG=1 -DCAESURA_REQUIRE_TEST_PREREQUISITES=ON && cmake --build build --config Debug --parallel` | `69e0777810ced7c47aa2378b551b9fee69a3e87c` |
+| Linux (x64 / Ubuntu 24.04 / WSL) | Runtime | 🟢 `verified` | [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) | `xvfb-run -a -s '-screen 0 1280x720x24' ctest --test-dir build --output-on-failure` | `69e0777810ced7c47aa2378b551b9fee69a3e87c` |
 | Linux (x64 / Ubuntu 24.04 / WSL) | First Vn | 🟢 `verified` | [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) | `xvfb-run -a -s '-screen 0 1280x720x24' bash scripts/verify_bundle_boot.sh build/CaesuraAmeKAG first_vn` | `3cc9bfb8` |
 | Linux (x64 / Ubuntu 24.04 / WSL) | Packaging | 🟢 `verified` | [`docs/guides/release-process.md`](../../docs/guides/release-process.md) | `CI 'Linux · Package' job: CPack TGZ then verify_release_package.sh on CaesuraAmeKAG-(PROJECT_VERSION)-Linux-x86_64.tar.gz` | `3cc9bfb8` |
 | Linux (x64 / Ubuntu 24.04 / WSL) | Release | ⏳ `pending` | [`docs/guides/release-validation.md`](../../docs/guides/release-validation.md) | `RC-GO decision gate` | `62132e78` |
@@ -222,7 +240,7 @@ All `verified` and `probe` capabilities are anchored by concrete evidence artifa
 
 ## 4. Release Candidate Gate & Blockers
 
-- [x] **Windows (Tier 1)**: CI run 33783878872 (Windows MSVC Debug + Release: full test surfaces, ctest, coupling) green at 3cc9bfb8. Local re-measurement on 7935dffb: 1120 doctest cases / 385790 assertions (0 failed, 0 skipped), 143 main Lua suites (0 failed), 25 orphan suites (0 failed; +select->cross-scene [jump] regression as of 2026-08-29), coupling gate PASS, 15/15 ctest targets (CaesuraBuildCli + CaesuraGoldenVn; ctest --test-dir build -N at HEAD b7e1e7ce, 2026-08-29) (commit `3cc9bfb8`); First-VN E2E verified.
+- [x] **Windows (Tier 1)**: Clean local windows-debug run 12183991-ef9b-4bbf-b814-66da967a9f24 at 0278910e: runner, collector and strict verifier exit 0; 45 CTest entries, 44 passed, zero failed, only predeclared CaesuraHeadlessAiSmoke skipped. HTTP smoke actually passed. Outcome: artifacts/validation/u22-foundation/candidate-0278910e-01-outcome.json. Not hosted Windows, final-package, First-VN revalidation or release approval; those older rows retain their own commits. (commit `0278910e0ff735fda4458a1ffd4386e846ad37ea`); First-VN E2E verified.
 - [x] **Linux (Tier 1)**: 11/11 CTest targets verified, headless Xvfb bundle boot verified.
 - [x] **Web (Tier 1)**: Vitest suite green (cd web && npm test; 368 tests / 27 files, all run and passed with the story bundle and web dist present, measured 2026-08-28), CDP real-browser unlock and reload save persistence verified.
 - [x] **Android (Tier 1)**: Real device Redmi K40 (M2012K11AC, haydn, Snapdragon 870 / Adreno 650 / Android 13) -- CJK RGBA8 atlas, multi-texture batching, IME bridge, and V1/V2/V3 release signing verified.

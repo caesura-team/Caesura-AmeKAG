@@ -9,9 +9,11 @@
 #include "job/JobSystem.h"
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <limits>
 #include <stdexcept>
 #include <thread>
 #include <vector>
@@ -143,6 +145,156 @@ private:
 };
 
 } // namespace
+
+TEST_CASE("U22 software audio: update mixes real stereo PCM against the manual mixer") {
+    AudioQuota quota(4);
+    ScopedAudioQuota scopedQuota(quota);
+    SoLoudAudioEngine software{SoLoudAudioEngine::OutputMode::Software};
+    SoLoudAudioEngine manual{SoLoudAudioEngine::OutputMode::ManualMix};
+    REQUIRE(software.init());
+    REQUIRE(manual.init());
+    CHECK(software.soloud().getBackendId() == SoLoud::Soloud::NULLDRIVER);
+    CHECK(software.soloud().getBackendSamplerate() == 48000);
+    CHECK(software.soloud().getBackendChannels() == 2);
+    std::vector<float> source(48000 * 2);
+    for (unsigned i = 0; i < 48000; ++i) {
+        source[i * 2] = float(int(i % 97) - 48) / 500.0f;
+        source[i * 2 + 1] = float(int(i % 71) - 35) / 700.0f;
+    }
+    const auto softwareHandle = software.playRawPCM(source.data(), 48000, 48000, 2);
+    const auto manualHandle = manual.playRawPCM(source.data(), 48000, 48000, 2);
+    REQUIRE(softwareHandle != 0);
+    REQUIRE(manualHandle != 0);
+    std::vector<float> reference(375 * 2);
+    double energy = 0;
+    float peak = 0;
+    uint64_t nonzero = 0;
+    for (unsigned block = 0; block != 32; ++block) {
+        // Exactly representable dt: 48 kHz / 128 = 375 sample frames.
+        software.update(1.0f / 128);
+        manual.soloud().mix(reference.data(), 375);
+        for (const auto sample : reference) {
+            REQUIRE(std::isfinite(sample));
+            energy += std::abs(sample);
+            peak = std::max(peak, std::abs(sample));
+            nonzero += sample != 0;
+        }
+    }
+    const auto stats = software.softwareMixStats();
+    CHECK(stats.frames == 12000);
+    CHECK(stats.samples == 24000);
+    CHECK(stats.nonfiniteSamples == 0);
+    CHECK_FALSE(stats.saturated);
+    CHECK(stats.nonzeroSamples == nonzero);
+    CHECK(stats.nonzeroSamples > 0);
+    CHECK(stats.absoluteEnergy == doctest::Approx(energy).epsilon(0.000001));
+    CHECK(stats.peak == doctest::Approx(peak));
+    CHECK(energy > 1);
+    CHECK(software.soloud().getStreamPosition(softwareHandle) ==
+          doctest::Approx(manual.soloud().getStreamPosition(manualHandle)));
+    CHECK(software.soloud().getStreamPosition(softwareHandle) > 0);
+}
+
+TEST_CASE("U22 software audio: suspension does not advance or accrue catch-up time") {
+    AudioQuota quota(2);
+    ScopedAudioQuota scopedQuota(quota);
+    SoLoudAudioEngine audio{SoLoudAudioEngine::OutputMode::Software};
+    REQUIRE(audio.init());
+    std::vector<float> source(48000 * 2, 0.1f);
+    const auto handle = audio.playRawPCM(source.data(), 48000, 48000, 2);
+    REQUIRE(handle != 0);
+    audio.update(1.0f / 64);
+    CHECK(audio.softwareMixStats().frames == 750);
+    const auto position = audio.soloud().getStreamPosition(handle);
+    audio.suspend();
+    audio.update(0.25f);
+    audio.update(0.25f);
+    CHECK(audio.softwareMixStats().frames == 750);
+    CHECK(audio.soloud().getStreamPosition(handle) == position);
+    audio.resume();
+    audio.update(1.0f / 64);
+    CHECK(audio.softwareMixStats().frames == 1500);
+    CHECK(audio.soloud().getStreamPosition(handle) > position);
+}
+
+TEST_CASE("U22 software audio: natural completion reclaims SE and voice quotas once") {
+    AudioQuota quota(2);
+    ScopedAudioQuota scopedQuota(quota);
+    SoLoudAudioEngine audio{SoLoudAudioEngine::OutputMode::Software};
+    REQUIRE(audio.init());
+    std::vector<float> source(128 * 2, 0.1f);
+    REQUIRE(audio.playRawPCM(source.data(), 128, 48000, 2) != 0);
+    REQUIRE(audio.playVoice("tests/audio/silence.wav") != 0);
+    REQUIRE(quota.activeCount == 2);
+    audio.update(0.25f);
+    audio.update(0.25f);
+    CHECK_FALSE(audio.isSEPlaying());
+    CHECK_FALSE(audio.isVoicePlaying());
+    CHECK(quota.activeCount == 0);
+    CHECK(quota.releaseCalls == 2);
+    CHECK(quota.releaseUnderflows == 0);
+    CHECK(audio.consumeVoiceCompletions() == 1);
+    audio.update(0.25f);
+    CHECK(audio.consumeVoiceCompletions() == 0);
+    CHECK(quota.releaseCalls == 2);
+}
+
+TEST_CASE("U22 software audio: fractional and invalid time inputs remain bounded") {
+    SoLoudAudioEngine audio{SoLoudAudioEngine::OutputMode::Software};
+    REQUIRE(audio.init());
+    const float fractional = 1.0f / 131072;
+    audio.update(fractional); // 0.3662109375 sample frames, retained precisely.
+    for (const float invalid : {0.0f, -1.0f, std::numeric_limits<float>::infinity(),
+             -std::numeric_limits<float>::infinity(), std::numeric_limits<float>::quiet_NaN()}) {
+        audio.update(invalid);
+    }
+    CHECK(audio.softwareMixStats().frames == 0);
+    for (unsigned i = 1; i < 512; ++i) audio.update(fractional);
+    CHECK(audio.softwareMixStats().frames == 187); // 187.5 frames, not 512 rounded samples.
+    audio.update(std::numeric_limits<float>::max());
+    CHECK(audio.softwareMixStats().frames == 12187); // At most 0.25 seconds per update.
+    CHECK(audio.softwareMixStats().samples == 24374);
+    CHECK(audio.softwareMixStats().nonfiniteSamples == 0);
+    CHECK_FALSE(audio.softwareMixStats().saturated);
+    CHECK(audio.softwareMixStats().nonzeroSamples == 0); // Actual initialized mixer silence.
+}
+
+TEST_CASE("U22 software audio: ManualMix update preserves its explicit host clock") {
+    AudioQuota quota(1);
+    ScopedAudioQuota scopedQuota(quota);
+    SoLoudAudioEngine audio{SoLoudAudioEngine::OutputMode::ManualMix};
+    REQUIRE(audio.init());
+    std::vector<float> source(48000 * 2, 0.1f);
+    const auto handle = audio.playRawPCM(source.data(), 48000, 48000, 2);
+    REQUIRE(handle != 0);
+    audio.update(0.25f);
+    CHECK(audio.soloud().getStreamPosition(handle) == 0);
+    CHECK(audio.softwareMixStats().frames == 0);
+    std::vector<float> output(512 * 2);
+    audio.soloud().mix(output.data(), 512);
+    CHECK(audio.soloud().getStreamPosition(handle) > 0);
+    CHECK(std::any_of(output.begin(), output.end(), [](float sample) { return sample != 0; }));
+}
+
+TEST_CASE("U22 software audio: shutdown and reinit reset the session clock") {
+    SoLoudAudioEngine audio{SoLoudAudioEngine::OutputMode::Software};
+    REQUIRE(audio.init());
+    audio.update(1.0f / 131072); // Leave a fractional sample before shutdown.
+    audio.update(1.0f / 64);
+    CHECK(audio.softwareMixStats().frames == 750);
+    audio.suspend();
+    audio.shutdown();
+    audio.update(0.25f);
+    CHECK(audio.softwareMixStats().frames == 750);
+    REQUIRE(audio.init());
+    CHECK(audio.softwareMixStats().frames == 0);
+    CHECK(audio.softwareMixStats().absoluteEnergy == 0);
+    audio.update(1.0f / 131072);
+    audio.update(1.0f / 131072);
+    CHECK(audio.softwareMixStats().frames == 0); // Old fractional remainder is gone.
+    audio.update(1.0f / 131072);
+    CHECK(audio.softwareMixStats().frames == 1); // Old suspension is also gone.
+}
 
 TEST_CASE("U21 audio paths: WAV playback accepts UTF-8 directories and filenames") {
     REQUIRE(std::filesystem::is_regular_file("tests/audio/silence.wav"));

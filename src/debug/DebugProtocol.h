@@ -65,7 +65,7 @@ public:
     // Destruction of an attached protocol on the wrong thread terminates.
     bool shutdown();
 
-    // Breakpoints
+    // Breakpoints use UTF-8 source identifiers, as supplied by Lua/editor JSON.
     // This is a lexical operation: Lua's source marker is removed, separators
     // and path segments are normalized, and Windows-style paths are ASCII
     // case-folded. Relative identifiers remain relative for display.

@@ -7,121 +7,104 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release version tag (e.g. v1.0.0)'
+        description: 'Existing release tag; run this workflow from that same tag'
         required: true
-        default: 'v1.0.0'
+        type: string
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  build-windows:
-    name: Windows x64 Release Build
-    runs-on: windows-latest
+  resolve-tag:
+    name: Require the selected existing tag to match this source
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          submodules: recursive
-
-      - name: Setup CMake and MSVC
-        uses: ilammy/msvc-dev-cmd@v1
-
-      - name: Configure CMake
+          fetch-depth: 0
+      - name: Check tag identity without creating or moving a tag
+        id: tag
+        env:
+          RELEASE_TAG: ${{ inputs.version || github.ref_name }}
+          SOURCE_SHA: ${{ github.sha }}
         run: |
-          cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DCAESURA_BUILD_TESTS=ON -DCPACK_PACKAGE_VERSION="${{ github.ref_name }}"
+          python3 - <<'PY'
+          import os, re, subprocess
+          from pathlib import Path
+          tag = os.environ['RELEASE_TAG']
+          assert re.fullmatch(r'v[0-9A-Za-z][0-9A-Za-z._+-]*', tag), 'Invalid explicit release tag'
+          assert Path('.git').exists(), 'No source repository identity'
+          head = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+          target = subprocess.check_output(['git', 'rev-parse', '--verify', 'refs/tags/' + tag + '^{commit}'], text=True).strip()
+          assert target == head == os.environ['SOURCE_SHA'], 'Run the release workflow from its existing tag'
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as stream:
+              stream.write('tag=' + tag + '\n')
+          PY
 
-      - name: Build Engine & Tools
-        run: |
-          cmake --build build --config Release --parallel
-
-      - name: Run Core Test Suite
-        run: |
-          cd build/tests/Release
-          ./CaesuraTests.exe
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      - name: Build editor IDE (editor/dist ships in the package)
-        run: |
-          cd editor
-          npm ci --no-audit --no-fund
-          npm run build
-
-      - name: Package Windows ZIP
-        run: |
-          cd build
-          cpack -C Release -G ZIP
-
-      - name: Upload Windows Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-release-zip
-          path: build/CaesuraAmeKAG-*.zip
-
-  build-web:
-    name: Web Wasm Player PWA Build
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      - name: Install dependencies & Test
-        run: |
-          cd web
-          npm ci
-          npm test
-
-      - name: Build Web Static PWA Distribution
-        run: |
-          cd web
-          npm run build
-
-      - name: Package Web Distribution
-        run: |
-          tar -czf caesura-web-pwa.tar.gz -C web/dist .
-
-      - name: Upload Web Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: web-pwa-bundle
-          path: caesura-web-pwa.tar.gz
+  validate:
+    name: Full CI and all final package gates
+    needs: resolve-tag
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
 
   publish-release:
-    name: Publish GitHub Release
-    needs: [build-windows, build-web]
-    runs-on: ubuntu-latest
+    name: Publish the validated final package bytes
+    needs: [resolve-tag, validate]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Download all build artifacts
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Download exact Windows package bundle
         uses: actions/download-artifact@v4
         with:
-          path: release-artifacts
-
-      - name: Generate SHA-256 Checksums
+          name: caesura-amekag-windows-x64
+          path: ${{ runner.temp }}/release-inputs/windows
+      - name: Download exact Linux package bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: caesura-amekag-linux-x64
+          path: ${{ runner.temp }}/release-inputs/linux
+      - name: Download exact macOS package bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: caesura-amekag-macos-arm64
+          path: ${{ runner.temp }}/release-inputs/macos
+      - name: Download exact Web package bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: caesura-amekag-web
+          path: ${{ runner.temp }}/release-inputs/web
+      # These same-workflow manifest hashes bind transferred bytes. Hosted
+      # artifact provenance and release authorization remain separate gates.
+      - name: Verify producer manifests and collect only their final files
+        id: collect
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          WINDOWS_MANIFEST: ${{ needs.validate.outputs.windows_manifest_sha256 }}
+          LINUX_MANIFEST: ${{ needs.validate.outputs.linux_manifest_sha256 }}
+          MACOS_MANIFEST: ${{ needs.validate.outputs.macos_manifest_sha256 }}
+          WEB_MANIFEST: ${{ needs.validate.outputs.web_manifest_sha256 }}
         run: |
-          mkdir -p dist
-          find release-artifacts -type f \( -name "*.zip" -o -name "*.tar.gz" -o -name "*.apk" \) -exec cp {} dist/ \;
-          cd dist
-          sha256sum * > checksums.txt
-          cat checksums.txt
-
+          python3 scripts/ci_package_lane.py collect --source-sha "$SOURCE_SHA" \
+            --work "$RUNNER_TEMP/caesura-release-final" \
+            --bundle "$RUNNER_TEMP/release-inputs/windows" "$WINDOWS_MANIFEST" \
+            --bundle "$RUNNER_TEMP/release-inputs/linux" "$LINUX_MANIFEST" \
+            --bundle "$RUNNER_TEMP/release-inputs/macos" "$MACOS_MANIFEST" \
+            --bundle "$RUNNER_TEMP/release-inputs/web" "$WEB_MANIFEST" \
+            --github-output "$GITHUB_OUTPUT"
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            dist/*
-            docs/status/release-candidate-report-semantic-head.md
+          tag_name: ${{ needs.resolve-tag.outputs.tag }}
+          files: ${{ steps.collect.outputs.upload_files }}
+          fail_on_unmatched_files: true
           draft: false
           prerelease: false
           generate_release_notes: true

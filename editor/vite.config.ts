@@ -8,6 +8,8 @@ import react from '@vitejs/plugin-react'
 // is served from the same origin as the engine (or behind the same
 // proxy), so this matches both modes.
 export default defineConfig({
+  // Keep packaged static assets resolvable after moving the dist directory.
+  base: './',
   plugins: [react()],
   server: {
     port: 5173,
