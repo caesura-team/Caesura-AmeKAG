@@ -3,6 +3,7 @@
 #include "doctest.h"
 #include "TestPaths.h"
 #include "storage/SaveManager.h"
+#include "storage/api/ICloudSaveCoordinator.h"
 #include "storage/AtomicSaveFile.h"
 #include "storage/CloudConflictStore.h"
 #include <utility>
@@ -32,6 +33,8 @@
 #include <atomic>
 #include <future>
 #include <functional>
+#include <stdexcept>
+#include <type_traits>
 
 
 using namespace Caesura;
@@ -2180,4 +2183,1127 @@ TEST_CASE("U26 conflict store: capacity and incomplete recovery never evict orig
     const auto restored = reopened.readRecord(fixture.context(), base);
     u26ConflictCheckRecord(restored, U26StoreCode::Complete, U26RecordKind::EqualObserved, fixture.a, fixture.a);
     fixture.checkSources();
+}
+
+// U26 coordinator regressions reuse the real CAES/disk/HTTP conflict fixtures.
+// Existing cloud-provider and B1 methods above retain their original assertions.
+namespace {
+class U26CoordinatorHttpServer {
+public:
+    enum class Mode { Present, Missing, ServerError, ShortBody, Timeout };
+    U26CoordinatorHttpServer() : gate(release.get_future().share()) {
+        server.Get(R"(/saves/(.*))", [this](const httplib::Request&, httplib::Response& response) {
+            ++gets;
+            Mode selected;
+            std::string payload;
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                selected = mode;
+                payload = stored;
+            }
+            response.set_header("ETag", "\"observed-but-not-CAS\"");
+            response.set_header("Connection", "close");
+            if (selected == Mode::Missing) { response.status = 404; return; }
+            if (selected == Mode::ServerError) { response.status = 500; return; }
+            if (selected == Mode::ShortBody) {
+                response.set_content_provider(11, "application/octet-stream",
+                    [](size_t, size_t, httplib::DataSink& sink) {
+                        sink.write("abc", 3); return false;
+                    });
+                return;
+            }
+            if (selected == Mode::Timeout) { entered = true; gate.wait(); }
+            response.set_content(payload, "application/octet-stream");
+        });
+        server.Put(R"(/saves/(.*))", [this](const httplib::Request& request, httplib::Response& response) {
+            ++writes;
+            { std::lock_guard<std::mutex> lock(mutex); stored = request.body; }
+            response.status = 200;
+        });
+        server.Delete(R"(/saves/(.*))", [this](const httplib::Request&, httplib::Response& response) {
+            ++deletes;
+            { std::lock_guard<std::mutex> lock(mutex); stored.clear(); mode = Mode::Missing; }
+            response.status = 200;
+        });
+        port = server.bind_to_any_port("127.0.0.1");
+        REQUIRE(port > 0);
+        worker = std::thread([this] { server.listen_after_bind(); });
+        server.wait_until_ready();
+    }
+    ~U26CoordinatorHttpServer() { stop(); }
+    void stop() {
+        if (stopped) return;
+        stopped = true;
+        release.set_value();
+        server.stop();
+        if (worker.joinable()) worker.join();
+    }
+    bool joined() const { return stopped && !worker.joinable(); }
+    std::string endpoint() const { return "http://127.0.0.1:" + std::to_string(port) + "/saves"; }
+    void set(const std::string& bytes, Mode next = Mode::Present) {
+        std::lock_guard<std::mutex> lock(mutex); stored = bytes; mode = next;
+    }
+    std::string bytes() { std::lock_guard<std::mutex> lock(mutex); return stored; }
+    std::atomic<int> gets{0}, writes{0}, deletes{0};
+    std::atomic<bool> entered{false};
+private:
+    std::promise<void> release;
+    std::shared_future<void> gate;
+    httplib::Server server;
+    std::thread worker;
+    std::mutex mutex;
+    std::string stored;
+    Mode mode = Mode::Present;
+    int port = 0;
+    bool stopped = false;
+};
+
+class U26CountingSnapshotProvider final : public ISaveProvider,
+                                         public ICloudSaveTransport,
+                                         public ICloudSaveSnapshotTransport {
+public:
+    explicit U26CountingSnapshotProvider(const std::string& endpoint, int timeoutMs = 1000)
+        : real(endpoint, timeoutMs) {}
+    ~U26CountingSnapshotProvider() override { if (destructions) ++*destructions; }
+    int localReads = 0, cloudReads = 0, legacyReads = 0, writes = 0, deletes = 0;
+    std::function<void(CloudSide)> afterRead;
+    std::shared_ptr<int> destructions;
+    bool claimConditionalWrite = false;
+    HttpCloudSaveProvider real;
+    CloudSnapshot readSnapshot(CloudSide side, const std::string& path) override {
+        if (side == CloudSide::Local) ++localReads; else ++cloudReads;
+        auto result = real.readSnapshot(side, path); // actual disk + actual loopback HTTP
+        auto callback = std::move(afterRead);
+        if (callback) callback(side);
+        return result;
+    }
+    CloudConditionalWriteSupport conditionalWriteSupport(CloudSide side) const override {
+        return claimConditionalWrite ? CloudConditionalWriteSupport::CompareAndReplace :
+                                       real.conditionalWriteSupport(side);
+    }
+    std::string readFile(const std::string& path) override { ++legacyReads; return real.readFile(path); }
+    bool writeFile(const std::string& path, const std::string& bytes) override {
+        ++writes; return real.writeFile(path, bytes);
+    }
+    bool deleteFile(const std::string& path) override { ++deletes; return real.deleteFile(path); }
+    std::vector<std::string> listFiles(const std::string& path) override { return real.listFiles(path); }
+    bool supportsCloudSync() const override { return true; }
+    bool pushToCloud(const std::string& path) override { ++writes; return real.pushToCloud(path); }
+    bool pullFromCloud(const std::string& path) override { ++writes; return real.pullFromCloud(path); }
+    std::string readLocalFile(const std::string& path) override { ++legacyReads; return real.readLocalFile(path); }
+    std::string readCloudFile(const std::string& path) override { ++legacyReads; return real.readCloudFile(path); }
+    bool writeLocalFile(const std::string& path, const std::string& bytes) override {
+        ++writes; return real.writeLocalFile(path, bytes);
+    }
+    bool writeCloudFile(const std::string& path, const std::string& bytes) override {
+        ++writes; return real.writeCloudFile(path, bytes);
+    }
+};
+struct U26CoordinatorRegistryGuard {
+    ISaveManager* previous = BackendRegistry::instance().getSaveManager();
+    explicit U26CoordinatorRegistryGuard(ISaveManager* current) {
+        BackendRegistry::instance().setSaveManager(current);
+    }
+    ~U26CoordinatorRegistryGuard() { BackendRegistry::instance().setSaveManager(previous); }
+};
+struct U26CoordinatorFixture {
+    U26ConflictFixture source;
+    U26CoordinatorHttpServer server;
+    std::filesystem::path coordinatorRoot = source.root / "coordinator";
+    // Member guard also restores the registry if constructor REQUIRE fails in RED.
+    U26CoordinatorRegistryGuard registration{&source.manager};
+    U26CountingSnapshotProvider* provider = nullptr;
+    ICloudSaveCoordinator* api = nullptr;
+    uint64_t epoch = 1;
+    explicit U26CoordinatorFixture(bool bindNow = true, int timeoutMs = 1000) {
+        REQUIRE(std::filesystem::create_directory(coordinatorRoot));
+        server.set(source.a);
+        auto owned = std::make_unique<U26CountingSnapshotProvider>(server.endpoint(), timeoutMs);
+        provider = owned.get();
+        source.manager.setSaveProvider(std::move(owned));
+        api = dynamic_cast<ICloudSaveCoordinator*>(BackendRegistry::instance().getSaveManager());
+        REQUIRE(api != nullptr);
+        if (bindNow) bind();
+    }
+    void bind() { REQUIRE(api->bindCloudCoordinator(binding()).code == CloudCoordinatorCode::Ready); }
+    CloudCoordinatorBinding binding() const {
+        return {u26SnapshotPath(coordinatorRoot), source.context().scopeId, epoch};
+    }
+    std::filesystem::path contextRoot() const {
+        return coordinatorRoot / source.context().scopeId / std::to_string(epoch);
+    }
+    std::filesystem::path cursorPath() const { return contextRoot() / "selected" / "slot_3.json"; }
+    detail::ConflictRecordRef rawRef(const CloudPreservedRecordRef& ref) const {
+        return {ref.id, ref.manifestSha256};
+    }
+    void noSourceWrites() const {
+        CHECK(provider->writes == 0);
+        CHECK(provider->deletes == 0);
+        CHECK(provider->legacyReads == 0);
+        CHECK(server.writes.load() == 0);
+        CHECK(server.deletes.load() == 0);
+    }
+    void setSides(const std::string& local, const std::string& cloud) {
+        source.setSides(local, cloud);
+        server.set(cloud);
+    }
+    CloudPrepareResult equal(const std::string& token) {
+        setSides(source.a, source.a);
+        auto result = api->prepareCloudSync(3, token);
+        REQUIRE(result.code == CloudCoordinatorCode::Complete);
+        REQUIRE(result.comparison == CloudComparison::EqualObserved);
+        REQUIRE(result.preservation == CloudPreservation::Complete);
+        REQUIRE(result.ancestor == CloudAncestorSelection::Selected);
+        REQUIRE(result.preparation.has_value());
+        REQUIRE(result.record.has_value());
+        return result;
+    }
+};
+struct U26SelectedWriteFailure {
+    detail::SaveWriteStage target;
+    std::filesystem::path parent;
+    size_t hits = 0;
+    size_t targetOrdinal = 0;
+    size_t opened = 0;
+    static bool checkpoint(detail::SaveWriteStage stage, const std::filesystem::path& temporary,
+                           void* context) {
+        auto& self = *static_cast<U26SelectedWriteFailure*>(context);
+        if (temporary.parent_path() == self.parent && stage == detail::SaveWriteStage::CreateTemporary)
+            ++self.opened;
+        if (temporary.parent_path() == self.parent && stage == self.target &&
+            (self.targetOrdinal == 0 || self.opened == self.targetOrdinal)) {
+            ++self.hits;
+            return false;
+        }
+        return true;
+    }
+};
+
+std::string u26CoordinatorToken(unsigned value) {
+    auto suffix = std::to_string(value);
+    return std::string(32 - suffix.size(), '0') + suffix;
+}
+CloudPrepareResult u26CoordinatorFork(U26CoordinatorFixture& fixture) {
+    fixture.equal(u26CoordinatorToken(1));
+    fixture.setSides(fixture.source.b, fixture.source.c);
+    auto result = fixture.api->prepareCloudSync(3, u26CoordinatorToken(2));
+    REQUIRE(result.code == CloudCoordinatorCode::Complete);
+    REQUIRE(result.comparison == CloudComparison::Conflict);
+    REQUIRE(result.preservation == CloudPreservation::Complete);
+    REQUIRE(result.preparation.has_value());
+    REQUIRE(result.record.has_value());
+    return result;
+}
+CloudHistorySelection u26CoordinatorChoice(const CloudPrepareResult& preparation,
+                                         CloudPreservedVariant variant = CloudPreservedVariant::Local) {
+    REQUIRE(preparation.preparation.has_value());
+    return {*preparation.preparation, variant, preparation.stamp};
+}
+struct U26PostPublishHashFailure : carc::CryptoEngine {
+    std::filesystem::path target;
+    bool armed = false;
+    size_t hits = 0;
+    std::string candidate;
+    static bool checkpoint(detail::SaveWriteStage stage, const std::filesystem::path& temporary, void* context) {
+        auto& self = *static_cast<U26PostPublishHashFailure*>(context);
+        if (stage == detail::SaveWriteStage::Replace && temporary.parent_path() == self.target.parent_path()) {
+            self.candidate = cloudFileBytes(temporary);
+            self.armed = true;
+        }
+        return true;
+    }
+    void sha256(const uint8_t* data, size_t size, uint8_t* hash, size_t hashSize) override {
+        carc::CryptoEngine::sha256(data, size, hash, hashSize); // Never manufacture a digest.
+        if (armed && hits == 0 && size == candidate.size() &&
+            std::memcmp(data, candidate.data(), size) == 0 && cloudFileBytes(target) == candidate) {
+            ++hits;
+            throw std::runtime_error("U26 observed actual published file then failed final digest return");
+        }
+    }
+};
+struct U26ScopedCryptoOverride {
+    carc::ICryptoEngine* previous = BackendRegistry::instance().getCryptoEngine();
+    explicit U26ScopedCryptoOverride(carc::ICryptoEngine* next) { BackendRegistry::instance().setCryptoEngine(next); }
+    ~U26ScopedCryptoOverride() { BackendRegistry::instance().setCryptoEngine(previous); }
+};
+
+// A legacy-only implementation proves the optional API does not require all
+// ISaveManager implementations to claim a coordinator. It is not the SUT.
+class U26LegacySaveManager final : public ISaveManager {
+public:
+    void init(const std::string&) override {}
+    bool save(int, const json&, const std::string&, int, const std::string&) override { return false; }
+    json load(int, SaveMeta*) override { return {}; }
+    json loadLegacyPlaintext(int, SaveMeta*) override { return {}; }
+    std::vector<SaveMeta> listSaves() override { return {}; }
+    bool slotExists(int) override { return false; }
+    bool deleteSlot(int) override { return false; }
+    void setEncryptionKey(const uint8_t[32]) override {}
+    void clearEncryptionKey() override {}
+    bool isEncryptionEnabled() const override { return false; }
+    void setEncryptionPolicy(SaveEncryptionPolicy) override {}
+    SaveEncryptionPolicy getEncryptionPolicy() const override { return SaveEncryptionPolicy::Compatible; }
+    void setSaveProvider(std::unique_ptr<ISaveProvider>) override {}
+    ISaveProvider* getSaveProvider() const override { return nullptr; }
+    bool configureCloudSync(const std::string&) override { return false; }
+    bool pushSlotToCloud(int) override { return false; }
+    bool pullSlotFromCloud(int) override { return false; }
+    int currentSchemaVersion() const override { return 1; }
+    void registerMigration(int, int, MigrationFn) override {}
+};
+} // namespace
+
+TEST_CASE("U26 coordinator: optional capability validates captured bytes once") {
+    U26CoordinatorFixture f;
+    const auto result = f.equal("10000000000000000000000000000001");
+    CHECK(f.provider->localReads == 1);
+    CHECK(f.provider->cloudReads == 1);
+    CHECK(result.local.validity == CloudSaveValidity::ValidCurrentPolicy);
+    CHECK(result.cloud.validity == CloudSaveValidity::ValidCurrentPolicy);
+    CHECK(result.local.sha256 == u26ConflictSha(f.source.a));
+    CHECK(result.cloud.sha256 == u26ConflictSha(f.source.a));
+    detail::CloudConflictStore store(f.contextRoot() / "records");
+    const auto saved = store.readRecord(f.source.context(), f.rawRef(*result.record));
+    u26ConflictCheckRecord(saved, U26StoreCode::Complete, U26RecordKind::EqualObserved,
+                          f.source.a, f.source.a);
+    REQUIRE(saved.record.has_value());
+    u26ConflictCheckManifest(f.contextRoot() / "records", *saved.record);
+    const auto before = u26ConflictTree(f.coordinatorRoot);
+    const auto repeated = f.api->prepareCloudSync(3, "10000000000000000000000000000001");
+    REQUIRE(repeated.code == CloudCoordinatorCode::Replayed);
+    REQUIRE(repeated.preparation.has_value());
+    CHECK(repeated.preparation->receiptSha256 == result.preparation->receiptSha256);
+    CHECK(f.provider->localReads == 1);
+    CHECK(f.provider->cloudReads == 1);
+    CHECK(u26ConflictTree(f.coordinatorRoot) == before);
+    f.noSourceWrites();
+    f.source.checkSources();
+    {
+        U26CoordinatorFixture changed;
+        changed.provider->afterRead = [&](CloudSide side) {
+            REQUIRE(side == CloudSide::Local);
+            changed.setSides(changed.source.b, changed.source.a);
+        };
+        const auto captured = changed.api->prepareCloudSync(3, u26CoordinatorToken(19));
+        REQUIRE(captured.code == CloudCoordinatorCode::Complete);
+        REQUIRE(captured.record.has_value());
+        detail::CloudConflictStore raw(changed.contextRoot() / "records");
+        const auto savedCapture = raw.readRecord(changed.source.context(), changed.rawRef(*captured.record));
+        u26ConflictCheckRecord(savedCapture, U26StoreCode::Complete, U26RecordKind::EqualObserved,
+                              changed.source.a, changed.source.a);
+        CHECK(changed.provider->localReads == 1);
+        CHECK(changed.provider->cloudReads == 1);
+        CHECK(cloudFileBytes(changed.source.slot) == changed.source.b);
+        changed.noSourceWrites();
+    }
+}
+
+TEST_CASE("U26 coordinator: new manager reads selected ancestor and classifies actual forks") {
+    U26CoordinatorFixture f;
+    const auto first = f.equal("20000000000000000000000000000001");
+    const auto selectedBefore = cloudFileBytes(f.cursorPath());
+    REQUIRE_FALSE(selectedBefore.empty());
+    // Same process, new actual SaveManager: explicitly NOT child-process proof.
+    SaveManager reopened;
+    reopened.init(TestPaths::withTrailingSeparator(f.source.root));
+    reopened.setEncryptionKey(f.source.key.data());
+    reopened.setEncryptionPolicy(SaveEncryptionPolicy::RequireEncrypted);
+    auto owned = std::make_unique<U26CountingSnapshotProvider>(f.server.endpoint());
+    auto* counted = owned.get();
+    reopened.setSaveProvider(std::move(owned));
+    auto* api = dynamic_cast<ICloudSaveCoordinator*>(static_cast<ISaveManager*>(&reopened));
+    REQUIRE(api != nullptr);
+    REQUIRE(api->bindCloudCoordinator(f.binding()).code == CloudCoordinatorCode::Ready);
+    f.setSides(f.source.b, f.source.c);
+    const auto fork = api->prepareCloudSync(3, "20000000000000000000000000000002");
+    REQUIRE(fork.code == CloudCoordinatorCode::Complete);
+    CHECK(fork.comparison == CloudComparison::Conflict);
+    CHECK(fork.preservation == CloudPreservation::Complete);
+    REQUIRE(fork.record.has_value());
+    REQUIRE(fork.base.has_value());
+    CHECK(fork.base->id == first.record->id);
+    CHECK(fork.base->manifestSha256 == first.record->manifestSha256);
+    CHECK(cloudFileBytes(f.cursorPath()) == selectedBefore);
+    detail::CloudConflictStore store(f.contextRoot() / "records");
+    const auto record = store.readRecord(f.source.context(), f.rawRef(*fork.record));
+    u26ConflictCheckRecord(record, U26StoreCode::Complete, U26RecordKind::Conflict,
+                          f.source.b, f.source.c, f.source.a);
+    CHECK(counted->localReads == 1);
+    CHECK(counted->cloudReads == 1);
+    CHECK(counted->legacyReads == 0);
+    CHECK(counted->writes == 0);
+    CHECK(counted->deletes == 0);
+    f.source.checkSources();
+    {
+        U26CoordinatorFixture table;
+        const auto base = table.equal(u26CoordinatorToken(100));
+        const auto cursorA = cloudFileBytes(table.cursorPath());
+        struct Case { const std::string* local; const std::string* remote; CloudComparison expected; };
+        const std::array<Case, 3> cases{{
+            {&table.source.b, &table.source.a, CloudComparison::LocalChanged},
+            {&table.source.a, &table.source.c, CloudComparison::CloudChanged},
+            {&table.source.b, &table.source.c, CloudComparison::Conflict}}};
+        unsigned token = 101;
+        for (const auto& item : cases) {
+            table.setSides(*item.local, *item.remote);
+            const auto result = table.api->prepareCloudSync(3, u26CoordinatorToken(token++));
+            CHECK(result.code == CloudCoordinatorCode::Complete);
+            CHECK(result.comparison == item.expected);
+            REQUIRE(result.base.has_value());
+            CHECK(result.base->id == base.record->id);
+            CHECK(cloudFileBytes(table.cursorPath()) == cursorA);
+        }
+        // Add a complete unrelated equality through actual B1, with no cursor write.
+        detail::CloudConflictStore store2(table.contextRoot() / "records");
+        table.setSides(table.source.c, table.source.c);
+        const auto sides = table.source.capture();
+        const auto unrelated = store2.preserve(table.source.context(), sides.first, sides.second);
+        REQUIRE(unrelated.code == U26StoreCode::Preserved);
+        table.setSides(table.source.b, table.source.c);
+        const auto afterUnselected = table.api->prepareCloudSync(3, u26CoordinatorToken(105));
+        CHECK(afterUnselected.comparison == CloudComparison::Conflict);
+        REQUIRE(afterUnselected.base.has_value());
+        CHECK(afterUnselected.base->id == base.record->id);
+        const auto plain = R"({"schema_version":5,"timestamp":1,"data":{"chapter":9}})";
+        const auto nonceOne = encryptCloudTestBytes(plain), nonceTwo = encryptCloudTestBytes(plain);
+        REQUIRE(nonceOne != nonceTwo);
+        table.setSides(nonceOne, nonceTwo);
+        CHECK(table.api->prepareCloudSync(3, u26CoordinatorToken(106)).comparison == CloudComparison::Conflict);
+        replaceCloudFileBytes(table.cursorPath(), "{damaged cursor");
+        const auto damaged = u26ConflictTree(table.coordinatorRoot);
+        CHECK(table.api->prepareCloudSync(3, u26CoordinatorToken(107)).code == CloudCoordinatorCode::InvalidAncestor);
+        CHECK(u26ConflictTree(table.coordinatorRoot) == damaged);
+        REQUIRE(std::filesystem::remove(table.cursorPath()));
+        const auto noAncestor = table.api->prepareCloudSync(3, u26CoordinatorToken(108));
+        CHECK(noAncestor.comparison == CloudComparison::DivergedWithoutBase);
+        CHECK_FALSE(noAncestor.base.has_value());
+        CHECK_FALSE(std::filesystem::exists(table.cursorPath()));
+        table.noSourceWrites();
+    }
+}
+
+TEST_CASE("U26 coordinator: record publication does not imply ancestor selection") {
+    const std::array<detail::SaveWriteStage, 6> stages{{
+        detail::SaveWriteStage::CreateTemporary, detail::SaveWriteStage::Write,
+        detail::SaveWriteStage::WriteProgress, detail::SaveWriteStage::Flush,
+        detail::SaveWriteStage::Close, detail::SaveWriteStage::Replace
+    }};
+    for (auto stage : stages) {
+        INFO("selected cursor failure stage=", static_cast<int>(stage));
+        U26CoordinatorFixture f;
+        const auto first = f.equal("30000000000000000000000000000001");
+        const auto selectedBefore = cloudFileBytes(f.cursorPath());
+        const auto oldRecordTree = u26ConflictTree(f.contextRoot() / "records" / first.record->id);
+        f.setSides(f.source.b, f.source.b);
+        U26SelectedWriteFailure failure{stage, f.cursorPath().parent_path(), 0};
+        CloudPrepareResult prepared;
+        {
+            detail::ScopedSaveWriteTestHook hook({&U26SelectedWriteFailure::checkpoint, &failure});
+            prepared = f.api->prepareCloudSync(3, "30000000000000000000000000000002");
+        }
+        REQUIRE(failure.hits == 1);
+        CHECK(prepared.preservation == CloudPreservation::Complete);
+        CHECK(prepared.ancestor == CloudAncestorSelection::NotSelected);
+        REQUIRE(prepared.preparation.has_value());
+        REQUIRE(prepared.record.has_value());
+        CHECK(cloudFileBytes(f.cursorPath()) == selectedBefore);
+        CHECK(u26ConflictTree(f.contextRoot() / "records" / first.record->id) == oldRecordTree);
+        detail::CloudConflictStore store(f.contextRoot() / "records");
+        const auto saved = store.readRecord(f.source.context(), f.rawRef(*prepared.record));
+        u26ConflictCheckRecord(saved, U26StoreCode::Complete, U26RecordKind::EqualObserved,
+                              f.source.b, f.source.b, f.source.a);
+        const auto beforeReplay = u26ConflictTree(f.coordinatorRoot);
+        const auto replayed = f.api->prepareCloudSync(3, "30000000000000000000000000000002");
+        CHECK(replayed.code == CloudCoordinatorCode::Replayed);
+        CHECK(replayed.ancestor == CloudAncestorSelection::RecoveredNotSelected);
+        CHECK(f.provider->localReads == 2);
+        CHECK(f.provider->cloudReads == 2);
+        CHECK(u26ConflictTree(f.coordinatorRoot) == beforeReplay);
+        f.noSourceWrites();
+        f.source.checkSources();
+    }
+    {
+        U26CoordinatorFixture f;
+        f.equal(u26CoordinatorToken(110));
+        const auto selectedBefore = cloudFileBytes(f.cursorPath());
+        f.setSides(f.source.b, f.source.b);
+        const auto token = u26CoordinatorToken(111);
+        U26SelectedWriteFailure failure{detail::SaveWriteStage::Replace,
+            f.contextRoot() / "operations" / token, 0, 2, 0};
+        CloudPrepareResult result;
+        { detail::ScopedSaveWriteTestHook hook({&U26SelectedWriteFailure::checkpoint, &failure});
+          result = f.api->prepareCloudSync(3, token); }
+        REQUIRE(failure.hits == 1);
+        CHECK(result.code == CloudCoordinatorCode::RecordPreservedReceiptFailed);
+        CHECK(result.preservation == CloudPreservation::Complete);
+        REQUIRE(result.record.has_value());
+        detail::CloudConflictStore store(f.contextRoot() / "records");
+        const auto preserved = store.readRecord(f.source.context(), f.rawRef(*result.record));
+        REQUIRE(preserved.code == U26StoreCode::Complete);
+        CHECK(cloudFileBytes(f.cursorPath()) == selectedBefore);
+        const auto beforeReplay = u26ConflictTree(f.coordinatorRoot);
+        CHECK(f.api->prepareCloudSync(3, token).code == CloudCoordinatorCode::Indeterminate);
+        CHECK(u26ConflictTree(f.coordinatorRoot) == beforeReplay);
+        CHECK(f.provider->localReads == 2);
+        CHECK(f.provider->cloudReads == 2);
+        f.noSourceWrites();
+    }
+    {
+        U26CoordinatorFixture f;
+        f.equal(u26CoordinatorToken(112));
+        f.setSides(f.source.b, f.source.b);
+        U26PostPublishHashFailure fault;
+        fault.target = f.cursorPath();
+        CloudPrepareResult result;
+        { U26ScopedCryptoOverride crypto(&fault);
+          detail::ScopedSaveWriteTestHook hook({&U26PostPublishHashFailure::checkpoint, &fault});
+          result = f.api->prepareCloudSync(3, u26CoordinatorToken(113)); }
+        REQUIRE(fault.hits == 1);
+        CHECK(result.ancestor == CloudAncestorSelection::Indeterminate);
+        REQUIRE(result.preparation.has_value());
+        REQUIRE(result.record.has_value());
+        CHECK_FALSE(result.candidateCursorSha256.empty());
+        CHECK(cloudFileBytes(f.cursorPath()) == fault.candidate);
+        CHECK(u26ConflictSha(fault.candidate) == result.candidateCursorSha256);
+        const auto tree = u26ConflictTree(f.coordinatorRoot);
+        const auto reopened = f.api->reopenCloudPreparation(*result.preparation);
+        CHECK(reopened.code == CloudCoordinatorCode::Replayed);
+        CHECK(reopened.ancestor == CloudAncestorSelection::RecoveredSelected);
+        CHECK(u26ConflictTree(f.coordinatorRoot) == tree);
+        f.noSourceWrites();
+    }
+}
+
+TEST_CASE("U26 coordinator: no conditional-write backend means no publication") {
+    U26CoordinatorFixture f;
+    f.equal("40000000000000000000000000000001");
+    f.setSides(f.source.b, f.source.c);
+    const auto fork = f.api->prepareCloudSync(3, "40000000000000000000000000000002");
+    REQUIRE(fork.code == CloudCoordinatorCode::Complete);
+    REQUIRE(fork.preparation.has_value());
+    REQUIRE(fork.record.has_value());
+    const CloudHistorySelection selection{*fork.preparation, CloudPreservedVariant::Local, fork.stamp};
+    for (bool advertised : {false, true}) {
+        // A capability bit without an actual conditional-write API is not CAS.
+        f.provider->claimConditionalWrite = advertised;
+        for (auto destination : {CloudSide::Local, CloudSide::Cloud}) {
+            const auto checked = f.api->checkCloudPublication(selection, destination);
+            CHECK(checked.code == CloudCoordinatorCode::UnsupportedConditionalWrite);
+        }
+    }
+    CHECK(f.provider->localReads == 6);
+    CHECK(f.provider->cloudReads == 6);
+    const auto cursorBefore = cloudFileBytes(f.cursorPath());
+    const auto recordsBefore = u26ConflictTree(f.contextRoot() / "records");
+    const auto copy = f.api->exportCloudHistory(selection, "40000000000000000000000000000003");
+    REQUIRE(copy.code == CloudCoordinatorCode::Complete);
+    REQUIRE_FALSE(copy.path.empty());
+    const auto output = std::filesystem::u8path(copy.path);
+    CHECK(cloudFileBytes(output) == f.source.b);
+    CHECK(copy.byteCount == f.source.b.size());
+    CHECK(copy.sha256 == u26ConflictSha(f.source.b));
+    CHECK(cloudFileBytes(f.cursorPath()) == cursorBefore);
+    CHECK(u26ConflictTree(f.contextRoot() / "records") == recordsBefore);
+    CHECK(f.provider->localReads == 6); // history export does not read either live side
+    CHECK(f.provider->cloudReads == 6);
+    const auto beforeReplay = u26ConflictTree(f.coordinatorRoot);
+    const auto replay = f.api->exportCloudHistory(selection, "40000000000000000000000000000003");
+    CHECK(replay.code == CloudCoordinatorCode::Replayed);
+    CHECK(replay.path == copy.path);
+    CHECK(replay.sha256 == copy.sha256);
+    CHECK(u26ConflictTree(f.coordinatorRoot) == beforeReplay);
+    f.setSides(f.source.c, f.source.c);
+    const auto stale = f.api->checkCloudPublication(selection, CloudSide::Cloud);
+    CHECK(stale.code == CloudCoordinatorCode::StaleObservation);
+    CHECK(f.provider->localReads == 7);
+    CHECK(f.provider->cloudReads == 7);
+    CHECK(u26ConflictTree(f.contextRoot() / "records") == recordsBefore);
+    CHECK(cloudFileBytes(output) == f.source.b);
+    f.noSourceWrites();
+    f.source.checkSources();
+}
+
+TEST_CASE("U26 coordinator: only current valid equal observations select ancestors") {
+    // Production CAES codec plus real payloads; the validation result is never mocked.
+    U26ConflictFixture inputs;
+    auto rejected = rejectedSyncInputs(inputs.a);
+    rejected.push_back({"future-schema", encryptCloudTestBytes(R"({"schema_version":999,"data":{"chapter":1}})")});
+    rejected.push_back({"truncated-CAES", "CAES"});
+    rejected.push_back({"empty-Present", ""});
+    for (const auto& item : rejected) {
+        INFO(item.name);
+        U26CoordinatorFixture f(false);
+        setSyncTestKey(f.source.manager, item);
+        f.bind();
+        f.setSides(item.bytes, item.bytes);
+        const auto result = f.api->prepareCloudSync(3, u26CoordinatorToken(20));
+        CHECK(result.code == CloudCoordinatorCode::InvalidSave);
+        CHECK(result.comparison == CloudComparison::InvalidSave);
+        CHECK(result.local.state == CloudReadState::Present);
+        CHECK(result.cloud.state == CloudReadState::Present);
+        CHECK(result.local.validity == CloudSaveValidity::InvalidCurrentPolicy);
+        CHECK(result.cloud.validity == CloudSaveValidity::InvalidCurrentPolicy);
+        CHECK(result.ancestor == CloudAncestorSelection::NotRequested);
+        CHECK_FALSE(std::filesystem::exists(f.cursorPath()));
+        CHECK(result.preservation == CloudPreservation::Complete);
+        REQUIRE(result.record.has_value());
+        detail::CloudConflictStore store(f.contextRoot() / "records");
+        const auto raw = store.readRecord(f.source.context(), f.rawRef(*result.record));
+        REQUIRE(raw.record.has_value());
+        u26ConflictCheckManifest(f.contextRoot() / "records", *raw.record);
+        CHECK(raw.record->localBytes == item.bytes);
+        CHECK(raw.record->cloudBytes == item.bytes);
+        CHECK(f.provider->localReads == 1);
+        CHECK(f.provider->cloudReads == 1);
+        f.noSourceWrites();
+        f.source.checkSources();
+    }
+    for (bool throwMigration : {false, true}) {
+        U26CoordinatorFixture f(false);
+        size_t called = 0;
+        f.source.manager.registerMigration(4, 5, [&](json) -> json {
+            ++called;
+            if (throwMigration) throw std::runtime_error("actual migration refusal");
+            return nullptr;
+        });
+        const auto bytes = encryptCloudTestBytes(R"({"schema_version":4,"data":{"chapter":1}})");
+        f.bind();
+        f.setSides(bytes, bytes);
+        const auto result = f.api->prepareCloudSync(3, u26CoordinatorToken(21));
+        CHECK(result.code == CloudCoordinatorCode::InvalidSave);
+        CHECK(result.local.validity == CloudSaveValidity::InvalidCurrentPolicy);
+        CHECK(result.cloud.validity == CloudSaveValidity::InvalidCurrentPolicy);
+        CHECK(called >= 2);
+        CHECK_FALSE(std::filesystem::exists(f.cursorPath()));
+        f.noSourceWrites();
+    }
+    {
+        U26CoordinatorFixture f(false);
+        f.source.manager.setEncryptionPolicy(SaveEncryptionPolicy::Compatible);
+        f.bind();
+        const std::string plaintext = R"({"schema_version":5,"data":{"chapter":7}})";
+        f.setSides(plaintext, plaintext);
+        const auto result = f.api->prepareCloudSync(3, u26CoordinatorToken(22));
+        CHECK(result.code == CloudCoordinatorCode::Complete);
+        CHECK(result.local.validity == CloudSaveValidity::ValidCurrentPolicy);
+        CHECK(result.cloud.validity == CloudSaveValidity::ValidCurrentPolicy);
+        CHECK(result.ancestor == CloudAncestorSelection::Selected);
+        REQUIRE(result.record.has_value());
+        detail::CloudConflictStore store(f.contextRoot() / "records");
+        const auto raw = store.readRecord(f.source.context(), f.rawRef(*result.record));
+        REQUIRE(raw.record.has_value());
+        CHECK(raw.record->localBytes == plaintext);
+        u26ConflictCheckManifest(f.contextRoot() / "records", *raw.record);
+        f.noSourceWrites();
+    }
+}
+
+TEST_CASE("U26 coordinator: missing unavailable and partial observations stay distinct") {
+    using Mode = U26CoordinatorHttpServer::Mode;
+    struct Case { Mode mode; bool localMissing; CloudReadState cloudState; CloudReadError error; CloudComparison comparison; };
+    const std::array<Case, 6> cases{{
+        {Mode::Missing, false, CloudReadState::Missing, CloudReadError::None, CloudComparison::OneSideMissing},
+        {Mode::Present, true, CloudReadState::Present, CloudReadError::None, CloudComparison::OneSideMissing},
+        {Mode::Missing, true, CloudReadState::Missing, CloudReadError::None, CloudComparison::BothMissing},
+        {Mode::ServerError, false, CloudReadState::Failed, CloudReadError::HttpStatus, CloudComparison::InspectionIncomplete},
+        {Mode::ShortBody, false, CloudReadState::Failed, CloudReadError::Truncated, CloudComparison::InspectionIncomplete},
+        {Mode::Timeout, false, CloudReadState::Unavailable, CloudReadError::TransportUnavailable, CloudComparison::InspectionIncomplete}
+    }};
+    for (const auto& item : cases) {
+        INFO("HTTP mode=", static_cast<int>(item.mode), " local missing=", item.localMissing);
+        U26CoordinatorFixture f(true, 120);
+        f.equal(u26CoordinatorToken(30));
+        const auto cursor = cloudFileBytes(f.cursorPath());
+        const auto oldRecords = u26ConflictTree(f.contextRoot() / "records");
+        if (item.localMissing) REQUIRE(std::filesystem::remove(f.source.slot));
+        f.server.set(f.source.a, item.mode);
+        const auto result = f.api->prepareCloudSync(3, u26CoordinatorToken(31));
+        CHECK(result.comparison == item.comparison);
+        CHECK(result.cloud.state == item.cloudState);
+        CHECK(result.cloud.error == item.error);
+        CHECK(result.local.state == (item.localMissing ? CloudReadState::Missing : CloudReadState::Present));
+        CHECK(cloudFileBytes(f.cursorPath()) == cursor);
+        CHECK(u26ConflictTree(f.contextRoot() / "records") == oldRecords); // No forged equal pair.
+        if (item.comparison == CloudComparison::OneSideMissing) {
+            CHECK(result.code == CloudCoordinatorCode::Complete);
+            CHECK(result.preservation == CloudPreservation::Complete);
+            REQUIRE(result.preparation.has_value());
+            const auto observed = f.contextRoot() / "operations" / u26CoordinatorToken(31) / "observed.bin";
+            CHECK(cloudFileBytes(observed) == f.source.a);
+            CHECK_FALSE(result.record.has_value());
+            const auto presentVariant = item.localMissing ? CloudPreservedVariant::Cloud : CloudPreservedVariant::Local;
+            const auto missingVariant = item.localMissing ? CloudPreservedVariant::Local : CloudPreservedVariant::Cloud;
+            const auto copy = f.api->exportCloudHistory(u26CoordinatorChoice(result, presentVariant), u26CoordinatorToken(32));
+            REQUIRE(copy.code == CloudCoordinatorCode::Complete);
+            CHECK(cloudFileBytes(std::filesystem::u8path(copy.path)) == f.source.a);
+            const auto beforeMissingExport = u26ConflictTree(f.coordinatorRoot);
+            const auto refused = f.api->exportCloudHistory(u26CoordinatorChoice(result, missingVariant), u26CoordinatorToken(33));
+            CHECK(refused.code == CloudCoordinatorCode::MissingVariant);
+            CHECK(u26ConflictTree(f.coordinatorRoot) == beforeMissingExport);
+        } else if (item.comparison == CloudComparison::BothMissing) {
+            CHECK(result.code == CloudCoordinatorCode::Complete);
+            CHECK(result.preservation == CloudPreservation::None);
+            CHECK_FALSE(result.record.has_value());
+            CHECK_FALSE(std::filesystem::exists(f.contextRoot() / "operations" / u26CoordinatorToken(31) / "observed.bin"));
+        } else {
+            CHECK(result.code == CloudCoordinatorCode::InspectionIncomplete);
+            CHECK(result.preservation == CloudPreservation::None);
+            CHECK(result.cloud.sha256.empty());
+            CHECK_FALSE(result.record.has_value());
+        }
+        if (item.mode == Mode::Timeout) CHECK(f.server.entered.load());
+        CHECK(f.provider->localReads == 2);
+        CHECK(f.provider->cloudReads == 2);
+        CHECK(f.server.gets.load() == 2);
+        if (item.localMissing) CHECK_FALSE(std::filesystem::exists(f.source.slot));
+        else CHECK(cloudFileBytes(f.source.slot) == f.source.a);
+        f.noSourceWrites();
+        f.server.stop();
+        CHECK(f.server.joined());
+    }
+    U26CoordinatorFixture steamFixture(false);
+    U26SnapshotSteam sdk;
+    steamFixture.source.manager.setSaveProvider(std::make_unique<CloudSaveProvider>(&sdk));
+    steamFixture.provider = nullptr; // Explicitly no dangling forwarding pointer use.
+    steamFixture.bind();
+    const auto missing = steamFixture.api->prepareCloudSync(3, u26CoordinatorToken(34));
+    CHECK(missing.code == CloudCoordinatorCode::InspectionIncomplete);
+    CHECK(missing.cloud.state == CloudReadState::Unavailable);
+    CHECK(missing.cloud.error == CloudReadError::IndeterminateMissing);
+    CHECK(missing.comparison == CloudComparison::InspectionIncomplete);
+    CHECK(sdk.writes == 0);
+    CHECK(sdk.deletes == 0);
+    CHECK(cloudFileBytes(steamFixture.source.slot) == steamFixture.source.a);
+}
+
+TEST_CASE("U26 coordinator: configuration changes invalidate prior selections") {
+    for (int action = 0; action < 7; ++action) {
+        INFO("configuration action=", action);
+        U26CoordinatorFixture f;
+        const auto fork = u26CoordinatorFork(f);
+        const auto choice = u26CoordinatorChoice(fork);
+        const auto oldContext = f.contextRoot();
+        const auto oldTree = u26ConflictTree(oldContext);
+        switch (action) {
+        case 0: {
+            auto otherKey = f.source.key; otherKey[0] ^= 0x80;
+            f.source.manager.setEncryptionKey(otherKey.data()); break;
+        }
+        case 1: f.source.manager.clearEncryptionKey(); break;
+        case 2: f.source.manager.setEncryptionPolicy(SaveEncryptionPolicy::Compatible); break;
+        case 3: f.source.manager.init(TestPaths::withTrailingSeparator(f.source.root)); break;
+        case 4:
+            f.source.manager.setSaveProvider(std::make_unique<U26CountingSnapshotProvider>(f.server.endpoint()));
+            f.provider = nullptr; break;
+        case 5:
+            REQUIRE(f.source.manager.configureCloudSync(f.server.endpoint()));
+            f.provider = nullptr; break;
+        case 6: f.source.manager.registerMigration(4, 5, [](json data) { return data; }); break;
+        }
+        const int gets = f.server.gets.load();
+        CHECK(f.api->exportCloudHistory(choice, u26CoordinatorToken(40)).code == CloudCoordinatorCode::StaleContext);
+        CHECK(f.api->checkCloudPublication(choice, CloudSide::Cloud).code == CloudCoordinatorCode::StaleContext);
+        CHECK(f.api->prepareCloudSync(3, u26CoordinatorToken(41)).code == CloudCoordinatorCode::NotConfigured);
+        CHECK(f.api->bindCloudCoordinator(f.binding()).code == CloudCoordinatorCode::ContextChanged);
+        CHECK(f.server.gets.load() == gets);
+        CHECK(u26ConflictTree(oldContext) == oldTree);
+        f.epoch = 2;
+        f.bind();
+        CHECK(u26ConflictTree(oldContext) == oldTree);
+        CHECK(f.server.writes.load() == 0);
+        CHECK(f.server.deletes.load() == 0);
+    }
+    {
+        U26CoordinatorFixture f;
+        const auto fork = u26CoordinatorFork(f);
+        NullSteamBackend unavailable;
+        struct RestoreSteam {
+            ISteamBackend* previous = BackendRegistry::instance().getSteamBackend();
+            ~RestoreSteam() { BackendRegistry::instance().setSteamBackend(previous); }
+        } restore;
+        BackendRegistry::instance().setSteamBackend(&unavailable);
+        CHECK_FALSE(f.source.manager.configureCloudSync("steam"));
+        CHECK(f.api->checkCloudPublication(u26CoordinatorChoice(fork), CloudSide::Cloud).code ==
+              CloudCoordinatorCode::UnsupportedConditionalWrite);
+        f.noSourceWrites();
+    }
+    {
+        U26CoordinatorFixture f(false);
+        auto oldDeaths = std::make_shared<int>(0);
+        auto rejectedDeaths = std::make_shared<int>(0);
+        f.provider->destructions = oldDeaths;
+        auto* original = f.source.manager.getSaveProvider();
+        size_t migrationCalls = 0;
+        f.source.manager.registerMigration(4, 5, [&](json data) {
+            if (++migrationCalls == 1) {
+                auto replacement = std::make_unique<U26CountingSnapshotProvider>(f.server.endpoint());
+                replacement->destructions = rejectedDeaths;
+                f.source.manager.setSaveProvider(std::move(replacement));
+                f.source.manager.clearEncryptionKey();
+                f.source.manager.setEncryptionPolicy(SaveEncryptionPolicy::Compatible);
+                CHECK(f.source.manager.getSaveProvider() == original);
+                CHECK(*oldDeaths == 0);
+                CHECK(f.source.manager.isEncryptionEnabled());
+                CHECK(f.source.manager.getEncryptionPolicy() == SaveEncryptionPolicy::RequireEncrypted);
+            }
+            return data;
+        });
+        f.bind();
+        const auto bytes = encryptCloudTestBytes(R"({"schema_version":4,"data":{"chapter":1}})");
+        f.setSides(bytes, bytes);
+        const auto result = f.api->prepareCloudSync(3, u26CoordinatorToken(42));
+        CHECK(result.code == CloudCoordinatorCode::ContextChanged);
+        CHECK(migrationCalls >= 1);
+        CHECK(*oldDeaths == 0);
+        CHECK(*rejectedDeaths == 1);
+        CHECK(f.source.manager.getSaveProvider() == original);
+        CHECK_FALSE(std::filesystem::exists(f.cursorPath()));
+        if (std::filesystem::exists(f.contextRoot() / "records"))
+            CHECK(std::filesystem::is_empty(f.contextRoot() / "records"));
+        f.noSourceWrites();
+    }
+}
+
+TEST_CASE("U26 coordinator: duplicate operation tokens never rerun observations") {
+    U26CoordinatorFixture f;
+    const auto first = f.equal(u26CoordinatorToken(50));
+    f.setSides(f.source.b, f.source.b);
+    const auto second = f.api->prepareCloudSync(3, u26CoordinatorToken(51));
+    REQUIRE(second.code == CloudCoordinatorCode::Complete);
+    REQUIRE(second.ancestor == CloudAncestorSelection::Selected);
+    const auto selectedB = cloudFileBytes(f.cursorPath());
+    f.setSides(f.source.c, f.source.c);
+    const auto tree = u26ConflictTree(f.coordinatorRoot);
+    for (int i = 0; i < 2; ++i) {
+        const auto replay = f.api->prepareCloudSync(3, u26CoordinatorToken(50));
+        CHECK(replay.code == CloudCoordinatorCode::Replayed);
+        CHECK(replay.ancestor == CloudAncestorSelection::Superseded);
+        REQUIRE(replay.preparation.has_value());
+        CHECK(replay.preparation->receiptSha256 == first.preparation->receiptSha256);
+        CHECK(cloudFileBytes(f.cursorPath()) == selectedB);
+        CHECK(u26ConflictTree(f.coordinatorRoot) == tree);
+    }
+    CHECK(f.provider->localReads == 2);
+    CHECK(f.provider->cloudReads == 2);
+    CHECK(f.api->prepareCloudSync(4, u26CoordinatorToken(50)).code == CloudCoordinatorCode::TokenMismatch);
+    CHECK(u26ConflictTree(f.coordinatorRoot) == tree);
+    const auto emptyReservation = f.contextRoot() / "operations" / u26CoordinatorToken(52);
+    REQUIRE(std::filesystem::create_directory(emptyReservation));
+    const auto incompleteTree = u26ConflictTree(f.coordinatorRoot);
+    CHECK(f.api->prepareCloudSync(3, u26CoordinatorToken(52)).code == CloudCoordinatorCode::Indeterminate);
+    CHECK(u26ConflictTree(f.coordinatorRoot) == incompleteTree);
+    const auto receipt = f.contextRoot() / "operations" / u26CoordinatorToken(50) / "receipt.json";
+    const auto original = cloudFileBytes(receipt);
+    REQUIRE_FALSE(original.empty());
+    replaceCloudFileBytes(receipt, "{\"schema_version\":1,\"schema_version\":99}");
+    const auto corruptTree = u26ConflictTree(f.coordinatorRoot);
+    CHECK(f.api->prepareCloudSync(3, u26CoordinatorToken(50)).code == CloudCoordinatorCode::Indeterminate);
+    CHECK(u26ConflictTree(f.coordinatorRoot) == corruptTree);
+    replaceCloudFileBytes(receipt, original);
+    const auto listed = f.api->listCloudPreparations(3);
+    CHECK(listed.code == CloudCoordinatorCode::Complete);
+    CHECK(listed.preparations.size() == 2);
+    CHECK(listed.incompleteOperations == 1);
+    CHECK(f.provider->localReads == 2);
+    CHECK(f.provider->cloudReads == 2);
+    f.noSourceWrites();
+    {
+        U26CoordinatorFixture bounded;
+        const auto operations = bounded.contextRoot() / "operations";
+        std::filesystem::create_directories(operations);
+        for (unsigned n = 0; n < 128; ++n)
+            REQUIRE(std::filesystem::create_directory(operations / u26CoordinatorToken(1000 + n)));
+        const auto full = u26ConflictTree(bounded.coordinatorRoot);
+        CHECK(bounded.api->prepareCloudSync(3, u26CoordinatorToken(3000)).code == CloudCoordinatorCode::CapacityExceeded);
+        CHECK(u26ConflictTree(bounded.coordinatorRoot) == full);
+        CHECK(bounded.provider->localReads == 0);
+        CHECK(bounded.provider->cloudReads == 0);
+    }
+}
+
+TEST_CASE("U26 coordinator: historical export keeps exact bytes and works offline") {
+    U26CoordinatorFixture f;
+    const auto fork = u26CoordinatorFork(f);
+    const auto records = u26ConflictTree(f.contextRoot() / "records");
+    const auto selected = cloudFileBytes(f.cursorPath());
+    f.server.stop();
+    REQUIRE(f.server.joined());
+    const int gets = f.server.gets.load();
+    unsigned operation = 60;
+    for (auto variant : {CloudPreservedVariant::Local, CloudPreservedVariant::Cloud, CloudPreservedVariant::Base}) {
+        const auto token = u26CoordinatorToken(operation++);
+        const auto choice = u26CoordinatorChoice(fork, variant);
+        const auto result = f.api->exportCloudHistory(choice, token);
+        REQUIRE(result.code == CloudCoordinatorCode::Complete);
+        REQUIRE_FALSE(result.path.empty());
+        const auto path = std::filesystem::u8path(result.path);
+        const auto expected = variant == CloudPreservedVariant::Local ? f.source.b :
+                              variant == CloudPreservedVariant::Cloud ? f.source.c : f.source.a;
+        CHECK(cloudFileBytes(path) == expected);
+        CHECK(result.sha256 == u26ConflictSha(expected));
+        CHECK(result.byteCount == expected.size());
+        CHECK(path.parent_path() == f.contextRoot() / "exports" / token);
+        CHECK(path.filename() == "save.bin");
+        const auto before = u26ConflictTree(f.coordinatorRoot);
+        const auto modified = std::filesystem::last_write_time(path);
+        const auto replay = f.api->exportCloudHistory(choice, token);
+        CHECK(replay.code == CloudCoordinatorCode::Replayed);
+        CHECK(replay.path == result.path);
+        CHECK(replay.sha256 == result.sha256);
+        CHECK(std::filesystem::last_write_time(path) == modified);
+        CHECK(u26ConflictTree(f.coordinatorRoot) == before);
+        auto other = choice;
+        other.variant = variant == CloudPreservedVariant::Local ? CloudPreservedVariant::Cloud : CloudPreservedVariant::Local;
+        CHECK(f.api->exportCloudHistory(other, token).code == CloudCoordinatorCode::TokenMismatch);
+        CHECK(u26ConflictTree(f.coordinatorRoot) == before);
+    }
+    const auto occupied = f.contextRoot() / "exports" / u26CoordinatorToken(63);
+    REQUIRE(std::filesystem::create_directory(occupied));
+    replaceCloudFileBytes(occupied / "save.bin", "unrelated destination sentinel");
+    const auto beforeOccupied = u26ConflictTree(f.coordinatorRoot);
+    CHECK(f.api->exportCloudHistory(u26CoordinatorChoice(fork), u26CoordinatorToken(63)).code == CloudCoordinatorCode::Indeterminate);
+    CHECK(u26ConflictTree(f.coordinatorRoot) == beforeOccupied);
+    CHECK(cloudFileBytes(f.cursorPath()) == selected);
+    CHECK(u26ConflictTree(f.contextRoot() / "records") == records);
+    CHECK(f.server.gets.load() == gets);
+    CHECK(f.provider->localReads == 2);
+    CHECK(f.provider->cloudReads == 2);
+    f.noSourceWrites();
+    f.source.checkSources();
+}
+
+TEST_CASE("U26 coordinator: export rechecks selections and retains failed attempts") {
+    for (int damage = 0; damage < 4; ++damage) {
+        INFO("saved selection damage=", damage);
+        U26CoordinatorFixture f;
+        const auto fork = u26CoordinatorFork(f);
+        auto choice = u26CoordinatorChoice(fork);
+        const auto recordPath = f.contextRoot() / "records" / fork.record->id;
+        if (damage == 0) replaceCloudFileBytes(recordPath / "manifest.json", "{invalid-json");
+        if (damage == 1) replaceCloudFileBytes(recordPath / "local.bin", "changed original");
+        if (damage == 2) choice.preparation.receiptSha256 = std::string(64, '0');
+        if (damage == 3) {
+            choice.variant = CloudPreservedVariant::Base;
+            REQUIRE(std::filesystem::remove(recordPath / "base.bin"));
+        }
+        const auto before = u26ConflictTree(f.coordinatorRoot);
+        const auto result = f.api->exportCloudHistory(choice, u26CoordinatorToken(70));
+        CHECK(result.code == CloudCoordinatorCode::InvalidInput);
+        CHECK(result.path.empty());
+        CHECK(u26ConflictTree(f.coordinatorRoot) == before);
+        CHECK(f.provider->localReads == 2);
+        CHECK(f.provider->cloudReads == 2);
+        f.noSourceWrites();
+    }
+    const std::array<detail::SaveWriteStage, 6> stages{{detail::SaveWriteStage::CreateTemporary,
+        detail::SaveWriteStage::Write, detail::SaveWriteStage::WriteProgress,
+        detail::SaveWriteStage::Flush, detail::SaveWriteStage::Close, detail::SaveWriteStage::Replace}};
+    for (auto stage : stages) {
+        INFO("export payload failure stage=", static_cast<int>(stage));
+        U26CoordinatorFixture f;
+        const auto fork = u26CoordinatorFork(f);
+        const auto selected = cloudFileBytes(f.cursorPath());
+        const auto records = u26ConflictTree(f.contextRoot() / "records");
+        const auto exportDirectory = f.contextRoot() / "exports" / u26CoordinatorToken(71);
+        U26SelectedWriteFailure fault{stage, exportDirectory, 0, 2, 0}; // request first, payload second
+        CloudHistoryExportResult result;
+        { detail::ScopedSaveWriteTestHook hook({&U26SelectedWriteFailure::checkpoint, &fault});
+          result = f.api->exportCloudHistory(u26CoordinatorChoice(fork), u26CoordinatorToken(71)); }
+        REQUIRE(fault.hits == 1);
+        CHECK(result.code == CloudCoordinatorCode::IoFailed);
+        CHECK(result.path.empty());
+        CHECK_FALSE(std::filesystem::exists(exportDirectory / "receipt.json"));
+        const auto failedTree = u26ConflictTree(f.coordinatorRoot);
+        CHECK(f.api->exportCloudHistory(u26CoordinatorChoice(fork), u26CoordinatorToken(71)).code == CloudCoordinatorCode::Indeterminate);
+        CHECK(u26ConflictTree(f.coordinatorRoot) == failedTree);
+        CHECK(cloudFileBytes(f.cursorPath()) == selected);
+        CHECK(u26ConflictTree(f.contextRoot() / "records") == records);
+        f.noSourceWrites();
+    }
+    {
+        U26CoordinatorFixture f;
+        const auto fork = u26CoordinatorFork(f);
+        const auto directory = f.contextRoot() / "exports" / u26CoordinatorToken(72);
+        U26SelectedWriteFailure fault{detail::SaveWriteStage::Replace, directory, 0, 3, 0};
+        CloudHistoryExportResult result;
+        { detail::ScopedSaveWriteTestHook hook({&U26SelectedWriteFailure::checkpoint, &fault});
+          result = f.api->exportCloudHistory(u26CoordinatorChoice(fork), u26CoordinatorToken(72)); }
+        REQUIRE(fault.hits == 1);
+        CHECK(result.code == CloudCoordinatorCode::Indeterminate);
+        CHECK(cloudFileBytes(directory / "save.bin") == f.source.b);
+        CHECK_FALSE(std::filesystem::exists(directory / "receipt.json"));
+        const auto before = u26ConflictTree(f.coordinatorRoot);
+        CHECK(f.api->exportCloudHistory(u26CoordinatorChoice(fork), u26CoordinatorToken(72)).code == CloudCoordinatorCode::Indeterminate);
+        CHECK(u26ConflictTree(f.coordinatorRoot) == before);
+        f.noSourceWrites();
+    }
+    {
+        U26CoordinatorFixture f;
+        const auto fork = u26CoordinatorFork(f);
+        U26PostPublishHashFailure fault;
+        fault.target = f.contextRoot() / "exports" / u26CoordinatorToken(73) / "receipt.json";
+        CloudHistoryExportResult result;
+        {
+            U26ScopedCryptoOverride crypto(&fault);
+            detail::ScopedSaveWriteTestHook hook({&U26PostPublishHashFailure::checkpoint, &fault});
+            result = f.api->exportCloudHistory(u26CoordinatorChoice(fork), u26CoordinatorToken(73));
+        }
+        REQUIRE(fault.hits == 1);
+        CHECK(result.code == CloudCoordinatorCode::Indeterminate);
+        CHECK(cloudFileBytes(fault.target.parent_path() / "save.bin") == f.source.b);
+        CHECK(cloudFileBytes(fault.target) == fault.candidate);
+        f.noSourceWrites();
+    }
+}
+
+TEST_CASE("U26 coordinator: stale selected choices never write current endpoints") {
+    for (int change = 0; change < 4; ++change) {
+        INFO("observed change=", change);
+        U26CoordinatorFixture f;
+        const auto fork = u26CoordinatorFork(f);
+        const auto before = u26ConflictTree(f.coordinatorRoot);
+        if (change == 0) f.setSides(f.source.c, f.source.c);
+        if (change == 1) f.setSides(f.source.b, f.source.b);
+        if (change == 2) f.server.set("", U26CoordinatorHttpServer::Mode::Missing);
+        if (change == 3) f.server.set("", U26CoordinatorHttpServer::Mode::ServerError);
+        const auto sourceBefore = cloudFileBytes(f.source.slot);
+        const auto remoteBefore = f.server.bytes();
+        const auto result = f.api->checkCloudPublication(u26CoordinatorChoice(fork), CloudSide::Cloud);
+        CHECK(result.code == (change == 3 ? CloudCoordinatorCode::InspectionIncomplete : CloudCoordinatorCode::StaleObservation));
+        CHECK(f.provider->localReads == 3);
+        CHECK(f.provider->cloudReads == 3);
+        CHECK(cloudFileBytes(f.source.slot) == sourceBefore);
+        CHECK(f.server.bytes() == remoteBefore);
+        CHECK(u26ConflictTree(f.coordinatorRoot) == before);
+        f.noSourceWrites();
+    }
+}
+
+TEST_CASE("U26 coordinator: optional interface is queried through the registry") {
+    static_assert(std::is_abstract<ICloudSaveCoordinator>::value, "optional API must stay pure virtual");
+    static_assert(std::has_virtual_destructor<ICloudSaveCoordinator>::value, "optional API requires virtual destruction");
+    U26LegacySaveManager legacy;
+    {
+        U26CoordinatorRegistryGuard registration(&legacy);
+        CHECK(dynamic_cast<ICloudSaveCoordinator*>(BackendRegistry::instance().getSaveManager()) == nullptr);
+    }
+    U26CoordinatorFixture f(false);
+    CHECK(BackendRegistry::instance().getSaveManager() == &f.source.manager);
+    REQUIRE(dynamic_cast<ICloudSaveCoordinator*>(BackendRegistry::instance().getSaveManager()) == f.api);
+    const auto pristine = u26ConflictTree(f.coordinatorRoot);
+    CHECK(f.api->prepareCloudSync(3, u26CoordinatorToken(90)).code == CloudCoordinatorCode::NotConfigured);
+    CHECK(u26ConflictTree(f.coordinatorRoot) == pristine);
+    CHECK(f.provider->localReads == 0);
+    CHECK(f.provider->cloudReads == 0);
+    f.source.manager.setSaveProvider(std::make_unique<SingleReadCloudProvider>());
+    f.provider = nullptr;
+    f.bind();
+    const auto bound = u26ConflictTree(f.coordinatorRoot);
+    CHECK(f.api->prepareCloudSync(3, u26CoordinatorToken(91)).code == CloudCoordinatorCode::UnsupportedSnapshot);
+    CHECK(u26ConflictTree(f.coordinatorRoot) == bound);
+    CHECK(f.server.gets.load() == 0);
+    CHECK(f.server.writes.load() == 0);
+}
+
+namespace {
+// Corrupt only the typed metadata after a real disk/HTTP read. This is an
+// adversarial provider contract test, not evidence of a real backend defect.
+class U26MalformedSnapshotProvider final : public ISaveProvider, public ICloudSaveSnapshotTransport {
+public:
+    U26CountingSnapshotProvider real;
+    int damage;
+    U26MalformedSnapshotProvider(const std::string& endpoint, int mode) : real(endpoint), damage(mode) {}
+    CloudSnapshot readSnapshot(CloudSide side, const std::string& path) override {
+        auto result = real.readSnapshot(side, path);
+        if (side == CloudSide::Cloud) {
+            result.bytes.clear(); result.state = CloudReadState::Missing;
+            result.observedBytes = 0; result.error = CloudReadError::None;
+            if (damage == 0) result.error = CloudReadError::Io;
+            if (damage == 1) result.observedBytes = 3;
+            if (damage == 2) result.state = static_cast<CloudReadState>(255);
+        }
+        return result;
+    }
+    CloudConditionalWriteSupport conditionalWriteSupport(CloudSide) const override { return CloudConditionalWriteSupport::Unsupported; }
+    std::string readFile(const std::string& p) override { return real.readFile(p); }
+    bool writeFile(const std::string& p, const std::string& b) override { return real.writeFile(p,b); }
+    bool deleteFile(const std::string& p) override { return real.deleteFile(p); }
+    std::vector<std::string> listFiles(const std::string& p) override { return real.listFiles(p); }
+    bool supportsCloudSync() const override { return true; }
+    bool pushToCloud(const std::string& p) override { return real.pushToCloud(p); }
+    bool pullFromCloud(const std::string& p) override { return real.pullFromCloud(p); }
+};
+}
+TEST_CASE("U26 coordinator review: malformed typed observations never become missing") {
+    for (int damage = 0; damage < 3; ++damage) {
+        INFO("malformed typed observation=", damage);
+        U26CoordinatorFixture f(false);
+        auto owned = std::make_unique<U26MalformedSnapshotProvider>(f.server.endpoint(), damage);
+        auto* watched = owned.get();
+        f.source.manager.setSaveProvider(std::move(owned)); f.provider = nullptr;
+        f.bind();
+        const auto result = f.api->prepareCloudSync(3, u26CoordinatorToken(401));
+        CHECK(result.code == CloudCoordinatorCode::InspectionIncomplete);
+        CHECK(result.comparison == CloudComparison::InspectionIncomplete);
+        CHECK(result.preservation == CloudPreservation::None);
+        CHECK_FALSE(result.record.has_value());
+        CHECK_FALSE(std::filesystem::exists(f.cursorPath()));
+        CHECK_FALSE(std::filesystem::exists(f.contextRoot() / "operations" / u26CoordinatorToken(401) / "observed.bin"));
+        CHECK(watched->real.localReads == 1);
+        CHECK(watched->real.cloudReads == 1);
+        CHECK(watched->real.legacyReads == 0);
+        CHECK(watched->real.writes == 0);
+        CHECK(f.server.writes.load() == 0);
+        CHECK(f.server.deletes.load() == 0);
+    }
+}
+TEST_CASE("U26 coordinator review: strict receipt schema rejects externally rehashed malformed bytes") {
+    const std::array<std::string, 4> mutations{{"duplicate", "unknown", "oversized", "scope"}};
+    for (const auto& mutation : mutations) {
+        INFO(mutation);
+        U26CoordinatorFixture f;
+        const auto fork = u26CoordinatorFork(f);
+        const auto path = f.contextRoot() / "operations" / fork.preparation->token / "receipt.json";
+        auto doc = json::parse(cloudFileBytes(path));
+        std::string raw;
+        if (mutation == "duplicate") raw = "{\"schema_version\":1," + doc.dump().substr(1);
+        if (mutation == "unknown") { doc["payload_path"] = "../live-slot"; raw = doc.dump(); }
+        if (mutation == "oversized") { doc["padding"] = std::string(16384, 'p'); raw = doc.dump(); }
+        if (mutation == "scope") { doc["context"]["scope_id"] = std::string(32, 'f'); raw = doc.dump(); }
+        replaceCloudFileBytes(path, raw);
+        auto selection = u26CoordinatorChoice(fork);
+        selection.preparation.receiptSha256 = u26ConflictSha(raw); // force actual schema validation
+        const auto before = u26ConflictTree(f.coordinatorRoot);
+        const auto result = f.api->exportCloudHistory(selection, u26CoordinatorToken(402));
+        CHECK(result.code == CloudCoordinatorCode::InvalidInput);
+        CHECK(result.path.empty());
+        CHECK(u26ConflictTree(f.coordinatorRoot) == before);
+        f.noSourceWrites();
+    }
+}
+TEST_CASE("U26 coordinator review: unknown bytes and unfinished exports consume capacity") {
+    {
+        U26CoordinatorFixture f;
+        const auto path = f.contextRoot() / "exports" / "unknown.bin";
+        replaceCloudFileBytes(path, "x");
+        std::filesystem::resize_file(path, 256u * 1024u * 1024u);
+        const auto result = f.api->prepareCloudSync(3, u26CoordinatorToken(403));
+        CHECK(result.code == CloudCoordinatorCode::CapacityExceeded);
+        CHECK(std::filesystem::file_size(path) == 256u * 1024u * 1024u);
+        CHECK(std::filesystem::is_empty(f.contextRoot() / "operations"));
+        CHECK(f.provider->localReads == 0);
+        CHECK(f.provider->cloudReads == 0);
+        f.noSourceWrites();
+    }
+    {
+        U26CoordinatorFixture f;
+        const auto fork = u26CoordinatorFork(f);
+        for (unsigned n = 0; n < 128; ++n)
+            REQUIRE(std::filesystem::create_directory(f.contextRoot() / "exports" / u26CoordinatorToken(500+n)));
+        const auto before = u26ConflictTree(f.coordinatorRoot);
+        const auto result = f.api->exportCloudHistory(u26CoordinatorChoice(fork), u26CoordinatorToken(404));
+        CHECK(result.code == CloudCoordinatorCode::CapacityExceeded);
+        CHECK(u26ConflictTree(f.coordinatorRoot) == before);
+        f.noSourceWrites();
+    }
 }

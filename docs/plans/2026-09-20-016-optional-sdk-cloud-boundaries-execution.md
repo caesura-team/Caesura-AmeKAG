@@ -132,3 +132,16 @@ CloudConflictStore 现已实现 owner 限定的不可变本地观察记录：在
 原下载器超时用例再次实际复现：blob headers阻塞返回TimeoutError，但报告seconds=0.093、deadline_exceeded=false。本机Python3.12.9的monotonic使用GetTickCount64、分辨率15.625ms；perf_counter使用单调且不可调的QueryPerformanceCounter、分辨率100ns。尝试移除最后预算内的socket timeout后，Windows阻塞读取约0.8秒才返回，原四个时间断言失败；此尝试保留并撤回，未改预算或断言。最终只将七处预算/elapsed观察统一为perf_counter，保留原socket超时和owned watchdog。
 
 最终Windows原14方法通过（CTest4.14秒），Linux原14方法通过（3.247秒），另保留原header方法三个真实传输失败报告，实际0.105497/0.102813/0.105371秒均deadline_exceeded=true。合法完整传输和凭据隔离、残留字节/摘要负控仍由同一未修改suite执行。根复核两份完整五场景/23child报告共162引用及原命令流，目标修复收据01799a69e9fd05b1f25e8d564bd08a6a32b197d97bb9e3134cfbd0a4f5d29192。新修复后的完整门禁尚待执行，不能把这些定向通过拼接成35dc完整PASS。B2/B3协调器、历史导出、真实SDK/账号与条件云写入边界继续按计划未完成。
+
+
+### B2/B3 当前策略协调器与历史导出（2026-09-24）
+
+新增纯虚可选ICloudSaveCoordinator，由Registry已有ISaveManager查询；无新后台线程/服务槽位。SaveManager保留旧push/pull行为，增加配置撤销和重入保护。内部CloudCoordinatorState使用普通目录/OS身份校验、固定严格JSON、排他token、现有真实原子writer与B1 store，保存原始观察和外部SHA，receipt先于祖先游标发布。历史导出只产生受控新副本；checkCloudPublication在选择或观察过期时拒绝，未过期也只返回UnsupportedConditionalWrite，不调用旧writer。账户scope/验证epoch由宿主明确提供，不推测账号。
+
+初始六方法Unsupported骨架构建成功；冻结12个新回归实际12失败（296断言/13失败），原40云存档方法2594断言通过。根保留原二进制、源锁和流；失败主要在绑定前置，未把更深断言写成已执行。第一实现对同一12方法实际通过3621断言，原40方法也通过。随后新增3个审查用例：严格元数据与未知内容/未完成导出容量均通过；恶意provider在真实磁盘/HTTP读取后篡改typed Missing元数据，实际复现1方法9断言失败，错误地当作OneSideMissing并写observed.bin。生产修正将矛盾状态、错误/字节计数和未知枚举归为Invalid/MalformedMetadata，禁止缺失语义与保全晋升。
+
+修正后Windows原12方法3621断言及新3方法490断言全通过；WSL Linux15/15、4111断言通过，存储/云/原子写/迁移/绑定/黄金存档邻近165/165、9624断言通过。根重核源码、命令、原始流，owned退出均0、无超时强杀，Linuxrun SHA256 ee9e3d1479a29a712fbea342167869670bf5661a080e7271644b9abe3838cdb9，Windows审查GREEN run SHA256 676d37840af05aba62bacb5887edec7e3ce9167ba08e78e00f4b17c3fbf64ef4。Windows发现1455、Linux发现1439；筛选未选中的方法不算执行skip或完整通过。
+
+桌面C++门槛按新增15个无平台条件方法提升15（Win1455/Linux1411/macOS1298），保留原平台保守下界；实际Linux发现1439另外记录，不能将下界冒充发现数。CTest仍58。生成api-stats与手册同步两个可选接口，纯虚方法452、接口头40来自源码扫描，不是覆盖率。
+
+本批尚缺协调器receipt/祖先游标的独立child终止/重开五场景、最终完整Debug门禁及后续审查。现有B1五场景23child只证明底层opaque记录，不代替B2/B3的CAES/选择/receipt恢复。真实Steam账号、Live2D运行与SDK ON、远端CAS、断电持久性及整个U26继续未完成。

@@ -9,6 +9,7 @@
 // ===========================================================================
 
 #include "SaveManager.h"
+#include "CloudCoordinatorState.h"
 #include "api/ISaveProvider.h"
 #include "api/ICloudSaveTransport.h"
 #include "CloudSaveProvider.h"
@@ -57,7 +58,7 @@ void secureErase(void* memory, size_t size) noexcept {
 #endif
 const char* SaveManager::ENGINE_VERSION = CAESURA_VERSION;
 
-SaveManager::SaveManager() = default;
+SaveManager::SaveManager() : m_coordinator(std::make_unique<detail::CloudCoordinatorState>()) {}
 SaveManager::~SaveManager() {
     secureErase(m_encryptKey, sizeof(m_encryptKey));
     m_keySet = false;
@@ -68,11 +69,15 @@ SaveManager::~SaveManager() {
 // ============================================================================
 
 void SaveManager::setSaveProvider(std::unique_ptr<ISaveProvider> provider) {
+    if (!m_coordinator->allowMutation()) return;
+    m_coordinator->invalidate();
     m_saveProvider = std::move(provider);
     printf("[SaveManager] Custom save provider installed.\n");
 }
 
 void SaveManager::init(const std::string& saveDir) {
+    if (!m_coordinator->allowMutation()) return;
+    m_coordinator->invalidate();
     m_saveDir = saveDir;
 
     if (!m_saveDir.empty() && m_saveDir.back() != '/' && m_saveDir.back() != '\\') {
@@ -112,8 +117,11 @@ void SaveManager::init(const std::string& saveDir) {
 // call names wins for that call. No code path syncs implicitly, so simply
 // configuring an endpoint never moves or destroys a save.
 bool SaveManager::configureCloudSync(const std::string& endpoint) {
+    if (!m_coordinator->allowMutation()) return false;
     if (endpoint.empty()) {
-        m_saveProvider = std::make_unique<LocalFileSaveProvider>();
+        auto replacement = std::make_unique<LocalFileSaveProvider>();
+        m_coordinator->invalidate();
+        m_saveProvider = std::move(replacement);
         return true;
     }
     if (endpoint == "steam" || endpoint == "steam://" || endpoint == "steamcloud") {
@@ -133,12 +141,16 @@ bool SaveManager::configureCloudSync(const std::string& endpoint) {
             printf("[SaveManager] Cloud sync NOT configured: Steam backend unavailable\n");
             return false;
         }
-        m_saveProvider = std::make_unique<CloudSaveProvider>(steam);
+        auto replacement = std::make_unique<CloudSaveProvider>(steam);
+        m_coordinator->invalidate();
+        m_saveProvider = std::move(replacement);
         printf("[SaveManager] Cloud sync configured: Steam Remote Storage "
                "(cloud is the save store; local files are not read)\n");
         return true;
     }
-    m_saveProvider = std::make_unique<HttpCloudSaveProvider>(endpoint);
+    auto replacement = std::make_unique<HttpCloudSaveProvider>(endpoint);
+        m_coordinator->invalidate();
+        m_saveProvider = std::move(replacement);
     printf("[SaveManager] Cloud sync configured: %s (local disk stays the store; "
            "push/pull are explicit)\n", endpoint.c_str());
     return true;
@@ -237,12 +249,16 @@ bool SaveManager::pullSlotFromCloud(int slot) {
 }
 
 void SaveManager::setEncryptionKey(const uint8_t key[32]) {
+    if (!m_coordinator->allowMutation()) return;
+    m_coordinator->invalidate();
     std::memcpy(m_encryptKey, key, 32);
     m_keySet = true;
     printf("[SaveManager] Encryption key set (AES-256-GCM)\n");
 }
 
 void SaveManager::clearEncryptionKey() {
+    if (!m_coordinator->allowMutation()) return;
+    m_coordinator->invalidate();
     secureErase(m_encryptKey, sizeof(m_encryptKey));
     m_keySet = false;
     printf("[SaveManager] Encryption key cleared\n");
@@ -638,6 +654,8 @@ void SaveManager::registerMigration(int fromVersion, int toVersion, MigrationFn 
         DEBUG_ERR(SubSys::Storage, ErrCode::Ok, "[SaveManager] Rejected migration v%d -> v%d (must increase)", fromVersion, toVersion);
         return;
     }
+    if (!m_coordinator->allowMutation()) return;
+    m_coordinator->invalidate();
     m_migrations[fromVersion] = {toVersion, fn};
     if (toVersion > m_currentSchemaVersion) {
         m_currentSchemaVersion = toVersion;
@@ -725,5 +743,46 @@ void SaveManager::registerBuiltinMigrations() {
     });
 }
 
+
+void SaveManager::setEncryptionPolicy(SaveEncryptionPolicy policy) {
+    if (!m_coordinator->allowMutation()) return;
+    if (m_encryptionPolicy != policy) {
+        m_coordinator->invalidate();
+        m_encryptionPolicy = policy;
+    }
+}
+
+bool SaveManager::validateCloudBytes(int slot, const std::string& bytes) {
+    return !loadContents(slot, decodeSaveBytes(bytes), nullptr).is_null();
+}
+CloudCoordinatorBindResult SaveManager::bindCloudCoordinator(const CloudCoordinatorBinding& binding) {
+    return m_coordinator->bind(binding);
+}
+CloudPrepareResult SaveManager::prepareCloudSync(int slot, const std::string& token) {
+    return m_coordinator->prepare(slot, token,
+        dynamic_cast<ICloudSaveSnapshotTransport*>(m_saveProvider.get()), slotPath(slot),
+        m_currentSchemaVersion, static_cast<int>(m_encryptionPolicy),
+        [this](int s, const std::string& b) { return validateCloudBytes(s, b); });
+}
+CloudPrepareResult SaveManager::reopenCloudPreparation(const CloudPreparationRef& expected) {
+    return m_coordinator->reopen(expected,
+        [this](int s, const std::string& b) { return validateCloudBytes(s, b); });
+}
+CloudPreparationList SaveManager::listCloudPreparations(int slot) {
+    return m_coordinator->list(slot,
+        [this](int s, const std::string& b) { return validateCloudBytes(s, b); });
+}
+CloudHistoryExportResult SaveManager::exportCloudHistory(const CloudHistorySelection& selection,
+                                                        const std::string& token) {
+    return m_coordinator->exportHistory(selection, token,
+        [this](int s, const std::string& b) { return validateCloudBytes(s, b); });
+}
+CloudPublicationCheck SaveManager::checkCloudPublication(const CloudHistorySelection& selection,
+                                                         CloudSide destination) {
+    return m_coordinator->check(selection, destination,
+        dynamic_cast<ICloudSaveSnapshotTransport*>(m_saveProvider.get()),
+        [this](int s) { return slotPath(s); },
+        [this](int s, const std::string& b) { return validateCloudBytes(s, b); });
+}
 
 } // namespace Caesura

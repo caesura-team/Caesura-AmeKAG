@@ -1,7 +1,7 @@
 # Caesura (AmeKAG) — C++ API Interface Reference
 
-> **38 个 API 接口头文件；28 个具名运行时服务槽位通过 `BackendRegistry` 访问**
-> 最后更新: 2026-09-06；逐文件统计见 [API Statistics](api-stats.md)。同一个接口头可以包含多个纯虚类，头文件数不等于类数。
+> **40 个 API 接口头文件；28 个具名运行时服务槽位通过 `BackendRegistry` 访问**
+> 最后更新: 2026-09-24；逐文件统计见 [API Statistics](api-stats.md)。同一个接口头可以包含多个纯虚类，头文件数不等于类数。
 >
 > **更新记录**: 2026-08-23 — STEP14 (Track P5 Audio Focus Service): interface census 33 -> 34 (+`IAudioFocusService`)，Registry 服务槽位 24 -> 25
 > 2026-08-23 — STEP13 (Track P4 组合根默认存档 provider): 无新增接口头（census 保持 33；`Engine::init` 缺省安装 `LocalFileSaveProvider`，修复未装 provider 时存档静默失效）
@@ -1056,6 +1056,31 @@ SaveManager 加密整个 JSON 信封，包括 scene、timestamp、schema_version
 | `writeCloudFile(slotPath, bytes)` | 上传调用方给定的同一份字节，不重新读取本地文件 |
 
 SaveManager 持有读取结果，验证其 CAES/明文策略、key 和可加载结构后才调用对应 write。校验失败不会调用目标写入；校验中的内存迁移不改变传输字节。必须区分本地和云端：Steam provider 的普通 `readFile/writeFile` 指向云存储，但 push/pull 分别是本地→云端和云端→本地。仅声明 `supportsCloudSync()` 而未实现此 transport 的 provider，不能通过 SaveManager 发起安全同步。
+
+### 16.4 ICloudSaveSnapshotTransport
+
+[ICloudSaveSnapshotTransport.h](../../src/storage/api/ICloudSaveSnapshotTransport.h) 是独立的可选观察接口。`readSnapshot(side, slotPath)` 返回拥有原始缓冲的 `CloudSnapshot`，区分 Present、Missing、Unavailable、Failed、Invalid、Unsupported。Present 才有完整字节；空 Present 不等于缺失。诊断计数不授权使用部分内容，错误和非零计数不能与 Missing 混用。当前 HTTP/本地读提供该次读取的缺失信息；Steam 旧接口无法确定缺失时明确返回 Unavailable/IndeterminateMissing。两个端点按先本地、后云端分别读取，不是原子双端快照。
+
+`conditionalWriteSupport(side)` 是能力描述，接口本身没有条件写方法；摘要、时间戳、ETag 或能力位均不授权回退到旧的无条件 push/pull。
+
+### 16.5 ICloudSaveCoordinator
+
+[ICloudSaveCoordinator.h](../../src/storage/api/ICloudSaveCoordinator.h) 由 SaveManager 作为可选能力实现。调用者通过 `dynamic_cast<ICloudSaveCoordinator*>(BackendRegistry::instance().getSaveManager())` 查询，不新增服务槽位或具体后端单例。
+
+| 方法 | 行为 |
+|------|------|
+| `bindCloudCoordinator(binding)` | 显式绑定宿主控制的普通绝对目录、32位小写hex scopeId、非零policyEpoch。scope由宿主确认账户/端点命名空间，接口不发现或认证账户。 |
+| `prepareCloudSync(slot, operationToken)` | 每端一次typed观察，按当前密钥/策略/schema/迁移验证同一份原始字节。双端完整原件经不可变store保全；单边缺失只保存实际存在的一边。有效相等观察可在receipt发布后单独选择祖先。 |
+| `reopenCloudPreparation(expected)` | 按token与外部receipt SHA只读重开，并按当前策略重新验证保留内容；返回本实例stamp。不会重发记录或祖先选择。 |
+| `listCloudPreparations(slot)` | 有界列出完整引用及未完成/损坏计数，不选最新祖先，不清理未完成项。 |
+| `exportCloudHistory(selection, exportToken)` | 明确选择Local/Cloud/Base原件，重新验证后导出到排他取得的固定历史副本路径；不联网、不重新加密、不覆盖live slot。 |
+| `checkCloudPublication(selection, destination)` | 复核选择、当前策略和双方最新观察。变化为Stale，未知为InspectionIncomplete；未变化仍为UnsupportedConditionalWrite，绝不发起旧无条件传输。 |
+
+记录保全、receipt发布和祖先游标替换是不同提交点，不是多文件原子事务。游标发布前失败保持旧游标；发布后不确定结果保留候选引用，重开只描述RecoveredSelected/RecoveredNotSelected/Superseded，不回滚新游标。操作/导出token目录各最多128个；控制树逻辑字节预算256MiB，未完成项和未知内容也计数，不自动淘汰。固定JSON元数据限16KiB并拒绝重复/未知字段；原始存档仍受10MiB限额。
+
+所有方法为单owner-thread合同。运行期选择绑定真实随机sessionId与单调generation；provider、key、策略、init或迁移合同变化撤销旧绑定，同实例须换scope/epoch后显式绑定。校验回调中的重入配置修改会被拒绝，旧provider/key仍存活，外层返回ContextChanged。新实例恢复同一持久命名空间仍须显式绑定与原件复验。Compatible明文只能称ValidCurrentPolicy，不能称认证存档。
+
+当前定向验证包含真实CAES、磁盘、HTTP、原子writer失败与Windows/Linux执行；独立进程协调器恢复仍在补齐。完整U26、真实SDK账号、远端CAS与断电持久性不由此API文档宣称完成。
 
 ---
 
