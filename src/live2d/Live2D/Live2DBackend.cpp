@@ -394,9 +394,9 @@ bool Live2DBackend::loadModelInternal(Live2DModel& model) {
 
     // 7b. Cache motions (P1-1: motionCache was never populated, so
     // playMotion() could never find any clip).
-    const csmInt32 motionCount = model.setting->GetMotionCount();
-    if (motionCount > 0) {
-        for (csmInt32 i = 0; i < motionCount; ++i) {
+    const csmInt32 motionGroupCount = model.setting->GetMotionGroupCount();
+    if (motionGroupCount > 0) {
+        for (csmInt32 i = 0; i < motionGroupCount; ++i) {
             const char* groupName = model.setting->GetMotionGroupName(i);
             if (!groupName) continue;
             const std::string group(groupName);

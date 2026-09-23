@@ -234,6 +234,47 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" OR CMAKE_SYSTEM_NAME STREQUAL "Darwin")
 endif()
 
 if(Python3_EXECUTABLE)
+    # Native host process contract; cross/device/Web work is explicitly separate.
+    if(NOT CMAKE_CROSSCOMPILING AND NOT EMSCRIPTEN)
+        add_executable(CaesuraCloudConflictRestartProbe probes/cloud_conflict_restart_probe.cpp)
+        target_link_libraries(CaesuraCloudConflictRestartProbe PRIVATE
+            Caesura::Storage Caesura::Archive Caesura::BuildOptions)
+        # Normal full builds already produce CaesuraTests; same output directory supplies native DLLs.
+        add_dependencies(CaesuraCloudConflictRestartProbe CaesuraTests)
+        # Keep nested UUID/case/record/temp names below legacy Windows MAX_PATH
+        # in this probe; the cold-process contract does not require long-path support.
+        file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/ccr")
+        add_test(NAME CaesuraCloudConflictRestart
+            COMMAND ${Python3_EXECUTABLE} -B
+                ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_cloud_conflict_restart.py
+                --source-root ${CMAKE_SOURCE_DIR}
+                --probe $<TARGET_FILE:CaesuraCloudConflictRestartProbe>
+                --attempt-root ${CMAKE_BINARY_DIR}/ccr)
+        set_tests_properties(CaesuraCloudConflictRestart PROPERTIES
+            LABELS "storage;filesystem;isolation;recovery"
+            WORKING_DIRECTORY "$<TARGET_FILE_DIR:CaesuraCloudConflictRestartProbe>"
+            FIXTURES_REQUIRED caesura-test-assets
+            TIMEOUT 480
+            RUN_SERIAL TRUE
+            RESOURCE_LOCK save-files)
+        add_executable(CaesuraCloudCoordinatorRestartProbe probes/cloud_coordinator_restart_probe.cpp)
+        target_link_libraries(CaesuraCloudCoordinatorRestartProbe PRIVATE
+            Caesura::Storage Caesura::Archive Caesura::Debug Caesura::BuildOptions)
+        add_dependencies(CaesuraCloudCoordinatorRestartProbe CaesuraTests)
+        add_test(NAME CaesuraCloudCoordinatorRestart
+            COMMAND ${Python3_EXECUTABLE} -B
+                ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_cloud_coordinator_restart.py
+                --source-root ${CMAKE_SOURCE_DIR}
+                --probe $<TARGET_FILE:CaesuraCloudCoordinatorRestartProbe>
+                --attempt-root ${CMAKE_BINARY_DIR}/ccr)
+        set_tests_properties(CaesuraCloudCoordinatorRestart PROPERTIES
+            LABELS "storage;filesystem;isolation;recovery"
+            WORKING_DIRECTORY "$<TARGET_FILE_DIR:CaesuraCloudCoordinatorRestartProbe>"
+            FIXTURES_REQUIRED caesura-test-assets
+            TIMEOUT 480
+            RUN_SERIAL TRUE
+            RESOURCE_LOCK save-files)
+    endif()
     if(WIN32)
         add_executable(CaesuraPresentationColdProbe probes/presentation_cold_probe.cpp)
         target_link_libraries(CaesuraPresentationColdProbe PRIVATE Caesura::Engine)

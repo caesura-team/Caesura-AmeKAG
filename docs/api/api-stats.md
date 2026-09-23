@@ -9,8 +9,8 @@
 | Metric | Count |
 |--------|-------|
 | Module libraries (src/) | 16 |
-| API interface headers (src/*/api/I*.h) | 39 |
-| Pure-virtual interface methods | 448 |
+| API interface headers (src/*/api/I*.h) | 41 |
+| Pure-virtual interface methods | 457 |
 | Lua binding functions (luaL_Reg entries) | 182 |
 | KAG command handler files | 13 |
 | KAG contract commands (command-contracts.md) | 134 |
@@ -45,7 +45,7 @@
 | render | ILayerManager.h | 21 |
 | render | IMeshRenderer.h | 8 |
 | render | IParticleSystem.h | 10 |
-| render | IRenderDevice.h | 63 |
+| render | IRenderDevice.h | 64 |
 | render | ITextureManager.h | 18 |
 | render | IVideoPlayer.h | 19 |
 | resource | IAssetProvider.h | 5 |
@@ -58,6 +58,8 @@
 | rpc | IRpcServer.h | 5 |
 | script | ILuaManager.h | 12 |
 | steam | ISteamBackend.h | 24 |
+| storage | ICloudSaveCoordinator.h | 6 |
+| storage | ICloudSaveSnapshotTransport.h | 2 |
 | storage | ICloudSaveTransport.h | 4 |
 | storage | ISaveManager.h | 19 |
 | storage | ISaveProvider.h | 7 |

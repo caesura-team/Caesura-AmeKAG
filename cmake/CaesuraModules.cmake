@@ -348,6 +348,8 @@ caesura_add_module(Steam
 
 caesura_add_module(Storage
     src/storage/SaveManager.cpp
+    src/storage/CloudConflictStore.cpp
+    src/storage/CloudCoordinatorState.cpp
     src/storage/ISaveProvider.cpp
     src/storage/CloudSaveProvider.cpp
     src/storage/HttpCloudSaveProvider.cpp

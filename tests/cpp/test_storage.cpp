@@ -225,6 +225,7 @@ TEST_CASE("Storage: CloudSaveProvider large-file chunked roundtrip") {
     REQUIRE(provider.deleteFile("big_save.json"));
     CHECK_FALSE(steam.cloudFileExists("big_save.json.meta"));
     CHECK_FALSE(steam.cloudFileExists("big_save.json.chunk000"));
+    CHECK(steam.files.empty());  // Includes every generation chunk, not only legacy keys.
 }
 
 
@@ -272,6 +273,7 @@ TEST_CASE("Storage: CloudSaveProvider chunked write failure rolls back meta") {
     CHECK_FALSE(steam.cloudFileExists("roll.json.meta"));
     CHECK_FALSE(steam.cloudFileExists("roll.json.chunk000"));
     CHECK_FALSE(steam.cloudFileExists("roll.json.chunk001"));
+    CHECK(steam.files.empty());  // No unpublished generation or metadata survives.
 }
 
 TEST_CASE("Storage: CloudSaveProvider null backend is a safe no-op") {

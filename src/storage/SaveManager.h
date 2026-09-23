@@ -13,12 +13,14 @@
 #include <functional>
 #include <unordered_map>
 #include "api/ISaveManager.h"
+#include "api/ICloudSaveCoordinator.h"
 
 struct lua_State;
 
 namespace Caesura {
+namespace detail { struct CloudCoordinatorState; }
 
-class SaveManager : public ISaveManager {
+class SaveManager : public ISaveManager, public ICloudSaveCoordinator {
 public:
     SaveManager();
     ~SaveManager() override;
@@ -56,7 +58,7 @@ public:
     void setEncryptionKey(const uint8_t key[32]) override;
     void clearEncryptionKey() override;
     bool isEncryptionEnabled() const override { return m_keySet; }
-    void setEncryptionPolicy(SaveEncryptionPolicy policy) override { m_encryptionPolicy = policy; }
+    void setEncryptionPolicy(SaveEncryptionPolicy policy) override;
     SaveEncryptionPolicy getEncryptionPolicy() const override { return m_encryptionPolicy; }
 
     // Pluggable storage provider (SU-6) — default: LocalFileSaveProvider
@@ -66,8 +68,20 @@ public:
     bool pushSlotToCloud(int slot) override;
     bool pullSlotFromCloud(int slot) override;
 
+    // Optional owner-thread preparation and historical recovery capability.
+    CloudCoordinatorBindResult bindCloudCoordinator(const CloudCoordinatorBinding& binding) override;
+    CloudPrepareResult prepareCloudSync(int slot, const std::string& operationToken) override;
+    CloudPrepareResult reopenCloudPreparation(const CloudPreparationRef& expected) override;
+    CloudPreparationList listCloudPreparations(int slot) override;
+    CloudHistoryExportResult exportCloudHistory(const CloudHistorySelection& selection,
+                                               const std::string& exportToken) override;
+    CloudPublicationCheck checkCloudPublication(const CloudHistorySelection& selection,
+                                                CloudSide destination) override;
+
 
 private:
+    std::unique_ptr<detail::CloudCoordinatorState> m_coordinator;
+    bool validateCloudBytes(int slot, const std::string& bytes);
     std::string m_saveDir;
     int m_currentSchemaVersion = 1;
     bool m_keySet = false;
