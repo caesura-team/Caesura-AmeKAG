@@ -26,6 +26,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <future>
 #include <iostream>
 #include <iterator>
 #include <memory>
@@ -239,8 +240,8 @@ bool quietDebts(const json& j) {
 
 class Workload {
 public:
- Workload(fs::path output,unsigned cycles,double seconds,std::function<void(const json&)> progress={},std::string coldMode={})
-  : out_(std::move(output)),wanted_(cycles),seconds_(seconds),events_(out_/"events.jsonl",std::ios::binary),progress_(std::move(progress)),coldMode_(std::move(coldMode)) {
+ Workload(fs::path output,unsigned cycles,double seconds,std::function<void(const json&)> progress={},std::string coldMode={},std::string faultMode={})
+  : out_(std::move(output)),wanted_(cycles),seconds_(seconds),events_(out_/"events.jsonl",std::ios::binary),progress_(std::move(progress)),coldMode_(std::move(coldMode)),faultMode_(std::move(faultMode)) {
   require(bool(events_),"Cannot create event stream");
   EngineConfig c;c.width=kWidth;c.height=kHeight;c.title="Caesura bounded runtime workload";
   c.editorMode=true;c.renderBackend="dx11";c.saveEncryptionPolicy=SaveEncryptionPolicy::RequireEncrypted;
@@ -264,18 +265,19 @@ public:
   report_["process_created"]=std::to_string((uint64_t(a.dwHighDateTime)<<32)|a.dwLowDateTime);
   event("initialized",observe(*engine_));
  }
+ ~Workload() { releaseWorker(); }
  void run() {
   start_=Clock::now();cycleStart_=start_;
   const char* completed=coldMode_.empty()?"PROBE_COMPLETED":"COLD_COMPLETED";
   try {
-   if(!coldMode_.empty()) {
-    // Cold roles can finish quickly. Hold the live owner until the controller
+   if(!coldMode_.empty()||!faultMode_.empty()) {
+    // Controlled roles can finish quickly. Hold the live owner until the controller
     // has inspected this exact process and atomically published its identity.
     while(!fs::exists(out_/"owner-ready.json")) {
-     require(elapsed(start_)<10,"Cold owner inspection acknowledgement missing");SDL_Delay(1);
+     require(elapsed(start_)<10,"Owner inspection acknowledgement missing");SDL_Delay(1);
     }
     std::ifstream file(out_/"owner-ready.json",std::ios::binary);json ack;file>>ack;
-    require(ack.at("pid")==report_.at("pid")&&ack.at("created")==report_.at("process_created"),"Cold owner acknowledgement differs");
+    require(ack.at("pid")==report_.at("pid")&&ack.at("created")==report_.at("process_created"),"Owner acknowledgement differs");
    }
    engine_->run([this]{ if(coldMode_.empty())step();else stepCold(); });
    require(done_,"Engine exited before workload completed");
@@ -293,6 +295,12 @@ public:
   report_["measured_seconds"]=measured_?elapsed(measuredStart_):0.0;
   report_["measured_cycles"]=cycle_>20?cycle_-20:0;
   report_["last_phase"]=phase_;report_["completed_owner_frames"]=engine_->getHostSnapshot().completedOwnerFrames;
+  if(heldTexture_) {
+   report_["fault"]["retained_texture_valid"]=textures_->isValid(heldTexture_);
+   textures_->destroyTexture(heldTexture_);render_->destroyRenderTarget(heldTarget_);heldTexture_=0;heldTarget_={};
+   report_["fault"]["resource_release_requested"]=true;
+  }
+  if(workerRelease_) {releaseWorker();report_["fault"]["worker_release_requested"]=true;}
   engine_->shutdown();report_["shutdown_host"]={{"initialized",engine_->getHostSnapshot().initialized},{"running",engine_->getHostSnapshot().running}};
   write(out_/"result.json",report_);require(report_["status"]==completed,report_.value("error","Workload incomplete"));
  }
@@ -301,6 +309,28 @@ public:
  double measurementEventSeconds() const { return measurementEventSeconds_; }
  double lastQuietSeconds() const { return lastQuietSeconds_; }
 private:
+ void releaseWorker() noexcept {
+  if(workerRelease_) {try {workerRelease_->set_value();}catch(...) {}workerRelease_.reset();}
+ }
+ void startFault() {
+  require(report_.find("fault")==report_.end(),"Fault admitted more than once");
+  json fault={{"role",faultMode_},{"cycle",cycle_},{"owner_frame",engine_->getHostSnapshot().completedOwnerFrames},
+   {"seconds",elapsed(start_)},{"before",observe(*engine_)}};
+  if(faultMode_=="fault-resources") {
+   heldTexture_=textures_->createSolidTexture(33,44,55,255);heldTarget_=render_->createRenderTarget(17,19);
+   require(heldTexture_&&textures_->isValid(heldTexture_)&&heldTarget_.id,"Retained fault resource admission failed");
+   fault["texture"]=heldTexture_;fault["target"]=heldTarget_.id;fault["texture_valid"]=true;
+  } else if(faultMode_=="fault-worker") {
+   auto* jobs=BackendRegistry::instance().getJobSystem();require(jobs&&jobs->isRunning(),"Missing real worker owner");
+   auto entered=std::make_shared<std::promise<void>>();auto entry=entered->get_future();
+   workerRelease_=std::make_shared<std::promise<void>>();auto release=workerRelease_->get_future().share();
+   const auto id=jobs->submit([entered,release]{entered->set_value();release.wait();});
+   require(id>0,"Worker fault admission failed");
+   require(entry.wait_for(std::chrono::seconds(2))==std::future_status::ready,"Admitted worker never entered");
+   entry.get();fault["job_id"]=id;fault["worker_entered"]=true;
+  }
+  fault["after"]=observe(*engine_);report_["fault"]=fault;write(out_/"fault.json",fault);
+ }
  double elapsed(Clock::time_point t) const { return std::chrono::duration<double>(Clock::now()-t).count(); }
  void event(const char* name,json detail=json::object()) {
   const double seconds=start_==Clock::time_point{}?0:elapsed(start_);
@@ -376,9 +406,14 @@ private:
   SDL_Delay(1);
  }
  void step() {
+  if(faultMode_=="fault-stall") {
+   startFault();event("fault_stall",observe(*engine_));
+   for(;;)SDL_Delay(5); // Deliberate owner stall; the external owned deadline terminates this process.
+  }
   require(elapsed(cycleStart_)<10,"Cycle watchdog exceeded ten seconds");
   switch(phase_) {
   case 0: {
+   if(cycle_==20&&faultMode_=="fault-resources")startFault();
    cycleStart_=Clock::now();lua("Soak.begin("+std::to_string(cycle_+1)+")");
    texture_=textures_->createSolidTexture(43,170,82,255);target_=render_->createRenderTarget(32,32);
    event("transient_resources",{{"texture",texture_},{"texture_valid",textures_->isValid(texture_)},
@@ -414,6 +449,7 @@ private:
    lua("Soak.rollback_commit()");event("rollback");lua("Soak.clean()");
    audio_->stopBGM(0);audio_->stopVoice();audio_->stopSE();
    textures_->destroyTexture(texture_);render_->destroyRenderTarget(target_);texture_=0;target_={};
+   if(cycle_==20&&faultMode_=="fault-worker")startFault();
    quietStart_=Clock::now();consecutive_=0;previousQuiet_=json();phase(9);
   }break;
   case 9: {
@@ -435,7 +471,9 @@ private:
  }
  fs::path out_;unsigned wanted_,cycle_=0,consecutive_=0;double seconds_;std::ofstream events_;json report_,previousQuiet_;
  std::function<void(const json&)> progress_;
- std::string coldMode_;
+ std::string coldMode_,faultMode_;
+ std::shared_ptr<std::promise<void>> workerRelease_;
+ uint32_t heldTexture_=0;ViewportHandle heldTarget_{};
  double measurementEventSeconds_=0,lastQuietSeconds_=0;
  std::unique_ptr<Engine> engine_;ILuaManager* vm_=nullptr;IAudioBackend* audio_=nullptr;IRenderDevice* render_=nullptr;ITextureManager* textures_=nullptr;
  Clock::time_point start_{},cycleStart_{},quietStart_{},measuredStart_{};bool done_=false,measured_=false;int phase_=0;uint64_t frame_=0;
@@ -502,6 +540,9 @@ int wmain(int argc,wchar_t** argv) {
   require(root!=output&&fs::is_directory(root)&&fs::is_directory(output),"Dedicated existing runtime/output directories required");
   if(argc==4) {
    const auto role=utf8(fs::path(argv[3]));
+   if(role=="fault-resources"||role=="fault-worker"||role=="fault-stall") {
+    fs::current_path(root);Workload work(output,22,0,{},{},role);work.run();return 0;
+   }
    require(role=="cold-producer"||role=="cold-consumer"||role=="cold-corrupt","Unknown cold role");
    fs::current_path(root);Workload work(output,0,0,{},role);work.run();return 0;
   }
