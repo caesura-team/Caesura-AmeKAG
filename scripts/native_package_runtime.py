@@ -32,6 +32,8 @@ from package_runtime import (ProcessIdentity, RuntimeContractError, native_env,
                              verify_owned_listener, run_runtime_command)
 from package_verification import inspect_inventory, _sha256_file, _reparse
 from verify_native_package import _configuration
+from macho_dependencies import (is_macho, inspect_macho, inspect_package_closure,
+                                is_system_library, library_path_hint)
 
 class _ObservationError(RuntimeContractError):
     def __init__(self, message, observations):
@@ -302,8 +304,59 @@ def _observe_loaded_modules(identity: ProcessIdentity, report: dict) -> dict:
     return report
 
 
+def _macos_dependency_images(identity: ProcessIdentity, package: Path, report: dict) -> list[str]:
+    """Check actual mapped images while retaining unrelated txt resources.
+
+    lsof also reports fonts, .car files and protected/transient OS caches.
+    Their inability to be re-opened is not proof that they are dylibs. Actual
+    Mach-O files and unresolved dylib/framework image names are treated as code.
+    The static lane separately proves the executable's dependency closure.
+    """
+    observed = {"status":"NOT_VERIFIED", "images":[], "system_paths":[],
+                "non_image_paths":[], "unavailable_nonlibrary_paths":[]}
+    report["dependency_images"] = observed
+    package = package.resolve(strict=True)
+    unavailable = {item["path"] for key in ("missing_paths", "inaccessible_paths")
+                   for item in report.get(key, [])}
+    for value in report["paths"]:
+        path = Path(value)
+        if is_system_library(path.as_posix()):
+            observed["system_paths"].append(value)
+            continue
+        if value in unavailable:
+            _need(not library_path_hint(value), f"Mapped non-system library is unavailable: {value}")
+            observed["unavailable_nonlibrary_paths"].append(value)
+            continue
+        try:
+            image = is_macho(path)
+        except (FileNotFoundError, PermissionError):
+            _need(not library_path_hint(value), f"Mapped non-system library disappeared or became inaccessible: {value}")
+            observed["unavailable_nonlibrary_paths"].append(value)
+            continue
+        if not image:
+            # A mapped resource is not code merely because it is inside the
+            # package. This classification does not replace static image checks.
+            _need(path.is_relative_to(package) or not library_path_hint(value),
+                  f"Mapped external library is not a verifiable Mach-O image: {value}")
+            observed["non_image_paths"].append(value)
+            continue
+        _need(path.is_relative_to(package), f"Mapped non-system Mach-O image is outside package: {value}")
+        parsed = inspect_macho(path)
+        observed["images"].append({"path":value, "sha256":parsed["sha256"], "cpu_type":parsed["cpu_type"],
+                                   "file_type":parsed["file_type"]})
+    derived = []
+    executable = Path(identity.executable)
+    if is_macho(executable):
+        closure = inspect_package_closure(package, [executable], [])
+        report["dependency_closure"] = closure
+        derived = [image["relative_path"] for image in closure["images"]
+                   if image["file_type"] in (6, 8)]
+    observed["status"] = "MAPPED_IMAGES_CHECKED"
+    return derived
+
+
 def _inspect_libraries(identity: ProcessIdentity, package: Path, required: list[str]) -> dict:
-    if not required:
+    if not required and sys.platform != "darwin":
         return {"status":"NOT_REQUIRED", "required":[], "reason":"No shared libraries required by external configuration"}
     report = observe_loaded_modules(identity)
     try:
@@ -314,7 +367,8 @@ def _inspect_libraries(identity: ProcessIdentity, package: Path, required: list[
                         for key in ("path", "reported_path")}
         matched = []
         missing = []
-        for relative in required:
+
+        def inspect_required(relative):
             declared = package / relative
             expected = declared.resolve(strict=True)
             _need(expected.is_relative_to(package), f"Required library escapes package: {relative}")
@@ -326,10 +380,22 @@ def _inspect_libraries(identity: ProcessIdentity, package: Path, required: list[
                   f"A second source for required library was observed: {relative}")
             if expected not in observed:
                 missing.append(relative)
-                continue
+                return
             matched.append({"relative_path":relative, "resolved_path":str(expected), "sha256":_sha(expected)})
+        for relative in required:
+            inspect_required(relative)
         if missing:
             raise _LibrariesPending("Required library not observed from this runtime package: " + ", ".join(missing))
+        if sys.platform == "darwin":
+            try:
+                derived = _macos_dependency_images(identity, package, report)
+            except ValueError as error:
+                raise RuntimeContractError(f"Mapped Mach-O dependencies are NOT_VERIFIED: {error}") from error
+            for relative in derived:
+                if relative not in required:
+                    inspect_required(relative)
+            if missing:
+                raise _LibrariesPending("Required dependency not observed from this runtime package: " + ", ".join(missing))
         return {**report, "status":"VERIFIED", "required":matched}
     except (OSError, ValueError, RuntimeContractError) as error:
         error.module_observation = report

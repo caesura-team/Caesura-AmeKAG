@@ -1,8 +1,11 @@
 """Real Python/HTTP fixtures exercise orchestration, never Engine acceptance.
 
-Only native Engine/Lua executable invocation is replaced with an explicit Python
-protocol fixture. The owned runner, identity/socket checks, HTTP requests, file
-copies, template provenance and mutation checks remain real.
+Native Engine/Lua invocation is replaced with an explicit Python protocol fixture.
+Only within that invocation, native Mach-O package closure is marked FIXTURE_ONLY:
+framework Python and its host libraries are not a packaged Engine. The owned runner,
+module observation, required-library matching, identity/socket checks, HTTP, copies,
+template provenance and mutation checks remain real. Native closure has its own
+unchanged positive/negative contract tests and actual final-package lane.
 """
 from __future__ import annotations
 
@@ -19,6 +22,7 @@ import shlex
 import shutil
 import socket
 from socketserver import TCPServer
+import struct
 import subprocess
 import sys
 import tempfile
@@ -410,7 +414,8 @@ class MacLsofFieldProtocolTests(unittest.TestCase):
         # expected Unicode is supplied separately by the actual filesystem.
         self.unicode_directory = br"\xe4\xbd\x9c\xe5\x93\x81 \xe8\xbe\x93\xe5\x87\xba"
 
-    def inspect(self, wire_paths, *, exit_code=0, loaded=False, raw_fields=None):
+    def inspect(self, wire_paths, *, exit_code=0, loaded=False, raw_fields=None,
+                required=None, host_aliases=None):
         fields = ([b"p1234"] + [b"n/lsof-fixture/" + path for path in wire_paths]
                   if raw_fields is None else raw_fields)
         lines, nuls = self.root / "lines.bin", self.root / "nuls.bin"
@@ -421,6 +426,8 @@ class MacLsofFieldProtocolTests(unittest.TestCase):
             value = str(value)
             if value == "/usr/sbin/lsof":
                 return self.tool
+            if host_aliases and value in host_aliases:
+                return host_aliases[value]
             if value.startswith(prefix):
                 return self.root / value[len(prefix):]
             return Path(value)
@@ -438,7 +445,107 @@ class MacLsofFieldProtocolTests(unittest.TestCase):
             stack.enter_context(patch.object(runtime, "process_identity", return_value=self.identity))
             stack.enter_context(patch.object(runtime.subprocess, "run", side_effect=command))
             inspect = runtime._loaded_libraries if loaded else runtime._inspect_libraries
-            return inspect(self.identity, self.package, [self.library.name])
+            return inspect(self.identity, self.package,
+                           [self.library.name] if required is None else required)
+
+    @staticmethod
+    def dependency_image(dependencies=(), *, library=False):
+        # Real bounded Mach-O framing, no code or runnable backend. The only
+        # executable invoked by this fixture remains the owned lsof seam.
+        commands = []
+        for name in dependencies:
+            value = name.encode("utf-8") + b"\0"
+            size = (24 + len(value) + 7) & ~7
+            commands.append(struct.pack("<6I", 0xC, size, 24, 2, 0x30000, 0x30000)
+                            + value.ljust(size - 24, b"\0"))
+        body = b"".join(commands)
+        return struct.pack("<8I", 0xFEEDFACF, 0x0100000C, 0, 6 if library else 2,
+                           len(commands), len(body), 0, 0) + body
+
+    def dependency_fixture(self):
+        self.engine.write_bytes(self.dependency_image([
+            "@loader_path/libSDL3.0.dylib", "@loader_path/libssl.3.dylib",
+            "@loader_path/libcrypto.3.dylib", "/usr/lib/libSystem.B.dylib",
+            "/System/Library/Frameworks/Metal.framework/Versions/A/Metal"]))
+        for name in (self.library.name, "libssl.3.dylib", "libcrypto.3.dylib"):
+            dependencies = ["/usr/lib/libSystem.B.dylib"]
+            if name == "libssl.3.dylib": dependencies.append("@loader_path/libcrypto.3.dylib")
+            (self.package / name).write_bytes(self.dependency_image(dependencies, library=True))
+        return [self.library.name, "libssl.3.dylib", "libcrypto.3.dylib"]
+
+    def dependency_fields(self, names):
+        fields = [b"p1234"]
+        for name in names:
+            # The ftxt/n record shape and Homebrew spellings are from the
+            # original Mac run 35474593317. PID/package paths here explicitly
+            # belong to this fixture and never claim new remote observations.
+            fields.extend([b"ftxt", b"n" + name])
+        return fields
+
+    def test_macos_dependency_closure_rejects_host_openssl_beside_valid_sdl(self):
+        self.dependency_fixture()
+        host_names = ["/opt/homebrew/Cellar/openssl@3/3.6.4/lib/libssl.3.dylib",
+                      "/opt/homebrew/Cellar/openssl@3/3.6.4/lib/libcrypto.3.dylib"]
+        aliases = {}
+        for name in host_names:
+            path = self.root / Path(name).name
+            path.write_bytes(self.dependency_image(["/usr/lib/libSystem.B.dylib"], library=True))
+            aliases[name] = path
+        fields = self.dependency_fields([
+            b"/lsof-fixture/" + self.unicode_directory + b"/CaesuraAmeKAG",
+            b"/lsof-fixture/" + self.unicode_directory + b"/libSDL3.0.dylib",
+            *(name.encode("ascii") for name in host_names)])
+        # Old caller input is intentionally SDL-only, as on the actual run.
+        # Real foreign image bytes must not disappear behind that incomplete set.
+        with self.assertRaises(runtime.RuntimeContractError):
+            self.inspect([], raw_fields=fields, host_aliases=aliases)
+
+    def test_macos_dependency_closure_rejects_undeclared_external_macho(self):
+        required = self.dependency_fixture()
+        plugin = self.root / "foreign-plugin.bundle/Contents/MacOS/Plugin"
+        plugin.parent.mkdir(parents=True)
+        plugin.write_bytes(self.dependency_image(["/usr/lib/libSystem.B.dylib"], library=True))
+        names = [b"/lsof-fixture/" + self.unicode_directory + b"/" + name.encode()
+                 for name in ["CaesuraAmeKAG", *required]]
+        names.append(b"/lsof-fixture/foreign-plugin.bundle/Contents/MacOS/Plugin")
+        with self.assertRaises(runtime.RuntimeContractError):
+            self.inspect([], raw_fields=self.dependency_fields(names), required=required)
+
+    def test_macos_dependency_closure_accepts_local_images_and_nonimage_resources(self):
+        required = self.dependency_fixture()
+        for name in ("SystemAppearance.car", "Helvetica.otf", ".plist-cache.transient"):
+            (self.root / name).write_bytes(b"mapped resource fixture, not a Mach-O image")
+        names = [b"/lsof-fixture/" + self.unicode_directory + b"/" + name.encode()
+                 for name in ["CaesuraAmeKAG", *required]]
+        names.extend(b"/lsof-fixture/" + name for name in
+                     (b"SystemAppearance.car", b"Helvetica.otf", b".plist-cache.transient"))
+        # System load commands exist in the actual on-disk fixture, but their
+        # dyld shared-cache mappings are deliberately absent from lsof output.
+        result = self.inspect([], raw_fields=self.dependency_fields(names), required=required)
+        self.assertEqual(result["status"], "VERIFIED")
+        self.assertEqual([item["relative_path"] for item in result["required"]], required)
+        for item in result["required"]:
+            self.assertEqual(item["sha256"], hashlib.sha256((self.package / item["relative_path"]).read_bytes()).hexdigest())
+        self.assertIn(str(self.root / "SystemAppearance.car"), result["paths"])
+        observed = json.loads(self.capture.read_text(encoding="utf-8"))
+        self.assertEqual(observed["environment"].get("LC_ALL"), "C")
+        self.assertEqual(observed["argv"][:5], ["-a", "-p", "1234", "-d", "txt"])
+
+    def test_macos_dependency_closure_missing_required_crypto_remains_rejected(self):
+        required = self.dependency_fixture()
+        names = [b"/lsof-fixture/" + self.unicode_directory + b"/" + name.encode()
+                 for name in ["CaesuraAmeKAG", self.library.name, "libssl.3.dylib"]]
+        with self.assertRaisesRegex(runtime.RuntimeContractError, "libcrypto.3.dylib"):
+            self.inspect([], raw_fields=self.dependency_fields(names), required=required)
+
+    def test_macos_dependency_closure_mixed_crypto_origin_remains_rejected(self):
+        required = self.dependency_fixture()
+        (self.root / "libcrypto.3.dylib").write_bytes((self.package / "libcrypto.3.dylib").read_bytes())
+        names = [b"/lsof-fixture/" + self.unicode_directory + b"/" + name.encode()
+                 for name in ["CaesuraAmeKAG", *required]]
+        names.append(b"/lsof-fixture/libcrypto.3.dylib")
+        with self.assertRaisesRegex(runtime.RuntimeContractError, "second source"):
+            self.inspect([], raw_fields=self.dependency_fields(names), required=required)
 
     def test_unicode_n_field_identifies_actual_required_image(self):
         result = self.inspect([self.unicode_directory + b"/CaesuraAmeKAG",
@@ -620,12 +727,48 @@ class NativePackageRuntimeTests(unittest.TestCase):
             if Path(executable).name in ("lua", "lua.exe"):
                 return [FIXTURE_PYTHON, "-I", "-c", "print('Lua 5.4 synthetic protocol fixture')"]
             return [FIXTURE_PYTHON, "-I", str(self.engine_script), *args]
-        with patch.object(runtime, "_native_argv", native_boundary):
+        def protocol_closure_boundary(identity, package, observation):
+            # This seam accompanies the executable replacement, never production
+            # acceptance. Reject accidental use for any real native process/image.
+            self.assertEqual(Path(identity.executable).resolve(strict=True),
+                             Path(FIXTURE_PYTHON).resolve(strict=True))
+            self.assertEqual((package / self.engine_name).read_bytes(),
+                             b"synthetic executable boundary fixture")
+            observation["dependency_images"] = {
+                "status":"FIXTURE_ONLY", "images":[],
+                "scope":"Python protocol orchestration; native Engine closure NOT_VERIFIED"}
+            return []
+        with patch.object(runtime, "_native_argv", native_boundary), \
+             patch.object(runtime, "_macos_dependency_images", protocol_closure_boundary):
             return runtime.run_native_package(self.package, self.config, attempt or self.root / "attempt",
                                               python_executable=FIXTURE_PYTHON,
                                               command_timeout=12, readiness_timeout=1,
                                               editor_port=editor_port, audio_output=audio_output,
                                               **({"launch_relative_path":launch} if launch is not None else {}))
+
+    def test_python_protocol_fixture_has_explicit_native_closure_boundary(self):
+        # Reproduce the hosted framework-Python dependency failure on any host.
+        # These bytes are a valid minimal Mach-O header, not an executed library.
+        foreign = self.root / "host-python-ssl.dylib"
+        foreign.write_bytes(struct.pack("<IIIIIIII", 0xfeedfacf, 0x100000c, 0, 6, 0, 0, 0, 0))
+        inspect = runtime._inspect_libraries
+        production = runtime._macos_dependency_images
+        def native_closure_required(identity, package, required):
+            result = inspect(identity, package, required)
+            detail = {"paths":[str(foreign)], "missing_paths":[], "inaccessible_paths":[]}
+            runtime._macos_dependency_images(identity, package, detail)
+            return {**result, "protocol_fixture_closure":detail["dependency_images"]}
+        with patch.object(runtime, "_inspect_libraries", native_closure_required):
+            report = self.invoke()
+        self.assertEqual(report["status"], "RUNTIME_PASS", report)
+        for stage in report["stages"]:
+            if not stage["name"].startswith("editor_"): continue
+            observation = stage["commands"][0]["observations"]["loaded_modules"]
+            self.assertEqual(observation["protocol_fixture_closure"]["status"], "FIXTURE_ONLY")
+        self.assertIs(runtime._macos_dependency_images, production)
+        with self.assertRaisesRegex(runtime.RuntimeContractError, "outside package"):
+            production(runtime.process_identity(os.getpid()), self.package,
+                       {"paths":[str(foreign)], "missing_paths":[], "inaccessible_paths":[]})
 
     def test_explicit_software_selection_binds_argv_and_completed_pcm_observation(self):
         report = self.invoke(audio_output='software')
