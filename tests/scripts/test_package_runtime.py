@@ -752,13 +752,52 @@ class PackageRuntimeTests(unittest.TestCase):
     else:
         def exec_script(self, body, *, control="mapping", expected=None, observe=0.5):
             script = self.root / (control + "-AppRun")
-            script.write_text("#!/bin/sh\n" + body + "\n", encoding="utf-8")
+            # On the hosted Mac, /bin/sh can be observed by libproc as
+            # /bin/bash. Declare the actual interpreter for these fixtures;
+            # keep the production exact-image rejection unchanged.
+            interpreter = "/bin/bash" if sys.platform == "darwin" else "/bin/sh"
+            script.write_text("#!" + interpreter + "\n" + body + "\n", encoding="utf-8")
             script.chmod(0o755)
             with (self.root / (control + ".log")).open("wb") as log:
                 return run_runtime_command([str(script)], self.root, self.environ,
                     self.root / control, log, log, 8,
                     expected_final_executable=expected or self.python_image,
                     exec_observation_timeout=observe)
+
+        def test_declared_fixture_shell_matches_actual_held_interpreter(self):
+            ready = self.root / "shell-ready.json"
+            temporary = self.root / "shell-ready.writing"
+            shell_release = self.root / "release-shell"
+            python_release = self.root / "release-python"
+            code = ("from pathlib import Path; import time; "
+                    f"release=Path({str(python_release)!r})\n"
+                    "while not release.exists(): time.sleep(0.01)")
+            body = ("printf '{\"pid\":%s}\\n' \"$$\" > " + shlex.quote(str(temporary)) + "\n"
+                    + "mv " + shlex.quote(str(temporary)) + " " + shlex.quote(str(ready)) + "\n"
+                    + "while [ ! -f " + shlex.quote(str(shell_release)) + " ]; do sleep 0.01; done\n"
+                    + "exec " + shlex.quote(self.python_image) + " -I -c " + shlex.quote(code))
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(self.exec_script, body, observe=4)
+                try:
+                    started = self.await_json(ready, future=future)
+                    shell = process_identity(started["pid"])
+                    script = self.root / "mapping-AppRun"
+                    declared = script.read_text(encoding="utf-8").splitlines()[0][2:]
+                    self.assertEqual(Path(shell.executable), Path(declared).resolve())
+                    self.assertFalse((self.root / "mapping/process.json").exists())
+                    shell_release.write_bytes(b"release")
+                    final = ProcessIdentity(**self.await_json(self.root / "mapping/process.json", future=future))
+                    self.assertEqual((shell.pid, shell.created), (final.pid, final.created))
+                    self.assertEqual(Path(final.executable), Path(self.python_image))
+                finally:
+                    shell_release.write_bytes(b"release")
+                    python_release.write_bytes(b"release")
+                report = future.result(timeout=8)
+            self.assertEqual(report["exec_transition"]["status"], "VERIFIED")
+            self.assertEqual(report["actual_exit_code"], 0)
+            self.assertEqual(report["owned_tree_cleanup"], "COMPLETE")
+            with self.assertRaises(RuntimeContractError):
+                process_identity(final.pid)
 
         def test_actual_exec_refusal_surfaces_original_future_error_and_raw_receipts(self):
             self.diagnostics_root = self.root / "retained-diagnostics"
@@ -842,7 +881,9 @@ class PackageRuntimeTests(unittest.TestCase):
                 future = executor.submit(self.exec_script, "exec " + shlex.quote(self.python_image) + " -I -c " + shlex.quote(code))
                 try:
                     self.await_json(self.root / "mapping/process.json", future=future)
-                    (self.root / "mapping-AppRun").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+                    script = self.root / "mapping-AppRun"
+                    shebang = script.read_text(encoding="utf-8").splitlines()[0]
+                    script.write_text(shebang + "\nexit 0\n", encoding="utf-8")
                 finally:
                     release.write_text("release", encoding="utf-8")
                 with self.assertRaises(RuntimeContractError):

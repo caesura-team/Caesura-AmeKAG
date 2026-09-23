@@ -1,6 +1,21 @@
 # U22 最终包隔离验证执行记录
 
-开始：2026-09-13。沿用当前计划 U22，底层优先、Studio 暂停。工作分支先整合 U21 候选 4c007407；U21 的最终完整门禁与合并结果仍独立跟踪，不能因下游准备开始而宣布上游完成。
+## 当前状态（2026-09-20）
+
+**U22 尚未完成四平台最终包验收。** 当前候选 `0a651bfdd29555152246f44ce626602f5a7764be` 的完整本地 Windows Debug 门禁已通过；[CI 35471198493](https://github.com/caesura-team/Caesura-AmeKAG/actions/runs/35471198493) 已终态 FAILURE：11个job为8成功、2失败、1跳过。失败是Mac原始字段观察及Chrome153沙箱启动，详见末尾追加；macOS Package因上游失败未执行。Windows ZIP与Linux TGZ/AppImage两个包job及其上传前复核/上传步骤成功，本轮原包尚未逐字节下载审计。下一候选只补同次 Mac 原始观察持久化，以及按 Chromium 合同安装浏览器沙箱，不放宽包接受条件。
+
+此前最近完成全部托管执行的候选为 `016f77f7af611c83bdac87c6dae12fd1a877d6ea`；[CI 35467654286](https://github.com/caesura-team/Caesura-AmeKAG/actions/runs/35467654286) attempt 1 已终态 FAILURE，11 个 job 中 **9 成功、2 失败、0 job 跳过**。实际执行的是 PR merge 源码 `cc258c6ae9293a24eec82ae7bfe7fbcf155bef2b`，不能与 API 的 PR head 混同；job 无跳过也不表示内部所有测试或条件步骤均无跳过。
+
+| 本轮范围 | 已有事实 | 尚未建立的验收 |
+|---|---|---|
+| Windows Debug/Release、Linux GCC、macOS Clang；Android/iOS 三项编译或静态探针 | 7 个 job 成功 | 编译/静态探针不证明移动设备运行 |
+| Windows ZIP；Linux TGZ、AppImage | 两个 package job 成功，验证、上传前复核及上传步骤成功 | 本记录尚未下载并逐字节审计本轮这三个最终包，旧候选下载审计不能移用于本轮 |
+| macOS TGZ | 原件已审计；新建游戏实际退出 0，但加载库来源检查失败，`accepted=false` | DMG 未到；不能因 Engine 正常退出改判整个 TGZ 通过 |
+| Web | Chrome 152 原始 CDP 记录确认离线覆盖后为 `online=false`，重载后变回 `true`，目录根场景失败 | 子路径和最终 ZIP 验收未到；Linux Chrome 153 尚无运行通过证据 |
+
+后续候选包含固定 Chrome 153 归档选择和严格 lsof 字节路径解析两项有界修复，证据详见末尾追加。Chrome 153 的 WSL 启动被缺失 `libnspr4.so` 阻止；lsof 修复已完成真实 Linux wire 控制及 Windows/WSL 脚本回归，但原 Mac 失败未保留被拒绝路径，转义问题仍是 **INFERENCE**。候选修复的本地回归不替代新的完整门禁和真实托管包验收，也不授予发布批准。
+
+历史起点为 2026-09-13，沿用当前计划 U22，底层优先、Studio 暂停。工作分支最初整合 U21 候选 `4c007407`，其后合流与验证记录保留如下。下文历史段落中的“当前”指该段记录时点；最新状态以本节和末尾追加为准，历史失败不覆盖、不改判。
 
 ## 合同与实现顺序
 
@@ -230,3 +245,208 @@ Web probe迁移到同一页面session中的Network.emulateNetworkConditionsByRul
 生产probe SHA256为8cdcf53a061f854e478649f6aca78cb1f3df0cbc4e50f0621fdaa7086dcc9c13，测试为c84b6cc7b970d5ebb6fc2ce4d2948152782f87dd37802c05908c23624910f920；冻结收据u22-hosted-d418845d/offline-controls-freeze-01.json摘要f4a77b5c91ac5958988dd2346eab62d6d70de5f240213928bed7b3f53b0974a2。私有真实Chrome153的连续session和断开后重连同target对照中，旧接口与新组合均通过；因此本变更只称兼容性迁移，不能声称复现或已修复托管Chrome152的原问题。对照确认package server已退出、SW可供字节、浏览器网络请求被阻断而独立存活HTTP正控仍返回200；所有owned进程已清理。首次辅助模型SystemInfo路由错误的FAIL独立保留。下一托管运行必须给出Chrome152实际结果，U22未据此验收。
 
 Web兼容性两文件独审无可行动发现，逐项重算冻结源码/日志/实际Chrome对照原件；报告offline-controls-independent-review-01.md摘要dc51fa29e836c6796012251289537d44d601350d029213ad8dfb38078c0cd831，JSON摘要d5a13a3ef698bbef2a55b69c3e9d97db4b75ca0be47f239b49752c46593ca502。独审未启动新浏览器，原托管问题仍等待下一次真实包CI判定。
+
+## 2026-09-20 016f77f7 托管终态与两项修复候选
+
+本节链接到的 `artifacts/validation/` 原始证据位于本工作树忽略目录，不随 Git 提交上传。[最终 API 状态 state-05.json](../../artifacts/validation/u22-hosted-016f77f7/state-05.json) 记录 run `35467654286` attempt 1 整体 failure：9 个成功 job、2 个失败 job、0 个跳过 job。PR head 为 `016f77f7af611c83bdac87c6dae12fd1a877d6ea`，原 job checkout 日志及包报告绑定的实际 merge 源码为 `cc258c6ae9293a24eec82ae7bfe7fbcf155bef2b`。
+
+Windows Debug/Release、Linux GCC、macOS Clang 和三个移动编译/静态探针均成功。[Windows Package 105966018617](https://github.com/caesura-team/Caesura-AmeKAG/actions/runs/35467654286/job/105966018617) 与 [Linux Package 105965941442](https://github.com/caesura-team/Caesura-AmeKAG/actions/runs/35467654286/job/105965941442) 的最终格式验证、上传前复核和上传步骤成功；本次未下载审计它们的 Windows ZIP、Linux TGZ、Linux AppImage 原件，因此这里只确认托管步骤状态。此前 `fd5b426b` 的固定 ID 下载审计继续仅属于原候选。两个失败是 [Web Final Package 105965941484](https://github.com/caesura-team/Caesura-AmeKAG/actions/runs/35467654286/job/105965941484) 和 [macOS Package 105964618274](https://github.com/caesura-team/Caesura-AmeKAG/actions/runs/35467654286/job/105964618274)。
+
+### Web：已取得 Chrome 152 原始重载记录，153 仍待实际 Linux 验收
+
+固定诊断 artifact `10592760182` 的原 ZIP 为 8,853,666 B，SHA256 `3e70b1dd8e87f3a42b444e60206451d26ea2affa92ea8c370edb9c774270cd88`，见 [artifact 元数据](../../artifacts/validation/u22-hosted-016f77f7/web-artifact-01.json) 与 [原 ZIP](../../artifacts/validation/u22-hosted-016f77f7/web-transfer-01/artifact.zip)。[原始审计](../../artifacts/validation/u22-hosted-016f77f7/web-offline-audit-01.json) 绑定实际 `Chrome/152.0.7977.82`：同一 session `7EC018C65787C9F2EC1CA0ABB0DE45BA` 先发送 `Network.emulateNetworkConditionsByRule` 和 `Network.overrideNetworkState`，得到非空 rule ID 后观察到 `online=false`，随后 `Page.reload` 的文档却为 `online=true`。本轮原 `offline/cdp.jsonl` 已保留并重算 SHA256 `0ee322777a335a9eea2b5f9988690c807c6d04e1851dcc5f9261a796d405765d`；报告摘要为 `c311beb495232f2f10e6e09ca56d11d0617f6f8d5ca7d6e208043f2b743d4f57`。这次实际记录证明前一轮迁移到新 CDP 接口仍未让 152 的重载状态满足严格合同，不能把接口调用成功当离线通过。
+
+失败发生在最终目录的 root 离线场景，子路径及最终 Web ZIP 验收未到。offline probe PID3578 实际退出 1；HTTP server PID3071/port39615 受控停止、退出 -15，Chrome PID3075/port38825 受控停止、退出 0。原收据均无 timeout/forced kill，owned cleanup COMPLETE，两端口已关闭；本次失败不是未回收进程造成的通过假象。
+
+已保存精确版本的 Chromium 上游源码与来源元数据：[152 源码](../../artifacts/validation/u22-hosted-016f77f7/blink-network-agent-152-01.txt)、[152 来源](../../artifacts/validation/u22-hosted-016f77f7/chromium-source-152-01.json)、[153 源码](../../artifacts/validation/u22-hosted-016f77f7/blink-network-agent-153-01.txt)、[153 来源](../../artifacts/validation/u22-hosted-016f77f7/chromium-source-153-01.json)。两份源码 SHA256 分别为 `9026665eb122d3a335ded423519c63c73c8c15c0a0dc6b126d5ee8b25a690d8d`、`29f17657e2df2a3725a0dc9fdca612bd47ba032453c7be33f7ca9b72de8441a7`。152 的 `overrideNetworkState` 未保存这些网络覆盖字段，`Restore` 也没有对应重施加；153 的 2631–2635 行保存 offline/latency/throughput/connection type，837–852 行在 `Restore` 重施加。这个差异与本轮重载观测相符，支持选择具有持久化实现的版本，但没有替代真实 Linux 浏览器验收。
+
+修复候选固定 Chrome for Testing `153.0.8010.52` 的官方 Linux64 归档；[下载原记录](../../artifacts/validation/u22-hosted-016f77f7/chrome-linux-download-01.json) 为 195,708,470 B，SHA256 **`e66f66d4802a46d4a022667e668aa950e277cadbfbed4b3777915b47413a0ef9`**。工作流先验证归档再解压，固定传入所选浏览器路径，并保存实际 binary 摘要、version stdout/stderr、退出码和 selection PASS/FAIL；没有自动替换浏览器或放松 offline/SW 断言。[版本选择独审](../../artifacts/validation/u22-hosted-016f77f7/browser-pin-review-01.md) 的初始 P2 是非零 version 调用丢失原 stderr，修订后已闭合；该独审属于静态接线检查。
+
+[WSL 准备原记录](../../artifacts/validation/u22-hosted-016f77f7/prepare-linux-chrome-01.json) 锁定解出的 executable SHA256 `328fbee82d8e58b05a755b2343abfd192d92ca7066353cb357fad389bc7e3989`，但 `--version` 实际退出 **127**：`libnspr4.so: cannot open shared object file`。因此本地没有 Linux Chrome 153 启动或包运行 PASS，也不能把这台 WSL 的缺依赖推断成托管 Ubuntu 同样缺失。候选仍需新托管运行证明精确浏览器启动、root/子路径、重载离线、SW 字节、网络阻断与清理；原 152 失败继续保留。
+
+### macOS：正常退出的 Engine 被来源检查拒绝，路径转义解释仍为推断
+
+固定诊断 artifact `10591659417` 的原 ZIP 为 14,729,574 B，SHA256 **`8b99ae8848870299032692ef065b514ebb08997532060c1127bc2bfd00b75c5d`**，匹配 [artifact 元数据](../../artifacts/validation/u22-hosted-016f77f7/mac-artifact-01.json) 与 [原 ZIP](../../artifacts/validation/u22-hosted-016f77f7/mac-transfer-01/artifact.zip)。[Mac 原件审计](../../artifacts/validation/u22-hosted-016f77f7/mac-package-audit-01.md) 及 [逐项摘要](../../artifacts/validation/u22-hosted-016f77f7/mac-package-audit-01.json) 绑定最终 TGZ SHA256 `d38dbcabffc811bbd7f95b7bac191689c25db434c93fec7b415e9d7eb14c4678`；21 项命令日志/收据引用重新计算一致，source/runtime-copy/created-game-copy/evidence 稳定。TGZ 准备成功，两个 editor、原始 demo 和 author create/build 阶段通过；`created_game_frames` 因 `A second source for required library was observed: libSDL3.0.dylib` 被拒绝，最终 `Required loaded-library provenance is NOT_VERIFIED`、`accepted=false`，后续 DMG 未到。
+
+失败阶段运行本包新建游戏的 `作品 输出` 目录，argv 含 `--frames 60 --audio-output software`。实际 PID31150、creation `1789850946:571402`，Engine 初始化 Metal 并运行新建 KAG 项目，最终 EXITED/exit0、无 stop/timeout/forced kill、cleanup COMPLETE。原 stdout 的真实软件混音为 76,416 frames、152,832 samples、43,490 nonzero、0 nonfinite，48kHz stereo；physical output 仍 NOT_RUN。来源观察先失败，后续 created-game 音频验收未到，因此这些事实不能将整个阶段改判为 PASS。
+
+旧 observer 把 lsof 的 `n` 字段直接当路径；C locale 对中文祖先目录的字节转义可能保留 SDL basename、改变全路径，进而触发同名异源拒绝。**这是 INFERENCE，不是已证实的该次托管根因。** 原失败未保留被拒绝路径或 lsof stdout，不能排除真正第二份 SDL，也不能用后来的重跑填补这次观察缺口。
+
+[真实 Linux lsof 4.99.4 wire 控制](../../artifacts/validation/u22-hosted-016f77f7/lsof-wire-control-01/report.json) 确认 C locale 转义中文/emoji，`-F0n` 只改变分隔符，UTF-8 locale 仍转义字面反斜杠；`-Di` 不受该版本支持并退出 1，原失败保留。[第二组 wire 控制](../../artifacts/validation/u22-hosted-016f77f7/lsof-wire-control-02/report.json) 又确认部分控制字节与合法字面 caret 名称具有相同输出，无法唯一还原，修复选择拒绝这种歧义。Linux 控制没有冒充 macOS 本地执行。
+
+生产修复显式设置 `LC_ALL=C`、捕获原字节，校验 PID 和字段结构后仅做一次严格 lsof 转义解析。字面双反斜杠保持字面路径；未知/残缺转义、NUL、C locale 非 ASCII 字段、caret 歧义均拒绝。原 PID/creation、文件存在及摘要、包内路径、未知 observer、混合/外来同名 SDL 拒绝合同未放宽。成功和失败观察均保存工具路径/摘要、argv、受控环境、退出码、带大小和摘要的原 stdout/stderr base64、原字段及可得的规范化路径；失败继续保留原错误类型/文本，超时保留已收到的部分输出，便于后续托管诊断。
+
+原测试先取得 RED：5 个方法出现 5 个 subcase failure、1 error；额外失败诊断/caret 控制 2 个方法出现 2 failure、2 error。冻结源码上的实际 GREEN 如下，均 0 failure、0 skipped，原失败未覆盖；命令退出 0，源码前后摘要一致。
+
+| 实际脚本范围 | 通过数 | 测试耗时 |
+|---|---:|---:|
+| Windows 定向 lsof 与既有 mac mapping 控制 | 17/17 | 0.703s |
+| WSL 定向 lsof 与既有 mac mapping 控制 | 20/20 | 0.406s |
+| Windows native package runtime 完整脚本 suite | 51/51 | 46.315s |
+| WSL native package runtime 完整脚本 suite | 52/52 | 29.350s |
+
+保留的真实 Linux 输出另经生产 parser 读回，20 字段中 14 项精确还原、6 项歧义拒绝，见 [wire 读回结果](../../artifacts/validation/u22-hosted-016f77f7/mac-lsof-retained-wire-readback-01.json)。这些脚本使用真实受控小进程和文件/摘要检查，但 Engine/Lua 协议夹具不证明真实 Engine 包通过。源码冻结 SHA256 为 `7395b3b8a2b113c1fb10fa96e8dfff1ea021c516c1ab8fa3cf333a46ff0ebe0e`，测试为 `16ba88fd25d8522d75afe155ff2c1566b3597fed063b4b73e2001b433bd48874`；[交接](../../artifacts/validation/u22-hosted-016f77f7/mac-lsof-handoff-01.md)、[69 项锁定清单与 RED/GREEN 原日志索引](../../artifacts/validation/u22-hosted-016f77f7/mac-lsof-freeze-02.json)、[精确差异](../../artifacts/validation/u22-hosted-016f77f7/mac-lsof-changes-01.patch) 均已保留。该修复未执行实际 Mac Engine、TGZ/DMG，也未替换原失败收据。
+
+两项候选由主代理统一审查、提交并执行适用完整门禁；需要后续真实托管包结果和当前最终产物的精确字节审计。本文没有重新构建、重跑 CI、变更服务器设置、发布或部署；U22 整体继续开放，旧本地通过、旧候选包审计、本轮托管失败与修复候选分别保留。
+
+主代理随后独立核对完整生产、测试和工作流差异，69项冻结原件逐项重算匹配，无剩余可行动发现；最终actionlint1.7.7实际exit0。审查JSON [candidate-independent-review-01.json](../../artifacts/validation/u22-hosted-016f77f7/candidate-independent-review-01.json) 摘要 `eedf0aeee37e6115bb638cec0554fb704835b5c95104f0c548abbe240c65874d`，当前workflow摘要 `a757cf5148baab00ff4a660ac04d46a3f0ae0c12f95839cc7825c0e7cf192f77`；[审查说明](../../artifacts/validation/u22-hosted-016f77f7/candidate-independent-review-01.md) 保留实际Mac/Linux浏览器未验边界。完整新候选门禁仍另行执行。
+
+
+## 0a651bfd 的完整本地门禁与新托管失败（2026-09-20）
+
+本地 clean `0a651bfdd29555152246f44ce626602f5a7764be` 的完整Windows Debug run `36864c0f-d14f-4d18-98e5-a0b8437df12d` 已通过：全量构建退出0，C++1415/1415、427088断言、0失败/跳过；Lua147/147及56/56；CTest48项为47通过、预声明可选AI一项跳过，0失败，552.14秒。runner、collector、strict verifier均0，源码/夹具稳定。run.json SHA `dcfc384cbeaf55796353d4883022583729e235ee3d17f0346323d9b1d711ffbd`；独立重核68个日志/收据引用，review SHA `f307aea927457c441881892a044ce6edaee55bdd3019e55bf8d05a673192cacc`。这是本地SDK关闭证据，不替代托管最终包。
+
+托管run35471198493的head为0a651bfd，实际PR merge执行源码为`ffb64bfb8f3fc172c05062c63dd08eb7f23fd145`。Mac Clang job105972355724中，原生Python suite实际50方法、49通过1ERROR，8个新增wire方法全部通过；CTest46通过、1失败和1可选AI跳过，退出8。实际当前Python进程的lsof成功返回，但中间字段有不以n/开头的行；严格解析抛Unknown lsof image field，尚未进入路径解码。原job日志SHA `e7543cbf27820794f1ef3661ef895bd6c62bbc7b0406bc6c9a2c154c23a79a1b`。固定诊断artifact10593003412已下载，与API/原上传摘要一致，146601字节、SHA `3541e0285b3cb273b8f3424399caa37f7c8b7902c1b9efae56d6f72d84d59042`；31成员均未保存module_observation原字节。未知字段继续标UNKNOWN，不猜测f字段、匿名映射或Unicode。
+
+诊断缺口在测试直接调用observer：异常附带的记录未被unittest序列化。新增诊断只复制该次异常已有的module_observation、测试ID和错误到独占临时目录，再原样抛同一个异常；保存失败不能替换原异常，不重新运行lsof、不复制整个环境、不改parser。Mac失败上传增加固定caesura-native-observer根。独立回归先6方法4FAIL/2PASS，再Windows及WSL各7/7（含真实当前进程观察）、0失败/跳过，actionlint通过。freeze SHA `d14a1f1c6e8eb47518df4a4f879a6584fe85387f08abd6279253e2a3b701cda5`；独审重核21份原件，无可行动发现。新Mac真实字段仍待下一次执行，不将诊断补丁称为parser修复。
+
+Web job105974876150已成功下载、核SHA并选择Chrome for Testing153.0.8010.52，实际binary SHA `328fbee82d8e58b05a755b2343abfd192d92ca7066353cb357fad389bc7e3989`。固定artifact10593825042已按API验证下载，7593986字节、SHA `1796f1815ae6ac310bf7a2052f4b299d74ec777600e910270280d59360dc3349`。根场景浏览器PID2938在CDP/page启动前退出-6，原stderr为No usable sandbox；stages为空，未执行应用boot、离线重载、子路径或ZIP运行。server/browser/私有Chrome临时目录cleanup均通过。本次不能证明也不能否定153的离线重载行为；与上一轮152的navigator.onLine失败分开。
+
+原锁定CfT ZIP含chrome_sandbox（下划线、755），而精确153源码GetSandboxBinaryPath优先寻找binary旁chrome-sandbox（连字符），PrependWrapper要求root属主/SUID/可执行。按Chromium官方SUID安装合同补齐独占root-owned安装树及同包helper，保持浏览器/OS沙箱开启；不添加no-sandbox、不修改AppArmor或sysctl。helper SHA `c100b678a8c171ad0733e51b6f18d98d936d38ab945681c41da00f2ee22e7571`，与已锁完整ZIP绑定。安装/模式readback只提供启动前提，真实下一轮包运行才提供验收。确切153源码和首失败证据保存于u22-hosted-0a651bfd，web-sandbox-diagnosis-01.json SHA `83ebe957de426077b7953e814a938484a794e0adecf62c08e234dd5416dbcd71`。
+
+
+该轮最终API快照state-04.json SHA `cb675d60ab6595332b078400d97da871a44f3d9b3ab24f38731e6b8ab9660ba5` 记录8成功、2失败、1跳过；首次失败不重跑覆盖。对应本地完整门禁中的HTTP实际75/75，PID28976、创建身份134343285306528988、端口13115；requested stop后实际退出1，cleanup COMPLETE，无timeout/force。原result.json SHA `12583c67fafd0b316527a7c6e9094be563a284f90e173f70edb5bd7447dbb9ea`；独立3份原日志/owned收据重核报告SHA `ba54e00da48af5300492489330e0341ce4b01d66a57f90c7e60a453b711654dc`。
+
+
+下一候选浏览器安装增量已冻结：workflow SHA `13e7cdcd4189288afdaf64544162c581d518cfc913557f683c79a1e60f40c290`，bash -n、actionlint1.7.7和两段Python AST均通过。独立重核29项输入/诊断原件，除Web安装step外其余YAML与Mac诊断快照相同；未在本机执行特权安装或浏览器，新的实际沙箱与包运行保持NOT_RUN。冻结清单SHA `49918a386acd96fad7fa53bb6f8328fa261c8126a4bd4ccaab56c2b7346e959c`。
+
+
+## 58f3678d 完整本地门禁与实际 Mac 字段诊断
+
+干净58f3678d的windows-debug run `0c71cc4e-ea7d-42ee-938c-a52275836b67` 完成：Debug全量构建、C++1415/1415与427088断言、Lua147/147及56/56全部通过；CTest48项中47通过、0失败、仅预声明AI服务跳过，545.81秒。实际HTTP75/75，含两项Web打包正控；PID26872/创建134343307686759238、端口8316，受控STOPPED实际exit1、无强杀超时、cleanup COMPLETE。全部11个profile检查及runner/collector/strict verifier退出0；run.json SHA256 `54520f1fb4846fc2adb6e2b3d79367bf837c637f19a8436b997c10df11c53db9`。独审重核162引用、93独立文件、148302165字节及历史Git blob一致；证据u22-foundation/full-debug-58f3678d-01-review.md/json。该结果不迁移给下述新代码。
+
+托管run35473344618的Mac Clang在真实Python进程观察器维护测试失败，Mac最终包因此未跑。新诊断成功保留原lsof stdout：4447字节，SHA256 `9cddc38b392ad838a6112874dac7b376fa6f1cc619267c02a70d34912724190f`，35组完整ftxt/nPATH，observer实际exit0。固定artifact10593602536外层150969字节、SHA256 `22d6d4e51fa707e24ff7187cdc2e39c488ce9cc29790d693aa989e8c1b2363e5`。旧解析只接受n/行，在路径解码前拒绝ftxt。lsof上游manpage也说明旧版即使-Fn仍产生f描述符；此处依据实际字段修复，不推测丢失的旧日志。
+
+新增5方法先真实RED（3通过、1失败、1错误），生产只扩展为接受完整ftxt/name记录对或原name-only格式，拒绝混合、未知描述符、缺路径、额外PID及断裂记录；原路径转义、required库身份和第二来源拒绝保持。完整Python套件Windows62/62、WSL63/63，零失败零跳过，均前后源码稳定、实际exit0、cleanup COMPLETE。独审原始35记录旧解析拒绝/新解析全解出，并以2801有限序列和额外坏wire验证严格边界；53个原测试AST正文未变。独审报告mac-ftxt-fix-01/independent-review-01.md SHA256 `c4a283a83e9de232d5915a10f8b77b9cae256fd19da03101584093d4ae6e73d8`。协议重放不等于Mac真实Engine最终包验证。
+
+## 托管 Web 计时失败与既有 U27 修复移植
+
+同一run的Linux GCC在Web维护套件627/628处失败，perf-bundle故事比值0.7929896907216494低于固定0.8。日志source/bundle中位数均显示0.0ms；源码仍同步调用并丢弃async Promise，实际没有等待场景完成，不能将该数字解释为场景吞吐。原job105978202130日志945445字节、SHA256 `a9fd52f6f80a0dc2aebdc33b74c9324b67920a81edf4c7ff27fc09fa36172fb1`保留。Linux最终包与Web最终包被上游失败跳过，所以这轮Chrome sandbox安装尚无运行证据。
+
+精确移植U27已独审提交da9d833aad97b9440b7d5b3121439f18973b7439的三文件：计时器warmup与每个样本串行await、调用方返回Promise、入口等待完成并dispose。原采样次数、上下文、阈值和超时均保持；此前真实RED与确定性10/10及原638全套证据见U27执行记录。移植后在本树冻结dirty快照实际完整Web52文件638/638、0失败0跳过，170.51秒，源/工具/生成资源首尾稳定，owned exit0、无timeout/force、cleanup COMPLETE。tiny中位数9.5/9.6ms，story921.6/914.2ms、吞吐比1.008，synthetic1340.5/1045.7ms、比1.282，原0.8阈值不变。证据benchmark-integration-01/full-web-integration-01-outcome.json及原Vitest JSON；此为维护验证，不是正式Release多进程基线或真实浏览器长跑。新干净候选完整门禁及新的托管最终包仍须执行。
+
+
+## fab91a12 完整本地门禁与托管生成文档修正
+
+干净 fab91a127bef3004f63d8c6f51f707ac7785fdf5 的完整 Windows Debug run 5c0abca4-aa5d-41c7-8634-fa065839612e 已通过：全量构建、C++1415/1415及427088断言、Lua147/147与56/56、CTest48发现中47通过及1个预声明AI/Ollama不可达跳过，HTTP75/75含两项Web检查。runner/collector/strict verifier全部0，源码及夹具首末稳定。独立审计重新哈希163引用/94个物理文件148352195字节，live clean身份与原run相同，strict错误列表为空。原run SHA256 5b72df3b486044a105f542c073f6be8cd371edf5caecfbb2aaac046cfa8d7ddb，manifest 00b85c294e6905c28a475c58491b845a7aab54d6ae6d5147f7ab11f14d79d53a；完整原件与审查见u22-foundation/full-debug-fab91a12-01。HTTP进程PID9756（创建身份见原收据），受控STOPPED实际exit1、无超时强杀且cleanup COMPLETE；精确进程已不存在。
+
+托管run35474593317的Mac Clang job105981537066成功，实际checkout是merge ec82bf049779733e354c906effcb0ecced693479，与PR head分开记录。原日志确认Lua147/56、CTest47通过及1可选AI跳过；成功输出未展开C++/native Python实际内部计数，不能用源码注册数量替代。真实当前进程observer无skip/mock，可由精确merge源码和完整suite通过支持，但没有独立方法PASS行或原模块字节。原日志SHA256 2f9d7aca284ff813c5a19b459f48f19cd2f3d85847dc2ef1848763218daf9e07，审计见u22-hosted-fab91a12/mac-clang-audit-01。Mac Package也报告success，最终TGZ/DMG字节审计仍待完成。
+
+本轮Linux GCC的完整Web638/638及CTest48入口（47通过/1可选跳过）均已通过；唯一失败发生在随后生成能力矩阵的freshness检查：已提交指纹8f9a5fcfae4c8693仍对应旧Web测试输入，当前真实输入指纹为54564d50946c4426。原job105981537172日志SHA256 c114e6df74967a2348559b9ba38c41592dc2358687ea6d384cc6e94e4f85a9da保留于u22-hosted-fab91a12/linux-failure-01。重新运行原capability_closure.py，实际diff仅生成时间与源指纹，两者外全部矩阵字节不变；未手改矩阵、生成规则、测试或阈值。本次修正为生成文档同步，可复用上述未变产品源码的构建证据；新托管候选仍须通过实际全部门禁。该Linux失败导致本轮Linux/Web最终包任务skip，Chrome sandbox和完整U22仍未验收。
+
+
+## Mac 最终原件独审发现包外 OpenSSL
+
+run35474593317 的 Mac Package job105982743419 原SUCCESS保持；固定最终artifact10593789574（80080561B，SHA256 8c53e7e50ebeeed70862927555735cad5c854383a5acd049872026b3224630f6）与evidence10593919472（29838643B，d3de4e7ae8449921a92cd9649b3e9b2462ffdbed4f94edbb6f06f27c0ce2cd27）独立下载核对。原执行merge ec82bf049779733e354c906effcb0ecced693479与触发head fab91a12分别绑定。两包共14个native命令与6个hdiutil命令、8次实际模块观测、1119引用/1024文件/226048109B均回读闭合；TGZ author_create自然退出早于最终映像身份发布，该PID边界保留。
+
+独审实际TGZ Engine Mach-O在offset2600/2672分别LC_LOAD_DYLIB引用绝对Homebrew libssl.3/libcrypto.3；两包仅含SDL3 dylib，8次真实lsof均从Homebrew Cellar3.6.4加载两个OpenSSL库。此为P1可搬迁性缺口，独审不接受Mac交付；原package PASS收据不被重写。四次实际Metal及软件PCM结果仍只证明原runner上的运行，不证明干净Mac依赖闭合。审查u22-hosted-fab91a12/mac-final-package-audit-01/audit-01.json SHA37584897bdee08b57f9fc3366f09e6549b50f161bf48502b354729e69a0608eb、MD 0f1dfe9515ad9af3621f8b8ce9cae387048d21057c5f020c418d3337293da45e。
+
+DMG相对TGZ额外4个Python字节码文件，3个静态库同大小异SHA，不能声称两容器payload相同。未排除ignored pycache和先后独立安装可解释字节码污染，具体静态库字节差异原因UNKNOWN；不为消除差异直接删除交付内容。OpenSSL闭包与打包清洁度需要相应修复和新的托管最终包验证。
+
+## 24c50eba 的 Web 安装前安全检查失败
+
+新run35475767897的Web Final Package job105986988055在2026-09-19 23:39:01 UTC失败。固定ChromeZIP摘要通过，但安装前置检查返回Unsafe browser installation parent: /opt；原日志未输出具体uid/mode或访问位，不能猜测哪一个谓词触发。浏览器未启动，包构建/离线验证与最终上传全部SKIP，诊断上传当时没有selection文件。原job log 44010B SHA256 809e7a2c582a240224663dc7ebaa0ff87cbcdbca31e123fbb351c95245c1483a保留。
+
+该run现已结束，11个job中10个成功，只有上述Web包任务失败；Windows最终Package与Linux最终Package也已成功完成。`u22-hosted-24c50eba/hosted-final-state-01.json`保留原API终态。本次只复核这些托管状态，未据此把Mac已确认的第三方动态库来源缺口改判，也不代替新版验证器下重新生成的最终包。
+
+### 实际安装规则中的 Python 缓存排除
+
+Mac审计发现的TGZ/DMG缓存文件差异促成独立回归：使用真实维护中的scripts安装规则，实际CMake安装保留了两个`__pycache__`目录、`.pyc`及`.pyo`，新方法首次1项FAIL；这是安装文件集合不符，配置与实际install成功，非编译或工具前提错误。修正仅在`install(DIRECTORY scripts/)`增加上述三个明确排除规则，普通Python源码与JSON资源仍逐字节保留。
+
+完整实际CMake/CPack维护套件Windows7/7、1.980秒，WSL10/10、11.957秒全部通过，差异为原有POSIX专用链接场景。新增回归同时验证安装目录及真实TGZ经生产安全提取后的精确文件集合；测试payload是惰性普通文件，不声称运行过Mach-O或SDL。`u22-python-cache-01/review-01.json`摘要193a69a54ab112fa9d95499a5c31a2189abea4d742c6fca597f0f70ddcbf6b23封存18个fixture命令清单及原始流摘要，原RED与WSL宿主代理提示保留。此小修不改变此前归档原件，新的Mac最终包仍需实际重新打包验证。
+
+修复仅将安装根改为/usr/lib下的独立版本目录，并让预检无论成功失败都保存parent逐项uid/gid/mode/runner_writable、错误和NOT_VERIFIED sandbox状态。原固定ZIP/binary/helper摘要、root所有权、4755 helper、非root运行和完整权限验证保持；不修改系统现有目录权限。提取实际workflow脚本的Bash语法、两个Python块编译和actionlint1.7.7通过；本机WSL uid1000实际预检/usr/lib链通过，/tmp可写目录负控仍拒绝且保留FAIL JSON。只执行预检，没有安装或启动浏览器，托管环境仍需新run验证。workflow-review-01.json SHA256 3ea849645f0526a7344c9a2448874a6340de74dbb9ec09274e5cdc000971fd8e。
+
+
+## macOS 依赖闭包拒绝与 OpenSSL 文件复制回归（2026-09-20）
+
+新增共享薄 Mach-O parser 后，静态包检查递归核对 Engine/Lua/必需库的实际 load commands、rpath 及包内传递依赖；运行观察使用同份 lsof 原数据，将普通资源与映像分开，拒绝包外非系统 Mach-O。仅接受明确系统目录边界，Homebrew、伪系统前缀、路径逃逸、缺失 Crypto、未知必需 load command 和未验证 fat 格式均不能转为通过。原新增7静态/5运行观察回归的测试主体不变。
+
+首次候选 GREEN 实际出现6静态失败、1运行错误及真实 Engine repro exit2：稳定文件被误报 changed。原始诊断证明 Windows Python3.12 的 path stat/fstat ctime 语义不同；修复保留各API自身前后ctime检查，并跨API核对dev/inode/size/mtime。第二次真实7/7与5/5通过，原始Engine/Lua/SDL字节保持，repro正确拒绝`/opt/homebrew/opt/openssl@3/lib/libssl.3.dylib`，未执行Mach-O。原 Engine 摘要8564619c916ee80556b53e15a9bc4cd259cc14c1f674be2b615dd2ad5e58a245；repro-result.json摘要54334dde5029f14a35da7c6f57e583141c6ef39d67f1847d3b0c69471c4feab3。首次错误和旧最终包PASS收据都保留，不被覆盖。
+
+两处旧正例原先仅magic+零字节，CPU/filetype为0；只升级它们的Mach-O构造字节，原断言、12新增方法和方法集合保持。实际完整静态/运行维护套件Windows29/29与67/67，WSL29/29与68/68，全部exit0、无超时强杀、cleanup COMPLETE，七个源锁前后稳定。whole-01.json摘要51c499dcbcbf5517aa208dd9512a3e23350fe0cea48a608758bd6409116495e2。薄文件夹具和lsof观察夹具不能作为真实macOS运行证据。
+
+OpenSSL复制层另取得真实CMake RED：Windows6方法8失败断言，WSL8方法10失败断言，实际UNKNOWN IMPORTED目标被旧helper静默跳过。现以显式LINKAGE及RUNTIME_NAME选择普通复制，保持原SDL调用默认；实际Release配置、静态无动态文件、缺失Crypto失败、非法名字/链接类型拒绝、CPack及WSL软链接COPY/DESTDIR均通过。新增6/6、8/8，原安装套件7/7、10/10全绿；root-green-review-01.json摘要3ca6fb840c04b0f8ca6e4773f4d1fb96ee1601afe6bc3632f8f22b36cbc5f185回核31份fixture命令清单与8份原流日志。新增安装suite已注册到CTest；当时最低发现数的数字替换误改了rc-adversarial字段，未实际提高CTest。下文记录按检查id修正与真实发现结果。
+
+上述只关闭验证器漏检及普通文件复制合同。构建侧OpenSSL要求声明、安装后load-command重写/签名、全量Debug门禁、新macOS托管构建及最终TGZ/DMG实际执行仍待完成，当前旧包仍有已证实可移植性缺陷；没有发布批准或正式签名结论。
+
+
+## OpenSSL 实际配置选择与 FIFO 重开修复（2026-09-22 收取验证）
+
+CMake 现逐实际配置读取 imported OpenSSL SSL/Crypto 的 LOCATION_<CONFIG>（包含 MAP_IMPORTED_CONFIG），由共同 selector 检查所选普通文件；UNKNOWN 不再被推定为 static。static 要求完整 ar 成员框架但不宣称对象ABI；shared 要求薄 Mach-O dylib、唯一合法 LC_ID、精确 runtime 名称、两组件不同文件且CPU一致。per-config selection 留来源路径、alias绑定、摘要及 NOT_RUN 安装/签名状态；包 requirements 的 Mac 字段作为成组外部输入校验。旧无此组元数据仍走原依赖闭包，不推定静态。生产三文件及 selector 当前均有独立源锁。
+
+14个新增方法先在旧实现 Windows/WSL 取得实际失败（各13个失败子断言、2个错误，9个不同失败方法）；修复后两端各14/14通过，真实执行CMake配置/receiver/完整包夹具。最初GREEN收据 `u22-macos-install-01/phase-b-root-green-01.json` 摘要 `29489b3f1ece2570ff0ca9dbf6587550e01dd10dc77b23020c2cc82a6f075ed1`，root重核84引用、30个CMake命令的记录摘要 `218d057b76c0c411b2fd4e9f1cdaec19f49d396974f388d2f6c5b80ea498c4d2`。这些合成ar/Mach-O是格式与编排夹具，不是实际Apple二进制运行。
+
+随后发现 selector 保留了安全打开的原fd，却调用共享 inspect_macho 再次按路径阻塞打开。真实WSL复现将私有普通 dylib 移走并在原名建FIFO；子进程仍持原普通fd，内核wchan=wait_for_partner、openat flags=0x80000，非阻塞writer实际连接后，parser才到fstat并拒绝非普通文件。原结果 RED_BLOCKING_REOPEN_REPRODUCED、child74/controller1，完整回收且无强杀。最小修复只改共享parser打开方式：os.open加可用NONBLOCK/NOFOLLOW/BINARY，ExitStack明确关闭唯一fd，原解析、哈希与前后身份检查正文保持。生产摘要 `e299678a56e61f6e3e8e3d331a98204053f41523cc1f589c32f0c730fc764ecf`。
+
+同一未改复现脚本再次执行，实际 GREEN_PROMPT_REJECTION_WITHOUT_WRITER；无需writer便拒绝，child74/controller0、cleanup COMPLETE。原RED/GREEN的请求、子进程原流与内外收据均保存在D盘，root回核摘要 `60d406be79e0b9b9891474aa01d70eb36d674e97189dc5c086705d874586c120`。维护中的native contract suite追加一个POSIX实际FIFO方法，包含普通文件正控、实际selector/parser边界、无writer拒绝及私有子进程fd前后集合相等；旧方法AST完整保留。Windows不发现此POSIX方法，并非记录一个skip。
+
+修复后的完整维护套件结果：Windows metadata14、native static29、native runtime67、Mac copy6、原copy7全部通过；WSL分别14、30、68、8、10全部通过，均0跳过。Windows首次三套CMake测试在启动工具前因fixture CWD为261–283字符而报WinError267；原失败与目录保留，仅将外部证据根改为新 `D:/caesura-u22-cmake-green-02` 后，这三套分别14/14、6/6、7/7通过。未改变产品、测试断言或已通过的另外七套结果，也未重跑它们。35份结果/原流被root重核，合并范围记录 `phase-b-complete-root-review-01.json` 摘要 `84964ae5645905b0386725b0d099e48b28fb0fdba2bd42a9031e82933f4f751b`。
+
+维护FIFO套件原来仅保留/tmp夹具的locator，之后WSL再次启动时该/tmp目录已不存在，`fifo-maintenance-readback-01/readback.json` 如实记录丢失；因此新维护套件通过可由实际原始suite日志和断言支持，但不能声称后来再次逐字节核过该子进程文件。更早实际RED/GREEN复现的关键结果和原流已直接写D盘，不受此影响。后续需要长期保留的POSIX夹具应明确选持久目录，不能把/tmp locator当持久证据。
+
+本轮将metadata suite接入CTest，并按profile内check id校正门槛：rc-adversarial恢复未变的57；CTest从原48提升到50，对应两个新增实际注册。实际Windows configure退出0，CTest JSON发现50个唯一入口，两项新suite均存在；原对抗suite实际57/57通过。记录 `phase-b-registration-01/run-01.json` 原命令、源码首末身份和cleanup均完整。这是对本分支尚未提交配置错误的修正，未改旧运行日志或降低实际测试集合。
+
+下一步仍是单进程Mac安装coordinator：持有所选SDK文件，复制、精确重定位、实际ad-hoc签名及最终依赖闭包；静态也不能绕过安装检查。现有 SDL copy 保留，不重复走OpenSSL复制。真正 install_name_tool/codesign、全新托管TGZ/DMG及加载映射尚未执行，旧绝对Homebrew依赖的P1未由夹具通过自动关闭，U22整体仍未验收。
+
+
+## macOS 安装协调器红绿回归（2026-09-23）
+
+Phase C 已落地单一 Python coordinator，CMake 在 Engine/SDL 安装后调用同一事务。保持两份所选 SDK 的 descriptor/route/hash，独占复制，先完成精确 load-command/ID 修改，再依次 ad-hoc sign SSL/Crypto/Engine 和 strict verify，最终重新解析闭包及摘要。安全的外部报告目录保留第一错误、原命令流和 owned 结果；未完成阶段为 TAINTED_NOT_ACCEPTED，不宣称回滚。API注入 runner 只产生 FIXTURE_ONLY，CLI 没有绕过签名的夹具开关，非 Darwin 明确失败。显式旧收据必须绑定 physical stage、输入身份和 final files。
+
+真实首轮 RED 为 Windows15方法13失败（27个失败断言）、WSL19方法13失败（26个失败断言），没有测试 ERROR。Windows另有CMake生成脚本的反斜杠 `\P` 错误；root只将嵌入的Python路径改为CMake路径格式，原测试与Unsupported骨架保持，再跑Windows15方法得到4通过/11失败、24个失败断言，CMake正控已经通过。原RED及修正记录保留。
+
+生产实现与独审修正后，冻结原suite在Windows15/15（45.164秒）、WSL19/19（146.957秒）通过，全部0跳过。涵盖真实普通/链接/目录/held fd行为、逐项工具失败停止、no-op变换拒绝、显式repeat、static路径、实际CMake config/prefix/DESTDIR调度。Windows未选择4个POSIX方法，不伪称4个skip或pass。最终脚本SHA256 e175ee7bcd847138d8e115c70e73843cd8f2c5e40dbb9fbf0bbcc4c587eb36f3。
+
+独审发现并修正物理目录替换、fresh selection后同字节inode替换、safe失败收据丢失声明输入三个问题；新增独立回归在继承实现Windows/Linux各3失败，修正后各3通过。工具成功同时要求child exit0、launcher exit0、无stop/timeout/force且cleanup COMPLETE。root回读94份实际收据、338条命令原流/进程记录：316个exit0和22个预设工具exit37；74份拒绝与20份FIXTURE_ONLY成功（含历史继承实现负控的错误接受，不把20视为最终接受数）。两份CLI拒绝收据为APPLE_TOOLS但未执行任何工具并明确requires Darwin。根核对记录 `phase-c-root-green-review-01.json` SHA256 36e25d4594ba561a63cf8c963424d47bb831dcc0db2a39a25f057ce24ff6a819；其范围为synthetic Mach-O/ar与owned Python工具夹具，实际Apple签名/ABI/本机加载均未证明。
+
+build_engine引用按冻结合同仅为原输入只读身份，CMake安装会合法调整RPATH，因此不要求其整文件SHA与stage相等，也不宣称安装Engine每个机器码字节来自该原文件。真正安装的整体来源与最终包身份仍通过后续受控构建/最终包证据核对。将3个已实测回归纳入维护suite、CTest新注册和CI外部诊断收集正在接续；full Debug及新的真实macOS TGZ/DMG验收尚未完成，旧Homebrew绝对依赖P1仍未被本地夹具自动关闭。
+
+
+### 维护接入与真实发现（2026-09-23）
+
+三个独审回归已并入原维护类，保留原方法AST；Windows 18/18（54.529秒）、WSL 22/22（152.542秒）实际通过。源锁首末相同，owned执行均exit0、无超时强杀。根收据 `u22-macos-install-01/phase-c-maintained-01/root-green-review-01.json` SHA256 0b0deaa30ab27feded731741a7846c53dd0e30419ad16fa3e226171204473e44。非Darwin的拒绝与合成工具结果继续按原边界标注。
+
+CTest新增coordinator注册，保持240秒超时；实际configure与JSON发现exit0，发现51个入口，新入口恰好一次。六个desktop profile仅按ctest check id将最低发现数50提升至51。直接调用ci_package_lane维护suite时漏传现有构建的Lua路径，34方法中的实际打包方法报环境ERROR，原失败保留。随后使用正式CTest注册入口（传递CAESURA_TEST_LUA和generator），原34方法全通过，没有改测试或产品。
+
+macOS CI新增always收集完整安装诊断目录、selection和requirements；有限Apple工具版本参数诊断仅为DIAGNOSTIC_ONLY，失败/不支持参数保留实际结果，不覆盖原包门禁。新的Apple工具和TGZ/DMG实际运行仍待托管CI；当前本地结果不关闭旧包的Homebrew绝对依赖P1。
+
+
+### 首次完整门禁与旧安装断言修正（2026-09-23）
+
+干净e5399223运行e5a9aa5c-f758-4987-babb-536936652731整体FAIL：全量build0，C++1415中1414通过/1失败（427088断言中1失败），Lua147/56通过；CTest51项中49通过、1失败、1项预声明AI skip。两个C++执行均只失败于原test_source_encoding的安装文字断言，它要求scripts安装命令在DESTINATION之后立即闭合，因新增合法PATTERN缓存排除而不匹配。实际scripts安装/CPack字节合同和新coordinator均通过；strict verifier仍明确拒绝整体运行。
+
+修正仅让原静态断言识别DESTINATION scripts之后合法的空白/参数或闭括号，保留原方法、其余断言和安装内容验证。实际重建后整个source_encoding文件23方法/315断言通过；筛选未选中的1392方法不算完整通过。原失败、命令与流均保留，新的完整门禁仍须运行。
+
+
+### 完整门禁、托管失败与协议夹具边界（2026-09-24）
+
+干净 b210234b7c1a55bc7c2d68f979e95295a28f223f 的 Windows Debug run9994b9a3-fa6e-4641-9c12-0a4d0e4df923 全量构建、C++1415/1415与427088断言、Lua147/56通过；CTest51项为50通过、零失败、1项预声明AI服务skip。执行/收集/strict verifier均0，源码与fixture稳定；根重算29份原流/报告。run SHA256 0f82024a3a8f284e5f701d66025f4c0b3e27dcaf92c64c9ac7ae52af182f73e9。此干净结果不覆盖随后新增的协议回归。
+
+该头推至草稿PR25，托管run35885141511的macOS Clang作业107263245398失败于native_package_runtime：Python协议夹具使用Homebrew framework Python，它确实映射包外libcrypto/libssl，新的真实Mach-O闭包验证正确拒绝。共10失败/1错误；同作业的macOS install、metadata、coordinator三个CTest均通过，Package因上游失败跳过。原日志SHA256 738703d573883b4b3880ee1645ea41d10f4713b256bab5af07e9dba191d8e7e3，原失败保留。Linux作业107263245263的全部51项CTest通过，随后平台矩阵同步锚点仍为c3ffa4b而非b210，freshness明确失败；不是运行时测试失败。
+
+协议夹具现在同时明确原来的Engine/Lua可执行替代和它专属的Mach-O闭包替代。替代仅在invoke作用域，核对真实被拥有进程必须是FIXTURE_PYTHON、包内引擎必须为固定synthetic字节，结果标为FIXTURE_ONLY/native closure NOT_VERIFIED。真实进程身份、实际模块枚举、显式required库匹配、HTTP、端口和原件变更检测保持运行；生产native_package_runtime、Mac映像解析/闭包和真实包入口零修改。新增跨主机回归先实际RED，模拟外部Mach-O导致RUNTIME_FAIL；修正后GREEN，并在退出夹具作用域后确认同一生产闭包仍拒绝外部映像。
+
+完整维护suite Windows68/68（39.265秒）、WSL69/69（30.943秒）通过，零skip。源锁、owned退出/cleanup、原始流均由root-green-review-01.json重核。实际Mac协议fixture和最终TGZ/DMG仍须由新CI执行，不能从这次本地通过宣称旧Homebrew包泄漏已关闭。平台矩阵只同步代码审阅锚点，历史能力行的commit/日期/证据不改写。
+
+### 当前候选托管门禁与实际 Mac 最终包复核（2026-09-24）
+
+PR25头为 `de70e0a702f0a0206207b51b63886bc532b6e50f`，托管run `35888002078` 的11个作业全部成功。实际CI checkout是该头与base65e5b425的合并提交 `13f6cf8b854f4c27d7092add2d6e777231729026`；lane、包和运行证据绑定此merge SHA，不把它重标成de70原树。终态API原件及摘要保存在 `u22-hosted-de70-01/transfer-03/ci-terminal.json`。
+
+macOS Package作业107277833793留下两次真实安装收据（TGZ与DragNDrop不同物理stage）。每次5处实际load-command/ID重定位，11条Apple工具命令成功，包括SSL/Crypto/Engine的3次ad-hoc签名和3次strict verify；全部owned身份、退出和cleanup已核对。最终Engine、SDL、SSL、Crypto摘要在两个stage完全相同，递归Mach-O闭包通过，非系统依赖均在包内。8个实际Engine进程覆盖两容器的显式token编辑器、生成token编辑器、有限帧引擎与Unicode新建游戏；libproc身份与实际lsof映像吻合，4个核心文件均从各自运行目录加载，没有Homebrew/Cellar映像。原始22条Apple工具及8个Engine进程均有实际OS身份。两次快速author_create Python命令正常退出且输入稳定，但最终Python映像核对前已退出，标记EXITED_BEFORE_VERIFICATION，不能宣称其最终映像已核实。
+
+证据ZIP实际30,028,218字节，SHA256 `bdec86cd2fa844a67a457825c8daca20a42f5d116ab829cfb540ea87e4098500`，与API及上传日志一致。最终包ZIP首次gh获取在240秒超时；维护下载器随后在900.1009秒期限失败，保留55,296,000字节和原FAIL报告。另建诊断性续传，两段各14,984,348字节，HTTP206/精确Content-Range/同ETag核对后拼接到新文件，完整85,264,696字节SHA256 `23344d67bbf3ce04d84dab7feef694463efc8f595b9ce8977e849fd5918a20bf`与GitHub上传摘要完全一致。此续传不冒充U23生产下载器成功，原失败及前缀零改动。
+
+最终TGZ SHA256 `f2d44a33cd2e439af1e3d1a7df5326c0d14185f703887e4ce49e01971bb75a54`，DMG `4e1c065eb466fd2ef4aacd12c97642fdec224fddb862f5af6918ade3abd2efd2`。本机安全提取TGZ后重新解析实际Engine、Lua与必需dylib闭包；实际4个核心文件逐字节摘要与安装/加载记录一致。DMG本机只核对容器字节，内容使用同摘要的真实Mac只读挂载、独立info归属、6条hdiutil成功命令及确认detach证据；其payload preparation本来accepted=false/runtime NOT_RUN，最终包运行门禁另有实际PASS，不把容器提取提升为运行。两个包均无__pycache__/pyc/pyo，文件路径集合相同；libfreetype.a、libsoloud.a、libzstd.a仍各自同大小异摘要，未证实成因，不宣称所有payload相同。
+
+根运行证据复核SHA256 `5398cb0e1748963dff2fd2c30e28f39a35bb6ac9e7c30dd5c5e8801642a05b5f`；最终包复核 `transfer-03/root-final-package-review-01.json` SHA256 `38d829a1b9602c48cefae3b49f0abf117d5170414ec49f958fb05bbc3617c67c`。两次审查脚本错误分别为把lua目录计入可执行集合、误要求仅负责提取的container收据accepted=true，修正依据实际schema；原脚本保留，产品验证器及原收据不改写。
+
+据此关闭本候选已确认的Mac绝对Homebrew运行依赖P1及Python缓存污染；这不追溯修复旧包，也不证明任意干净Mac或物理声音。音频为Software，物理输出NOT_RUN；签名为ad-hoc，未做Developer ID、公证或商店上传。PR仍为draft，TaotianZhufang审查待完成，尚未合并；最新其他平台门禁全绿不等于本段对其所有最终字节进行过同样独审。U23聚合、其余计划项与候选范围验收继续进行。
+
+### 文档后继 CI 暴露的 Mac shell 夹具前提（2026-09-24）
+
+推送文档后继8c3fd2be后，run35899327845的macOS Clang作业107311159389在CTest失败：51项中仅`CaesuraPackage_package_runtime`失败，其39方法中`test_launch_script_change_after_exec_is_not_accepted`在进入脚本篡改阶段前出错。实际libproc观察PID21184/creation1790186811:936927映像为`/bin/bash`，夹具shebang与冻结contract却声明`/bin/sh`；生产精确映像拒绝正确触发，LAUNCH_FAILED、actualexit-15、cleanup COMPLETE，未发布process.json。原job日志SHA256为`9ce8349645bd4a630ddfa9c96f8ba6dd4da5a997849e30cd119430246420126f`。Mac Package因上游失败跳过；原de70包的通过证据保留，但不据此接受8c当前候选。
+
+修改仅在实际进程测试夹具：Mac显式使用`#!/bin/bash`，Linux继续`#!/bin/sh`；脚本篡改测试保留既有shebang，只改正文。新增POSIX屏障正控在shell真正存活时读取OS映像并核对声明，确认最终身份尚未发布，然后释放shell进入Python，验证相同PID/creation、正确最终映像、正常退出和完整清理。所有旧测试方法保留，原脚本篡改测试的assert调用树完全一致；生产package_runtime.py未改变，没有加入shell别名白名单或放宽映像匹配。新屏障自己的观测期限4秒用于两次明确握手，旧测试0.5秒期限保持。
+
+实际Windows35/35、WSL Linux41/41通过，源码首尾稳定、两条owned命令退出0，无超时强杀，cleanup COMPLETE。根审计`u22-shell-fixture-01/root-review-01.json` SHA256为`bc68bff7847567ed8e36f33d97c92201908fb089eb866afa94d30353e6ec2cce`，原run为`ad8968594e184bdf825646113d7750badba230c390d5e9a806b4fa1036a01551`。辅助审计先遇到WSL混合编码原流及Windows CRLF，再改用原始ASCII字节标记检查；原流/失败脚本保留，测试未重跑。新Mac实际屏障及完整CI仍须验证，不能从Windows/Linux结果宣称Mac已通过。

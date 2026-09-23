@@ -450,6 +450,7 @@ jobs:
         name: macos-rpc-failure-evidence
         path: |
           build/Testing/Temporary/LastTest.log
+          ${{ runner.temp }}/caesura-native-observer/**/*.json
           build/artifacts/validation/rpc-timeouts-*/
           build/artifacts/validation/stdio-output-*/
           build/artifacts/validation/http-smoke-*/
@@ -1142,6 +1143,55 @@ jobs:
         path: ${{ steps.package.outputs.upload_files }}
         if-no-files-found: error
       id: package_upload
+    - name: Preserve Apple tool identity and version diagnostics
+      if: always()
+      continue-on-error: true
+      run: |
+        python3 -B - <<'PY'
+        import hashlib, json, os, sys
+        from datetime import datetime, timezone
+        from pathlib import Path
+        root = Path.cwd().resolve()
+        sys.path.insert(0, str(root / 'scripts'))
+        from package_runtime import run_runtime_command
+        output = root / 'build-macos-install-reports' / 'apple-tool-diagnostics'
+        output.mkdir(parents=True, exist_ok=False)
+        report = {'schema': 1, 'status': 'DIAGNOSTIC_ONLY', 'commands': [],
+                  'started_utc': datetime.now(timezone.utc).isoformat(),
+                  'scope': 'Raw version-option results and tool identities; unsupported options are retained, never package acceptance.'}
+        environment = {'PATH': '/usr/bin:/bin:/usr/sbin:/sbin', 'HOME': str(Path.home()),
+                       'TMPDIR': os.environ.get('RUNNER_TEMP', '/tmp'), 'LANG': 'C', 'LC_ALL': 'C'}
+        def identity(path):
+            resolved = path.resolve(strict=True)
+            with resolved.open('rb') as stream:
+                sha = hashlib.file_digest(stream, 'sha256').hexdigest()
+            return {'path': str(resolved), 'sha256': sha, 'size': resolved.stat().st_size}
+        for name, option in (('install_name_tool', '-version'), ('codesign', '--version'), ('xcodebuild', '-version')):
+            executable = Path('/usr/bin') / name
+            item = {'argv': [str(executable), option], 'status': 'NOT_RUN'}
+            report['commands'].append(item)
+            control = output / (name + '.owned')
+            try:
+                item['image_before'] = identity(executable)
+                with (output / (name + '.stdout')).open('xb') as stdout, (output / (name + '.stderr')).open('xb') as stderr:
+                    item['runtime'] = run_runtime_command(item['argv'], root, environment, control, stdout, stderr, 20)
+                item['status'] = 'RESULT_RECORDED'
+            except Exception as error:
+                item['status'] = 'UNAVAILABLE_OR_FAILED'
+                item['error'] = f'{type(error).__name__}: {error}'
+                if (control / 'run.json').is_file():
+                    item['runtime'] = json.loads((control / 'run.json').read_text(encoding='utf-8'))
+            finally:
+                try:
+                    item['image_after'] = identity(executable)
+                except Exception as error:
+                    item['image_after_error'] = f'{type(error).__name__}: {error}'
+                (output / 'report.json').write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
+        report['finished_utc'] = datetime.now(timezone.utc).isoformat()
+        (output / 'report.json').write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
+        print(json.dumps({'status': 'DIAGNOSTIC_ONLY', 'report': str(output / 'report.json')}))
+        PY
+
     - name: Preserve first package attempt evidence
       if: always() && env.PACKAGE_WORK != ''
       uses: actions/upload-artifact@v4
@@ -1149,6 +1199,9 @@ jobs:
         name: u22-macos-package-evidence
         path: |
           build/release-build.log
+          build/openssl-selection-*.json
+          build/package-requirements-*.json
+          build-macos-install-reports/
           ${{ env.PACKAGE_WORK }}/**/*.json
           ${{ env.PACKAGE_WORK }}/**/*.log
           ${{ env.PACKAGE_WORK }}/**/*.png
@@ -1160,6 +1213,7 @@ jobs:
         name: macos-release-runtime-failure-evidence
         path: |
           build/Testing/Temporary/LastTest.log
+          ${{ runner.temp }}/caesura-native-observer/**/*.json
           build/artifacts/validation/http-smoke-*/
         if-no-files-found: ignore
     - name: Preserve first macos-release execution attempt
@@ -1218,6 +1272,130 @@ jobs:
         npm ci --prefix web --no-audit --no-fund
     - name: Require current tracked script index
       run: node web/gen-index.mjs --check
+    - name: Install the pinned browser for offline package validation
+      # Chrome 152 loses the navigator network override on renderer reload.
+      # Keep the strict offline assertions and select a reproducible stable
+      # browser with the persisted override, instead of the runner image copy.
+      run: |
+        chrome_root="$RUNNER_TEMP/u22-chrome-153.0.8010.52"
+        mkdir "$chrome_root"
+        curl --fail --location --max-time 180 \
+          https://storage.googleapis.com/chrome-for-testing-public/153.0.8010.52/linux64/chrome-linux64.zip \
+          --output "$chrome_root/chrome.zip"
+        printf '%s  %s\n' e66f66d4802a46d4a022667e668aa950e277cadbfbed4b3777915b47413a0ef9 "$chrome_root/chrome.zip" | sha256sum --check --strict
+        install_root=/usr/lib/caesura-u22-chrome-153.0.8010.52
+        export CHROME_BINARY="$install_root/chrome-linux64/chrome"
+        # Chrome 153 discovers the sibling chrome-sandbox before consulting
+        # environment overrides. Keep the OS sandbox enabled and install the
+        # pinned helper with its required root ownership and setuid mode.
+        python3 - <<'PY'
+        import json, os, pathlib, stat
+        target = pathlib.Path(os.environ['CHROME_BINARY']).parents[1]
+        evidence = {'status': 'FAIL', 'target': str(target), 'runner_uid': os.geteuid(),
+                    'installation_parents': [], 'sandbox_runtime': 'NOT_VERIFIED'}
+        try:
+            if os.geteuid() == 0:
+                raise ValueError('Browser validation must run as the unprivileged runner')
+            for parent in reversed(target.parents):
+                info = parent.lstat()
+                row = {'path': str(parent), 'uid': info.st_uid, 'gid': info.st_gid,
+                       'mode': oct(stat.S_IMODE(info.st_mode)),
+                       'runner_writable': os.access(parent, os.W_OK)}
+                evidence['installation_parents'].append(row)
+                if (not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_gid != 0 or
+                        info.st_mode & 0o022 or row['runner_writable']):
+                    raise ValueError(f'Unsafe browser installation parent: {row}')
+            if os.path.lexists(target):
+                raise ValueError(f'Browser installation target already exists: {target}')
+            evidence['status'] = 'PASS'
+        except (OSError, ValueError) as error:
+            evidence['error'] = str(error)
+            raise
+        finally:
+            output = pathlib.Path(os.environ['RUNNER_TEMP']) / 'u22-chrome-153.0.8010.52' / 'preflight.json'
+            output.write_text(json.dumps(evidence, indent=2) + '\n', encoding='utf-8')
+            print(json.dumps(evidence))
+        PY
+        sudo -n mkdir --mode=0755 -- "$install_root"
+        # Verify an immutable-to-runner archive copy before privileged unzip.
+        sudo -n install --owner=root --group=root --mode=0644 -- "$chrome_root/chrome.zip" "$install_root/chrome.zip"
+        printf '%s  %s\n' e66f66d4802a46d4a022667e668aa950e277cadbfbed4b3777915b47413a0ef9 "$install_root/chrome.zip" | sha256sum --check --strict
+        sudo -n unzip -q "$install_root/chrome.zip" -d "$install_root"
+        printf '%s  %s\n' \
+          328fbee82d8e58b05a755b2343abfd192d92ca7066353cb357fad389bc7e3989 "$CHROME_BINARY" \
+          c100b678a8c171ad0733e51b6f18d98d936d38ab945681c41da00f2ee22e7571 "$install_root/chrome-linux64/chrome_sandbox" \
+          | sha256sum --check --strict
+        test ! -e "$install_root/chrome-linux64/chrome-sandbox"
+        test ! -L "$install_root/chrome-linux64/chrome-sandbox"
+        sudo -n install --owner=root --group=root --mode=4755 -- "$install_root/chrome-linux64/chrome_sandbox" "$install_root/chrome-linux64/chrome-sandbox"
+        sudo -n rm -- "$install_root/chrome.zip"
+        python3 - <<'PY'
+        import hashlib, json, os, pathlib, stat, subprocess, sys
+        binary = pathlib.Path(os.environ['CHROME_BINARY'])
+        helper = binary.with_name('chrome-sandbox')
+        install_root = binary.parents[1]
+        root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'u22-chrome-153.0.8010.52'
+        code, stdout, stderr = None, b'', b''
+        evidence = {'status': 'FAIL', 'path': str(binary), 'sha256': None,
+                    'archive_sha256': 'e66f66d4802a46d4a022667e668aa950e277cadbfbed4b3777915b47413a0ef9',
+                    'sandbox_runtime': 'NOT_VERIFIED', 'installation_parents': []}
+        def identity(path, directory=False, expected_mode=None, expected_sha256=None):
+            info = path.lstat()
+            mode = stat.S_IMODE(info.st_mode)
+            if ((not stat.S_ISDIR(info.st_mode) if directory else not stat.S_ISREG(info.st_mode)) or
+                    info.st_uid != 0 or info.st_gid != 0 or mode & 0o022 or os.access(path, os.W_OK) or
+                    (not directory and info.st_nlink != 1) or
+                    (mode & 0o7000 and path != helper) or
+                    (expected_mode is not None and mode != expected_mode)):
+                raise ValueError(f'Unsafe installed browser identity: {path}')
+            result = {'path': str(path), 'uid': info.st_uid, 'gid': info.st_gid,
+                      'mode': oct(mode), 'links': info.st_nlink, 'runner_writable': False}
+            if expected_sha256 is not None:
+                result['sha256'] = hashlib.sha256(path.read_bytes()).hexdigest()
+                if result['sha256'] != expected_sha256:
+                    raise ValueError(f'Installed browser digest differs: {path}')
+            return result
+        try:
+            if os.geteuid() == 0:
+                raise ValueError('Browser validation must run as the unprivileged runner')
+            for parent in [*reversed(install_root.parents), install_root, binary.parent]:
+                evidence['installation_parents'].append(identity(parent, directory=True))
+            entries = 0
+            def traversal_error(error):
+                raise error
+            for current, directories, files in os.walk(install_root, followlinks=False, onerror=traversal_error):
+                for name in directories:
+                    identity(pathlib.Path(current) / name, directory=True)
+                for name in files:
+                    identity(pathlib.Path(current) / name)
+                entries += len(directories) + len(files)
+            evidence['tree_entries_checked'] = entries
+            evidence['binary_identity'] = identity(binary, expected_mode=0o755,
+                expected_sha256='328fbee82d8e58b05a755b2343abfd192d92ca7066353cb357fad389bc7e3989')
+            evidence['sha256'] = evidence['binary_identity']['sha256']
+            evidence['helper'] = identity(helper, expected_mode=0o4755,
+                expected_sha256='c100b678a8c171ad0733e51b6f18d98d936d38ab945681c41da00f2ee22e7571')
+            if not os.access(binary, os.X_OK) or not os.access(helper, os.X_OK):
+                raise ValueError('Installed browser and sandbox helper must be executable by the runner')
+            result = subprocess.run([str(binary), '--version'], capture_output=True, timeout=20)
+            code, stdout, stderr = result.returncode, result.stdout, result.stderr
+        except subprocess.TimeoutExpired as error:
+            code, stdout, stderr = None, error.stdout or b'', error.stderr or b''
+            stderr += b'\nBrowser version command exceeded 20 seconds.\n'
+        except (OSError, ValueError) as error:
+            code, stdout, stderr = None, b'', str(error).encode('utf-8')
+        root.joinpath('version.stdout.log').write_bytes(stdout)
+        root.joinpath('version.stderr.log').write_bytes(stderr)
+        version = stdout.decode('utf-8', errors='replace').strip()
+        accepted = code == 0 and version.split()[-1:] == ['153.0.8010.52']
+        evidence.update(status='PASS' if accepted else 'FAIL', exit_code=code, version=version)
+        root.joinpath('selection.json').write_text(json.dumps(evidence, indent=2) + '\n', encoding='utf-8')
+        print(json.dumps(evidence))
+        sys.stderr.write(stderr.decode('utf-8', errors='replace'))
+        if not accepted:
+            raise SystemExit(1)
+        PY
+        echo "CHROME_BINARY=$CHROME_BINARY" >> "$GITHUB_ENV"
     - name: Build chosen game and validate final directory, ZIP and Pages tar
       id: package
       run: |
@@ -1226,7 +1404,7 @@ jobs:
         python scripts/ci_package_lane.py web --source-sha "$SOURCE_SHA" --work "$PACKAGE_WORK" \
           --game "$WEB_GAME" --zip-name "CaesuraAmeKAG-${ENGINE_VERSION}-Web.zip" --pages-tar \
           --node "$(command -v node)" --lua "$(command -v lua5.4)" \
-          --browser /opt/google/chrome/chrome "${args[@]}" --github-output "$GITHUB_OUTPUT"
+          --browser "$CHROME_BINARY" "${args[@]}" --github-output "$GITHUB_OUTPUT"
       env:
         WEB_GAME: ${{ inputs.web_game }}
         WEB_ACTIONS: ${{ inputs.web_actions }}
@@ -1264,6 +1442,9 @@ jobs:
       with:
         name: u22-web-package-evidence
         path: |
+          ${{ runner.temp }}/u22-chrome-153.0.8010.52/selection.json
+          ${{ runner.temp }}/u22-chrome-153.0.8010.52/preflight.json
+          ${{ runner.temp }}/u22-chrome-153.0.8010.52/version.*.log
           ${{ env.PACKAGE_WORK }}/**/*.json
           ${{ env.PACKAGE_WORK }}/**/*.jsonl
           ${{ env.PACKAGE_WORK }}/**/*.log
