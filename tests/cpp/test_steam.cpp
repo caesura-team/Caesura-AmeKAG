@@ -62,14 +62,14 @@ TEST_CASE("NullSteamBackend::shutdown is idempotent") {
 }
 
 // ---------------------------------------------------------------------------
-// G3: Conditional-compilation test stubs for the Steam SDK paths.
+// G3: Conditional-compilation tests for the real Steam backend.
 //
 // SteamBackend.cpp is ALWAYS compiled (cmake/CaesuraModules.cmake
 // caesura_add_module(Steam ...)), so in a no-SDK build every method compiles
-// its #else branch. These tests exercise that graceful-degradation surface --
-// the exact code paths a release without Steamworks must silently fall back
-// to -- plus static source assertions that SDK-only symbols never leak outside
-// their #ifdef CAESURA_HAS_STEAM guards (which would break a no-SDK build).
+// its #else branch. The four cases below preserve that degradation contract
+// without the SDK and exercise uninitialized sentinels with the SDK. SDK ON
+// cases never call init(): initialized sessions and account actions require
+// separate acceptance. Static source checks follow these runtime cases.
 // ---------------------------------------------------------------------------
 
 #include "steam/SteamBackend.h"
@@ -110,38 +110,78 @@ static std::string readSteamSourceFile(const std::string& relative) {
     return out.str();
 }
 
+#ifdef CAESURA_HAS_STEAM
+TEST_CASE("SteamBackend (SDK ON uninitialized) default state is unavailable") {
+#else
 TEST_CASE("SteamBackend (no-SDK build) init degrades to false") {
-    // Without CAESURA_HAS_STEAM the real SteamBackend must refuse to init and
-    // never touch Steamworks symbols.
+#endif
     SteamBackend steam;
+#ifdef CAESURA_HAS_STEAM
+    REQUIRE_FALSE(steam.isAvailable());
+#else
+    // Without the SDK the real backend must refuse to initialize.
     CHECK(steam.init() == false);
+#endif
     CHECK(std::string(steam.name()) == "Steam");
     steam.shutdown();
+#ifdef CAESURA_HAS_STEAM
+    CHECK_FALSE(steam.isAvailable());
+#endif
 }
 
+#ifdef CAESURA_HAS_STEAM
+TEST_CASE("SteamBackend (SDK ON uninitialized) feature gates return disabled sentinels") {
+#else
 TEST_CASE("SteamBackend (no-SDK build) feature gates all return disabled sentinels") {
+#endif
     SteamBackend steam;
+#ifdef CAESURA_HAS_STEAM
+    REQUIRE_FALSE(steam.isAvailable());
+#else
     steam.init();
+#endif
     CHECK(steam.isOverlayActive() == false);
     CHECK(steam.unlockAchievement("ACH_TEST") == false);
     CHECK(steam.isAchievementUnlocked("ACH_TEST") == false);
     CHECK(steam.resetAchievement("ACH_TEST") == false);
     CHECK(steam.resetAllAchievements() == false);
+#ifdef CAESURA_HAS_STEAM
+    CHECK_FALSE(steam.isAvailable());
+#endif
 }
 
+#ifdef CAESURA_HAS_STEAM
+TEST_CASE("SteamBackend (SDK ON uninitialized) stats return default values") {
+#else
 TEST_CASE("SteamBackend (no-SDK build) stats degrade to default values") {
+#endif
     SteamBackend steam;
+#ifdef CAESURA_HAS_STEAM
+    REQUIRE_FALSE(steam.isAvailable());
+#else
     steam.init();
+#endif
     CHECK(steam.setStatInt("kills", 10) == false);
     CHECK(steam.getStatInt("kills") == 0);
     CHECK(steam.setStatFloat("time", 1.5f) == false);
     CHECK(steam.getStatFloat("time") == 0.0f);
     CHECK(steam.storeStats() == false);
+#ifdef CAESURA_HAS_STEAM
+    CHECK_FALSE(steam.isAvailable());
+#endif
 }
 
+#ifdef CAESURA_HAS_STEAM
+TEST_CASE("SteamBackend (SDK ON uninitialized) cloud operations return empty") {
+#else
 TEST_CASE("SteamBackend (no-SDK build) cloud operations degrade to empty") {
+#endif
     SteamBackend steam;
+#ifdef CAESURA_HAS_STEAM
+    REQUIRE_FALSE(steam.isAvailable());
+#else
     steam.init();
+#endif
     const char* data = "save payload";
     CHECK(steam.cloudWrite("save.dat", data, 12) == false);
     char buf[64] = {};
@@ -153,6 +193,9 @@ TEST_CASE("SteamBackend (no-SDK build) cloud operations degrade to empty") {
     CHECK(steam.cloudQuotaUsed() == 0);
     CHECK(steam.cloudFileCount() == 0);
     CHECK(std::string(steam.cloudFileNameAt(0)) == "");
+#ifdef CAESURA_HAS_STEAM
+    CHECK_FALSE(steam.isAvailable());
+#endif
 }
 
 TEST_CASE("SteamBackend (no-SDK build) destructor + runCallbacks are safe") {
