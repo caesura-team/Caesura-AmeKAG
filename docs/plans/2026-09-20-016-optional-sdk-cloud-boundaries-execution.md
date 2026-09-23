@@ -102,3 +102,22 @@ CloudConflictStore 现已实现 owner 限定的不可变本地观察记录：在
 主代理原始复核 phase-b-root-green-review-01.json SHA256 bc11c8ce5166f98bd5eb28001aeaedd69c9962fd2651d882ea29fd8d87a76f58。独立只读审查完整读取实现、六组测试、typed reader 和原子 writer，重核14项源码锁及39项源码/证据引用，在 B1 合同内未发现可行动缺陷；review-01.md SHA256 8ecd2c2370175ebdc5ad62ed2a5dcf157ae6cf69a2cb9345777a21c5f36bb24e，JSON 4248af1e98ff6159ed48a4403ca980395120deda8c2075facf0cfd95c88c7470。Windows 二进制 efb39890609338af12696d83a0810b65358fe6d93246ccac0122bf6ca66399a3；Linux /var/tmp 持久构建二进制 faf072f18b6d295f69aa3e7b23db12252a0b4583c83fec95492f1fd93576a94b，9月22日只读重哈希均匹配。
 
 原34个cloud测试正文保留并新增六方法；六 native profile 的 cpp 最低发现数按 id 各增加6，其他阈值不变。当前源码仍须完整 Debug/C++/Lua/CTest 门禁。此批证明不透明字节保全与预提交失败，不证明 CAES 当前 key/policy/envelope 有效性、账户身份、远端 CAS、SaveManager 恢复协调、真实独立进程重启、提交后故障或掉电持久性。路径攻击、非 ASCII root、碰撞耗尽、线程/重入和部分扫描边界也未由本批实际运行，U26继续推进。
+
+
+## B1 不可变记录的干净完整门禁（2026-09-22）
+
+干净 b36aa8db18cca81efbc03cbf981ac7cf86bdec0a 的 Windows Debug run87ea101e-599e-4e16-8554-3181f43329fd 已完成全量构建0、C++1440/1440与429400断言、0failed/0skipped，Lua147/147+56/56；CTest发现57项、56通过、0失败、1项CaesuraHeadlessAiSmoke按既定可选服务规则跳过。全部11检查及执行器、collector、strict verifier均0，源码fingerprint3706cbff2bd371e12aa9680c841bb0534a3427b08e7c6dce60a91a9f7dd4b06b及fixture首尾稳定，owned进程正常完成、无超时强杀。
+
+根代理重读49份bundle/outer原件共83957443字节，全部摘要匹配。原run SHA256 a838a8492adbbda44fcb045cc8ae30e71dab9f86aa9791b443d726c39196b773，manifest7437df9a35e20eb76be8bac68c528d8bc86605af955ee1980b9a57b73c805098，root-review-01.json d54d4dbe71148f958192599c4339aac55508c3286c3c789ff110e682e85a2147。此profile没有独立HTTP smoke，不证明真实SDK账号或独立进程恢复。B1b随后新增probe与冷进程测试，必须使用新执行结果；本完整门禁不转写为新测试已通过。
+
+
+### 2026-09-23 — B1b/B1c 冷进程提交边界
+
+在 b36aa8db18cca81efbc03cbf981ac7cf86bdec0a 的生产实现上，只新增独立 host probe、Python 驱动和 CTest 注册，未改变 store/provider/crypto 生产行为。
+
+- B1b 首次 Windows/Linux configure、target build、驱动均退出0。每端四场景、18个新进程：manifest 发布前受控 `_Exit`、发布前进程自身异常终止、发布后正常返回、发布后异常终止。前置终止保留三份 opaque 原件但记录 Incomplete；发布后 fresh reader 按原引用 Complete；错误外部 SHA 的单独读者得到 InvalidRecord。旧 seed、A/B/C 和读前读后整个记录树逐字节保持。根各重算66个输入/原流摘要，所有 owned cleanup COMPLETE，无超时或 runner 强杀。
+- B1c 追加第五场景，总计每端23个新进程，Windows/Linux configure/build/run全部0。原 Replace hook 仅在真实发布前捕获 manifest 和预先计算引用；正式 manifest 已落盘且 SHA 输入与原文完全相等后，测试 Crypto 明确调用真实 SHA，确认与预备摘要相同，然后仅抛一次异常。原生产 preserve 返回 Indeterminate、无可用 record，但 candidateRef 和 operationId 完整保留。先验证同一对象异常展开后可读，再由普通 Crypto 的全新进程按原返回 candidateRef 冷读 Complete。没有再 preserve 或扫描最新记录来代替恢复。
+- 原四场景不变，两个平台第五场景的实际注入次数、已发布文件、输入匹配、真实摘要、一次异常、同对象及冷进程恢复全部核对。根各重新核对81个输入/原始流引用，reader 目录零写。Windows报告 SHA256 `9ea3b9780c387ae07dc002be29c6e981c846e00d3545616d2e6cae14b5d18508`，Linux报告 `30aa08631ff473179ae38f4e06ea08fd2945a7d8225cf63d0512f8b441c52a4f`；根复核在 `artifacts/validation/u26-conflict-design-01/phase-b1c-{windows,linux}-01/root-review-01.json`。原B1/B1b二进制和首次记录分别保留。
+- CTest 实际 discovery Windows/Linux 各58项，新 `CaesuraCloudConflictRestart` 各恰好一次。纯host构建注册，跨编译/Emscripten不注册；桌面profile的CTest最低发现数57→58，C++最低数不变。尚未以新增后的源码重跑全量门禁，b36的完整门禁继续只对应b36。
+
+这些证明进程终止/受控后端异常下的本地记录边界，不证明断电持久性、真实磁盘故障、OpenSSL/BCrypt实际故障、目录fsync或远端CAS。原件是opaque测试数据，B1 EqualObserved仍不是已验证CAES祖先。B2/B3的账户/key/policy/context、持久祖先游标、选择后复核和显式导出继续实施；SDK真实账号与网络侧条件未由本结果完成。
