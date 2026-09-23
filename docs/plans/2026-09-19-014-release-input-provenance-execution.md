@@ -171,3 +171,17 @@ HTTP实际Engine PID29708/creation134343339855401940/port8028由原控制器受�
 执行、collector和strict verifier均实际exit0，受控进程树全部清理，无timeout或forced kill；源码fingerprint `01449c8349b1a7c782eab5dfb7d18d130d6e1472164e06b3ecb0dc4e33d0ac3f` 首尾一致且dirty=false，fixture未变。根回读复核29个原始流/报告摘要和实际CTest XML，run.json SHA256为 `c7f534b087febc40448b9841111bd5b23a6eeef897d877f2354e5bbf3d38d66f`，审查 `artifacts/validation/u23-mac-full-02/root-green-review-01.json` SHA256为 `31922c67b8b7e321f85c0fa3fe9a0b88e0da7850066bc20ccdcbde9ff216bac3`。
 
 远端f87候选run35901948988的Linux Debug、Mac Debug已成功，其他producer及聚合仍在运行；这只是此时的只读进展，不是整次托管验收。11个artifact聚合、AE7真实取消/调包和有效服务端required-check仍未闭合。未发布、部署、合并master或改动服务端规则。
+
+## 2026-09-24 f87 托管聚合与 AE7 摘要负控
+
+run35901948988/attempt1随后实际完成，12个作业全部success，包括聚合作业107344086525。执行源码为 `f87f7aa76969e8952be5e8cbf220bb2f2847eeb5`，caller/callee workflow来自PR merge `394fb5410499768b924dc2b2d4f7488491c25998`，两者分别核对而非混用。固定ID10772123263的原门禁证据经维护下载器取得1381636字节、传输摘要 `3edeee8cfd502e734b98fd5cc2b50e27c720bde59bcbc87c7fcd545f1e464bc1`，152份安全解包文件、33份真实API响应正文和内部摘要由根回读。
+
+正式未注入入口产生 `DRY_RUN_INPUTS_VERIFIED`，原gate摘要 `6cc26a28094b19e6da03a96471e2727d8de7d7251cfdabb87dc53fe95a16c497`，aggregate摘要 `4a6a37906c9c60b5a658f6ff903280ff3f76d7efaf6a6ac615ba38a97ac2226a`。9个required jobs、45字段输出、11个固定artifact ID与digest通过首次和最终托管认证；原下载收据记录共480675784字节。六个真实execution bundle和四个平台包被接收，源码/输入稳定，正式preupload复核完成，生成六份Release文件选择。独立Pages artifact10770496775的原tar与Web proof中的tar摘要同为 `66515cdec9a4765007fb382d1b2b459fe158f7e4d62165e3d9398394181ef60f`；tar不进入普通Release列表。
+
+根审查 `artifacts/validation/u23-hosted-f87-gate-01/root-review-01.json` 摘要 `805ebe7e0549a35ccf9915b3890f56d6fa3275ba6ed7de5725ef2e241aefadf8`。本地回核的是经过认证的托管原收据、嵌入证据及清单；11个源ZIP和最终payload的完整重算发生在托管runner，本地没有重新下载全部11份payload，也未重新执行各平台的运行阶段。全部结果仍 `release_ready=false`，Pages deployment为NOT_RUN；它们不授予发布、签名、真机或覆盖率结论。
+
+在新的干净f87独立checkout及仓外 `u23-ae7-digest-5us8mws7` 上执行一次真实正负控。原始9 jobs/11 artifacts选择由正式verify_release_inputs CLI经实时GitHub API通过；随后保持artifact ID10771648374和其他44字段不变，仅改变Windows package预期digest中的一个十六进制字符，运行正式ci_release_gate CLI。它实际解析全部required job后，在hosted-initial阶段以 `Wrong artifact transport digest for windows-package` 退出1，downloads为空，无upload_files或Pages plan。无API/下载器注入，远端产物没有改变，原始正控CLI退出0；两条owned进程均完整清理，无超时/强杀，源码和输入锁首尾一致。
+
+AE7原计划要求“更换一个package digest，或让一个required job被取消”，本次覆盖其中摘要替换分支；真实取消分支仍NOT_RUN，不沿用历史缺输出失败代替它。原run摘要 `b1f0e99509c7338790471e47948571e138901258f5a53e47d9633046ebaffce4`，根回核28份API正文的审查摘要 `e7be1b72db7c625d3ccc3ef8e43634c5b59925d918336a85bcb068473a71bb60`。初版辅助审查未归一化API摘要的sha256前缀而失败；第二版只按生产已支持的格式归一化，原脚本/失败保留，未重跑或修改正负控。
+
+此进展关闭非注入托管聚合和AE7摘要负控的证据缺口。有效服务端required-check绑定、带版本/tag的发布演练与最终整合仍待完成；两个PR仍为draft、REVIEW_REQUIRED，无审批。没有发布、部署、合并master或修改服务端保护规则，U23及整个U1–U29计划保持未完成。
