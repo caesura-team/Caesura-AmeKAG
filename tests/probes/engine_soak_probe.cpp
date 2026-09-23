@@ -25,6 +25,7 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <iterator>
 #include <memory>
@@ -238,7 +239,8 @@ bool quietDebts(const json& j) {
 
 class Workload {
 public:
- Workload(fs::path output,unsigned cycles,double seconds) : out_(std::move(output)),wanted_(cycles),seconds_(seconds),events_(out_/"events.jsonl",std::ios::binary) {
+ Workload(fs::path output,unsigned cycles,double seconds,std::function<void(const json&)> progress={})
+  : out_(std::move(output)),wanted_(cycles),seconds_(seconds),events_(out_/"events.jsonl",std::ios::binary),progress_(std::move(progress)) {
   require(bool(events_),"Cannot create event stream");
   EngineConfig c;c.width=kWidth;c.height=kHeight;c.title="Caesura bounded runtime workload";
   c.editorMode=true;c.renderBackend="dx11";c.saveEncryptionPolicy=SaveEncryptionPolicy::RequireEncrypted;
@@ -283,11 +285,20 @@ public:
   engine_->shutdown();report_["shutdown_host"]={{"initialized",engine_->getHostSnapshot().initialized},{"running",engine_->getHostSnapshot().running}};
   write(out_/"result.json",report_);require(report_["status"]=="PROBE_COMPLETED",report_.value("error","Workload incomplete"));
  }
+ const json& result() const { return report_; }
+ double startedSince(Clock::time_point origin) const { return std::chrono::duration<double>(start_-origin).count(); }
+ double measurementEventSeconds() const { return measurementEventSeconds_; }
+ double lastQuietSeconds() const { return lastQuietSeconds_; }
 private:
  double elapsed(Clock::time_point t) const { return std::chrono::duration<double>(Clock::now()-t).count(); }
  void event(const char* name,json detail=json::object()) {
-  events_<<json({{"event",name},{"cycle",cycle_},{"owner_frame",engine_->getHostSnapshot().completedOwnerFrames},
-   {"seconds",start_==Clock::time_point{}?0:elapsed(start_)},{"detail",std::move(detail)}}).dump()<<'\n';events_.flush();require(bool(events_),"Event stream failed");
+  const double seconds=start_==Clock::time_point{}?0:elapsed(start_);
+  const json value={{"event",name},{"cycle",cycle_},{"owner_frame",engine_->getHostSnapshot().completedOwnerFrames},
+   {"seconds",seconds},{"detail",std::move(detail)}};
+  events_<<value.dump()<<'\n';events_.flush();require(bool(events_),"Event stream failed");
+  if(std::string(name)=="measurement_begin")measurementEventSeconds_=seconds;
+  if(std::string(name)=="quiet")lastQuietSeconds_=seconds;
+  if(progress_)progress_(value);
  }
  lua_Integer lua(const std::string& source) {
   vm_->resetInstructionBudget();auto* L=vm_->state();const int top=lua_gettop(L);const int status=luaL_dostring(L,source.c_str());
@@ -375,20 +386,79 @@ private:
   SDL_Delay(1);
  }
  fs::path out_;unsigned wanted_,cycle_=0,consecutive_=0;double seconds_;std::ofstream events_;json report_,previousQuiet_;
+ std::function<void(const json&)> progress_;
+ double measurementEventSeconds_=0,lastQuietSeconds_=0;
  std::unique_ptr<Engine> engine_;ILuaManager* vm_=nullptr;IAudioBackend* audio_=nullptr;IRenderDevice* render_=nullptr;ITextureManager* textures_=nullptr;
  Clock::time_point start_{},cycleStart_{},quietStart_{},measuredStart_{};bool done_=false,measured_=false;int phase_=0;uint64_t frame_=0;
  uint32_t texture_=0;ViewportHandle target_{};ScreenshotTicket ticket_{};std::string capturePage_;
  std::array<unsigned,3> voiceHandles_{};
 };
+
+void runContexts(const fs::path& output,unsigned cycles,double seconds,unsigned minimumContexts) {
+ const auto origin=Clock::now();
+ const auto elapsed=[&]{return std::chrono::duration<double>(Clock::now()-origin).count();};
+ std::ofstream progress(output/"progress.jsonl",std::ios::binary);require(bool(progress),"Cannot create continuous progress stream");
+ json summary={{"status","RUNNING"},{"pid",GetCurrentProcessId()},{"epochs",json::array()},
+  {"physical_audio","NOT_MEASURED"},{"cold_restart","NOT_RUN"}};
+ double firstMeasurement=0,lastQuiet=0;unsigned measuredCycles=0;
+ try {
+  for(unsigned index=0;index<1000;++index) {
+   const auto name="epoch-"+std::to_string(index);const auto directory=output/name;
+   require(fs::create_directory(directory),"Epoch output already exists");
+   json epoch={{"index",index},{"directory",name}};
+   {
+    // Returning from run before shutdown/destruction keeps all backend teardown
+    // outside the frame callback. This lexical scope owns exactly one Engine.
+    Workload work(directory,cycles,0,[&](const json& event){
+     progress<<json({{"epoch",index},{"event",event.at("event")},{"cycle",event.at("cycle")},
+       {"process_seconds",elapsed()}}).dump()<<'\n';progress.flush();require(bool(progress),"Continuous progress stream failed");
+    });
+    if(index==0)require(fs::copy_file(directory/"initialized.json",output/"initialized.json"),"Cannot publish initial context readiness");
+    work.run();
+    epoch["started_seconds"]=work.startedSince(origin);
+    epoch["result"]=work.result();
+    if(index==0) {
+     firstMeasurement=work.startedSince(origin)+work.measurementEventSeconds();
+     summary["process_created"]=work.result().at("process_created");
+    }
+    lastQuiet=work.startedSince(origin)+work.lastQuietSeconds();
+    measuredCycles+=work.result().at("measured_cycles").get<unsigned>();
+   }
+   auto& registry=BackendRegistry::instance();
+   require(!registry.getLuaManager()&&!registry.getRenderDevice()&&!registry.getAudioBackend()&&!registry.getTextureManager(),
+           "Destroyed context left registered backend owners");
+   epoch["destroyed_seconds"]=elapsed();epoch["backend_registry_retired"]=true;
+   summary["epochs"].push_back(epoch);
+   progress<<json({{"epoch",index},{"event","context_destroyed"},{"process_seconds",elapsed()}}).dump()<<'\n';
+   progress.flush();require(bool(progress),"Cannot retain context destruction");
+   summary["context_restarts"]=index;summary["measured_cycles"]=measuredCycles;
+   summary["measured_seconds"]=lastQuiet-firstMeasurement;summary["process_seconds"]=elapsed();
+   write(output/"contexts.json",summary);
+   if(index+1>=minimumContexts&&lastQuiet-firstMeasurement>=seconds) {
+    summary["status"]="CONTEXTS_COMPLETED";write(output/"contexts.json",summary);return;
+   }
+  }
+  throw std::runtime_error("Continuous context count exceeded bounded workload");
+ } catch(const std::exception& error) {
+  summary["status"]="FAIL";summary["error"]=error.what();summary["process_seconds"]=elapsed();
+  write(output/"contexts.json",summary);throw;
+ }
+}
 }
 int wmain(int argc,wchar_t** argv) {
  SDL_SetMainReady();
  try {
-  require(argc==5,"Usage: probe RUNTIME_ROOT OUTPUT_DIR TOTAL_CYCLES MIN_MEASURED_SECONDS");
+  require(argc==5||argc==6,"Usage: probe RUNTIME_ROOT OUTPUT_DIR TOTAL_CYCLES MIN_MEASURED_SECONDS [MIN_CONTEXTS]");
   const auto root=fs::canonical(argv[1]),output=fs::canonical(argv[2]);
   require(root!=output&&fs::is_directory(root)&&fs::is_directory(output),"Dedicated existing runtime/output directories required");
   const auto cycles=std::stoul(argv[3]);const auto seconds=std::stod(argv[4]);
   require(cycles>=21&&cycles<=100000&&seconds>=0&&seconds<=7200,"Invalid bounded workload request");
-  fs::current_path(root);Workload work(output,unsigned(cycles),seconds);work.run();return 0;
+  fs::current_path(root);
+  if(argc==6) {
+   const auto contexts=std::stoul(argv[5]);
+   require(contexts>=2&&contexts<=1000&&(cycles==22||cycles==120),"Invalid bounded context request");
+   runContexts(output,unsigned(cycles),seconds,unsigned(contexts));
+  } else {Workload work(output,unsigned(cycles),seconds);work.run();}
+  return 0;
  } catch(const std::exception& error){std::cerr<<"U27 workload: "<<error.what()<<'\n';return 1;}
 }

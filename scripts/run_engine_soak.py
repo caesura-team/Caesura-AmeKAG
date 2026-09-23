@@ -2,7 +2,7 @@
 
 Requires an already configured Windows foundation build. Builds the actual
 Release probe, preserves one attempt and uses a fresh external runtime copy.
-The diagnostic mode never reports short/long, recovery or release acceptance.
+Diagnostics never report short/long, cold recovery or release acceptance.
 """
 import argparse
 from concurrent.futures import ThreadPoolExecutor
@@ -19,7 +19,7 @@ import sys
 import time
 import wave
 
-from engine_soak_trace import check_trace
+from engine_soak_trace import check_trace, check_epochs
 from native_package_runtime import observe_loaded_modules
 from package_runtime import ProcessIdentity, process_identity, run_runtime_command
 from run_validation import _source_identity, _validate_environment
@@ -186,13 +186,13 @@ def source_identity(repo):
     return _source_identity(repo)
 
 
-def run_diagnostic(repo, build, output):
+def run_diagnostic(repo, build, output, *, contexts=False):
     repo, build = Path(repo).resolve(strict=True), Path(build).resolve(strict=True)
     output = Path(output).absolute()
     require(os.name == 'nt', 'This native D3D11/Device lane requires Windows')
     require(not output.resolve().is_relative_to(repo), 'Runtime evidence must be outside the source checkout')
     output.mkdir()
-    report = dict(status='FAIL', mode='diagnostic', accepted_soak=False,
+    report = dict(status='FAIL', mode='context-diagnostic' if contexts else 'diagnostic', accepted_soak=False,
                   physical_audibility='NOT_MEASURED', context_restart='NOT_RUN',
                   cold_restart='NOT_RUN', negative_controls='NOT_RUN', commands=[])
     before = None
@@ -252,18 +252,58 @@ def run_diagnostic(repo, build, output):
             write_json(output/'loaded-modules.json', modules)
             return modules
 
-        observed = run_observed_command([str(executable),str(runtime),str(probe_output),'22','0'],
-            runtime,probe_env,output/'probe-process',probe_output/'initialized.json',probe_output/'events.jsonl',
+        argv = [str(executable),str(runtime),str(probe_output),'22','0'] + (['2'] if contexts else [])
+        progress_file = probe_output/('progress.jsonl' if contexts else 'events.jsonl')
+        observed = run_observed_command(argv,
+            runtime,probe_env,output/'probe-process',probe_output/'initialized.json',progress_file,
             timeout=120,startup_seconds=30,progress_seconds=10,inspect=inspect)
         report['probe_observation'] = observed
         require(observed['status'] == 'OBSERVED', observed.get('error', 'Probe observation failed'))
-        result_path = safe_file(probe_output, 'result.json')
-        event_path = safe_file(probe_output, 'events.jsonl', limit=16*1024**2)
+        result_path = safe_file(probe_output, 'contexts.json' if contexts else 'result.json')
+        event_path = safe_file(probe_output, progress_file.name, limit=16*1024**2)
         result = json.loads(result_path.read_text(encoding='utf-8'))
-        events = [json.loads(line) for line in event_path.read_text(encoding='utf-8').splitlines()]
-        errors = check_trace(result,events,observed['receipt']['process'],observed['owner_observed_seconds'],'diagnostic')
-        require(not errors, '; '.join(errors))
-        report['pngs'] = verify_images(probe_output, events)
+        if contexts:
+            selected = result.get('epochs')
+            require(isinstance(selected,list) and len(selected)==2, 'Diagnostic needs exactly two contexts')
+            epochs, epoch_files = [], []
+            for index, item in enumerate(selected):
+                name = f'epoch-{index}'
+                require(isinstance(item,dict) and item.get('directory')==name
+                        and item.get('backend_registry_retired') is True, 'Context directory or retired registry differs')
+                raw = safe_file(probe_output, name+'/result.json')
+                trace = safe_file(probe_output, name+'/events.jsonl', limit=16*1024**2)
+                epoch_result = json.loads(raw.read_text(encoding='utf-8'))
+                require(item.get('result')==epoch_result, 'Continuous summary substituted its epoch result')
+                events = [json.loads(line) for line in trace.read_text(encoding='utf-8').splitlines()]
+                epochs.append(dict(item,events=events))
+                epoch_files.append(dict(directory=name,result_sha256=sha(raw),events_sha256=sha(trace)))
+            errors = check_epochs(result,epochs,observed['receipt']['process'],observed['owner_observed_seconds'],'diagnostic')
+            require(not errors, '; '.join(errors))
+            progress = [json.loads(line) for line in event_path.read_text(encoding='utf-8').splitlines()]
+            expected = []
+            for index, epoch in enumerate(epochs):
+                expected.extend((index,event['event'],event['cycle']) for event in epoch['events'])
+                expected.append((index,'context_destroyed',None))
+            require(len(progress)==len(expected), 'Continuous progress omits or duplicates events')
+            previous = 0
+            for position, (event, (index,name,cycle)) in enumerate(zip(progress,expected)):
+                require(type(event.get('epoch')) is int and event['epoch']==index
+                        and event.get('event')==name and event.get('cycle')==cycle, 'Continuous progress order differs')
+                clock = event.get('process_seconds')
+                require(type(clock) in (int,float) and math.isfinite(clock)
+                        and previous<=clock<=observed['owner_observed_seconds']
+                        and clock-previous<(30 if position==0 else 10), 'Continuous progress clock differs')
+                previous = clock
+            report['pngs'] = []
+            for index, epoch in enumerate(epochs):
+                report['pngs'].extend(dict(row,file=f'epoch-{index}/'+row['file'])
+                                     for row in verify_images(probe_output/f'epoch-{index}',epoch['events']))
+            report.update(epoch_files=epoch_files,context_restart='OBSERVED')
+        else:
+            events = [json.loads(line) for line in event_path.read_text(encoding='utf-8').splitlines()]
+            errors = check_trace(result,events,observed['receipt']['process'],observed['owner_observed_seconds'],'diagnostic')
+            require(not errors, '; '.join(errors))
+            report['pngs'] = verify_images(probe_output, events)
         report.update(result=result,result_sha256=sha(result_path),events_sha256=sha(event_path))
         require(all(sha(runtime/name) == digest for name,digest in report['input_locks'].items()), 'Runtime input bytes changed')
         require(all(sha(path) == digest for path,digest in binary_locks.items()), 'Probe binary/DLL bytes changed')
@@ -294,9 +334,9 @@ def main():
     parser.add_argument('--repo-root', type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument('--build-dir', type=Path, required=True)
     parser.add_argument('--run-dir', type=Path, required=True, help='New directory under an existing parent, outside checkout')
-    parser.add_argument('--mode', choices=('diagnostic',), default='diagnostic')
+    parser.add_argument('--mode', choices=('diagnostic','context-diagnostic'), default='diagnostic')
     args = parser.parse_args()
-    report = run_diagnostic(args.repo_root,args.build_dir,args.run_dir)
+    report = run_diagnostic(args.repo_root,args.build_dir,args.run_dir,contexts=args.mode=='context-diagnostic')
     print(json.dumps({key:report[key] for key in ('status','accepted_soak','error') if key in report}))
     return 0 if report['status'] == 'DIAGNOSTIC_REVIEWED' else 1
 

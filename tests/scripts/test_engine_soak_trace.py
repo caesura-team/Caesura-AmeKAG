@@ -6,7 +6,7 @@ import sys
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
-from engine_soak_trace import check_trace
+from engine_soak_trace import check_trace, check_epochs
 from test_engine_soak_contract import measured
 
 
@@ -207,6 +207,113 @@ class SoakTraceTests(unittest.TestCase):
     def test_long_mode_accepts_a_complete_continuous_single_context_trace(self):
         self.args=list(fixture(620,6.1));self.args[4]='long'
         self.assertEqual(check_trace(*self.args),[])
+
+
+def epochs_fixture(mode='short', count=2, cycle_seconds=.7, measured_per_epoch=100):
+    epochs=[];start=1.0;total=0
+    for index in range(count):
+        result,events,owner,observed,_=fixture(20+measured_per_epoch,cycle_seconds)
+        for event in events:
+            if 'render' in event['detail']:event['detail']['render']['contextGeneration']=index+1
+        destroyed=start+result['process_seconds']+.1
+        epochs.append(dict(index=index,started_seconds=start,destroyed_seconds=destroyed,result=result,events=events))
+        total+=result['measured_cycles'];start=destroyed+.1
+    begin=epochs[0]['started_seconds']+next(e['seconds'] for e in epochs[0]['events'] if e['event']=='measurement_begin')
+    end=epochs[-1]['started_seconds']+epochs[-1]['events'][-1]['seconds']
+    summary=dict(status='CONTEXTS_COMPLETED',pid=owner['pid'],process_created=owner['created'],
+                 process_seconds=start,measured_seconds=end-begin+.1,measured_cycles=total,context_restarts=count-1)
+    return [summary,epochs,owner,start+1,mode]
+
+
+class SoakEpochTests(unittest.TestCase):
+    def setUp(self):self.args=epochs_fixture()
+
+    def reject(self):
+        errors=check_epochs(*self.args)
+        self.assertTrue(errors)
+        self.assertTrue(all(isinstance(e,str) and e for e in errors))
+
+    def test_continuous_context_restarts_allow_frame_and_ticket_counter_reset(self):
+        before=copy.deepcopy(self.args)
+        self.assertEqual(check_epochs(*self.args),[])
+        self.assertEqual(before,self.args)
+
+    def test_long_sequence_has_one_identity_and_six_hundred_measured_cycles(self):
+        self.assertEqual(check_epochs(*epochs_fixture('long',6,6.1)),[])
+
+    def test_context_resources_may_have_their_own_stable_baseline(self):
+        for event in self.args[1][1]['events']:
+            if 'render' in event['detail']:event['detail']['render']['resources']['textures']+=1
+        self.assertEqual(check_epochs(*self.args),[])
+
+    def test_short_and_long_cannot_be_supplied_by_brief_epoch_diagnostics(self):
+        for mode in ('short','long'):
+            with self.subTest(mode=mode):self.args=epochs_fixture(mode,2,.7,2);self.reject()
+        self.args[-1]='diagnostic'
+        self.assertEqual(check_epochs(*self.args),[])
+
+    def test_changed_pid_creation_or_outer_success_state_is_rejected(self):
+        for outer in (False,True):
+            for field,value in [('pid',4322),('pid',True),('process_created','old'),('status','FAIL')]:
+                with self.subTest(outer=outer,field=field,value=value):
+                    self.args=epochs_fixture()
+                    target=self.args[0] if outer else self.args[1][1]['result']
+                    target[field]=value;self.reject()
+
+    def test_context_generation_must_change_even_when_resource_counts_match(self):
+        for event in self.args[1][1]['events']:
+            if 'render' in event['detail']:event['detail']['render']['contextGeneration']=1
+        self.reject()
+
+    def test_later_warmup_cannot_reset_private_or_lua_growth_budget(self):
+        for field,delta in [('privateBytes',64*1024**2+1),('luaBytes',1024**2+1)]:
+            with self.subTest(field=field):
+                self.args=epochs_fixture();second=self.args[1][1]
+                for event in second['events']:
+                    if 'memory' in event['detail']:event['detail']['memory'][field]+=delta
+                self.assertEqual(check_trace(second['result'],second['events'],self.args[2],self.args[3],'diagnostic'),[])
+                self.reject()
+
+    def test_missing_duplicate_out_of_order_or_single_epoch_is_rejected(self):
+        for change in ('missing','duplicate','reverse','single'):
+            with self.subTest(change=change):
+                self.args=epochs_fixture()
+                if change=='missing':self.args[1][1]['events'].pop(12)
+                elif change=='duplicate':self.args[1].append(copy.deepcopy(self.args[1][1]))
+                elif change=='reverse':self.args[1].reverse()
+                else:self.args[1].pop()
+                self.reject()
+
+    def test_overlapping_context_lifetimes_and_idle_restart_gaps_are_rejected(self):
+        for field,value in [('started_seconds',0),('destroyed_seconds',0),('index',0),('index',1.0)]:
+            with self.subTest(field=field):
+                self.args=epochs_fixture();self.args[1][1][field]=value;self.reject()
+        self.args=epochs_fixture()
+        self.args[1][1]['started_seconds']+=20;self.args[1][1]['destroyed_seconds']+=20
+        self.args[0]['process_seconds']+=20;self.args[0]['measured_seconds']+=20;self.args[3]+=20
+        self.reject()
+
+    def test_incomplete_shutdown_or_missing_context_warmup_is_rejected(self):
+        for key,value in [('shutdown_host',{'initialized':True,'running':False}),('warm_cycles',19)]:
+            with self.subTest(key=key):
+                self.args=epochs_fixture();self.args[1][1]['result'][key]=value;self.reject()
+
+    def test_restarts_and_counts_are_derived_from_all_completed_epochs(self):
+        for key,value in [('context_restarts',0),('context_restarts',True),('measured_cycles',201),('measured_cycles',True)]:
+            with self.subTest(key=key):self.args=epochs_fixture();self.args[0][key]=value;self.reject()
+        self.args=epochs_fixture('short',3,.7,80);self.reject()
+
+    def test_reported_time_cannot_replace_observed_continuous_duration(self):
+        for key,value in [('measured_seconds',3600),('process_seconds',10000),('process_seconds',math.nan),('measured_seconds',True)]:
+            with self.subTest(key=key):self.args=epochs_fixture();self.args[0][key]=value;self.reject()
+        self.args=epochs_fixture('short',2,.3);self.reject()
+        self.args=epochs_fixture('long',6,.7);self.reject()
+
+    def test_each_context_keeps_its_own_post_warm_resource_limit(self):
+        for event in self.args[1][1]['events']:
+            if event['cycle']>=21 and 'render' in event['detail']:
+                event['detail']['render']['resources']['textures']+=1
+        self.reject()
 
 
 if __name__=="__main__":unittest.main(verbosity=2)

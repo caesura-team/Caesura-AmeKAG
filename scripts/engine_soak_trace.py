@@ -1,4 +1,4 @@
-"""Single-context workload trace checks; no process, image or recovery execution.
+"""Workload and continuous-context trace checks; no native or image execution.
 
 An empty error list is only this trace's acceptance, not a complete soak gate.
 The controller must separately authenticate inputs/binaries/modules, inspect PNG
@@ -205,4 +205,84 @@ def check_trace(result, events, expected_process, observed_seconds, mode):
               "Reported measurement time differs from trace")
         return []
     except (TraceError, KeyError, TypeError, OverflowError) as error:
+        return [str(error) or type(error).__name__]
+
+
+def check_epochs(summary, epochs, expected_process, observed_seconds, mode):
+    """Check continuous contexts in one externally owned process.
+
+    Every epoch carries its unmodified local trace and result. Its start and
+    destruction clocks are measured by the native outer owner, after init and
+    after destruction respectively. They are bounded by the independent process
+    observation. This is a trace check, not an image, cold-restore or fault gate.
+    """
+    try:
+        _need(mode in LIMITS, "Unknown epoch mode")
+        _need(isinstance(summary, dict) and isinstance(expected_process, dict), "Missing continuous result/owner")
+        _need(summary.get("status") == "CONTEXTS_COMPLETED", "Contexts did not complete")
+        _need(_uint(summary.get("pid"), "continuous PID", 1) == _uint(expected_process.get("pid"), "owner PID", 1),
+              "Continuous result belongs to another PID")
+        _need(summary.get("process_created") == expected_process.get("created"), "Continuous creation identity differs")
+        duration = _number(summary.get("process_seconds"), "continuous duration")
+        owned = _number(observed_seconds, "observed owner duration")
+        _need(0 < duration <= owned, "Continuous interval exceeds observed owner")
+        measured_duration = _number(summary.get("measured_seconds"), "continuous measured duration")
+        _need(isinstance(epochs, list) and 2 <= len(epochs) <= 1000, "Need bounded, repeated contexts")
+        _need(_uint(summary.get("context_restarts"), "context restarts") == len(epochs)-1,
+              "Context restart count differs")
+        global_baseline = None
+        generations = set()
+        previous_destroyed = previous_quiet = None
+        first_measurement = last_quiet = None
+        total = 0
+        for index, epoch in enumerate(epochs):
+            _need(isinstance(epoch, dict) and _uint(epoch.get("index"), "epoch index") == index,
+                  "Epoch is missing, duplicated or out of order")
+            started = _number(epoch.get("started_seconds"), "epoch start")
+            destroyed = _number(epoch.get("destroyed_seconds"), "epoch destruction")
+            result, events = epoch.get("result"), epoch.get("events")
+            errors = check_trace(result, events, expected_process, owned, "diagnostic")
+            _need(not errors, f"Epoch {index}: " + "; ".join(errors))
+            _need(started + result["process_seconds"] <= destroyed <= duration,
+                  "Epoch lifetime extends beyond destruction/owner")
+            if index == 0:
+                _need(started < 30, "Initial context exceeded startup boundary")
+            else:
+                _need(started >= previous_destroyed, "Context lifetimes overlap")
+                _need(started - previous_quiet < 10, "No workload progress across context restart")
+            last_quiet = started + events[-1]["seconds"]
+            _need(0 <= destroyed - last_quiet < 10, "Context teardown exceeded progress boundary")
+            previous_destroyed, previous_quiet = destroyed, last_quiet
+            generation = _uint(_get(events[0]["detail"], "render.contextGeneration"), "epoch generation", 1)
+            _need(generation not in generations, "Context identity was reused after destruction")
+            generations.add(generation)
+            count = result["measured_cycles"]
+            expected_count = 2 if mode == "diagnostic" else 100
+            _need(2 <= count <= expected_count and (index == len(epochs)-1 or count == expected_count),
+                  "Context did not restart at the declared measured cycle boundary")
+            total += count
+            quiet = [event["detail"] for event in events if event["event"] == "quiet"]
+            if index == 0:
+                global_baseline = {path:max(_get(sample, path) for sample in quiet[:20]) for path in GROWTH_BUDGETS}
+                first_measurement = started + next(event["seconds"] for event in events if event["event"] == "measurement_begin")
+                checked = quiet[20:]
+            else:
+                # Warm-up in a recreated context is not permission to discard
+                # already retained Lua/private allocations from the same PID.
+                checked = quiet
+            for sample in checked:
+                for path, allowance in GROWTH_BUDGETS.items():
+                    _need(_get(sample, path) <= global_baseline[path] + allowance,
+                          "Continuous memory exceeds initial warm budget: " + path)
+        _need(_uint(summary.get("measured_cycles"), "continuous measured cycles") == total,
+              "Continuous measured count differs from completed epochs")
+        minimum = 120 if mode == "short" else LIMITS[mode][1]
+        _need(total >= minimum, "Insufficient continuous measured cycles")
+        span = last_quiet - first_measurement
+        _need(span >= LIMITS[mode][0], "Continuous trace duration is too short")
+        _need(span <= measured_duration <= span + 1.0 and measured_duration <= duration,
+              "Continuous measured clock differs from trace")
+        _need(0 <= duration-last_quiet < 10, "Idle tail cannot supply measured duration")
+        return []
+    except (TraceError, KeyError, TypeError, OverflowError, StopIteration) as error:
         return [str(error) or type(error).__name__]
