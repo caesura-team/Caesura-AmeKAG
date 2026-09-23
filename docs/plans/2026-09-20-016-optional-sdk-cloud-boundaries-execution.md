@@ -157,3 +157,9 @@ CloudConflictStore 现已实现 owner 限定的不可变本地观察记录：在
 加强版冻结源码fingerprint为 `811799667d5ff791796454c1769b58c4634e95c37a335752a49194547915c2e2`，各命令首末稳定，全部owned清理完成、无runner超时强杀；场景自身异常退出Windows为74、Linux为SIGKILL(-9)，受控前置退出为73，均由父进程核对真实OS身份。Windows协调器报告SHA256 `a663a64d4f361ed16aec217bb255700bed267f603ecd8a6ff46e492adcaf2908`，Linux报告 `f2c0f23461a851a4c045f82c94a2d76c845dc7b25112a1f0bd2f88b42a5d2d85`。根各复核230份原始引用、74个独立进程、全部源锁和最终真实文件树；复核文件分别为 `c76811fa9d3b99cfe3d9d1d4e99752a37935b6f9cd0032e0ca665b2ec91992d5` 与 `4992acad6c23fb577da75a751af5ccff7c0f9f11bcfe478fefe22cbc17160cd2`。Windows短临时fixture及Linux `/var/tmp` 目录全部留存，报告绑定绝对路径与物理身份；没有承诺任意Windows长路径。
 
 新增CTest只注册host构建，C++方法数不变。Windows Debug/Release实际各发现59项；发现Release原门槛漏计旧B1探针，因此六桌面profile统一最低59（Debug加1，Release补齐旧探针后加1）。该数是注册门槛，不声称其他平台完整执行。新增探针后的干净完整门禁继续进行；真实Steam账号/客户端、合法Live2D模型及SDK ON、远端CAS和断电持久性仍分别未验，整个U26尚未关闭。
+
+### 协调器冷恢复的干净集成门禁（2026-09-24）
+
+新增探针后的干净提交 `08bfc27645a335b91f860144c49d99cc2142d8a4` 已完成单次 Windows Debug 门禁，run `3b720275-8b5e-49aa-8ce9-ac09b494ce06`：全量构建0，C++1455/1455、433511断言、0失败/0跳过，Lua147/147＋56/56；CTest实际59项，58通过、0失败、1项预声明CaesuraHeadlessAiSmoke可选服务跳过，691.30秒。新协调器和原B1冷进程入口均在本次CTest内执行通过。
+
+执行、收集、strict verifier全部退出0；源码fingerprint `60b874c1d13708c9b2e656eab8af104de3d84f92d6ffb61092b4959a7de370e8` 与夹具首尾稳定，owned清理完成，无超时强杀。根重新核对29份原流/报告摘要及CTest XML，原run SHA256 `e307643aac530ae0fba54eca374584bac5460accf715bee56100674aeccc3764`，`u26-coordinator-cold-full-01/root-green-review-01.json` SHA256 `5b50e6c326f4e9fddfe2ca3e83a64072e5ea885da19c80127b4cd096327cae37`。前述失败和双平台定向证据继续保留；这次完整通过不扩展到Linux完整门禁、真实账号/SDK、远端写入或掉电验证，U26其他条件验收仍未完成。
