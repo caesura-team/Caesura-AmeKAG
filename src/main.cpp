@@ -572,6 +572,47 @@ private:
                     stats.audio.voiceCompletionsPending = snapshot.voiceCompletionsPending;
                     stats.audio.restoredSources = snapshot.restoredSources;
                 }
+                {
+                    const auto& snapshot = observed.render;
+                    auto& render = stats.render;
+                    render.supported = snapshot.supported;
+                    render.contextInitialized = snapshot.contextInitialized;
+                    render.renderingAvailable = snapshot.renderingAvailable;
+                    render.resourceCountsAvailable = snapshot.resourceCountsAvailable;
+                    switch (snapshot.backendKind) {
+                    case Caesura::RenderBackendKind::Noop:
+                        render.backendKind = Caesura::RpcRenderBackendKind::Noop;
+                        break;
+                    case Caesura::RenderBackendKind::GraphicsApi:
+                        render.backendKind = Caesura::RpcRenderBackendKind::GraphicsApi;
+                        break;
+                    case Caesura::RenderBackendKind::Unknown: break;
+                    default: break; // Future native values retain the Unknown default.
+                    }
+                    render.backendName = snapshot.backendName;
+                    render.contextGeneration = snapshot.contextGeneration;
+                    render.captureSubmissionFrame = snapshot.captureSubmissionFrame;
+                    render.resources.dynamicIndexBuffers = snapshot.resources.dynamicIndexBuffers;
+                    render.resources.dynamicVertexBuffers = snapshot.resources.dynamicVertexBuffers;
+                    render.resources.frameBuffers = snapshot.resources.frameBuffers;
+                    render.resources.indexBuffers = snapshot.resources.indexBuffers;
+                    render.resources.occlusionQueries = snapshot.resources.occlusionQueries;
+                    render.resources.programs = snapshot.resources.programs;
+                    render.resources.shaders = snapshot.resources.shaders;
+                    render.resources.textures = snapshot.resources.textures;
+                    render.resources.uniforms = snapshot.resources.uniforms;
+                    render.resources.vertexBuffers = snapshot.resources.vertexBuffers;
+                    render.resources.vertexLayouts = snapshot.resources.vertexLayouts;
+                    render.screenshots.supported = snapshot.screenshots.supported;
+                    render.screenshots.waiting = snapshot.screenshots.waiting;
+                    render.screenshots.submitted = snapshot.screenshots.submitted;
+                    render.screenshots.terminal = snapshot.screenshots.terminal;
+                    render.screenshots.reservedBytes = snapshot.screenshots.reservedBytes;
+                    render.screenshots.pngBytes = snapshot.screenshots.pngBytes;
+                    render.screenshotOwnershipComplete = snapshot.screenshotOwnershipComplete;
+                    render.screenshotReadbackTrackingSupported = snapshot.screenshotReadbackTrackingSupported;
+                    render.screenshotReadbacksOutstanding = snapshot.screenshotReadbacksOutstanding;
+                }
                 Caesura::RpcReply reply = rpcOk();
                 reply.payload = std::move(stats);
                 return reply;

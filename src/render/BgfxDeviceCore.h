@@ -39,6 +39,9 @@ public:
     const char* getBackendName() const;
 
     bool init(void* nativeWindowHandle, int width, int height);
+    // Called by the renderer immediately after a successful native init, before
+    // screenshot admission. The callback keeps this identity through shutdown.
+    bool bindScreenshotContext(uint64_t contextGeneration);
     // Screen-offset pan (camera/quakes): shifts VIEW_MAIN's rect each frame.
     void setScreenOffset(int dx, int dy) { m_screenOffsetX = dx; m_screenOffsetY = dy; }
     void resize(int width, int height);

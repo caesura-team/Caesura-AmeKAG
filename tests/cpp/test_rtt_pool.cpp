@@ -132,6 +132,7 @@ public:
 
     // -- backend identification --
     const char* getBackendName() const override { return "CountingRenderDevice"; }
+    RenderSnapshot getSnapshot() const override { return {}; }
     RenderRuntimeInfo getRuntimeInfo() const override {
         return RenderRuntimeInfo{getBackendName(), 1280, 720, 0, true};
     }

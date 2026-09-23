@@ -76,6 +76,7 @@ public:
     bool recoverDevice(void* nativeWindowHandle, int width, int height) override;
     void flagDeviceLost() override;
     bool consumeDeviceLost() override;
+    RenderSnapshot getSnapshot() const override;
     RenderRuntimeInfo getRuntimeInfo() const override;
     void renderText(uint16_t viewId, const std::string& text,
                     float x, float y,
@@ -150,6 +151,9 @@ private:
     bool m_shaderRenderingDisabled = false;
     ShaderTestFault m_shaderTestFault = ShaderTestFault::None;
     uint64_t m_frameId = 0;
+    // Last successfully created Core context, retained after shutdown/failure.
+    // Zero means never created or process-wide identity exhaustion.
+    uint64_t m_contextGeneration = 0;
     std::shared_ptr<ScreenshotQueue> m_screenshots = std::make_shared<ScreenshotQueue>();
     bool canRender() const {
         return m_bgfxInitialized && !m_stopping && !m_recovering && !m_recoveryFailed

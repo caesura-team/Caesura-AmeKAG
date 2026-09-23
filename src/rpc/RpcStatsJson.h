@@ -24,6 +24,15 @@ inline const char* audioOutputName(RpcAudioOutput value) {
     return "unknown";
 }
 
+inline const char* renderBackendKindName(RpcRenderBackendKind value) {
+    switch (value) {
+    case RpcRenderBackendKind::Noop: return "noop";
+    case RpcRenderBackendKind::GraphicsApi: return "graphics_api";
+    case RpcRenderBackendKind::Unknown: return "unknown";
+    }
+    return "unknown";
+}
+
 // Serialize copied DTOs only. Keep bool and uint64 types intact; neither
 // transport performs backend reads or infers support/global idle from zeroes.
 inline nlohmann::json statsJson(const RpcStatsResult& s) {
@@ -80,6 +89,40 @@ inline nlohmann::json statsJson(const RpcStatsResult& s) {
             {"raw_cache_entries", s.audio.rawCacheEntries},
             {"voice_completions_pending", s.audio.voiceCompletionsPending},
             {"restored_sources", s.audio.restoredSources},
+        }},
+        {"render", {
+            {"supported", s.render.supported},
+            {"context_initialized", s.render.contextInitialized},
+            {"rendering_available", s.render.renderingAvailable},
+            {"resource_counts_available", s.render.resourceCountsAvailable},
+            {"backend_kind", renderBackendKindName(s.render.backendKind)},
+            {"backend_name", s.render.backendName},
+            {"context_generation", s.render.contextGeneration},
+            {"capture_submission_frame", s.render.captureSubmissionFrame},
+            {"resources", {
+                {"dynamic_index_buffers", s.render.resources.dynamicIndexBuffers},
+                {"dynamic_vertex_buffers", s.render.resources.dynamicVertexBuffers},
+                {"frame_buffers", s.render.resources.frameBuffers},
+                {"index_buffers", s.render.resources.indexBuffers},
+                {"occlusion_queries", s.render.resources.occlusionQueries},
+                {"programs", s.render.resources.programs},
+                {"shaders", s.render.resources.shaders},
+                {"textures", s.render.resources.textures},
+                {"uniforms", s.render.resources.uniforms},
+                {"vertex_buffers", s.render.resources.vertexBuffers},
+                {"vertex_layouts", s.render.resources.vertexLayouts},
+            }},
+            {"screenshots", {
+                {"supported", s.render.screenshots.supported},
+                {"waiting", s.render.screenshots.waiting},
+                {"submitted", s.render.screenshots.submitted},
+                {"terminal", s.render.screenshots.terminal},
+                {"reserved_bytes", s.render.screenshots.reservedBytes},
+                {"png_bytes", s.render.screenshots.pngBytes},
+            }},
+            {"screenshot_ownership_complete", s.render.screenshotOwnershipComplete},
+            {"screenshot_readback_tracking_supported", s.render.screenshotReadbackTrackingSupported},
+            {"screenshot_readbacks_outstanding", s.render.screenshotReadbacksOutstanding},
         }},
     };
 }

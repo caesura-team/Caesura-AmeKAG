@@ -230,6 +230,7 @@ public:
     RenderProgramHandle getFallbackProgram() const override { return {}; }
     RenderProgramHandle getModulatedTextureProgram() const override { return {}; }
     const char* getBackendName() const override { return "TestRender"; }
+    RenderSnapshot getSnapshot() const override { return {}; }
     RenderRuntimeInfo getRuntimeInfo() const override {
         return {"TestRender", m_width, m_height, 0, true};
     }

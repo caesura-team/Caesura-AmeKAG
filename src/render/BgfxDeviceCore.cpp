@@ -211,6 +211,10 @@ void BgfxDeviceCore::resize(int width, int height) {
                "[BgfxRenderDevice] Resized to %dx%d", width, height);
 }
 
+bool BgfxDeviceCore::bindScreenshotContext(uint64_t contextGeneration) {
+    return m_bgfxInitialized && !m_shutdownComplete && m_callback.bindScreenshotContext(contextGeneration);
+}
+
 void BgfxDeviceCore::shutdown() {
     CAESURA_ASSERT_MAIN_THREAD();
     if (m_shutdownComplete) return;
@@ -246,6 +250,11 @@ void BgfxDeviceCore::shutdown() {
     // 4. Destroy GPU context
     bgfx::shutdown();
     m_bgfxInitialized = false;
+    // Native shutdown has drained callbacks and joined its render thread. Only
+    // this edge may retire unanswered publications; beginShutdown cannot. If
+    // retirement is refused, preserve the debt/active ledger so observers fail
+    // the context-state match rather than reporting a fabricated idle.
+    (void)m_callback.screenshotContextShutdownComplete();
 printf("[BgfxRenderDevice] Shutdown complete.\n");
 }
 

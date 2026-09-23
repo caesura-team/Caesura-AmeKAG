@@ -156,6 +156,7 @@ public:
     RenderProgramHandle getFallbackProgram() const override { return {}; }
     RenderProgramHandle getModulatedTextureProgram() const override { return {}; }
     const char* getBackendName() const override { return "TransientRender"; }
+    RenderSnapshot getSnapshot() const override { return {}; }
     RenderRuntimeInfo getRuntimeInfo() const override { return {}; }
     bool setPreferredBackend(const char*) override { return false; }
     bool active = true;

@@ -94,6 +94,7 @@ class NullRenderDevice final : public IRenderDevice {public:
     RenderProgramHandle getFallbackProgram() const override;
     RenderProgramHandle getModulatedTextureProgram() const override;
     const char* getBackendName() const override;
+    RenderSnapshot getSnapshot() const override { return {}; }
     RenderRuntimeInfo getRuntimeInfo() const override;
     bool setPreferredBackend(const char* backendName) override;
 

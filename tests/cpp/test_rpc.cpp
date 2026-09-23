@@ -1592,6 +1592,23 @@ RpcStatsResult u27WideStats() {
         9007199254741003ULL, 18446744073709551611ULL, 4294967307ULL,
         9007199254741005ULL, 18446744073709551610ULL, 4294967308ULL,
         9007199254741007ULL, 18446744073709551609ULL};
+    s.render.supported = true;
+    s.render.contextInitialized = true;
+    s.render.renderingAvailable = true;
+    s.render.resourceCountsAvailable = true;
+    s.render.backendKind = RpcRenderBackendKind::GraphicsApi;
+    s.render.backendName = "GPU \"quoted\"\nline\\tail";
+    s.render.contextGeneration = 4294967296ULL;
+    s.render.captureSubmissionFrame = 9007199254740993ULL;
+    s.render.resources = {18446744073709551615ULL, 4294967297ULL, 9007199254740995ULL,
+        18446744073709551614ULL, 4294967298ULL, 9007199254740997ULL,
+        18446744073709551613ULL, 4294967299ULL, 9007199254740999ULL,
+        18446744073709551612ULL, 4294967300ULL};
+    s.render.screenshots = {true, 9007199254741001ULL, 18446744073709551611ULL,
+        4294967301ULL, 9007199254741003ULL, 18446744073709551610ULL};
+    s.render.screenshotOwnershipComplete = true;
+    s.render.screenshotReadbackTrackingSupported = true;
+    s.render.screenshotReadbacksOutstanding = 4294967302ULL;
     return s;
 }
 
@@ -1617,7 +1634,22 @@ U27Json u27ExpectedWideStats() {
         "session_handles":18446744073709551611,"retiring_bgm":4294967307,
         "retiring_voice":9007199254741005,"wave_cache_entries":18446744073709551610,
         "raw_cache_entries":4294967308,"voice_completions_pending":9007199254741007,
-        "restored_sources":18446744073709551609}
+        "restored_sources":18446744073709551609},
+      "render":{"supported":true,"context_initialized":true,"rendering_available":true,
+        "resource_counts_available":true,"backend_kind":"graphics_api",
+        "backend_name":"GPU \"quoted\"\nline\\tail",
+        "context_generation":4294967296,"capture_submission_frame":9007199254740993,
+        "resources":{"dynamic_index_buffers":18446744073709551615,
+          "dynamic_vertex_buffers":4294967297,"frame_buffers":9007199254740995,
+          "index_buffers":18446744073709551614,"occlusion_queries":4294967298,
+          "programs":9007199254740997,"shaders":18446744073709551613,
+          "textures":4294967299,"uniforms":9007199254740999,
+          "vertex_buffers":18446744073709551612,"vertex_layouts":4294967300},
+        "screenshots":{"supported":true,"waiting":9007199254741001,
+          "submitted":18446744073709551611,"terminal":4294967301,
+          "reserved_bytes":9007199254741003,"png_bytes":18446744073709551610},
+        "screenshot_ownership_complete":true,"screenshot_readback_tracking_supported":true,
+        "screenshot_readbacks_outstanding":4294967302}
     })");
 }
 
@@ -1628,6 +1660,24 @@ void u27CheckScalar(const U27Json& actual, const U27Json& expected) {
         if (actual.is_number_unsigned())
             CHECK(actual.get<std::uint64_t>() == expected.get<std::uint64_t>());
     } else CHECK(actual == expected);
+}
+
+// The render group adds another object level. Preserve the existing scalar
+// checks at every leaf, including unsigned JSON type and exact uint64 value.
+void u27CheckNestedStats(const U27Json& actual, const U27Json& expected) {
+    if (!expected.is_object()) {
+        u27CheckScalar(actual, expected);
+        return;
+    }
+    CHECK(actual.is_object());
+    if (!actual.is_object()) return;
+    CHECK(actual.size() == expected.size());
+    for (auto field = expected.begin(); field != expected.end(); ++field) {
+        CAPTURE(field.key());
+        CHECK(actual.contains(field.key()));
+        if (actual.contains(field.key()))
+            u27CheckNestedStats(actual.at(field.key()), field.value());
+    }
 }
 
 void u27CheckStats(const U27Json& actual, const U27Json& expected) {
@@ -1648,16 +1698,127 @@ void u27CheckStats(const U27Json& actual, const U27Json& expected) {
         for (auto member = field.value().begin(); member != field.value().end(); ++member) {
             CAPTURE(member.key());
             CHECK(value.contains(member.key()));
-            if (value.contains(member.key())) u27CheckScalar(value.at(member.key()), member.value());
+            if (value.contains(member.key())) u27CheckNestedStats(value.at(member.key()), member.value());
         }
     }
     CHECK_FALSE(actual.contains("idle"));
     CHECK_FALSE(actual.contains("global_idle"));
 }
 
+// Independent literal oracles for the new nested renderer group. Do not build
+// expected JSON through statsJson or by reflecting the supplied DTO fields.
+U27Json u27ExpectedUnsupportedRender() {
+    return U27Json::parse(R"({
+      "supported":false,"context_initialized":false,"rendering_available":false,
+      "resource_counts_available":false,"backend_kind":"unknown","backend_name":"",
+      "context_generation":0,"capture_submission_frame":0,
+      "resources":{"dynamic_index_buffers":0,"dynamic_vertex_buffers":0,
+        "frame_buffers":0,"index_buffers":0,"occlusion_queries":0,"programs":0,
+        "shaders":0,"textures":0,"uniforms":0,"vertex_buffers":0,"vertex_layouts":0},
+      "screenshots":{"supported":false,"waiting":0,"submitted":0,"terminal":0,
+        "reserved_bytes":0,"png_bytes":0},
+      "screenshot_ownership_complete":false,"screenshot_readback_tracking_supported":false,
+      "screenshot_readbacks_outstanding":0
+    })");
+}
+
+struct U27RenderMode {
+    const char* name;
+    RpcStatsResult supplied;
+    U27Json expected;
+};
+
+std::vector<U27RenderMode> u27RenderModes() {
+    std::vector<U27RenderMode> modes;
+    auto unsupported = u27WideStats();
+    unsupported.render = {};
+    auto unsupportedWire = u27ExpectedWideStats();
+    unsupportedWire["render"] = u27ExpectedUnsupportedRender();
+    modes.push_back({"unsupported zero counts", unsupported, unsupportedWire});
+
+    auto wide = u27WideStats();
+    auto wire = u27ExpectedWideStats();
+    modes.push_back({"graphics API with distinct wide counters", wide, wire});
+
+    auto noop = wide; auto noopWire = wire;
+    noop.render.backendKind = RpcRenderBackendKind::Noop;
+    noop.render.backendName = "Noop";
+    noop.render.renderingAvailable = false;
+    noopWire["render"]["backend_kind"] = "noop";
+    noopWire["render"]["backend_name"] = "Noop";
+    noopWire["render"]["rendering_available"] = false;
+    modes.push_back({"Noop stays explicit with retained counters", noop, noopWire});
+
+    auto unknown = wide; auto unknownWire = wire;
+    unknown.render.backendKind = RpcRenderBackendKind::Unknown;
+    unknownWire["render"]["backend_kind"] = "unknown";
+    modes.push_back({"known Unknown enum", unknown, unknownWire});
+    unknown.render.backendKind = static_cast<RpcRenderBackendKind>(777);
+    modes.push_back({"future enum degrades only its name", unknown, unknownWire});
+
+    // Each flag flips independently while every other supplied field remains
+    // unchanged. Transports must not infer these booleans from another flag.
+    auto notSupported = wide; auto notSupportedWire = wire;
+    notSupported.render.supported = false;
+    notSupportedWire["render"]["supported"] = false;
+    modes.push_back({"unsupported retained values", notSupported, notSupportedWire});
+    auto noContext = wide; auto noContextWire = wire;
+    noContext.render.contextInitialized = false;
+    noContextWire["render"]["context_initialized"] = false;
+    modes.push_back({"context flag independent", noContext, noContextWire});
+    auto notRendering = wide; auto notRenderingWire = wire;
+    notRendering.render.renderingAvailable = false;
+    notRenderingWire["render"]["rendering_available"] = false;
+    modes.push_back({"rendering flag independent", notRendering, notRenderingWire});
+    auto noCounts = wide; auto noCountsWire = wire;
+    noCounts.render.resourceCountsAvailable = false;
+    noCountsWire["render"]["resource_counts_available"] = false;
+    modes.push_back({"resource counts flag independent", noCounts, noCountsWire});
+    auto noQueue = wide; auto noQueueWire = wire;
+    noQueue.render.screenshots.supported = false;
+    noQueueWire["render"]["screenshots"]["supported"] = false;
+    modes.push_back({"queue flag independent", noQueue, noQueueWire});
+    auto incomplete = wide; auto incompleteWire = wire;
+    incomplete.render.screenshotOwnershipComplete = false;
+    incompleteWire["render"]["screenshot_ownership_complete"] = false;
+    modes.push_back({"ownership flag independent", incomplete, incompleteWire});
+    auto untracked = wide; auto untrackedWire = wire;
+    untracked.render.screenshotReadbackTrackingSupported = false;
+    untrackedWire["render"]["screenshot_readback_tracking_supported"] = false;
+    modes.push_back({"readback tracking flag independent", untracked, untrackedWire});
+
+    auto empty = unsupported; auto emptyWire = unsupportedWire;
+    empty.render.supported = true;
+    empty.render.contextInitialized = true;
+    empty.render.renderingAvailable = true;
+    empty.render.resourceCountsAvailable = true;
+    empty.render.backendKind = RpcRenderBackendKind::GraphicsApi;
+    empty.render.backendName = "empty graphics fixture";
+    empty.render.contextGeneration = 7;
+    empty.render.screenshots.supported = true;
+    empty.render.screenshotOwnershipComplete = true;
+    empty.render.screenshotReadbackTrackingSupported = true;
+    emptyWire["render"]["supported"] = true;
+    emptyWire["render"]["context_initialized"] = true;
+    emptyWire["render"]["rendering_available"] = true;
+    emptyWire["render"]["resource_counts_available"] = true;
+    emptyWire["render"]["backend_kind"] = "graphics_api";
+    emptyWire["render"]["backend_name"] = "empty graphics fixture";
+    emptyWire["render"]["context_generation"] = std::uint64_t{7};
+    emptyWire["render"]["screenshots"]["supported"] = true;
+    emptyWire["render"]["screenshot_ownership_complete"] = true;
+    emptyWire["render"]["screenshot_readback_tracking_supported"] = true;
+    modes.push_back({"supported zero observations", empty, emptyWire});
+    empty.render.contextGeneration = 0;
+    emptyWire["render"]["context_generation"] = std::uint64_t{0};
+    modes.push_back({"zero context identity is preserved", empty, emptyWire});
+    return modes;
+}
+
 std::vector<std::pair<RpcStatsResult, U27Json>> u27StatsModes() {
     auto unsupported = u27ExpectedWideStats();
     for (auto& field : unsupported.items()) {
+        if (field.key() == "render") continue; // Its two nested objects have a literal default oracle.
         if (field.value().is_object()) {
             for (auto& member : field.value().items()) {
                 if (member.value().is_boolean()) member.value() = false;
@@ -1667,6 +1828,7 @@ std::vector<std::pair<RpcStatsResult, U27Json>> u27StatsModes() {
         } else if (field.value().is_string()) field.value() = "";
         else field.value() = std::uint64_t{0};
     }
+    unsupported["render"] = u27ExpectedUnsupportedRender();
     std::vector<std::pair<RpcStatsResult, U27Json>> cases;
     cases.emplace_back(RpcStatsResult{}, std::move(unsupported));
     auto sdl = u27WideStats(); auto sdlWire = u27ExpectedWideStats();
@@ -1891,11 +2053,71 @@ TEST_CASE("U27 RPC stats: failures and wrong payload never become success snapsh
         const auto body = U27Json::parse(response->body);
         CHECK(body.at("code") == failure.code);
         CHECK(body.at("status") != "ok");
-        for (const char* name : {"stats", "jobs", "async_loader", "host", "audio"}) {
+        for (const char* name : {"stats", "jobs", "async_loader", "host", "audio", "render"}) {
             CHECK_FALSE(body.contains(name));
             CHECK_FALSE(stdio.contains(name));
         }
         CHECK(dispatcher->requestCount() == 2);
         server.stop();
+    }
+}
+
+TEST_CASE("U27 Render RPC stats: real stdio descriptor preserves raw flags modes and nested uint64 values") {
+    for (const auto& mode : u27RenderModes()) {
+        CAPTURE(mode.name);
+        U27RpcOutputCapture output;
+        REQUIRE(output.valid());
+        auto source = std::make_shared<ControlledLineSource>();
+        source->enqueue(R"({"id":2711,"method":"stats"})");
+        source->finish();
+        auto dispatcher = u27StatsDispatcher(mode.supplied);
+        {
+            RpcServer rpc(lineSourceFor(source), output.writer());
+            REQUIRE(rpc.outputReady());
+            rpc.setDispatcher(dispatcher);
+            output.startReader();
+            output.closeWriter();
+            rpc.run();
+            CHECK_FALSE(rpc.isRunning());
+        }
+        output.finish();
+        REQUIRE_FALSE(output.readFailed());
+        REQUIRE_FALSE(output.bytes().empty());
+        CHECK(output.bytes().back() == '\n');
+        std::istringstream lines(output.bytes());
+        std::string line;
+        REQUIRE(static_cast<bool>(std::getline(lines, line)));
+        const auto response = U27Json::parse(line);
+        REQUIRE(response.is_object());
+        CHECK(response.size() == 2);
+        CHECK(response.at("id") == 2711);
+        REQUIRE(response.contains("stats"));
+        u27CheckStats(response.at("stats"), mode.expected);
+        CHECK_FALSE(static_cast<bool>(std::getline(lines, line)));
+        CHECK(dispatcher->requestCount() == 1);
+        CHECK(source->readCalls() == 2);
+    }
+}
+
+TEST_CASE("U27 Render RPC stats: real HTTP preserves raw flags modes and nested uint64 values") {
+    for (const auto& mode : u27RenderModes()) {
+        CAPTURE(mode.name);
+        EditorServer server;
+        auto dispatcher = u27StatsDispatcher(mode.supplied);
+        server.setDispatcher(dispatcher);
+        REQUIRE(startOpen(server));
+        httplib::Client client("127.0.0.1", server.port());
+        client.set_connection_timeout(2, 0); client.set_read_timeout(3, 0);
+        const auto response = client.Get("/api/stats");
+        REQUIRE(response);
+        REQUIRE(response->status == 200);
+        auto body = U27Json::parse(response->body);
+        CHECK(body.at("status") == "ok");
+        CHECK_FALSE(body.contains("stats"));
+        body.erase("status");
+        u27CheckStats(body, mode.expected);
+        CHECK(dispatcher->requestCount() == 1);
+        server.stop();
+        CHECK_FALSE(server.isRunning());
     }
 }

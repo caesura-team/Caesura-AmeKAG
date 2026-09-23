@@ -237,6 +237,59 @@ Bytes decodeBase64(const std::string& input) {
     return bytes;
 }
 
+json resourceDescription(const RenderResourceCounts& value) {
+    return {{"dynamicIndexBuffers", value.dynamicIndexBuffers},
+        {"dynamicVertexBuffers", value.dynamicVertexBuffers}, {"frameBuffers", value.frameBuffers},
+        {"indexBuffers", value.indexBuffers}, {"occlusionQueries", value.occlusionQueries},
+        {"programs", value.programs}, {"shaders", value.shaders}, {"textures", value.textures},
+        {"uniforms", value.uniforms}, {"vertexBuffers", value.vertexBuffers},
+        {"vertexLayouts", value.vertexLayouts}};
+}
+
+json snapshotDescription(const RenderSnapshot& value) {
+    const auto& queue = value.screenshots;
+    return {{"supported", value.supported}, {"context_initialized", value.contextInitialized},
+        {"rendering_available", value.renderingAvailable}, {"resource_counts_available", value.resourceCountsAvailable},
+        {"backend_kind", int(value.backendKind)}, {"backend_name", value.backendName},
+        {"context_generation", value.contextGeneration}, {"capture_submission_frame", value.captureSubmissionFrame},
+        {"resources", resourceDescription(value.resources)}, {"screenshots", {
+            {"supported", queue.supported}, {"waiting", queue.waiting}, {"submitted", queue.submitted},
+            {"terminal", queue.terminal}, {"reserved_bytes", queue.reservedBytes}, {"png_bytes", queue.pngBytes}}},
+        {"ownership_complete", value.screenshotOwnershipComplete},
+        {"readback_tracking_supported", value.screenshotReadbackTrackingSupported},
+        {"readbacks_outstanding", value.screenshotReadbacksOutstanding}};
+}
+
+bool ownershipReady(const RenderSnapshot& value) {
+    return value.supported && value.contextInitialized && value.renderingAvailable
+        && value.resourceCountsAvailable && value.backendKind == RenderBackendKind::GraphicsApi
+        && value.contextGeneration != 0 && value.screenshots.supported
+        && value.screenshotOwnershipComplete && value.screenshotReadbackTrackingSupported;
+}
+
+bool ownershipEmpty(const RenderSnapshot& value) {
+    const auto& queue = value.screenshots;
+    return queue.waiting == 0 && queue.submitted == 0 && queue.terminal == 0
+        && queue.reservedBytes == 0 && queue.pngBytes == 0 && value.screenshotReadbacksOutstanding == 0;
+}
+
+bool baselineAccepts(const RenderSnapshot& baseline, const RenderSnapshot& value) {
+    return ownershipReady(baseline) && ownershipReady(value) && ownershipEmpty(value)
+        && value.contextGeneration == baseline.contextGeneration
+        && resourceDescription(value.resources) == resourceDescription(baseline.resources);
+}
+
+std::string loadedModulePath(const wchar_t* name) {
+    const HMODULE module = GetModuleHandleW(name);
+    require(module != nullptr, "Required runtime module is not loaded");
+    std::array<wchar_t, 32768> buffer{};
+    const DWORD size = GetModuleFileNameW(module, buffer.data(), static_cast<DWORD>(buffer.size()));
+    require(size > 0 && size < buffer.size(), "Cannot observe runtime module path");
+    const auto utf8 = fs::canonical(fs::path(buffer.data())).u8string();
+    return std::string(reinterpret_cast<const char*>(utf8.data()), utf8.size());
+}
+
+
 class Probe {
 public:
     Probe(fs::path output, json& report) : output_(std::move(output)), report_(report) {
@@ -292,6 +345,160 @@ public:
         persist();
     }
     unsigned failures() const { return failures_; }
+
+    void ownership() {
+        report_["ownership_contract"] = {{"warm_frames", 8}, {"recovery_frames", 16},
+            {"png_wait_ms", 3000}, {"process_timeout_seconds", 90}, {"resource_fields", 11}};
+        report_["boundaries"] = {
+            "Real hidden SDL HWND, D3D11, production Engine/renderer/queue/PNG decoder and TTF fixture.",
+            "Eleven API allocator counts, paired with context identity; neither GPU bytes nor a GPU fence.",
+            "Fixed eight warm frames; retained extra texture plus RTT; at most sixteen release frames.",
+            "PNG terminal observation has no frame pumping; take transfers queue PNG ownership to this caller.",
+            "Normal explicit recover and the pre-existing invalid-dimensions recovery return path only."
+        };
+        report_["not_measured"] = {"unanswered_native_request_retirement", "post_core_font_restore_failure",
+            "native_os_device_removal", "other_backends_or_platforms", "one_hour_soak"};
+        report_["runtime_modules"] = {{"executable", loadedModulePath(nullptr)},
+            {"sdl", loadedModulePath(L"SDL3.dll")}, {"d3d11", loadedModulePath(L"d3d11.dll")}};
+        const auto initial = ownershipSample("initial");
+        check("ownership_ready", ownershipReady(initial));
+        ScreenshotResult warm;
+        RenderSnapshot warmed;
+        for (unsigned frame = 0; frame < 8; ++frame) {
+            drawDirect();
+            if (frame == 0) warm = admit({}, "warm_admission");
+            ownershipAdvance();
+            warmed = ownershipSample("warm_" + std::to_string(frame + 1));
+        }
+        check("warm_exactly_eight_advances", ownershipAdvances_ == 8
+            && warmed.captureSubmissionFrame == initial.captureSubmissionFrame + 8);
+        if (!ownershipAwaitTerminal("warm")) return;
+        const auto warmResult = ownershipTake("warm", warm.ticket);
+        inspect("warm_png", warmResult, kWidth, kHeight);
+        const auto baseline = ownershipSample("baseline");
+        const auto reread = ownershipSample("baseline_reread");
+        check("baseline_ready_empty", ownershipReady(baseline) && ownershipEmpty(baseline));
+        check("getter_preserves_observation", snapshotDescription(baseline) == snapshotDescription(reread));
+
+        const std::array<uint8_t, 4> pixels{71, 113, 191, 255};
+        const uint32_t extraTexture = textures_->loadTextureFromRGBA(pixels.data(), 1, 1, "");
+        const auto extraRtt = device().createRenderTarget(24, 24);
+        const bool created = extraTexture != 0 && textures_->isValid(extraTexture)
+            && bool(extraRtt) && device().getViewportTexture(extraRtt).isValid();
+        report_["extra_resources"] = {{"texture_id", extraTexture}, {"viewport_id", extraRtt.id},
+            {"texture_cache_key", ""}, {"texture_rgba", pixels}, {"texture_size", {1, 1}}, {"rtt_size", {24, 24}}};
+        check("extra_resources_created", created);
+        const auto retained = ownershipSample("extra_retained");
+        check("extra_allocator_growth", created && retained.contextGeneration == baseline.contextGeneration
+            && retained.resources.textures >= baseline.resources.textures + 2
+            && retained.resources.frameBuffers >= baseline.resources.frameBuffers + 1);
+        check("retained_resources_reject_baseline", !baselineAccepts(baseline, retained));
+        if (extraTexture != 0) textures_->destroyTexture(extraTexture);
+        if (extraRtt) device().destroyRenderTarget(extraRtt);
+        check("extra_engine_handles_released", !textures_->isValid(extraTexture)
+            && !device().getViewportTexture(extraRtt).isValid());
+        ownershipSample("after_extra_destroy");
+        bool restored = false;
+        unsigned releaseFrames = 0;
+        for (; releaseFrames < 16; ) {
+            drawDirect();
+            ownershipAdvance();
+            ++releaseFrames;
+            const auto value = ownershipSample("release_" + std::to_string(releaseFrames));
+            if (baselineAccepts(baseline, value)) { restored = true; break; }
+        }
+        report_["release_frames"] = releaseFrames;
+        check("resource_vector_returns_within_sixteen_frames", restored);
+        if (!created || !restored) return;
+
+        drawDirect();
+        const auto held = admit({}, "held_admission");
+        ownershipAdvance();
+        if (!ownershipAwaitTerminal("held")) return;
+        const auto beforeRecover = ownershipSample("before_recover_held");
+        check("retained_png_rejects_baseline", !baselineAccepts(baseline, beforeRecover));
+        const auto beforeFont = device().captureFontState();
+        const auto oldRtt = rtt_;
+        releaseFixtureFramebuffer();
+        auto& registry = BackendRegistry::instance();
+        registry.notifyDeviceLost();
+        device().flagDeviceLost();
+        const bool recovered = device().recoverDevice(platform_->getNativeWindowHandle(), kWidth, kHeight);
+        check("normal_recovery_succeeds", recovered);
+        if (!recovered) return;
+        registry.notifyDeviceRestored();
+        bgfx::setDebug(BGFX_DEBUG_NONE);
+        const auto afterRecover = ownershipSample("after_recover_held");
+        check("normal_recovery_fresh_context", ownershipReady(afterRecover)
+            && afterRecover.contextGeneration > beforeRecover.contextGeneration);
+        check("normal_recovery_actual_d3d11", bgfx::getRendererType() == bgfx::RendererType::Direct3D11
+            && device().getRuntimeInfo().shaderReady);
+        check("old_terminal_retained_across_recovery", afterRecover.screenshots.terminal == 1
+            && afterRecover.screenshots.pngBytes == beforeRecover.screenshots.pngBytes
+            && afterRecover.screenshots.reservedBytes == beforeRecover.screenshots.reservedBytes
+            && afterRecover.screenshots.waiting == 0 && afterRecover.screenshots.submitted == 0
+            && afterRecover.screenshotReadbacksOutstanding == 0);
+        check("old_context_baseline_rejected", !baselineAccepts(baseline, afterRecover));
+        check("old_fixture_rtt_invalid", !device().getViewportTexture(oldRtt).isValid());
+        TextureSourceInfo source;
+        check("manager_fixture_restored", textures_->isValid(textureId_)
+            && textures_->describeTexture(textureId_, source) && source.kind == TextureSourceKind::Color
+            && source.color == std::array<uint8_t, 4>{kTextureColor[0], kTextureColor[1], kTextureColor[2], 255});
+        const auto afterFont = device().captureFontState();
+        check("ttf_fixture_restored", beforeFont.active && afterFont.active
+            && beforeFont.font == afterFont.font && beforeFont.assetPath == afterFont.assetPath
+            && beforeFont.pixelSize == afterFont.pixelSize);
+        const auto heldResult = ownershipTake("held", held.ticket);
+        const auto heldImage = inspect("held_png", heldResult, kWidth, kHeight);
+        const auto newEmpty = ownershipSample("new_context_empty");
+        check("empty_new_context_rejects_old_baseline", ownershipReady(newEmpty) && ownershipEmpty(newEmpty)
+            && !baselineAccepts(baseline, newEmpty));
+        createRtt();
+        drawDirect();
+        const auto fresh = admit({}, "fresh_admission");
+        check("capture_generation_changes_independently", fresh.ticket.generation > held.ticket.generation
+            && fresh.ticket.requestId != held.ticket.requestId);
+        ownershipAdvance();
+        if (!ownershipAwaitTerminal("fresh")) return;
+        const auto freshResult = ownershipTake("fresh", fresh.ticket);
+        const auto freshImage = inspect("fresh_png", freshResult, kWidth, kHeight);
+        check("recovered_font_pixels_equal", heldImage.ok && freshImage.ok
+            && fontPixels(heldImage) == fontPixels(freshImage));
+
+        // The old probe already uses invalid dimensions to observe a failed
+        // new initialization after a successful old-context shutdown.
+        const auto pending = admit({}, "invalid_size_pending_admission");
+        const auto beforeInvalid = ownershipSample("before_invalid_size");
+        check("invalid_size_ticket_waiting_not_submitted", beforeInvalid.screenshots.waiting == 1
+            && beforeInvalid.screenshots.submitted == 0 && beforeInvalid.screenshotReadbacksOutstanding == 0);
+        releaseFixtureFramebuffer();
+        registry.notifyDeviceLost();
+        check("invalid_size_recovery_returns_false",
+            !device().recoverDevice(platform_->getNativeWindowHandle(), 0, kHeight));
+        const auto failed = ownershipSample("after_invalid_size");
+        check("invalid_size_context_unavailable", failed.supported && !failed.contextInitialized
+            && !failed.renderingAvailable && !failed.resourceCountsAvailable
+            && failed.contextGeneration == beforeInvalid.contextGeneration);
+        check("invalid_size_shutdown_tracking_complete", failed.screenshotOwnershipComplete
+            && failed.screenshotReadbackTrackingSupported && failed.screenshotReadbacksOutstanding == 0);
+        check("invalid_size_rejects_baseline", !baselineAccepts(baseline, failed));
+        const auto rejected = device().requestScreenshot(ScreenshotOptions{});
+        check("invalid_size_rejects_new_ticket", rejected.status == ScreenshotStatus::Failed && !rejected.ticket,
+            description(rejected));
+        const auto cancelled = device().takeScreenshot(pending.ticket);
+        check("invalid_size_waiting_ticket_cancelled", cancelled.status == ScreenshotStatus::Cancelled
+            && cancelled.ticket.requestId == pending.ticket.requestId
+            && cancelled.ticket.generation == pending.ticket.generation && cancelled.png.empty(), description(cancelled));
+        check("invalid_size_ticket_consumed_once", device().takeScreenshot(pending.ticket).status == ScreenshotStatus::Unknown);
+        const auto emptyFailed = ownershipSample("invalid_size_taken");
+        check("invalid_size_retained_queue_empty", ownershipEmpty(emptyFailed));
+        device().beginFrame();
+        device().commit_frame();
+        ownershipAdvance();
+        const auto afterNoop = ownershipSample("invalid_size_noop_frame");
+        check("invalid_size_frame_does_not_advance_submission", afterNoop.captureSubmissionFrame == emptyFailed.captureSubmissionFrame
+            && afterNoop.contextGeneration == emptyFailed.contextGeneration && !afterNoop.resourceCountsAvailable);
+    }
 
     void presentRecovery() {
         constexpr uint32_t physicalWidth=800,physicalHeight=450;
@@ -537,6 +744,61 @@ public:
     }
 
 private:
+    void ownershipAdvance() {
+        device().advanceFrame();
+        ++ownershipAdvances_; // Owner calls, distinct from completed GPU work.
+    }
+    RenderSnapshot ownershipSample(const std::string& stage) {
+        const auto value = device().getSnapshot();
+        report_["ownership_samples"].push_back({{"stage", stage}, {"owner_advances", ownershipAdvances_},
+            {"snapshot", snapshotDescription(value)}});
+        persist();
+        return value;
+    }
+    bool ownershipAwaitTerminal(const std::string& name) {
+        const auto started = std::chrono::steady_clock::now();
+        const auto deadline = started + std::chrono::milliseconds(3000);
+        const auto advances = ownershipAdvances_;
+        const auto frame = device().getSnapshot().captureSubmissionFrame;
+        json observations = json::array();
+        RenderSnapshot value;
+        bool terminal = false;
+        do {
+            value = device().getSnapshot();
+            const auto observedAt = std::chrono::steady_clock::now();
+            observations.push_back(snapshotDescription(value));
+            terminal = observedAt <= deadline && ownershipReady(value) && value.screenshots.waiting == 0
+                && value.screenshots.submitted == 0 && value.screenshots.terminal == 1
+                && value.screenshots.pngBytes > 0 && value.screenshots.reservedBytes >= value.screenshots.pngBytes
+                && value.screenshotReadbacksOutstanding == 0;
+            if (terminal || observedAt >= deadline) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        } while (true);
+        report_["ownership_waits"][name] = {{"snapshots", std::move(observations)},
+            {"owner_advances_before", advances}, {"owner_advances_after", ownershipAdvances_},
+            {"submission_frame_before", frame},
+            {"wait_ms", std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - started).count()}};
+        check(name + "_terminal_png_retained", terminal, snapshotDescription(value));
+        check(name + "_wait_without_frame_pump", advances == ownershipAdvances_ && frame == value.captureSubmissionFrame);
+        ownershipSample(name + "_terminal");
+        return terminal;
+    }
+    ScreenshotResult ownershipTake(const std::string& name, ScreenshotTicket ticket) {
+        const auto before = ownershipSample(name + "_before_take");
+        auto result = device().takeScreenshot(ticket);
+        report_["captures"][name] = description(result);
+        const auto after = ownershipSample(name + "_after_take");
+        check(name + "_take_transfers_png", result.status == ScreenshotStatus::Completed
+            && result.ticket.requestId == ticket.requestId && result.ticket.generation == ticket.generation
+            && !result.png.empty() && before.screenshots.terminal == 1
+            && before.screenshots.pngBytes == result.png.size() && ownershipEmpty(after)
+            && before.captureSubmissionFrame == after.captureSubmissionFrame
+            && before.contextGeneration == after.contextGeneration, description(result));
+        check(name + "_take_once", device().takeScreenshot(ticket).status == ScreenshotStatus::Unknown);
+        return result;
+    }
+
     void fillCheckpoint(const std::string& name) {
         report_["fill_checkpoint"] = name;
         report_["fill_checkpoints"].push_back({{"name", name}, {"owner_advances", fillAdvances_}});
@@ -795,11 +1057,12 @@ private:
     unsigned renderCallbacks_ = 0, updateCallbacks_ = 0, failures_ = 0;
     unsigned fillAdvances_ = 0, fillPreviousAdvance_ = 0;
     uint64_t fillPreviousFrame_ = 0;
+    uint64_t ownershipAdvances_ = 0;
 };
 
 struct Arguments { std::wstring scenario; fs::path resources, output; };
 Arguments arguments(int argc, wchar_t** argv) {
-    require(argc == 7, "Usage: --scenario renderer|rpc|fill|present-recovery --resource-root DIR --output-dir DIR");
+    require(argc == 7, "Usage: --scenario renderer|rpc|fill|present-recovery|ownership --resource-root DIR --output-dir DIR");
     Arguments result;
     for (int index = 1; index < argc; index += 2) {
         const std::wstring key = argv[index];
@@ -809,7 +1072,7 @@ Arguments arguments(int argc, wchar_t** argv) {
         else throw std::runtime_error("Unknown probe argument");
     }
     require(result.scenario == L"renderer" || result.scenario == L"rpc" || result.scenario == L"fill"
-        || result.scenario == L"present-recovery", "Invalid probe scenario");
+        || result.scenario == L"present-recovery" || result.scenario == L"ownership", "Invalid probe scenario");
     require(fs::is_directory(result.resources) && fs::is_directory(result.output), "Missing probe directory");
     result.resources = fs::canonical(result.resources);
     result.output = fs::canonical(result.output);
@@ -827,7 +1090,7 @@ int wmain(int argc, wchar_t** argv) {
         output = args.output;
         fs::current_path(args.resources);
         report["scenario"] = args.scenario == L"renderer" ? "renderer" : (args.scenario == L"rpc" ? "rpc"
-            : (args.scenario == L"fill" ? "fill" : "present-recovery"));
+            : (args.scenario == L"fill" ? "fill" : (args.scenario == L"ownership" ? "ownership" : "present-recovery")));
         writeReport(output, report);
         SDL_SetMainReady();
         detail::g_mainThreadId = std::this_thread::get_id();
@@ -835,6 +1098,7 @@ int wmain(int argc, wchar_t** argv) {
         if (args.scenario == L"renderer") probe.renderer();
         else if (args.scenario == L"rpc") probe.rpc();
         else if (args.scenario == L"present-recovery") probe.presentRecovery();
+        else if (args.scenario == L"ownership") probe.ownership();
         else probe.fill();
         probe.shutdown();
         report["failed_checks"] = probe.failures();

@@ -16,6 +16,9 @@ RuntimeStatsSnapshot captureRuntimeStats(const IEngineHostSnapshot& host) {
     if (auto* audio = registry.getAudioBackend()) {
         result.audio = audio->getSnapshot();
     }
+    if (auto* renderer = registry.getRenderDevice()) {
+        result.render = renderer->getSnapshot();
+    }
     return result;
 }
 

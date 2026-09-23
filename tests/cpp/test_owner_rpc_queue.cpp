@@ -781,3 +781,291 @@ TEST_CASE("U27 Entry stats: real Job callback debt remains in returned copy unti
     CHECK(during.jobs.dispatchingCompletions == 1);
     engine.shutdown();
 }
+
+// U27 render collection uses the production collector and OwnerRpcQueue. The
+// interface boundary supplies values only; this is not a GPU workload or a test
+// of main.cpp's separate transport mapping.
+#include "EntryLifecycleBackends.h"
+#include "render/NullRenderDevice.h"
+
+namespace {
+class RuntimeStatsRenderProbe final : public Test::RenderDevice {
+public:
+    explicit RuntimeStatsRenderProbe(Test::LifecycleProbe& lifecycle)
+        : Test::RenderDevice(lifecycle) {}
+    RenderSnapshot current;
+    RuntimeStatsReads calls;
+    mutable std::atomic<int> otherReads{0};
+    RenderSnapshot getSnapshot() const override { calls.read(); return current; }
+    bool isInitialized() const override { ++otherReads; return false; }
+    RenderRuntimeInfo getRuntimeInfo() const override { ++otherReads; return {}; }
+    const char* getBackendName() const override { ++otherReads; return "unexpected separate read"; }
+    bool init(void*, int, int) override { ++calls.mutations; return false; }
+    void setPresentSize(uint32_t, uint32_t) override { ++calls.mutations; }
+    void beginShutdown() override { ++calls.mutations; }
+    void shutdown() override { ++calls.mutations; }
+    void flushAllRTT() override { ++calls.mutations; }
+    void beginFrame() override { ++calls.mutations; }
+    void endFrame() override { ++calls.mutations; }
+    void commit_frame() override { ++calls.mutations; }
+    void advanceFrame() override { ++calls.mutations; }
+    void beginBatch() override { ++calls.mutations; }
+    void flushBatch() override { ++calls.mutations; }
+    void setScreenOffset(int, int) override { ++calls.mutations; }
+    void setViewRect(uint16_t, uint16_t, uint16_t, uint16_t, uint16_t) override { ++calls.mutations; }
+    void setViewClear(uint16_t, uint16_t, uint32_t, float, uint8_t) override { ++calls.mutations; }
+    void touch(uint16_t) override { ++calls.mutations; }
+    ViewportHandle createRenderTarget(int, int) override { ++calls.mutations; return {}; }
+    void destroyRenderTarget(ViewportHandle) override { ++calls.mutations; }
+    RenderTextureHandle getViewportTexture(ViewportHandle) override { ++otherReads; return {}; }
+    int getBackbufferWidth() const override { ++otherReads; return 0; }
+    int getBackbufferHeight() const override { ++otherReads; return 0; }
+    void blitViewport(ViewportHandle, uint16_t, float, float, float, float) override { ++calls.mutations; }
+    void resize(int, int) override { ++calls.mutations; }
+    void blitTexture(uint16_t, uint32_t, float, float, float, float, uint8_t) override { ++calls.mutations; }
+    void stretchBlt(uint16_t, uint32_t, float, float, float, float,
+        uint32_t, float, float, float, float, int) override { ++calls.mutations; }
+    void affineBlt(uint16_t, uint32_t, float, float, float, float,
+        uint32_t, float, float, float, float, const float[6]) override { ++calls.mutations; }
+    void setDebugName(uint16_t, const std::string&) override { ++calls.mutations; }
+    void drawDebugOverlay(const std::string&) override { ++calls.mutations; }
+    bool requestScreenshot(const std::string&) override { ++calls.mutations; return false; }
+    ScreenshotResult requestScreenshot(const ScreenshotOptions&) override { ++calls.mutations; return {}; }
+    ScreenshotResult takeScreenshot(const ScreenshotTicket&) override { ++calls.mutations; return {}; }
+    bool cancelScreenshot(const ScreenshotTicket&) override { ++calls.mutations; return false; }
+    bool recoverDevice(void*, int, int) override { ++calls.mutations; return false; }
+    void flagDeviceLost() override { ++calls.mutations; }
+    bool consumeDeviceLost() override { ++calls.mutations; return false; }
+    void renderText(uint16_t, const std::string&, float, float,
+        uint8_t, uint8_t, uint8_t, uint8_t, float, bool, bool, bool) override { ++calls.mutations; }
+    void renderRuby(uint16_t, const std::string&, const std::string&, float, float,
+        uint8_t, uint8_t, uint8_t, uint8_t) override { ++calls.mutations; }
+    void setFont(int) override { ++calls.mutations; }
+    bool loadTTF(const char*, float) override { ++calls.mutations; return false; }
+    FontRestoreState captureFontState() const override { ++otherReads; return {}; }
+    FontRestoreState defaultFontState() const override { ++otherReads; return {}; }
+    std::unique_ptr<IPreparedFontState> prepareFontState(
+        const FontRestoreState&, const uint8_t*, size_t) override { ++calls.mutations; return {}; }
+    bool applyFontState(std::unique_ptr<IPreparedFontState>) override { ++calls.mutations; return false; }
+    void clearFontState() override { ++calls.mutations; }
+    float textLineHeight() const override { ++otherReads; return 0.0f; }
+    void submitBlend(uint16_t, RenderTextureHandle, RenderTextureHandle, int,
+        float, float, float) override { ++calls.mutations; }
+    void submitTransition(uint16_t, RenderTextureHandle, RenderTextureHandle,
+        RenderTextureHandle, int, float) override { ++calls.mutations; }
+    void submitVFX(uint16_t, RenderTextureHandle, int,
+        float, float, float, float, float, float, float) override { ++calls.mutations; }
+    void fillViewport(ViewportHandle, uint8_t, uint8_t, uint8_t, uint8_t) override { ++calls.mutations; }
+    bool setColorFilter(ColorFilterPreset) override { ++calls.mutations; return false; }
+    bool isPostFxSupported(PostFxKind) const override { ++otherReads; return false; }
+    PostFxHandle createPostFx(PostFxKind, const PostFxParams&) override { ++calls.mutations; return 0; }
+    void setPostFxParams(PostFxHandle, const PostFxParams&) override { ++calls.mutations; }
+    void destroyPostFx(PostFxHandle) override { ++calls.mutations; }
+    void clearPostFx() override { ++calls.mutations; }
+    bool isPostFxActive() const override { ++otherReads; return false; }
+    RenderUniformHandle getDefaultSampler() const override { ++otherReads; return {}; }
+    RenderProgramHandle getFallbackProgram() const override { ++otherReads; return {}; }
+    RenderProgramHandle getModulatedTextureProgram() const override { ++otherReads; return {}; }
+    bool setPreferredBackend(const char*) override { ++calls.mutations; return false; }
+};
+
+class RuntimeStatsRenderScope {
+public:
+    explicit RuntimeStatsRenderScope(IRenderDevice* renderer)
+        : registry(BackendRegistry::instance()), previous(registry.getRenderDevice()) {
+        registry.setRenderDevice(renderer);
+    }
+    ~RuntimeStatsRenderScope() { registry.setRenderDevice(previous); }
+private:
+    BackendRegistry& registry;
+    IRenderDevice* previous;
+};
+
+RenderSnapshot u27WideNativeRender() {
+    RenderSnapshot s;
+    s.supported = true;
+    s.contextInitialized = false;
+    s.renderingAvailable = true;
+    s.resourceCountsAvailable = false;
+    s.backendKind = static_cast<RenderBackendKind>(777); // Entry preserves raw future enums.
+    s.backendName = "GPU \"quoted\"\nline\\tail";
+    s.contextGeneration = 4294967296ULL;
+    s.captureSubmissionFrame = 9007199254740993ULL;
+    s.resources = {18446744073709551615ULL, 4294967297ULL, 9007199254740995ULL,
+        18446744073709551614ULL, 4294967298ULL, 9007199254740997ULL,
+        18446744073709551613ULL, 4294967299ULL, 9007199254740999ULL,
+        18446744073709551612ULL, 4294967300ULL};
+    s.screenshots = {true, 9007199254741001ULL, 18446744073709551611ULL,
+        4294967301ULL, 9007199254741003ULL, 18446744073709551610ULL};
+    s.screenshotOwnershipComplete = false;
+    s.screenshotReadbackTrackingSupported = true;
+    s.screenshotReadbacksOutstanding = 4294967302ULL;
+    return s;
+}
+
+void u27CheckNativeRender(const RenderSnapshot& actual, const RenderSnapshot& expected) {
+    CHECK(actual.supported == expected.supported);
+    CHECK(actual.contextInitialized == expected.contextInitialized);
+    CHECK(actual.renderingAvailable == expected.renderingAvailable);
+    CHECK(actual.resourceCountsAvailable == expected.resourceCountsAvailable);
+    CHECK(actual.backendKind == expected.backendKind);
+    CHECK(actual.backendName == expected.backendName);
+    CHECK(actual.contextGeneration == expected.contextGeneration);
+    CHECK(actual.captureSubmissionFrame == expected.captureSubmissionFrame);
+    CHECK(actual.resources.dynamicIndexBuffers == expected.resources.dynamicIndexBuffers);
+    CHECK(actual.resources.dynamicVertexBuffers == expected.resources.dynamicVertexBuffers);
+    CHECK(actual.resources.frameBuffers == expected.resources.frameBuffers);
+    CHECK(actual.resources.indexBuffers == expected.resources.indexBuffers);
+    CHECK(actual.resources.occlusionQueries == expected.resources.occlusionQueries);
+    CHECK(actual.resources.programs == expected.resources.programs);
+    CHECK(actual.resources.shaders == expected.resources.shaders);
+    CHECK(actual.resources.textures == expected.resources.textures);
+    CHECK(actual.resources.uniforms == expected.resources.uniforms);
+    CHECK(actual.resources.vertexBuffers == expected.resources.vertexBuffers);
+    CHECK(actual.resources.vertexLayouts == expected.resources.vertexLayouts);
+    CHECK(actual.screenshots.supported == expected.screenshots.supported);
+    CHECK(actual.screenshots.waiting == expected.screenshots.waiting);
+    CHECK(actual.screenshots.submitted == expected.screenshots.submitted);
+    CHECK(actual.screenshots.terminal == expected.screenshots.terminal);
+    CHECK(actual.screenshots.reservedBytes == expected.screenshots.reservedBytes);
+    CHECK(actual.screenshots.pngBytes == expected.screenshots.pngBytes);
+    CHECK(actual.screenshotOwnershipComplete == expected.screenshotOwnershipComplete);
+    CHECK(actual.screenshotReadbackTrackingSupported == expected.screenshotReadbackTrackingSupported);
+    CHECK(actual.screenshotReadbacksOutstanding == expected.screenshotReadbacksOutstanding);
+}
+
+void u27CheckUnsupportedNativeRender(const RenderSnapshot& value) {
+    CHECK_FALSE(value.supported);
+    CHECK_FALSE(value.contextInitialized);
+    CHECK_FALSE(value.renderingAvailable);
+    CHECK_FALSE(value.resourceCountsAvailable);
+    CHECK(value.backendKind == RenderBackendKind::Unknown);
+    CHECK(value.backendName.empty());
+    CHECK(value.contextGeneration == 0);
+    CHECK(value.captureSubmissionFrame == 0);
+    CHECK(value.resources.dynamicIndexBuffers == 0);
+    CHECK(value.resources.dynamicVertexBuffers == 0);
+    CHECK(value.resources.frameBuffers == 0);
+    CHECK(value.resources.indexBuffers == 0);
+    CHECK(value.resources.occlusionQueries == 0);
+    CHECK(value.resources.programs == 0);
+    CHECK(value.resources.shaders == 0);
+    CHECK(value.resources.textures == 0);
+    CHECK(value.resources.uniforms == 0);
+    CHECK(value.resources.vertexBuffers == 0);
+    CHECK(value.resources.vertexLayouts == 0);
+    CHECK_FALSE(value.screenshots.supported);
+    CHECK(value.screenshots.waiting == 0);
+    CHECK(value.screenshots.submitted == 0);
+    CHECK(value.screenshots.terminal == 0);
+    CHECK(value.screenshots.reservedBytes == 0);
+    CHECK(value.screenshots.pngBytes == 0);
+    CHECK_FALSE(value.screenshotOwnershipComplete);
+    CHECK_FALSE(value.screenshotReadbackTrackingSupported);
+    CHECK(value.screenshotReadbacksOutstanding == 0);
+}
+
+void u27CheckRenderReadOnly(const RuntimeStatsRenderProbe& renderer, int reads) {
+    CHECK(renderer.calls.reads.load() == reads);
+    CHECK(renderer.calls.ownerOnly.load());
+    CHECK(renderer.calls.mutations.load() == 0);
+    CHECK(renderer.otherReads.load() == 0);
+}
+} // namespace
+
+TEST_CASE("U27 Render entry stats: collector preserves every native value and owns its copy") {
+    Test::LifecycleProbe lifecycle;
+    RuntimeStatsRenderProbe renderer(lifecycle);
+    RuntimeStatsHostProbe host;
+    RuntimeStatsRegistryScope otherBackends(nullptr, nullptr, nullptr);
+    RuntimeStatsRenderScope registration(&renderer);
+    const auto expected = u27WideNativeRender();
+    renderer.current = expected;
+    const auto first = captureRuntimeStats(host);
+    u27CheckNativeRender(first.render, expected);
+    u27CheckRenderReadOnly(renderer, 1);
+    CHECK(host.calls.reads.load() == 1);
+    renderer.current = {};
+    renderer.current.backendKind = RenderBackendKind::Noop;
+    renderer.current.backendName = "new context owns another string";
+    renderer.current.contextInitialized = true;
+    renderer.current.resourceCountsAvailable = true;
+    renderer.current.screenshotOwnershipComplete = true;
+    renderer.current.screenshotReadbacksOutstanding = 18446744073709551615ULL;
+    const auto second = captureRuntimeStats(host);
+    u27CheckNativeRender(second.render, renderer.current);
+    u27CheckNativeRender(first.render, expected);
+    u27CheckRenderReadOnly(renderer, 2);
+    CHECK(host.calls.reads.load() == 2);
+    renderer.current.backendName.assign(256, 'X');
+    CHECK(first.render.backendName == "GPU \"quoted\"\nline\\tail");
+    CHECK(second.render.backendName == "new context owns another string");
+}
+
+TEST_CASE("U27 Render entry stats: missing and actual Null backends keep all defaults unsupported") {
+    RuntimeStatsHostProbe host;
+    host.current.supported = true;
+    host.current.completedOwnerFrames = 9007199254740993ULL;
+    RuntimeStatsRegistryScope otherBackends(nullptr, nullptr, nullptr);
+    {
+        RuntimeStatsRenderScope missing(nullptr);
+        const auto observed = captureRuntimeStats(host);
+        u27CheckUnsupportedNativeRender(observed.render);
+        CHECK(observed.host.supported);
+        CHECK(observed.host.completedOwnerFrames == 9007199254740993ULL);
+        CHECK(host.calls.reads.load() == 1);
+    }
+    {
+        NullRenderDevice renderer;
+        RuntimeStatsRenderScope registeredNull(&renderer);
+        const auto observed = captureRuntimeStats(host);
+        u27CheckUnsupportedNativeRender(observed.render);
+        CHECK(observed.host.supported);
+        CHECK(observed.host.completedOwnerFrames == 9007199254740993ULL);
+        CHECK(host.calls.reads.load() == 2);
+    }
+}
+
+TEST_CASE("U27 Render entry stats: owner queue reads once per request without lifecycle or ticket consumption") {
+    Test::LifecycleProbe lifecycle;
+    RuntimeStatsRenderProbe renderer(lifecycle);
+    RuntimeStatsHostProbe host;
+    RuntimeStatsRegistryScope otherBackends(nullptr, nullptr, nullptr);
+    RuntimeStatsRenderScope registration(&renderer);
+    auto expected = u27WideNativeRender();
+    expected.backendKind = RenderBackendKind::GraphicsApi;
+    renderer.current = expected;
+    Events events;
+    std::vector<RuntimeStatsSnapshot> captured;
+    OwnerRpcQueue queue([&](const RpcRequest& request) {
+        if (!std::holds_alternative<RpcStatsRequest>(request.payload))
+            return RpcReply{RpcReplyStatus::Failed, "unexpected_fixture_request", {}, {}};
+        captured.push_back(captureRuntimeStats(host));
+        return ok();
+    }, [&](const auto& event) { events.add(event); });
+    Caller caller(queue, RpcRequest{RpcStatsRequest{}});
+    REQUIRE(events.wait(Phase::Accepted, "stats"));
+    u27CheckRenderReadOnly(renderer, 0);
+    CHECK(host.calls.reads.load() == 0);
+    CHECK(count(events.snapshot(), Phase::Started, "stats") == 0);
+    queue.pump();
+    REQUIRE(caller.finish().status == RpcReplyStatus::Ok);
+    REQUIRE(captured.size() == 1);
+    u27CheckRenderReadOnly(renderer, 1);
+    CHECK(host.calls.reads.load() == 1);
+    u27CheckNativeRender(captured.front().render, expected);
+    u27CheckNativeRender(renderer.current, expected); // Observation did not consume the supplied state.
+    renderer.current = {};
+    renderer.current.contextGeneration = 18446744073709551615ULL;
+    CHECK(queue.dispatch(RpcRequest{RpcStatsRequest{}}).status == RpcReplyStatus::Ok);
+    REQUIRE(captured.size() == 2);
+    u27CheckRenderReadOnly(renderer, 2);
+    u27CheckNativeRender(captured.back().render, renderer.current);
+    u27CheckNativeRender(captured.front().render, expected);
+    queue.pump(); // An empty pump must not manufacture another observation.
+    u27CheckRenderReadOnly(renderer, 2);
+    const auto trace = events.snapshot();
+    CHECK(count(trace, Phase::Started, "stats") == 2);
+    CHECK(count(trace, Phase::Completed, "stats") == 2);
+    queue.close();
+}

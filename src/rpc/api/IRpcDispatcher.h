@@ -249,6 +249,50 @@ struct RpcAudioStats {
     std::uint64_t restoredSources = 0;
 };
 
+// Transport-owned renderer values. Resource counts are API allocator retention,
+// including deferred recycling; reserved/PNG bytes and callback obligations are
+// separate observations. Zero unsupported counts do not establish readiness.
+enum class RpcRenderBackendKind { Unknown, Noop, GraphicsApi };
+
+struct RpcRenderResourceStats {
+    std::uint64_t dynamicIndexBuffers = 0;
+    std::uint64_t dynamicVertexBuffers = 0;
+    std::uint64_t frameBuffers = 0;
+    std::uint64_t indexBuffers = 0;
+    std::uint64_t occlusionQueries = 0;
+    std::uint64_t programs = 0;
+    std::uint64_t shaders = 0;
+    std::uint64_t textures = 0;
+    std::uint64_t uniforms = 0;
+    std::uint64_t vertexBuffers = 0;
+    std::uint64_t vertexLayouts = 0;
+};
+
+struct RpcRenderScreenshotStats {
+    bool supported = false;
+    std::uint64_t waiting = 0;
+    std::uint64_t submitted = 0;
+    std::uint64_t terminal = 0;
+    std::uint64_t reservedBytes = 0;
+    std::uint64_t pngBytes = 0;
+};
+
+struct RpcRenderStats {
+    bool supported = false;
+    bool contextInitialized = false;
+    bool renderingAvailable = false;
+    bool resourceCountsAvailable = false;
+    RpcRenderBackendKind backendKind = RpcRenderBackendKind::Unknown;
+    std::string backendName;
+    std::uint64_t contextGeneration = 0;
+    std::uint64_t captureSubmissionFrame = 0;
+    RpcRenderResourceStats resources;
+    RpcRenderScreenshotStats screenshots;
+    bool screenshotOwnershipComplete = false;
+    bool screenshotReadbackTrackingSupported = false;
+    std::uint64_t screenshotReadbacksOutstanding = 0;
+};
+
 struct RpcStatsResult {
     int textureBudgetMB = 0;
     int textureTier = 0;
@@ -261,6 +305,7 @@ struct RpcStatsResult {
     RpcAsyncLoaderStats asyncLoader;
     RpcHostStats host;
     RpcAudioStats audio;
+    RpcRenderStats render;
 };
 
 struct RpcFrameResult {

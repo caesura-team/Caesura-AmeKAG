@@ -154,3 +154,92 @@ TEST_CASE("Render: GL effect shaders match C++ uniform and sampler names") {
     CHECK(has(kEmbeddedGL_fs_transition, kEmbeddedGL_fs_transition_size, "s_texture2"));
     CHECK(has(kEmbeddedGL_stretch_blt_fs, kEmbeddedGL_stretch_blt_fs_size, "StretchParams"));
 }
+
+namespace {
+std::vector<uint64_t> u27ResourceVector(const RenderResourceCounts& value) {
+    return {value.dynamicIndexBuffers, value.dynamicVertexBuffers, value.frameBuffers,
+            value.indexBuffers, value.occlusionQueries, value.programs, value.shaders,
+            value.textures, value.uniforms, value.vertexBuffers, value.vertexLayouts};
+}
+void u27CheckUnavailable(const RenderSnapshot& value) {
+    CHECK_FALSE(value.contextInitialized);
+    CHECK_FALSE(value.renderingAvailable);
+    CHECK_FALSE(value.resourceCountsAvailable);
+    CHECK(value.backendKind == RenderBackendKind::Unknown);
+    CHECK(value.contextGeneration == 0);
+    CHECK(value.captureSubmissionFrame == 0);
+    CHECK(u27ResourceVector(value.resources) == std::vector<uint64_t>(11, 0));
+    CHECK_FALSE(value.screenshotOwnershipComplete);
+    CHECK_FALSE(value.screenshotReadbackTrackingSupported);
+    CHECK(value.screenshotReadbacksOutstanding == 0);
+    CHECK(value.screenshots.waiting == 0);
+    CHECK(value.screenshots.submitted == 0);
+    CHECK(value.screenshots.terminal == 0);
+    CHECK(value.screenshots.reservedBytes == 0);
+    CHECK(value.screenshots.pngBytes == 0);
+}
+}
+
+TEST_CASE("U27 renderer snapshot: Null remains unsupported across its no-op lifecycle") {
+    NullRenderDevice device;
+    const IRenderDevice& api = device;
+    for (int stage = 0; stage != 3; ++stage) {
+        const auto first = api.getSnapshot();
+        const auto second = api.getSnapshot();
+        CHECK_FALSE(first.supported);
+        CHECK_FALSE(second.supported);
+        CHECK_FALSE(first.screenshots.supported);
+        CHECK_FALSE(second.screenshots.supported);
+        u27CheckUnavailable(first);
+        u27CheckUnavailable(second);
+        CHECK(first.backendName.empty());
+        CHECK(second.backendName.empty());
+        if (stage == 0) {
+            REQUIRE(device.init(nullptr, 3, 5));
+            CHECK(device.getBackbufferWidth() == 3);
+            CHECK(device.getBackbufferHeight() == 5);
+            device.beginFrame();
+            device.endFrame();
+        } else {
+            device.beginShutdown();
+            device.shutdown();
+        }
+    }
+}
+
+TEST_CASE("U27 renderer snapshot: concrete uninitialized reads do not create or advance a context") {
+    BgfxRenderDevice device;
+    const IRenderDevice& api = device;
+    for (int stage = 0; stage != 4; ++stage) {
+        const auto before = device.getRuntimeInfo();
+        const auto first = api.getSnapshot();
+        const auto second = api.getSnapshot();
+        CHECK(first.supported);
+        CHECK(second.supported);
+        CHECK(first.screenshots.supported);
+        CHECK(second.screenshots.supported);
+        CHECK(first.backendName == "bgfx");
+        CHECK(second.backendName == first.backendName);
+        u27CheckUnavailable(first);
+        u27CheckUnavailable(second);
+        CHECK_FALSE(device.isInitialized());
+        const auto after = device.getRuntimeInfo();
+        CHECK(after.backendName == before.backendName);
+        CHECK(after.width == before.width);
+        CHECK(after.height == before.height);
+        CHECK(after.viewCount == before.viewCount);
+        CHECK(after.shaderReady == before.shaderReady);
+        CHECK_FALSE(after.shaderReady);
+        if (stage == 0) {
+            // Invalid dimensions return before bgfx/Core initialization.
+            REQUIRE_FALSE(device.init(nullptr, 0, 0));
+        } else if (stage == 1) {
+            device.beginFrame();
+            device.commit_frame();
+            device.advanceFrame();
+            device.beginShutdown();
+        } else {
+            device.shutdown();
+        }
+    }
+}

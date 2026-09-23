@@ -1,6 +1,7 @@
 #include "ScreenshotQueue.h"
 #include <algorithm>
 #include <atomic>
+#include <charconv>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -80,6 +81,21 @@ ScreenshotResult rejected(const char* error) {
     result.status = ScreenshotStatus::Failed;
     result.error = error;
     return result;
+}
+bool validSubmissionName(const ScreenshotQueue::Submission& submission) {
+    if (!submission.ticket) return false;
+    std::array<char, 64> expected{};
+    constexpr char prefix[] = "caesura-capture-";
+    auto* next = std::copy(prefix, prefix + sizeof(prefix) - 1, expected.data());
+    auto* end = expected.data() + expected.size() - 1;
+    const auto generation = std::to_chars(next, end, submission.ticket.generation);
+    if (generation.ec != std::errc{} || generation.ptr == end) return false;
+    *generation.ptr = '-';
+    const auto request = std::to_chars(generation.ptr + 1, end, submission.ticket.requestId);
+    if (request.ec != std::errc{}) return false;
+    const auto length = static_cast<size_t>(request.ptr - expected.data());
+    return submission.callbackName.size() == length
+        && std::memcmp(submission.callbackName.data(), expected.data(), length) == 0;
 }
 }
 
@@ -242,6 +258,24 @@ void ScreenshotQueue::complete(const char* name, uint32_t w, uint32_t h, uint32_
         } else ++it;
     }
 }
+RenderScreenshotCounts ScreenshotQueue::getSnapshot() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    RenderScreenshotCounts snapshot;
+    snapshot.supported = true;
+    snapshot.reservedBytes = m_reservedBytes;
+    for (const auto& item : m_entries) {
+        const auto& result = item.second.result;
+        if (result.status == ScreenshotStatus::Pending) {
+            if (result.frameId == 0) ++snapshot.waiting;
+            else ++snapshot.submitted;
+        } else {
+            ++snapshot.terminal;
+        }
+        snapshot.pngBytes += static_cast<uint64_t>(result.png.size());
+    }
+    return snapshot;
+}
+
 size_t ScreenshotQueue::retainedCount() const {
     std::lock_guard<std::mutex> lock(m_mutex);
     return m_entries.size();
@@ -249,5 +283,134 @@ size_t ScreenshotQueue::retainedCount() const {
 size_t ScreenshotQueue::retainedBytes() const {
     std::lock_guard<std::mutex> lock(m_mutex);
     return m_reservedBytes;
+}
+
+bool ScreenshotQueue::beginReadbackContext(uint64_t contextGeneration) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (contextGeneration == 0 || contextGeneration <= m_readbackContext
+        || m_readbackContextActive) return false;
+    for (const auto& slot : m_readbacks)
+        if (slot.state != ReadbackState::Empty) return false;
+    m_readbackContext = contextGeneration;
+    m_readbackContextActive = true;
+    return true;
+}
+
+bool ScreenshotQueue::registerReadback(const Submission& submission, uint64_t contextGeneration) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (!m_ready || !m_readbackContextActive || contextGeneration == 0
+        || contextGeneration != m_readbackContext || submission.ticket.generation != m_generation
+        || !validSubmissionName(submission)) return false;
+    // A cancelled/taken fanout anchor need not remain, but a matching submitted
+    // Pending recipient must still exist before this publication is attempted.
+    bool hasRecipient = false;
+    for (const auto& item : m_entries) {
+        const auto& entry = item.second;
+        if (entry.result.status == ScreenshotStatus::Pending && entry.result.frameId != 0
+            && entry.result.ticket.generation == submission.ticket.generation
+            && entry.callbackName == submission.callbackName) {
+            hasRecipient = true;
+            break;
+        }
+    }
+    if (!hasRecipient) return false;
+    ReadbackSlot* vacant = nullptr;
+    for (auto& slot : m_readbacks) {
+        if (slot.state == ReadbackState::Empty) {
+            if (!vacant) vacant = &slot;
+        } else if (slot.token.requestId == submission.ticket.requestId
+                   || submission.callbackName == slot.callbackName.data()) {
+            return false;
+        }
+    }
+    if (!vacant) return false; // Never evict an unanswered native publication.
+    vacant->token = {contextGeneration, submission.ticket.requestId};
+    std::copy(submission.callbackName.begin(), submission.callbackName.end(), vacant->callbackName.begin());
+    vacant->callbackName[submission.callbackName.size()] = '\0';
+    vacant->state = ReadbackState::Published;
+    return true;
+}
+
+void ScreenshotQueue::failUnissuedSubmission(const Submission& submission, const char* reason) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (!validSubmissionName(submission)) return;
+    // A duplicate registration must not turn an already published fanout into
+    // an unissued one. Its callback still owns the corresponding obligation.
+    for (const auto& slot : m_readbacks)
+        if (slot.state != ReadbackState::Empty
+            && slot.token.requestId == submission.ticket.requestId
+            && submission.callbackName == slot.callbackName.data()) return;
+    for (auto it = m_entries.begin(); it != m_entries.end();) {
+        auto& entry = it->second;
+        if (entry.result.status != ScreenshotStatus::Pending || entry.result.frameId == 0
+            || entry.result.ticket.generation != submission.ticket.generation
+            || entry.callbackName != submission.callbackName) {
+            ++it;
+            continue;
+        }
+        finish(entry, ScreenshotStatus::Failed, reason ? reason : "screenshot readback unavailable");
+        if (!entry.legacyPath.empty()) it = m_entries.erase(it);
+        else ++it;
+    }
+}
+
+ScreenshotQueue::CallbackClaim ScreenshotQueue::claimReadbackCallback(
+        const char* exactName, uint64_t callbackContextGeneration) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (!exactName) return {};
+    if (m_readbackContext == 0 && callbackContextGeneration == 0)
+        return {CallbackDisposition::Unbound, {}};
+    if (!m_readbackContextActive || callbackContextGeneration == 0
+        || callbackContextGeneration != m_readbackContext) return {};
+    for (auto& slot : m_readbacks) {
+        if (slot.state != ReadbackState::Empty && slot.token.contextGeneration == callbackContextGeneration
+            && std::strcmp(slot.callbackName.data(), exactName) == 0) {
+            if (slot.state != ReadbackState::Published) return {}; // Duplicate Executing callback.
+            slot.state = ReadbackState::Executing;
+            return {CallbackDisposition::Claimed, slot.token};
+        }
+    }
+    return {};
+}
+
+void ScreenshotQueue::finishReadbackCallback(ReadbackToken token) noexcept {
+    // No allocation/destructor work beyond fixed value storage. A mutex failure
+    // is fatal through noexcept; it must never be reported as a fabricated idle.
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (token.contextGeneration == 0 || token.requestId == 0) return;
+    for (auto& slot : m_readbacks) {
+        if (slot.state == ReadbackState::Executing
+            && slot.token.contextGeneration == token.contextGeneration
+            && slot.token.requestId == token.requestId) {
+            slot = {};
+            return;
+        }
+    }
+}
+
+bool ScreenshotQueue::retireReadbacksAfterContextShutdown(uint64_t contextGeneration) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (!m_readbackContextActive || contextGeneration == 0 || contextGeneration != m_readbackContext)
+        return false;
+    for (const auto& slot : m_readbacks) {
+        if (slot.state != ReadbackState::Empty
+            && (slot.token.contextGeneration != contextGeneration || slot.state == ReadbackState::Executing))
+            return false;
+    }
+    for (auto& slot : m_readbacks) slot = {};
+    m_readbackContextActive = false;
+    return true;
+}
+
+ScreenshotQueue::ReadbackObservation ScreenshotQueue::getReadbackSnapshot() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    ReadbackObservation observation;
+    observation.supported = m_readbackContext != 0;
+    observation.ownershipComplete = observation.supported;
+    observation.contextGeneration = m_readbackContext;
+    observation.contextActive = m_readbackContextActive;
+    for (const auto& slot : m_readbacks)
+        if (slot.state != ReadbackState::Empty) ++observation.outstanding;
+    return observation;
 }
 } // namespace Caesura

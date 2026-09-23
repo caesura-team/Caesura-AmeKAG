@@ -163,3 +163,34 @@ RPC DTO新增jobs、async_loader、host、audio四组38字段，两个transport�
 新二进制执行 main-smoke-02：HTTP PID23028/creation134343408124868258，Device 模式、owner 帧0→3，受控STOPPED实际exit1且监听已释放；stdio Engine PID18652/creation134343408710021116，Null模式、帧1→5，stop响应后exit0，reader已join，控制器PID12284也exit0。30个源码/helper锁和390份运行输入首尾相符。根代理重读两条路径14/18份原始文件及响应，root-review-01.json SHA256 0efb5eb8a24ed6c3e48f1175971cc437d61f588de4c80501b2c96c0ca9d0e463；新请求SHA256 7e7221bfd3c6554681954749e790f15b690136eae9c0fc377d37ec93cecab151。没有把旧 main smoke 当作入口修复后的证据。
 
 六个 C++ profile 的发现底线同步增加本批43方法（39快照/RPC+4入口回归）；这是最低发现合同，不是声称已在所有平台执行。后续干净完整门禁继续运行；Renderer资源、独立截图回调债务和一小时真实后端长跑仍未完成。
+
+
+## 入口修复后的完整门禁
+
+干净提交661da729ee72ae2f35f4d324f5fc012e045a8b3e的Windows Debug run65ec8807-b306-4ead-83eb-746a9ef94f20实际完成：全量build0，C++1458/1458、432437断言、0failed/0skipped，Lua147/147+56/56，CTest59项中58通过、0失败、1项预声明可选AI服务跳过。所有11检查及collector/strict verifier通过，源码与fixture首尾稳定，owned进程均正常完成无超时强杀。
+
+根代理复核49份原始引用84907218字节，manifest SHA256 8e0850cb3f5c87ce6730559438b2eebb394761201869dd8d7f8da7bace40496e，原run 188b0678bd8f371b9bc15dfea8553109960a2ed62ec2541974b83092c33f3559，root-review-01.json bd1489e72885b0c73bd370d060a5e60a914bf71787f49b7fa1607298be9e8bf3。此完整结果关闭前次Main入口约束失败；旧失败原件保留。Renderer队列/资源观察的12文件8方法候选随后应用，开始独立空getter RED，不能借用本完整门禁宣称新Renderer实现通过。
+
+
+### 2026-09-23 — renderer snapshot / readback ownership / real D3D11 observation
+
+基于 661da729 的未提交后续实现已完成以下定向验证，尚不沿用前一干净提交的全量门禁作为新实现通过证据：
+
+- Phase A 为公共 renderer snapshot 增加 11 项 bgfx allocator 计数、进程唯一 context generation 和截图队列 waiting/submitted/terminal、预留及 PNG 逻辑字节。Null 后端明确 unsupported；getter 不推进帧。8 个新回归先失败，GREEN 为 8/919，邻接 181/5910。
+- Phase B 增加实际 callback publication/execution ledger，按 context/request/name 匹配，RAII claim 横跨真实 PNG 完成路径；取消、take、reset、超时不自行清偿 native obligation，实际 bgfx shutdown 返回后才退休未执行项。6 个新回归 RED 为 6 失败，GREEN 为 6/939；Phase A 8/919 和邻接 187/6849 同时通过。原始记录见 `artifacts/validation/u27-render-snapshot/phase-b-green-01/root-green-review-01.json`（SHA256 ede74c789bbd4dd90742d6665a9aaa85a317dd8d06d5fa61f84614805e311324）。
+- Phase C 保留原四场景，新增 opt-in `ownership` 真实 hidden SDL HWND / Direct3D11 / Engine / TTF / texture / RTT / PNG 场景。第一次构建 C2668 发生在新 probe 的 `requestScreenshot({})`；显式写成 `ScreenshotOptions{}` 后编译通过，原失败和唯一 harness 修正保留在 phase-c-actual-01/02，没有修改 production、断言或预算。
+- 实际 Phase C 68 个精确检查全部通过；8 帧预热基线中 texture=5、framebuffer=2，保留额外 texture+RTT 后为 7/3，同一谓词拒绝；销毁后第 1 帧所有 11 项计数精确恢复（预先上限 16 帧）。context 从 1 到 2；旧完成截图跨恢复保留，take 后队列与 readback debt 归零；新上下文真实 PNG 像素、TTF 与恢复前一致。warm/held/fresh 均为 640×360、11540 字节，提交帧为 1/10/11。
+- 正式 driver 独立复核原始向量、帧序列、PNG 文件、loaded executable/SDL/D3D11、构建 receipt 和源码身份，原生 PID23632 正常退出0且 owned cleanup COMPLETE。根重新核对 22 个产物引用及源码锁。原报告 SHA256 11483cca8d1931dbceb440fd0dec410dc64a690b1e3357dd9ba275246509888f，原 probe result SHA256 7a8753800590c76ec3aa19148c60005d4195c43eb5152fbfbb2e3bda26abbd71。
+
+这是 allocator handle 计数与逻辑截图所有权证据，不是显存字节或 GPU fence。native 未回复请求的 shutdown 退休、post-Core 字体恢复失败、真实 OS device removal、其他后端/平台和一小时 workload 仍为 NOT_MEASURED。RPC render 分组、实际主程序接线、全量门禁及一小时 soak 继续执行；U27 整体未完成。C++ 最低发现门槛按实测新增 14 个方法调整为 Windows1472、Linux1428、macOS1315；CTest 门槛未改。
+
+
+### Renderer RPC 与实际主程序接线（2026-09-23）
+
+Entry通过BackendRegistry取得renderer并恰好读取一次owned snapshot；main逐项复制到不依赖render实现的RPC DTO，共用serializer发布render的13字段、resources的11字段和screenshots的6字段。保持19个uint64精度及原始能力标志，Unknown/未来枚举不推导readiness或全局idle。
+
+五个新方法在旧实现先得到1通过/4失败（5686断言、170失败），六个原stats方法为1通过/5失败（2335断言、24失败）。实现后五方法8794断言、原六方法3667断言、相邻167方法17044断言全部通过；筛选未执行部分不计为完整套件通过。测试binary SHA256 7ee6434302617318ce2a4cd49cb35f6437ff0b569e6403ee5d978c74a4c1a40d，源码首末稳定，根收据SHA256 ee46e702867ac1e48fda26fc1c0ee23e8aacbeb3b90588a0d74157c2d3a3ce58。原renderer独审只发现过时Phase A注释，已修正文案，未改变行为。
+
+新构建实际main SHA256 a96b092515b405e5c5ab7a0bb22b2ff372da5cb5875ec0d488a505a7e427786e，锁定46个源码/helper与409份运行输入。HTTP默认Editor实际Direct3D11支持和资源计数通过，stdio默认Null明确unsupported且计数为0；owner帧均0→3。原始响应完整、没有注入极值，受控退出与进程身份被核对。HTTP报告8bce741e404c2a6ea9e1884b0985ee8134807676a70a9ef384b7af40b135e3dc，stdio报告13cdc2aedea1795b9587d5cd8e25b3225fe5ea8225a49b9abb178ac48043c375；根回核32原始文件，收据430590bbe65a31660d0a75e21cb70d2590e6ef87c876ab38b0961ecf3110d353。
+
+最低C++发现数现按新增五方法调整至Windows1477、Linux1433、macOS1320。检查发现前次14个renderer方法仅写入Debug门槛，Release仍为原计数；这些方法无Debug限定，因此本次同时补齐Release的19方法增量。计数为跨平台注册合同，不宣称其他平台已执行。最终完整门禁、一小时真实后端长跑、native unanswered readback与post-Core失败仍未完成。

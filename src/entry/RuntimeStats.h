@@ -4,6 +4,7 @@
 #include "../job/api/IJobSystem.h"
 #include "../resource/api/IAsyncLoader.h"
 #include "../audio/api/IAudioBackend.h"
+#include "../render/api/IRenderDevice.h"
 
 namespace Caesura {
 
@@ -14,6 +15,7 @@ struct RuntimeStatsSnapshot {
     AsyncLoaderSnapshot asyncLoader;
     EngineHostSnapshot host;
     AudioBackendSnapshot audio;
+    RenderSnapshot render;
 };
 
 // Owner/main thread only, while the registered backend owners remain alive.

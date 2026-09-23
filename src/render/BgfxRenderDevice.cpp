@@ -14,12 +14,28 @@
 #include <cstdio>
 #include <cstring>
 #include <algorithm>
+#include <atomic>
+#include <limits>
 
 
 
 namespace Caesura {
 
 namespace {
+
+// Context identity is separate from capture admission and survives shutdown in
+// the instance snapshot. Zero permanently closes this process-wide allocator
+// after UINT64_MAX has been assigned; an earlier context identity is never reused.
+std::atomic<uint64_t> nextContextGeneration{1};
+uint64_t allocateContextGeneration() {
+    auto current = nextContextGeneration.load(std::memory_order_relaxed);
+    while (current != 0) {
+        const auto next = current == std::numeric_limits<uint64_t>::max() ? 0 : current + 1;
+        if (nextContextGeneration.compare_exchange_weak(current, next, std::memory_order_relaxed))
+            return current;
+    }
+    return 0;
+}
 
 RenderTextureHandle toRenderHandle(bgfx::TextureHandle handle) {
     return bgfx::isValid(handle) ? RenderTextureHandle{handle.idx} : RenderTextureHandle{};
@@ -118,6 +134,8 @@ bool BgfxRenderDevice::init(void* nativeWindowHandle, int width, int height) {
         return false;
     }
     m_bgfxInitialized = true;
+    m_contextGeneration = allocateContextGeneration();
+    const bool screenshotsBound = m_deviceCore->bindScreenshotContext(m_contextGeneration);
     m_shaders->initEmbeddedShaders();
     // t73 (b): never submit a half-broken program. When any core embedded
     // shader failed to build (manager already printed the one-shot ERROR),
@@ -140,7 +158,7 @@ bool BgfxRenderDevice::init(void* nativeWindowHandle, int width, int height) {
     m_draw->init(&m_drawState);
     m_textRenderer = std::make_unique<TextRenderer>();
     if (!m_textRenderer->init(this)) { m_textRenderer.reset(); }
-    if (!m_shaders->coreProgramsBroken() && bgfx::getCaps()->rendererType != bgfx::RendererType::Noop
+    if (screenshotsBound && !m_shaders->coreProgramsBroken() && bgfx::getCaps()->rendererType != bgfx::RendererType::Noop
         && !m_deviceCore->deviceLost()) m_screenshots->open();
     return true;
 }
@@ -291,6 +309,12 @@ void BgfxRenderDevice::advanceFrame() {
     if (!m_stopping) {
         for (const auto& submission : m_screenshots->submit(++m_frameId)) {
             if (!canRender()) break;
+            // Publish debt before the void native call: an immediate callback
+            // must find its slot, and a silently declined request stays counted.
+            if (!m_screenshots->registerReadback(submission, m_contextGeneration)) {
+                m_screenshots->failUnissuedSubmission(submission, "screenshot readback unavailable or capacity exceeded");
+                continue;
+            }
             bgfx::requestScreenShot(BGFX_INVALID_HANDLE, submission.callbackName.c_str());
         }
     }
@@ -464,6 +488,8 @@ bool BgfxRenderDevice::recoverDevice(void* nativeWindowHandle, int width, int he
         return false;
     }
     m_bgfxInitialized = true;
+    m_contextGeneration = allocateContextGeneration();
+    const bool screenshotsBound = m_deviceCore->bindScreenshotContext(m_contextGeneration);
 
     if (hadPresentSize)
         m_deviceCore->setPresentSize(static_cast<uint16_t>(presentWidth), static_cast<uint16_t>(presentHeight));
@@ -504,7 +530,7 @@ bool BgfxRenderDevice::recoverDevice(void* nativeWindowHandle, int width, int he
         m_recoveryFailed = true;
         return false;
     }
-    m_screenshots->open();
+    if (screenshotsBound) m_screenshots->open();
     return true;
 }
 
@@ -514,6 +540,58 @@ void BgfxRenderDevice::flagDeviceLost() {
 }
 
 bool BgfxRenderDevice::consumeDeviceLost() { return m_deviceCore && m_deviceCore->consumeDeviceLost(); }
+
+RenderSnapshot BgfxRenderDevice::getSnapshot() const {
+    RenderSnapshot snapshot;
+    snapshot.supported = true;
+    snapshot.backendName = getBackendName();
+    snapshot.contextInitialized = m_bgfxInitialized && m_deviceCore;
+    snapshot.renderingAvailable = getRuntimeInfo().shaderReady;
+    snapshot.contextGeneration = m_contextGeneration;
+    snapshot.captureSubmissionFrame = m_frameId;
+    if (snapshot.contextInitialized) {
+        const auto* caps = bgfx::getCaps();
+        if (caps && caps->rendererType == bgfx::RendererType::Noop)
+            snapshot.backendKind = RenderBackendKind::Noop;
+        else if (caps && caps->rendererType > bgfx::RendererType::Noop &&
+                 caps->rendererType < bgfx::RendererType::Count)
+            snapshot.backendKind = RenderBackendKind::GraphicsApi;
+
+        // getStats owns a reused vendor buffer. Copy only these allocator
+        // values immediately, before another bgfx call or queue observation.
+        // Counts include deferred recycling; they do not establish GPU completion.
+        if (m_contextGeneration != 0) {
+            if (const auto* stats = bgfx::getStats()) {
+                snapshot.resources.dynamicIndexBuffers = stats->numDynamicIndexBuffers;
+                snapshot.resources.dynamicVertexBuffers = stats->numDynamicVertexBuffers;
+                snapshot.resources.frameBuffers = stats->numFrameBuffers;
+                snapshot.resources.indexBuffers = stats->numIndexBuffers;
+                snapshot.resources.occlusionQueries = stats->numOcclusionQueries;
+                snapshot.resources.programs = stats->numPrograms;
+                snapshot.resources.shaders = stats->numShaders;
+                snapshot.resources.textures = stats->numTextures;
+                snapshot.resources.uniforms = stats->numUniforms;
+                snapshot.resources.vertexBuffers = stats->numVertexBuffers;
+                snapshot.resources.vertexLayouts = stats->numVertexLayouts;
+                snapshot.resourceCountsAvailable = true;
+            }
+        }
+    }
+    if (m_screenshots) {
+        snapshot.screenshots = m_screenshots->getSnapshot();
+        const auto readbacks = m_screenshots->getReadbackSnapshot();
+        // Queue and ledger reads are sequential observations. Preserve raw debt
+        // even if binding failed; unavailable support must never imply idle.
+        snapshot.screenshotReadbacksOutstanding = readbacks.outstanding;
+        const bool contextMatches = m_contextGeneration != 0
+            && readbacks.contextGeneration == m_contextGeneration
+            && readbacks.contextActive == snapshot.contextInitialized;
+        snapshot.screenshotReadbackTrackingSupported = readbacks.supported && contextMatches;
+        snapshot.screenshotOwnershipComplete = readbacks.ownershipComplete
+            && snapshot.screenshotReadbackTrackingSupported;
+    }
+    return snapshot;
+}
 
 RenderRuntimeInfo BgfxRenderDevice::getRuntimeInfo() const {
     RenderRuntimeInfo info;
