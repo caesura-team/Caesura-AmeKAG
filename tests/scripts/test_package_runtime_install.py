@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -184,6 +185,43 @@ class RuntimeInstallTests(unittest.TestCase):
     def test_ios_install_section_does_not_copy_desktop_runtime(self):
         f=self.fixture(ios=True); self.configure(f); self.install(f)
         self.assertFalse(f['prefix'].exists() and any(f['prefix'].iterdir()))
+
+    def test_scripts_install_and_cpack_exclude_python_cache_bytes(self):
+        source = self.root / 'script-source'; source.mkdir()
+        scripts = source / 'scripts'; (scripts / 'nested' / '__pycache__').mkdir(parents=True)
+        (scripts / '__pycache__').mkdir()
+        wanted = {'entry.py': b'print("entry")\n', 'nested/helper.py': b'value = 7\n',
+                  'nested/data.json': b'{"fixture":true}\n'}
+        for name, payload in wanted.items():
+            (scripts / name).write_bytes(payload)
+        for name in ('__pycache__/entry.cpython-314.pyc', 'nested/__pycache__/helper.cpython-314.pyc',
+                     'nested/legacy.pyc', 'legacy.pyo'):
+            (scripts / name).write_bytes(b'host Python cache must not ship')
+        maintained = (ROOT / 'CMakeLists.txt').read_text(encoding='utf-8')
+        sections = re.findall(r'install\(DIRECTORY scripts/\s+DESTINATION scripts\b.*?\)', maintained, re.S)
+        self.assertEqual(len(sections), 1, 'Use the actual maintained scripts install rule')
+        (source / 'CMakeLists.txt').write_text(
+            'cmake_minimum_required(VERSION 3.25)\nproject(script_install_fixture LANGUAGES NONE)\n'
+            + sections[0] + '\nset(CPACK_PACKAGE_NAME ScriptFixture)\nset(CPACK_PACKAGE_VERSION 1.0.0)\n'
+            'set(CPACK_PACKAGE_FILE_NAME script-fixture)\nset(CPACK_GENERATOR TGZ)\ninclude(CPack)\n',
+            encoding='utf-8')
+        build = self.root / 'script-build'; prefix = self.root / 'script-installed'
+        self.command([self.cmake, '-S', source, '-B', build, *self.generator,
+                      '-DCMAKE_INSTALL_PREFIX=' + str(prefix)])
+        self.command([self.cmake, '--install', build])
+        def assert_content(root):
+            files = {p.relative_to(root).as_posix(): p.read_bytes() for p in root.rglob('*') if p.is_file()}
+            self.assertEqual(files, {'scripts/' + n: v for n, v in wanted.items()})
+            self.assertFalse(any(p.name == '__pycache__' for p in root.rglob('*')))
+        assert_content(prefix)
+        output = self.root / 'script-packages'
+        self.command([self.cpack, '--config', build / 'CPackConfig.cmake', '-G', 'TGZ', '-B', output])
+        archive = output / 'script-fixture.tar.gz'
+        prepared = prepare_package(archive, self.root / 'script-prepared',
+                                   expected_sha256=hashlib.sha256(archive.read_bytes()).hexdigest())
+        self.assertEqual(prepared['status'], 'PREPARED', prepared)
+        assert_content(Path(prepared['package_path']) / 'script-fixture')
+        self.assertEqual(verify_stable(prepared)['status'], 'STABLE')
 
     def test_missing_shared_runtime_fails_install_and_package(self):
         f=self.fixture(missing=True); self.configure(f)

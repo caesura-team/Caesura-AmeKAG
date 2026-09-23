@@ -14,6 +14,9 @@ import os
 from pathlib import Path
 import shutil
 import struct
+import stat
+import time
+import uuid
 import subprocess
 import sys
 import tempfile
@@ -23,6 +26,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[2]
 MODULE = ROOT / "scripts/verify_native_package.py"
 sys.path.insert(0, str(ROOT / "scripts"))
+import package_runtime as process_runtime
 if MODULE.is_file():
     spec = importlib.util.spec_from_file_location("native_package_contract", MODULE)
     native = importlib.util.module_from_spec(spec)
@@ -32,6 +36,39 @@ else:
 
 TEMPLATES = ("basic", "blank", "kag3", "live2d", "showcase")
 FFMPEG_DLLS = ("avcodec-62.dll", "avformat-62.dll", "avutil-60.dll", "swscale-9.dll", "swresample-6.dll")
+
+# Exact LC_LOAD_DYLIB bytes from the fixed final TGZ in run 35474593317,
+# artifact 10593789574, Engine SHA256 8564619c916ee80556b53e15a9bc4cd259
+# cc14c1f674be2b615dd2ad5e58a245, at offsets 2600/2672. The enclosing
+# minimal files below are parser fixtures, never runnable Engine evidence.
+HOSTED_OPENSSL_LOAD_COMMANDS = (
+    bytes.fromhex("0c0000004800000018000000020000000000030000000300"
+                  "2f6f70742f686f6d65627265772f6f70742f6f70656e73736c4033"
+                  "2f6c69622f6c696273736c2e332e64796c69620000"),
+    bytes.fromhex("0c0000005000000018000000020000000000030000000300"
+                  "2f6f70742f686f6d65627265772f6f70742f6f70656e73736c4033"
+                  "2f6c69622f6c696263727970746f2e332e64796c696200000000000000"),
+)
+
+
+def macho_dylib_command(name, command=0xC):
+    encoded = name.encode("utf-8") + b"\0"
+    size = (24 + len(encoded) + 7) & ~7
+    return struct.pack("<6I", command, size, 24, 2, 0x30000, 0x30000) + encoded.ljust(size - 24, b"\0")
+
+
+def macho_rpath_command(name):
+    encoded = name.encode("utf-8") + b"\0"
+    size = (12 + len(encoded) + 7) & ~7
+    return struct.pack("<3I", 0x8000001C, size, 12) + encoded.ljust(size - 12, b"\0")
+
+
+def macho_fixture(commands=(), *, file_type=2):
+    """Bounded arm64 Mach-O header/load commands; no native code is executed."""
+    commands = tuple(commands)
+    body = b"".join(commands)
+    return struct.pack("<8I", 0xFEEDFACF, 0x0100000C, 0, file_type,
+                       len(commands), len(body), 0, 0) + body
 
 
 def binary_header(platform):
@@ -219,10 +256,15 @@ class NativePackageContract(unittest.TestCase):
 
     def test_macos_bare_binary_and_framework_relative_links(self):
         self.install_binaries("macos")
+        system = macho_dylib_command("/usr/lib/libSystem.B.dylib")
+        (self.package / "CaesuraAmeKAG").write_bytes(macho_fixture([
+            macho_dylib_command("@loader_path/SDL3.framework/SDL3"), system]))
+        (self.package / "external/lua/lua").write_bytes(macho_fixture([system]))
         (self.package / "libSDL3.0.dylib").unlink()
         framework = self.package / "SDL3.framework"
         (framework / "Versions/A").mkdir(parents=True)
-        (framework / "Versions/A/SDL3").write_bytes(binary_header("macos"))
+        (framework / "Versions/A/SDL3").write_bytes(macho_fixture([
+            macho_dylib_command("@rpath/SDL3.framework/SDL3", 0xD), system], file_type=6))
         (framework / "Versions/Current").symlink_to("A", target_is_directory=True)
         # Match prepare_package(): materialized symlink targets use host
         # separators. Win32 rejects a raw multi-component POSIX target.
@@ -232,9 +274,105 @@ class NativePackageContract(unittest.TestCase):
         self.assertEqual(report["binaries"]["engine"]["relative_path"], "CaesuraAmeKAG")
         self.assertEqual(report["binaries"]["engine"]["header_format"], "Mach-O")
 
+    def install_macos_dependency_fixture(self):
+        self.install_binaries("macos")
+        system = macho_dylib_command("/usr/lib/libSystem.B.dylib")
+        for name in ("libSDL3.0.dylib", "libcrypto.3.dylib"):
+            (self.package / name).write_bytes(macho_fixture(
+                [macho_dylib_command("@rpath/" + name, 0xD), system], file_type=6))
+        (self.package / "libssl.3.dylib").write_bytes(macho_fixture([
+            macho_dylib_command("@rpath/libssl.3.dylib", 0xD),
+            macho_dylib_command("@loader_path/libcrypto.3.dylib"), system], file_type=6))
+        (self.package / "external/lua/lua").write_bytes(macho_fixture([system]))
+        (self.package / "CaesuraAmeKAG").write_bytes(macho_fixture([
+            macho_dylib_command("@rpath/libSDL3.0.dylib"),
+            macho_dylib_command("@rpath/libssl.3.dylib"),
+            macho_dylib_command("@rpath/libcrypto.3.dylib"),
+            macho_dylib_command("/System/Library/Frameworks/Metal.framework/Versions/A/Metal"),
+            system, macho_rpath_command("@loader_path")]))
+
+    def test_macos_dependency_closure_rejects_actual_hosted_absolute_load_commands(self):
+        self.install_macos_dependency_fixture()
+        self.assertEqual([hashlib.sha256(v).hexdigest() for v in HOSTED_OPENSSL_LOAD_COMMANDS], [
+            "a476ae0a6076a6723f0281412bc376f6ca5de975c9c25b8bda3ec791540d6552",
+            "da7ddf8316174b13f9cd83decb286007d992ebf4a1c2721184a5d626eb1d8740"])
+        (self.package / "CaesuraAmeKAG").write_bytes(macho_fixture([
+            *HOSTED_OPENSSL_LOAD_COMMANDS, macho_dylib_command("@rpath/libSDL3.0.dylib"),
+            macho_rpath_command("@loader_path")]))
+        # Deliberately retain the old external required set (SDL only): merely
+        # supplying valid SDL must not hide the binary's actual host dependency.
+        self.assert_failed(self.check_package("macos"), "libssl.3.dylib")
+
+    def test_macos_dependency_closure_rejects_transitive_host_crypto(self):
+        self.install_macos_dependency_fixture()
+        (self.package / "libssl.3.dylib").write_bytes(macho_fixture([
+            macho_dylib_command("@rpath/libssl.3.dylib", 0xD),
+            HOSTED_OPENSSL_LOAD_COMMANDS[1]], file_type=6))
+        self.assert_failed(self.check_package("macos"), "libcrypto.3.dylib")
+
+    def test_macos_dependency_closure_rejects_missing_package_crypto(self):
+        self.install_macos_dependency_fixture()
+        (self.package / "libcrypto.3.dylib").unlink()
+        self.assert_failed(self.check_package("macos"), "libcrypto.3.dylib")
+
+    def test_macos_dependency_closure_rejects_rpath_escape(self):
+        self.install_macos_dependency_fixture()
+        foreign = self.root / "foreign"
+        foreign.mkdir()
+        (foreign / "libssl.3.dylib").write_bytes((self.package / "libssl.3.dylib").read_bytes())
+        (self.package / "CaesuraAmeKAG").write_bytes(macho_fixture([
+            macho_dylib_command("@rpath/libssl.3.dylib"), macho_rpath_command("@loader_path/../foreign")]))
+        self.assert_failed(self.check_package("macos"))
+
+    def test_macos_dependency_closure_rejects_malformed_load_command_bounds(self):
+        self.install_macos_dependency_fixture()
+        good = macho_fixture([macho_dylib_command("@rpath/libSDL3.0.dylib")])
+        cases = {}
+        for label, offset, value in (("zero-command-size", 36, 0),
+                                     ("short-command", 36, 7),
+                                     ("past-file-command", 36, len(good) + 8),
+                                     ("name-inside-header", 40, 8),
+                                     ("name-past-command", 40, len(good)),
+                                     ("extra-command-count", 16, 2),
+                                     ("oversized-command-region", 20, len(good) + 8)):
+            changed = bytearray(good)
+            struct.pack_into("<I", changed, offset, value)
+            cases[label] = bytes(changed)
+        cases["unterminated-name"] = macho_fixture([
+            struct.pack("<6I", 0xC, 32, 24, 2, 0x30000, 0x30000) + b"no-zero!"])
+        cases["truncated-header"] = good[:24]
+        for label, data in cases.items():
+            with self.subTest(case=label):
+                (self.package / "CaesuraAmeKAG").write_bytes(data)
+                self.assert_failed(self.check_package("macos"))
+
+    def test_macos_dependency_closure_accepts_complete_local_and_system_graph(self):
+        self.install_macos_dependency_fixture()
+        report = self.check_package("macos")
+        self.assertTrue(report["passed"], report)
+        self.assertEqual(report["runtime"], "NOT_RUN")
+        # Apple shared-cache dependencies need not be ordinary package files.
+        self.assertFalse((self.package / "usr/lib/libSystem.B.dylib").exists())
+        self.assertFalse((self.package / "System/Library/Frameworks/Metal.framework").exists())
+
+    def test_macos_dependency_closure_rejects_system_prefix_lookalikes(self):
+        self.install_macos_dependency_fixture()
+        for name in ("/usr/library-foreign/libcrypto.3.dylib",
+                     "/System/LibraryFake/libcrypto.3.dylib"):
+            with self.subTest(dependency=name):
+                (self.package / "CaesuraAmeKAG").write_bytes(macho_fixture([macho_dylib_command(name)]))
+                self.assert_failed(self.check_package("macos"), "libcrypto.3.dylib")
+
     def test_posix_enabled_sdks_require_caller_resolved_linkage_and_paths(self):
         for platform in ("linux", "macos"):
             self.install_binaries(platform)
+            if platform == "macos":
+                system = macho_dylib_command("/usr/lib/libSystem.B.dylib")
+                (self.package / "CaesuraAmeKAG").write_bytes(macho_fixture([
+                    macho_dylib_command("@loader_path/libSDL3.0.dylib"), system]))
+                (self.package / "external/lua/lua").write_bytes(macho_fixture([system]))
+                (self.package / "libSDL3.0.dylib").write_bytes(macho_fixture([
+                    macho_dylib_command("@rpath/libSDL3.0.dylib", 0xD), system], file_type=6))
             for feature in ("ffmpeg", "steam"):
                 required = config(platform, **{feature: True})
                 self.assert_failed(self.check_package(platform, required), feature)
@@ -246,7 +384,11 @@ class NativePackageContract(unittest.TestCase):
                 required[feature + "_linkage"] = "shared"
                 required[feature + "_libraries"] = ["sdk-" + feature + ".bin"]
                 self.assert_failed(self.check_package(platform, required), "sdk-" + feature + ".bin")
-                (self.package / required[feature + "_libraries"][0]).write_bytes(binary_header(platform))
+                library_name = required[feature + "_libraries"][0]
+                library_bytes = (macho_fixture([
+                    macho_dylib_command("@rpath/" + library_name, 0xD), system], file_type=6)
+                    if platform == "macos" else binary_header(platform))
+                (self.package / library_name).write_bytes(library_bytes)
                 self.assertTrue(self.check_package(platform, required)["passed"])
 
     def test_configuration_is_explicit_and_cannot_escape_package(self):
@@ -367,6 +509,156 @@ class NativePackageContract(unittest.TestCase):
         result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", timeout=60)
         self.assertNotEqual(result.returncode, 0, "A package-owned configuration alias is not an external input")
         self.assertFalse(json.loads(result.stdout)["passed"])
+
+
+FIFO_SELECTION_CHILD = r'''
+import hashlib, json, os, stat, sys, time, traceback
+from pathlib import Path
+source, root = map(Path, sys.argv[1:])
+sys.path.insert(0, str(source / 'scripts'))
+import macos_runtime_selection as selection
+parser = selection.inspect_macho
+deadline = time.monotonic() + 15
+while not (root / 'controller-ready').exists() and time.monotonic() < deadline:
+    time.sleep(0.02)
+if not (root / 'controller-ready').exists():
+    raise RuntimeError('Controller ownership barrier was not released')
+positive = parser(root / 'ssl.dylib')
+if positive['sha256'] != hashlib.sha256((root / 'ssl.dylib').read_bytes()).hexdigest():
+    raise RuntimeError('Ordinary fixture positive control failed')
+def descriptor_snapshot():
+    result = []
+    # Popen close_fds leaves 0/1/2; this private single-thread child opens its
+    # fixture descriptors immediately above them. No /proc is needed on Mac.
+    for fd in range(64):
+        try:
+            info = os.fstat(fd)
+        except OSError:
+            continue
+        result.append([fd, info.st_dev, info.st_ino, stat.S_IFMT(info.st_mode)])
+    return result
+before = descriptor_snapshot()
+def actual_fifo_boundary(path):
+    path = Path(path)
+    if path != root / 'ssl.dylib' or (root / 'before-parser.json').exists():
+        raise RuntimeError('Unexpected parser boundary')
+    path.rename(root / 'held-original.dylib')
+    os.mkfifo(path, 0o600)
+    marker = root / 'before-parser.json'
+    temporary_marker = root / 'before-parser.tmp'
+    temporary_marker.write_text(json.dumps({'actual_fifo':stat.S_ISFIFO(path.lstat().st_mode)}))
+    os.replace(temporary_marker, marker)
+    return parser(path)
+selection.inspect_macho = actual_fifo_boundary
+try:
+    selection.select_openssl(root / 'ssl.dylib', root / 'crypto.dylib', 'Release')
+except (OSError, ValueError) as error:
+    result = {'status':'REJECTED', 'error':str(error), 'exception':type(error).__name__}
+else:
+    result = {'status':'UNEXPECTED_ACCEPT'}
+result.update(positive_sha256=positive['sha256'], descriptors_before=before,
+              descriptors_after=descriptor_snapshot())
+(root / 'child-result.json').write_text(json.dumps(result,indent=2))
+print(json.dumps(result),flush=True)
+sys.exit(0 if result['status']=='REJECTED' else 2)
+'''
+
+
+class MachOInputOpenContract(unittest.TestCase):
+    if os.name == 'posix':
+        def test_selector_fifo_reopen_rejects_without_writer_and_closes_descriptors(self):
+            temporary = tempfile.TemporaryDirectory(prefix='caesura-macho-fifo-')
+            root = Path(temporary.name).resolve()
+            evidence = os.environ.get('CAESURA_RUNTIME_INSTALL_EVIDENCE')
+            if evidence:
+                # Retain first failures including the actual FIFO; explicit
+                # detachment prevents TemporaryDirectory finalization deletion.
+                temporary._finalizer.detach()
+                locator = Path(evidence).resolve() / ('fifo-maintenance-' + uuid.uuid4().hex + '.json')
+                locator.parent.mkdir(parents=True, exist_ok=True)
+                locator.write_text(json.dumps({'retained_fixture':str(root)}), encoding='utf-8')
+            else:
+                self.addCleanup(temporary.cleanup)
+            for name in ('ssl', 'crypto'):
+                (root / (name + '.dylib')).write_bytes(macho_fixture([
+                    macho_dylib_command('@rpath/' + name + '.dylib', 0xD)], file_type=6))
+            script = root / 'fifo-child.py'
+            script.write_text(FIFO_SELECTION_CHILD, encoding='utf-8')
+            source_paths = [ROOT / 'scripts/macos_runtime_selection.py', ROOT / 'scripts/macho_dependencies.py']
+            digest = lambda p: hashlib.sha256(p.read_bytes()).hexdigest()
+            source_before = {str(p):digest(p) for p in source_paths}
+            python = process_runtime.process_identity(os.getpid()).executable
+            process = owner = writer = None
+            record = {'stop_requested':False, 'forced_kill':False, 'writer_needed':False}
+            with (root / 'child.stdout.log').open('wb') as stdout, (root / 'child.stderr.log').open('wb') as stderr:
+                try:
+                    process = subprocess.Popen([python, '-I', '-B', str(script), str(ROOT), str(root)],
+                                               stdout=stdout, stderr=stderr, cwd=root, close_fds=True)
+                    owner = process_runtime.process_identity(process.pid)
+                    record['owner'] = vars(owner)
+                    (root / 'controller-ready').write_text('owned', encoding='ascii')
+                    deadline = time.monotonic() + 15
+                    marker = root / 'before-parser.json'
+                    while not marker.exists() and process.poll() is None and time.monotonic() < deadline:
+                        time.sleep(0.02)
+                    self.assertTrue(marker.exists(), 'Child failed before the actual parser boundary')
+                    self.assertTrue(json.loads(marker.read_bytes())['actual_fifo'])
+                    try:
+                        process.wait(timeout=3)
+                    except subprocess.TimeoutExpired:
+                        record['writer_needed'] = True
+                        self.assertEqual(process_runtime.process_identity(process.pid), owner)
+                        fifo = root / 'ssl.dylib'
+                        self.assertTrue(stat.S_ISFIFO(fifo.lstat().st_mode))
+                        # Release the old bug by a real nonblocking rendezvous,
+                        # then let its actual fstat rejection finish naturally.
+                        writer = os.open(fifo, os.O_WRONLY | os.O_NONBLOCK | getattr(os, 'O_NOFOLLOW', 0))
+                        process.wait(timeout=3)
+                finally:
+                    if writer is not None:
+                        os.close(writer)
+                    if process is not None and process.poll() is None:
+                        if owner is None:
+                            # The startup barrier makes a fresh identity query
+                            # possible before this private child can run work.
+                            # If inspection itself failed, let its bounded
+                            # unreleased startup barrier exit and reap it.
+                            try:
+                                owner = process_runtime.process_identity(process.pid)
+                            except process_runtime.RuntimeContractError:
+                                process.wait(timeout=16)
+                        try:
+                            same_owner = process.poll() is None and process_runtime.process_identity(process.pid) == owner
+                        except process_runtime.RuntimeContractError:
+                            process.wait(timeout=1)
+                        else:
+                            if process.poll() is None:
+                                self.assertTrue(same_owner, 'Refusing to stop a changed process identity')
+                                record['stop_requested'] = True
+                                process.terminate()
+                                try:
+                                    process.wait(timeout=2)
+                                except subprocess.TimeoutExpired:
+                                    self.assertEqual(process_runtime.process_identity(process.pid), owner)
+                                    record['forced_kill'] = True
+                                    process.kill()
+                                    process.wait(timeout=2)
+                    record['exit_code'] = process.poll() if process is not None else None
+                    record['cleanup'] = 'COMPLETE' if process is not None and process.returncode is not None else 'INCOMPLETE'
+                    (root / 'owned-result.json').write_text(json.dumps(record, indent=2), encoding='utf-8')
+            text = (root / 'child.stdout.log').read_text(encoding='utf-8', errors='replace') + (root / 'child.stderr.log').read_text(encoding='utf-8', errors='replace')
+            self.assertFalse(record['writer_needed'], 'Actual parser blocked until an external FIFO writer arrived\n' + text)
+            self.assertEqual(record['exit_code'], 0, text)
+            self.assertEqual(record['cleanup'], 'COMPLETE')
+            self.assertFalse(record['stop_requested'])
+            self.assertFalse(record['forced_kill'])
+            result = json.loads((root / 'child-result.json').read_bytes())
+            self.assertEqual(result['status'], 'REJECTED')
+            self.assertIn('not a regular file', result['error'])
+            self.assertEqual(result['descriptors_before'], result['descriptors_after'])
+            self.assertEqual(result['positive_sha256'], digest(root / 'held-original.dylib'))
+            self.assertEqual(source_before, {str(p):digest(p) for p in source_paths})
+
 
 
 if __name__ == "__main__":

@@ -19,6 +19,7 @@ import shlex
 import shutil
 import socket
 from socketserver import TCPServer
+import struct
 import subprocess
 import sys
 import tempfile
@@ -410,7 +411,8 @@ class MacLsofFieldProtocolTests(unittest.TestCase):
         # expected Unicode is supplied separately by the actual filesystem.
         self.unicode_directory = br"\xe4\xbd\x9c\xe5\x93\x81 \xe8\xbe\x93\xe5\x87\xba"
 
-    def inspect(self, wire_paths, *, exit_code=0, loaded=False, raw_fields=None):
+    def inspect(self, wire_paths, *, exit_code=0, loaded=False, raw_fields=None,
+                required=None, host_aliases=None):
         fields = ([b"p1234"] + [b"n/lsof-fixture/" + path for path in wire_paths]
                   if raw_fields is None else raw_fields)
         lines, nuls = self.root / "lines.bin", self.root / "nuls.bin"
@@ -421,6 +423,8 @@ class MacLsofFieldProtocolTests(unittest.TestCase):
             value = str(value)
             if value == "/usr/sbin/lsof":
                 return self.tool
+            if host_aliases and value in host_aliases:
+                return host_aliases[value]
             if value.startswith(prefix):
                 return self.root / value[len(prefix):]
             return Path(value)
@@ -438,7 +442,107 @@ class MacLsofFieldProtocolTests(unittest.TestCase):
             stack.enter_context(patch.object(runtime, "process_identity", return_value=self.identity))
             stack.enter_context(patch.object(runtime.subprocess, "run", side_effect=command))
             inspect = runtime._loaded_libraries if loaded else runtime._inspect_libraries
-            return inspect(self.identity, self.package, [self.library.name])
+            return inspect(self.identity, self.package,
+                           [self.library.name] if required is None else required)
+
+    @staticmethod
+    def dependency_image(dependencies=(), *, library=False):
+        # Real bounded Mach-O framing, no code or runnable backend. The only
+        # executable invoked by this fixture remains the owned lsof seam.
+        commands = []
+        for name in dependencies:
+            value = name.encode("utf-8") + b"\0"
+            size = (24 + len(value) + 7) & ~7
+            commands.append(struct.pack("<6I", 0xC, size, 24, 2, 0x30000, 0x30000)
+                            + value.ljust(size - 24, b"\0"))
+        body = b"".join(commands)
+        return struct.pack("<8I", 0xFEEDFACF, 0x0100000C, 0, 6 if library else 2,
+                           len(commands), len(body), 0, 0) + body
+
+    def dependency_fixture(self):
+        self.engine.write_bytes(self.dependency_image([
+            "@loader_path/libSDL3.0.dylib", "@loader_path/libssl.3.dylib",
+            "@loader_path/libcrypto.3.dylib", "/usr/lib/libSystem.B.dylib",
+            "/System/Library/Frameworks/Metal.framework/Versions/A/Metal"]))
+        for name in (self.library.name, "libssl.3.dylib", "libcrypto.3.dylib"):
+            dependencies = ["/usr/lib/libSystem.B.dylib"]
+            if name == "libssl.3.dylib": dependencies.append("@loader_path/libcrypto.3.dylib")
+            (self.package / name).write_bytes(self.dependency_image(dependencies, library=True))
+        return [self.library.name, "libssl.3.dylib", "libcrypto.3.dylib"]
+
+    def dependency_fields(self, names):
+        fields = [b"p1234"]
+        for name in names:
+            # The ftxt/n record shape and Homebrew spellings are from the
+            # original Mac run 35474593317. PID/package paths here explicitly
+            # belong to this fixture and never claim new remote observations.
+            fields.extend([b"ftxt", b"n" + name])
+        return fields
+
+    def test_macos_dependency_closure_rejects_host_openssl_beside_valid_sdl(self):
+        self.dependency_fixture()
+        host_names = ["/opt/homebrew/Cellar/openssl@3/3.6.4/lib/libssl.3.dylib",
+                      "/opt/homebrew/Cellar/openssl@3/3.6.4/lib/libcrypto.3.dylib"]
+        aliases = {}
+        for name in host_names:
+            path = self.root / Path(name).name
+            path.write_bytes(self.dependency_image(["/usr/lib/libSystem.B.dylib"], library=True))
+            aliases[name] = path
+        fields = self.dependency_fields([
+            b"/lsof-fixture/" + self.unicode_directory + b"/CaesuraAmeKAG",
+            b"/lsof-fixture/" + self.unicode_directory + b"/libSDL3.0.dylib",
+            *(name.encode("ascii") for name in host_names)])
+        # Old caller input is intentionally SDL-only, as on the actual run.
+        # Real foreign image bytes must not disappear behind that incomplete set.
+        with self.assertRaises(runtime.RuntimeContractError):
+            self.inspect([], raw_fields=fields, host_aliases=aliases)
+
+    def test_macos_dependency_closure_rejects_undeclared_external_macho(self):
+        required = self.dependency_fixture()
+        plugin = self.root / "foreign-plugin.bundle/Contents/MacOS/Plugin"
+        plugin.parent.mkdir(parents=True)
+        plugin.write_bytes(self.dependency_image(["/usr/lib/libSystem.B.dylib"], library=True))
+        names = [b"/lsof-fixture/" + self.unicode_directory + b"/" + name.encode()
+                 for name in ["CaesuraAmeKAG", *required]]
+        names.append(b"/lsof-fixture/foreign-plugin.bundle/Contents/MacOS/Plugin")
+        with self.assertRaises(runtime.RuntimeContractError):
+            self.inspect([], raw_fields=self.dependency_fields(names), required=required)
+
+    def test_macos_dependency_closure_accepts_local_images_and_nonimage_resources(self):
+        required = self.dependency_fixture()
+        for name in ("SystemAppearance.car", "Helvetica.otf", ".plist-cache.transient"):
+            (self.root / name).write_bytes(b"mapped resource fixture, not a Mach-O image")
+        names = [b"/lsof-fixture/" + self.unicode_directory + b"/" + name.encode()
+                 for name in ["CaesuraAmeKAG", *required]]
+        names.extend(b"/lsof-fixture/" + name for name in
+                     (b"SystemAppearance.car", b"Helvetica.otf", b".plist-cache.transient"))
+        # System load commands exist in the actual on-disk fixture, but their
+        # dyld shared-cache mappings are deliberately absent from lsof output.
+        result = self.inspect([], raw_fields=self.dependency_fields(names), required=required)
+        self.assertEqual(result["status"], "VERIFIED")
+        self.assertEqual([item["relative_path"] for item in result["required"]], required)
+        for item in result["required"]:
+            self.assertEqual(item["sha256"], hashlib.sha256((self.package / item["relative_path"]).read_bytes()).hexdigest())
+        self.assertIn(str(self.root / "SystemAppearance.car"), result["paths"])
+        observed = json.loads(self.capture.read_text(encoding="utf-8"))
+        self.assertEqual(observed["environment"].get("LC_ALL"), "C")
+        self.assertEqual(observed["argv"][:5], ["-a", "-p", "1234", "-d", "txt"])
+
+    def test_macos_dependency_closure_missing_required_crypto_remains_rejected(self):
+        required = self.dependency_fixture()
+        names = [b"/lsof-fixture/" + self.unicode_directory + b"/" + name.encode()
+                 for name in ["CaesuraAmeKAG", self.library.name, "libssl.3.dylib"]]
+        with self.assertRaisesRegex(runtime.RuntimeContractError, "libcrypto.3.dylib"):
+            self.inspect([], raw_fields=self.dependency_fields(names), required=required)
+
+    def test_macos_dependency_closure_mixed_crypto_origin_remains_rejected(self):
+        required = self.dependency_fixture()
+        (self.root / "libcrypto.3.dylib").write_bytes((self.package / "libcrypto.3.dylib").read_bytes())
+        names = [b"/lsof-fixture/" + self.unicode_directory + b"/" + name.encode()
+                 for name in ["CaesuraAmeKAG", *required]]
+        names.append(b"/lsof-fixture/libcrypto.3.dylib")
+        with self.assertRaisesRegex(runtime.RuntimeContractError, "second source"):
+            self.inspect([], raw_fields=self.dependency_fields(names), required=required)
 
     def test_unicode_n_field_identifies_actual_required_image(self):
         result = self.inspect([self.unicode_directory + b"/CaesuraAmeKAG",

@@ -3,9 +3,10 @@
 
 The maintained source beside this tool supplies required Lua/CLI/template bytes.
 An external caller locks platform and effective SDK/linkage requirements. Package
-manifests cannot lower those requirements. Header signatures are deliberately
-limited observations: executable validity, ABI, actual library loading, signing,
-and runtime behavior require the separate host runtime lane.
+manifests cannot lower those requirements. Mac packages additionally require
+bounded Mach-O load-command framing and closed package/system dependency paths.
+Neither those paths nor header signatures prove executable validity, ABI,
+actual library loading, signing, or runtime behavior.
 """
 from __future__ import annotations
 
@@ -15,18 +16,21 @@ from html.parser import HTMLParser
 import json
 import os
 from pathlib import Path, PurePosixPath
+import re
 import stat
 import struct
 from urllib.parse import unquote, urlsplit
 
 from package_verification import inspect_inventory, PackageVerificationError
+from macho_dependencies import inspect_package_closure
 
 SOURCE = Path(__file__).resolve().parents[1]
 TEMPLATES = ("basic", "blank", "kag3", "live2d", "showcase")
 FFMPEG_DLLS = ("avcodec-62.dll", "avformat-62.dll", "avutil-60.dll",
                "swscale-9.dll", "swresample-6.dll")
 CONFIG_KEYS = {"schema", "sdl_linkage", "sdl_libraries", "ffmpeg", "steam", "live2d",
-               "ffmpeg_linkage", "ffmpeg_libraries", "steam_linkage", "steam_libraries"}
+               "ffmpeg_linkage", "ffmpeg_libraries", "steam_linkage", "steam_libraries",
+               "openssl_linkage", "openssl_libraries"}
 
 
 def _digest(path: Path) -> str:
@@ -93,6 +97,23 @@ def _configuration(platform: str, required) -> tuple[dict, list[str]]:
             raise ValueError(f"Shared {feature} requires exact {feature}_libraries paths")
         if linkage == "static" and paths:
             raise ValueError(f"Static {feature} must not declare dynamic libraries")
+        result.extend(paths)
+    # Schema-1 legacy callers may omit both fields. Keep that absence exactly:
+    # the actual Mach-O closure is still checked, and absence never means static.
+    openssl_keys = {"openssl_linkage", "openssl_libraries"} & set(required)
+    if openssl_keys:
+        if platform != "macos" or len(openssl_keys) != 2:
+            raise ValueError("OpenSSL linkage/libraries must be declared together for macOS")
+        linkage = required["openssl_linkage"]
+        if linkage not in ("static", "shared"):
+            raise ValueError("OpenSSL requires explicit static/shared linkage")
+        paths = _libraries(required["openssl_libraries"], "openssl_libraries")
+        if any(not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*", path) for path in paths):
+            raise ValueError("OpenSSL runtime libraries must be plain filenames")
+        if linkage == "static" and paths:
+            raise ValueError("Static OpenSSL must not declare dynamic libraries")
+        if linkage == "shared" and (len(paths) != 2 or len({p.casefold() for p in paths}) != 2):
+            raise ValueError("Shared OpenSSL requires two distinct SSL/Crypto runtime filenames")
         result.extend(paths)
     return required, list(dict.fromkeys(result))
 
@@ -225,6 +246,14 @@ def inspect_native_package(package_root: str | Path, platform: str, required: di
             identity = file(relative, binary=True)
             if identity:
                 report["runtime_libraries"].append(identity)
+        if platform == "macos":
+            try:
+                report["macho_dependency_closure"] = inspect_package_closure(
+                    package, [package / "CaesuraAmeKAG", package / "external/lua/lua"],
+                    [package / relative for relative in libraries])
+            except (OSError, ValueError, RuntimeError) as error:
+                report["macho_dependency_closure"] = {"status":"NOT_VERIFIED", "error":str(error)}
+                errors.append(f"Mach-O dependency closure: {error}")
         source_before = {}
         for relative in _trusted_paths():
             source_before[relative] = _digest(SOURCE / relative)

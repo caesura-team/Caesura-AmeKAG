@@ -552,7 +552,10 @@ install(TARGETS ${PROJECT_NAME}
     LIBRARY DESTINATION .
     BUNDLE DESTINATION .
 )
-install(DIRECTORY scripts/ DESTINATION scripts)
+install(DIRECTORY scripts/ DESTINATION scripts
+    PATTERN "__pycache__" EXCLUDE
+    PATTERN "*.pyc" EXCLUDE
+    PATTERN "*.pyo" EXCLUDE)
 install(DIRECTORY demo/ DESTINATION demo)
 install(DIRECTORY assets/ DESTINATION assets)
 install(DIRECTORY projects/ DESTINATION projects)
@@ -667,6 +670,9 @@ if(CAESURA_FFMPEG_FOUND AND WIN32)
 endif()
 
 include(cmake/CaesuraPackageRequirements.cmake)
+# Finalize every desktop Mac install after Engine and SDL.
+include(cmake/CaesuraMacOSInstall.cmake)
+caesura_install_macos_runtime(${PROJECT_NAME})
 include(CPack)
 
 # -- Tools ----------------------------------------------------------------
