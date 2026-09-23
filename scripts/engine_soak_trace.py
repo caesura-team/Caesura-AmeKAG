@@ -286,3 +286,77 @@ def check_epochs(summary, epochs, expected_process, observed_seconds, mode):
         return []
     except (TraceError, KeyError, TypeError, OverflowError, StopIteration) as error:
         return [str(error) or type(error).__name__]
+
+
+def check_cold_trace(result, events, expected_process, observed_seconds, role):
+    """Validate one cold role; the controller binds files/images across owners."""
+    try:
+        _need(role in ('cold-producer','cold-consumer','cold-corrupt'), 'Unknown cold role')
+        _need(isinstance(result,dict) and isinstance(expected_process,dict), 'Missing cold result/owner')
+        _need(result.get('status')=='COLD_COMPLETED' and result.get('mode')==role, 'Cold role did not complete')
+        _need(_uint(result.get('pid'),'cold PID',1)==_uint(expected_process.get('pid'),'owner PID',1), 'Wrong cold PID')
+        created=result.get('process_created')
+        _need(isinstance(created,str) and created.isascii() and created.isdecimal()
+              and 0<len(created)<=30 and int(created)>0 and created==expected_process.get('created'), 'Wrong cold creation identity')
+        _need(result.get('shutdown_host')==dict(initialized=False,running=False)
+              and all(type(v) is bool for v in result['shutdown_host'].values()), 'Cold engine did not shut down')
+        for field in ('warm_cycles','completed_cycles','measured_cycles'):
+            _need(_uint(result.get(field),field)==0, 'Cold control cannot count soak cycles')
+        _need(_number(result.get('measured_seconds'),'cold measured seconds')==0, 'Cold control cannot count soak duration')
+        duration=_number(result.get('process_seconds'),'cold process duration')
+        _need(0<duration<=_number(observed_seconds,'cold owner duration'), 'Cold duration exceeds observed owner')
+        _need(isinstance(events,list) and 0<len(events)<=8, 'Missing/oversized cold trace')
+        last_time,last_frame=0.0,0
+        for event in events:
+            _need(isinstance(event,dict) and isinstance(event.get('detail'),dict), 'Missing cold event detail')
+            clock=_number(event.get('seconds'),'cold event time');frame=_uint(event.get('owner_frame'),'cold owner frame')
+            _need(_uint(event.get('cycle'),'cold cycle')==0, 'Cold event counted a workload cycle')
+            _need(last_time<=clock<=duration and clock-last_time<10 and frame>=last_frame, 'Cold clock/frame order differs')
+            last_time,last_frame=clock,frame
+        _need(_uint(result.get('completed_owner_frames'),'cold completed frames')>=last_frame, 'Missing final cold owner frame')
+        cursor=0
+        def take(name):
+            nonlocal cursor
+            _need(cursor<len(events) and events[cursor].get('event')==name,'Expected cold event '+name)
+            value=events[cursor]['detail'];cursor+=1;return value
+        initialized=take('initialized')
+        for path,expected in [('render.supported',True),('render.contextInitialized',True),
+                              ('render.renderingAvailable',True),('render.backendKind','GraphicsApi'),
+                              ('render.backendName','Direct3D 11'),('audio.supported',True),
+                              ('audio.running',True),('audio.outputMode','Device'),('host.delivery','DirectDrain')]:
+            value=_get(initialized,path)
+            _need(type(value) is type(expected) and value==expected,'Cold backend differs: '+path)
+        _uint(_get(initialized,'render.contextGeneration'),'cold graphics generation',1)
+        a=dict(cycle=1,page=1,secret_code=1);b=dict(cycle=777,page=2,secret_code=2)
+        producer=role=='cold-producer';corrupt=role=='cold-corrupt'
+        def state(value,expected,flag=None):
+            _need(set(value)==set(expected)|({flag} if flag else set()),'Cold state fields differ')
+            for key,wanted in expected.items():_need(_uint(value.get(key),'cold state '+key)==wanted,'Cold state differs: '+key)
+            if flag:_need(value[flag] is True,'Cold context identity transition differs')
+        state(take('cold_begin'),a if producer else b)
+        generation=None;requests=set()
+        def capture(page):
+            nonlocal generation
+            admitted=take('capture_admitted');request=_uint(admitted.get('request_id'),'cold capture request',1)
+            current=_uint(admitted.get('generation'),'cold screenshot generation',1)
+            if generation is None:generation=current
+            _need(admitted.get('page')==page and current==generation and request not in requests,'Cold screenshot admission differs')
+            requests.add(request);consumed=take('capture_consumed')
+            _need(consumed.get('page')==page and _uint(consumed.get('request_id'),'cold consumed request',1)==request,'Cold screenshot consumption differs')
+            _need(consumed.get('file')==f'cycle-1-{page}.png','Cold screenshot filename differs')
+            _uint(consumed.get('png_bytes'),'cold PNG bytes',9);_uint(consumed.get('frame_id'),'cold screenshot frame',1)
+            color=(20,50,90) if page in ('a','restored') else (130,35,50);pixel=consumed.get('pixel')
+            _need(isinstance(pixel,list) and len(pixel)==3 and all(type(x) is int and 0<=x<=255 and abs(x-y)<=2 for x,y in zip(pixel,color)),'Wrong cold screenshot pixel')
+        capture('a' if producer else 'before')
+        if producer:
+            saved=take('cold_saved');_need(saved.get('file')=='checkpoint.caes','Cold checkpoint filename differs')
+            _uint(saved.get('bytes'),'cold checkpoint bytes',33)
+        else:
+            state(take('cold_rejected' if corrupt else 'cold_loaded'),b if corrupt else a,
+                  'context_unchanged' if corrupt else 'context_replaced')
+            capture('after' if corrupt else 'restored')
+        state(take('cold_finished'),b if corrupt else a)
+        _need(cursor==len(events),'Unexpected event after cold completion')
+        return []
+    except (TraceError,KeyError,TypeError,OverflowError) as error:
+        return [str(error) or type(error).__name__]

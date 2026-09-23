@@ -6,7 +6,7 @@ import sys
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
-from engine_soak_trace import check_trace, check_epochs
+from engine_soak_trace import check_trace, check_epochs, check_cold_trace
 from test_engine_soak_contract import measured
 
 
@@ -314,6 +314,102 @@ class SoakEpochTests(unittest.TestCase):
             if event['cycle']>=21 and 'render' in event['detail']:
                 event['detail']['render']['resources']['textures']+=1
         self.reject()
+
+
+def cold_fixture(role='cold-consumer'):
+    producer=role=='cold-producer';corrupt=role=='cold-corrupt'
+    a=dict(cycle=1,page=1,secret_code=1);b=dict(cycle=777,page=2,secret_code=2)
+    names=[('initialized',measured()),('cold_begin',copy.deepcopy(a if producer else b))]
+    def capture(page,request):
+        color=[20,50,90] if page in ('a','restored') else [130,35,50]
+        names.extend([('capture_admitted',dict(page=page,request_id=request,generation=7)),
+                      ('capture_consumed',dict(page=page,request_id=request,file=f'cycle-1-{page}.png',png_bytes=100,frame_id=request,pixel=color))])
+    capture('a' if producer else 'before',1)
+    if producer:names.append(('cold_saved',dict(file='checkpoint.caes',bytes=128)))
+    else:
+        names.append(('cold_rejected',dict(b,context_unchanged=True)) if corrupt else ('cold_loaded',dict(a,context_replaced=True)))
+        capture('after' if corrupt else 'restored',2)
+    names.append(('cold_finished',copy.deepcopy(b if corrupt else a)))
+    events=[dict(event=name,cycle=0,owner_frame=i,seconds=i*.03,detail=detail) for i,(name,detail) in enumerate(names)]
+    owner=dict(pid=4321,created='134343123456789012')
+    result=dict(status='COLD_COMPLETED',mode=role,pid=owner['pid'],process_created=owner['created'],
+                warm_cycles=0,completed_cycles=0,measured_cycles=0,measured_seconds=0.0,
+                process_seconds=len(events)*.03,completed_owner_frames=len(events),
+                shutdown_host=dict(initialized=False,running=False))
+    return [result,events,owner,1.0,role]
+
+
+class SoakColdTraceTests(unittest.TestCase):
+    def setUp(self):self.args=cold_fixture()
+
+    def event(self,name):return next(e for e in self.args[1] if e['event']==name)
+
+    def reject(self):
+        errors=check_cold_trace(*self.args)
+        self.assertTrue(errors)
+        self.assertTrue(all(isinstance(e,str) and e for e in errors))
+
+    def test_all_three_distinct_cold_paths_pass_without_mutating_inputs(self):
+        for role in ('cold-producer','cold-consumer','cold-corrupt'):
+            with self.subTest(role=role):
+                args=cold_fixture(role);before=copy.deepcopy(args)
+                self.assertEqual(check_cold_trace(*args),[]);self.assertEqual(args,before)
+
+    def test_an_ordinary_soak_or_wrong_owner_cannot_claim_cold_recovery(self):
+        for key,value in [('status','PROBE_COMPLETED'),('mode','diagnostic'),('pid',4322),('pid',True),('process_created','old')]:
+            with self.subTest(key=key):self.args=cold_fixture();self.args[0][key]=value;self.reject()
+
+    def test_missing_duplicate_or_reordered_load_is_rejected(self):
+        for change in ('missing','duplicate','reordered'):
+            with self.subTest(change=change):
+                self.args=cold_fixture();event=self.event('cold_loaded');index=self.args[1].index(event)
+                if change=='missing':self.args[1].pop(index)
+                elif change=='duplicate':self.args[1].insert(index,copy.deepcopy(event))
+                else:self.args[1][index],self.args[1][index+1]=self.args[1][index+1],self.args[1][index]
+                self.reject()
+
+    def test_consumer_cannot_resave_or_begin_with_the_producer_state(self):
+        self.args[1].insert(2,dict(event='cold_saved',cycle=0,owner_frame=1,seconds=.03,detail=dict(file='checkpoint.caes',bytes=128)))
+        self.reject();self.args=cold_fixture()
+        self.event('cold_begin')['detail']=dict(cycle=1,page=1,secret_code=1);self.reject()
+
+    def test_load_must_replace_context_and_restore_persisted_fields(self):
+        for key,value in [('cycle',777),('cycle',True),('page',2),('secret_code',2),('context_replaced',False),('context_replaced',1)]:
+            with self.subTest(key=key):self.args=cold_fixture();self.event('cold_loaded')['detail'][key]=value;self.reject()
+
+    def test_corrupt_load_must_reject_without_changing_old_state(self):
+        for key,value in [('cycle',1),('page',1),('secret_code',1),('context_unchanged',False)]:
+            with self.subTest(key=key):self.args=cold_fixture('cold-corrupt');self.event('cold_rejected')['detail'][key]=value;self.reject()
+        self.args=cold_fixture('cold-corrupt');self.event('cold_rejected')['event']='cold_loaded';self.reject()
+
+    def test_final_state_must_still_match_the_loaded_or_preserved_page(self):
+        for role in ('cold-producer','cold-consumer','cold-corrupt'):
+            with self.subTest(role=role):self.args=cold_fixture(role);self.event('cold_finished')['detail']['cycle']=9;self.reject()
+
+    def test_screenshot_admission_consumption_identity_and_paths_are_strict(self):
+        for name,key,value in [('capture_admitted','request_id',True),('capture_admitted','generation',0),('capture_consumed','request_id',2),('capture_consumed','file','../outside.png'),('capture_consumed','png_bytes',0),('capture_consumed','pixel',[20,50,90])]:
+            with self.subTest(key=key):self.args=cold_fixture();self.event(name)['detail'][key]=value;self.reject()
+
+    def test_producer_must_report_a_retained_encrypted_checkpoint(self):
+        for key,value in [('file','../save'),('bytes',32),('bytes',True),('bytes',128.0)]:
+            with self.subTest(key=key):self.args=cold_fixture('cold-producer');self.event('cold_saved')['detail'][key]=value;self.reject()
+
+    def test_incomplete_shutdown_unknown_backend_and_false_device_claim_fail(self):
+        for change in ('shutdown','renderer','audio'):
+            with self.subTest(change=change):
+                self.args=cold_fixture()
+                if change=='shutdown':self.args[0]['shutdown_host']['running']=True
+                elif change=='renderer':self.event('initialized')['detail']['render']['backendName']='Noop'
+                else:self.event('initialized')['detail']['audio']['outputMode']='Software'
+                self.reject()
+
+    def test_cold_durations_cannot_contribute_fabricated_soak_cycles(self):
+        for key,value in [('warm_cycles',20),('measured_cycles',1),('completed_cycles',1),('measured_seconds',1),('process_seconds',10),('process_seconds',math.nan)]:
+            with self.subTest(key=key):self.args=cold_fixture();self.args[0][key]=value;self.reject()
+
+    def test_clock_frame_and_cycle_observations_cannot_move_backwards(self):
+        for key,value in [('seconds',-1),('seconds',True),('owner_frame',True),('owner_frame',0),('cycle',1)]:
+            with self.subTest(key=key):self.args=cold_fixture();self.event('cold_loaded')[key]=value;self.reject()
 
 
 if __name__=="__main__":unittest.main(verbosity=2)

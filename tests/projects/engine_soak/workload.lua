@@ -83,6 +83,39 @@ function M.reject_corrupt()
     assert(not ok and runner.get_ctx() == old and old.f.page == "b")
 end
 
+function M.cold_begin(producer)
+    M.begin(producer and 1 or 777)
+    if not producer then
+        runner.get_ctx().f.secret = "consumer-never-saved"
+        page("b")
+    end
+end
+
+function M.cold_field(field)
+    local f = assert(runner.get_ctx()).f
+    if field == "cycle" then return f.cycle end
+    if field == "page" then return f.page == "a" and 1 or f.page == "b" and 2 or 0 end
+    assert(field == "secret_code")
+    return f.secret == "soak-encrypted-checkpoint" and 1 or f.secret == "consumer-never-saved" and 2 or 0
+end
+
+function M.cold_apply(corrupt)
+    local old = assert(runner.get_ctx())
+    assert(old.f.cycle == 777 and old.f.page == "b" and old.f.secret == "consumer-never-saved")
+    local ok, err = saves.load(old, {slot=39})
+    local current = assert(runner.get_ctx())
+    if corrupt then
+        M.cold_error = tostring(err or old.tf.load_error or "")
+        assert(not ok and M.cold_error ~= "" and current == old)
+        assert(old.f.cycle == 777 and old.f.page == "b" and old.f.secret == "consumer-never-saved")
+    else
+        assert(ok, err)
+        assert(current ~= old and current.f.cycle == 1 and current.f.page == "a")
+        assert(current.f.secret == "soak-encrypted-checkpoint")
+    end
+    return 1
+end
+
 function M.async_begin()
     local id = Render.load_texture_async("assets/soak/b.bmp", function(ok, path, tex)
         assert(ok and path == "assets/soak/b.bmp" and tex > 0)

@@ -239,8 +239,8 @@ bool quietDebts(const json& j) {
 
 class Workload {
 public:
- Workload(fs::path output,unsigned cycles,double seconds,std::function<void(const json&)> progress={})
-  : out_(std::move(output)),wanted_(cycles),seconds_(seconds),events_(out_/"events.jsonl",std::ios::binary),progress_(std::move(progress)) {
+ Workload(fs::path output,unsigned cycles,double seconds,std::function<void(const json&)> progress={},std::string coldMode={})
+  : out_(std::move(output)),wanted_(cycles),seconds_(seconds),events_(out_/"events.jsonl",std::ios::binary),progress_(std::move(progress)),coldMode_(std::move(coldMode)) {
   require(bool(events_),"Cannot create event stream");
   EngineConfig c;c.width=kWidth;c.height=kHeight;c.title="Caesura bounded runtime workload";
   c.editorMode=true;c.renderBackend="dx11";c.saveEncryptionPolicy=SaveEncryptionPolicy::RequireEncrypted;
@@ -255,6 +255,7 @@ public:
   report_={{"status","RUNNING"},{"pid",GetCurrentProcessId()},{"warm_cycles",20},{"requested_cycles",wanted_},
    {"requested_seconds",seconds_},{"runtime_modules",{{"executable",module(nullptr)},{"sdl",module(L"SDL3.dll")},{"d3d11",module(L"d3d11.dll")}}},
    {"physical_audio","NOT_MEASURED"},{"context_restarts",0},{"cold_restart","NOT_RUN"}};
+  if(!coldMode_.empty()){report_["mode"]=coldMode_;report_["warm_cycles"]=0;}
   auto* native=dynamic_cast<SoLoudAudioEngine*>(registry.getAudioBackend());require(native!=nullptr,"Expected actual registered SoLoud owner");
   report_["device_backend"]={{"id",native->soloud().getBackendId()},{"name",native->soloud().getBackendString()},
    {"sample_rate",native->soloud().getBackendSamplerate()},{"reported_buffer_size",native->soloud().getBackendBufferSize()}};
@@ -265,10 +266,20 @@ public:
  }
  void run() {
   start_=Clock::now();cycleStart_=start_;
+  const char* completed=coldMode_.empty()?"PROBE_COMPLETED":"COLD_COMPLETED";
   try {
-   engine_->run([this]{ step(); });
+   if(!coldMode_.empty()) {
+    // Cold roles can finish quickly. Hold the live owner until the controller
+    // has inspected this exact process and atomically published its identity.
+    while(!fs::exists(out_/"owner-ready.json")) {
+     require(elapsed(start_)<10,"Cold owner inspection acknowledgement missing");SDL_Delay(1);
+    }
+    std::ifstream file(out_/"owner-ready.json",std::ios::binary);json ack;file>>ack;
+    require(ack.at("pid")==report_.at("pid")&&ack.at("created")==report_.at("process_created"),"Cold owner acknowledgement differs");
+   }
+   engine_->run([this]{ if(coldMode_.empty())step();else stepCold(); });
    require(done_,"Engine exited before workload completed");
-   report_["status"]="PROBE_COMPLETED";
+   report_["status"]=completed;
   } catch(const std::exception& e) {
    report_["status"]="FAIL";report_["error"]=e.what();report_["last_observation"]=observe(*engine_);
    report_["lua_counts"]={{"completed",lua("return Soak.completed")},{"natural",lua("return Soak.natural")},
@@ -283,7 +294,7 @@ public:
   report_["measured_cycles"]=cycle_>20?cycle_-20:0;
   report_["last_phase"]=phase_;report_["completed_owner_frames"]=engine_->getHostSnapshot().completedOwnerFrames;
   engine_->shutdown();report_["shutdown_host"]={{"initialized",engine_->getHostSnapshot().initialized},{"running",engine_->getHostSnapshot().running}};
-  write(out_/"result.json",report_);require(report_["status"]=="PROBE_COMPLETED",report_.value("error","Workload incomplete"));
+  write(out_/"result.json",report_);require(report_["status"]==completed,report_.value("error","Workload incomplete"));
  }
  const json& result() const { return report_; }
  double startedSince(Clock::time_point origin) const { return std::chrono::duration<double>(start_-origin).count(); }
@@ -319,13 +330,50 @@ private:
   auto* decoder=BackendRegistry::instance().getImageDecoder();require(decoder!=nullptr,"Missing native image decoder");
   auto image=decoder->decode(result.png.data(),result.png.size(),size_t(kWidth)*kHeight*4);
   require(image.ok&&image.width==kWidth&&image.height==kHeight,"Wrong decoded screenshot");
-  const std::array<int,3> expected=capturePage_=="b"?std::array<int,3>{130,35,50}:std::array<int,3>{20,50,90};
+  const bool changed=capturePage_=="b"||capturePage_=="before"||capturePage_=="after";
+  const std::array<int,3> expected=changed?std::array<int,3>{130,35,50}:std::array<int,3>{20,50,90};
   const size_t pixel=(10*kWidth+10)*4;
   for(int c=0;c<3;++c)require(std::abs(int(image.rgba[pixel+c])-expected[c])<=2,"Screenshot background pixel differs from requested page");
   const auto path=out_/("cycle-"+std::to_string(cycle_+1)+"-"+capturePage_+".png");
   std::ofstream file(path,std::ios::binary);file.write(reinterpret_cast<const char*>(result.png.data()),std::streamsize(result.png.size()));file.close();require(bool(file),"Cannot retain PNG");
   event("capture_consumed",{{"page",capturePage_},{"file",utf8(path.filename())},{"png_bytes",result.png.size()},{"frame_id",result.frameId},{"request_id",ticket_.requestId},
    {"pixel",{image.rgba[pixel],image.rgba[pixel+1],image.rgba[pixel+2]}}});ticket_={};return true;
+ }
+ json coldState() {
+  return {{"cycle",lua("return Soak.cold_field('cycle')")},{"page",lua("return Soak.cold_field('page')")},
+   {"secret_code",lua("return Soak.cold_field('secret_code')")}};
+ }
+ void finishCold() {event("cold_finished",coldState());done_=true;engine_->quit();}
+ void stepCold() {
+  require(elapsed(start_)<10,"Cold role exceeded progress deadline");
+  const bool producer=coldMode_=="cold-producer",corrupt=coldMode_=="cold-corrupt";
+  switch(phase_) {
+  case 0:
+   lua(producer?"Soak.cold_begin(true)":"Soak.cold_begin(false)");event("cold_begin",coldState());phase(1);break;
+  case 1:if(advanced()){capture(producer?"a":"before");phase(2);}break;
+  case 2:if(take()) {
+   if(producer) {
+    lua("Soak.save()");std::ifstream file("saves/save_39.json",std::ios::binary);
+    std::string bytes((std::istreambuf_iterator<char>(file)),{});
+    require(bytes.size()>32&&bytes.substr(0,4)=="CAES"&&bytes.find("soak-encrypted-checkpoint")==std::string::npos,"Cold checkpoint is not encrypted CAES");
+    require(fs::copy_file("saves/save_39.json",out_/"checkpoint.caes"),"Cannot preserve cold checkpoint");
+    event("cold_saved",{{"file","checkpoint.caes"},{"bytes",bytes.size()}});finishCold();
+   } else {
+    require(lua(corrupt?"return Soak.cold_apply(true)":"return Soak.cold_apply(false)")==1,"Cold load contract failed");
+    auto state=coldState();state[corrupt?"context_unchanged":"context_replaced"]=true;
+    if(corrupt) {
+     auto* L=vm_->state();lua_getglobal(L,"Soak");lua_getfield(L,-1,"cold_error");
+     const char* value=lua_tostring(L,-1);const std::string error=value?value:"";lua_pop(L,2);
+     require(!error.empty(),"Missing real cold rejection reason");report_["cold_error"]=error;
+    }
+    event(corrupt?"cold_rejected":"cold_loaded",state);phase(3);
+   }
+  }break;
+  case 3:if(advanced()){capture(corrupt?"after":"restored");phase(4);}break;
+  case 4:if(take())finishCold();break;
+  default:throw std::runtime_error("Unknown cold phase");
+  }
+  SDL_Delay(1);
  }
  void step() {
   require(elapsed(cycleStart_)<10,"Cycle watchdog exceeded ten seconds");
@@ -387,6 +435,7 @@ private:
  }
  fs::path out_;unsigned wanted_,cycle_=0,consecutive_=0;double seconds_;std::ofstream events_;json report_,previousQuiet_;
  std::function<void(const json&)> progress_;
+ std::string coldMode_;
  double measurementEventSeconds_=0,lastQuietSeconds_=0;
  std::unique_ptr<Engine> engine_;ILuaManager* vm_=nullptr;IAudioBackend* audio_=nullptr;IRenderDevice* render_=nullptr;ITextureManager* textures_=nullptr;
  Clock::time_point start_{},cycleStart_{},quietStart_{},measuredStart_{};bool done_=false,measured_=false;int phase_=0;uint64_t frame_=0;
@@ -448,9 +497,14 @@ void runContexts(const fs::path& output,unsigned cycles,double seconds,unsigned 
 int wmain(int argc,wchar_t** argv) {
  SDL_SetMainReady();
  try {
-  require(argc==5||argc==6,"Usage: probe RUNTIME_ROOT OUTPUT_DIR TOTAL_CYCLES MIN_MEASURED_SECONDS [MIN_CONTEXTS]");
+  require(argc==4||argc==5||argc==6,"Usage: probe RUNTIME_ROOT OUTPUT_DIR COLD_ROLE | TOTAL_CYCLES MIN_MEASURED_SECONDS [MIN_CONTEXTS]");
   const auto root=fs::canonical(argv[1]),output=fs::canonical(argv[2]);
   require(root!=output&&fs::is_directory(root)&&fs::is_directory(output),"Dedicated existing runtime/output directories required");
+  if(argc==4) {
+   const auto role=utf8(fs::path(argv[3]));
+   require(role=="cold-producer"||role=="cold-consumer"||role=="cold-corrupt","Unknown cold role");
+   fs::current_path(root);Workload work(output,0,0,{},role);work.run();return 0;
+  }
   const auto cycles=std::stoul(argv[3]);const auto seconds=std::stod(argv[4]);
   require(cycles>=21&&cycles<=100000&&seconds>=0&&seconds<=7200,"Invalid bounded workload request");
   fs::current_path(root);
