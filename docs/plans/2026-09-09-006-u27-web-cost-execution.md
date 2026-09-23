@@ -194,3 +194,9 @@ Entry通过BackendRegistry取得renderer并恰好读取一次owned snapshot；ma
 新构建实际main SHA256 a96b092515b405e5c5ab7a0bb22b2ff372da5cb5875ec0d488a505a7e427786e，锁定46个源码/helper与409份运行输入。HTTP默认Editor实际Direct3D11支持和资源计数通过，stdio默认Null明确unsupported且计数为0；owner帧均0→3。原始响应完整、没有注入极值，受控退出与进程身份被核对。HTTP报告8bce741e404c2a6ea9e1884b0985ee8134807676a70a9ef384b7af40b135e3dc，stdio报告13cdc2aedea1795b9587d5cd8e25b3225fe5ea8225a49b9abb178ac48043c375；根回核32原始文件，收据430590bbe65a31660d0a75e21cb70d2590e6ef87c876ab38b0961ecf3110d353。
 
 最低C++发现数现按新增五方法调整至Windows1477、Linux1433、macOS1320。检查发现前次14个renderer方法仅写入Debug门槛，Release仍为原计数；这些方法无Debug限定，因此本次同时补齐Release的19方法增量。计数为跨平台注册合同，不宣称其他平台已执行。最终完整门禁、一小时真实后端长跑、native unanswered readback与post-Core失败仍未完成。
+
+### Renderer/RPC 集成后的完整 Windows 门禁（2026-09-24）
+
+干净提交 `3c5b8c0a76fbde101554550e6a2c2a06db9ec937` 的完整 Windows Debug 验证已通过：全量构建退出0，C++1477/1477、444441断言、0失败/0跳过，Lua147/147及56/56通过，CTest59项中58通过、0失败、1项预声明可选AI服务跳过。execute、collector和strict verifier均退出0，进程所有权清理完成，无超时或强杀；源码与运行输入首尾稳定。CTest用时657.33秒。
+
+运行标识为 `8f1c685b-4a76-4a36-8527-d8ccb14f49da`，源码fingerprint为 `799fe91583e786b7fc97943210d676109bb9ea10fceba3614f8ef84f9f02ac8f`。原始 `artifacts/validation/u27-render-full-01/raw/run.json` SHA256为 `90871d5ad7a6c818f9fea8ab99900c17264db52e93b343bd1c96d370ea32b481`；根复核 `root-green-review-01.json` 重新校验29份原始流/报告及CTest XML。此结果覆盖该提交的renderer/RPC集成和计时修复，不替代尚未执行的一小时Release真实后端工作负载，也不提升native unanswered readback、post-Core失败及其他平台的证据状态。U27整体继续保持未完成。
