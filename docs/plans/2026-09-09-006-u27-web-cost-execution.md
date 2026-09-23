@@ -223,3 +223,9 @@ root重算红绿原流、源锁及保存的源码，确认测试正文未变；`
 修正后的 `native-diagnostic-07` 源码/输入/实际binary首尾稳定，22轮全部执行，20轮预热后两轮正式测量仅1.30744秒，静止点检查无错误；GPU纹理基线6、逻辑纹理18432字节。66张640×360 PNG逐一解码、摘要及背景像素复核，各轮A与恢复后的整帧RGBA完全相同且与B不同；实际截图可见中英文文字。root审计摘要 `aae2c48b0b21f03e28934d07e096ceed67b6823d27d4c4a38ffdad4582c8be5e`，原run摘要 `b505ad456ae2d9910f94159f3613034afda6c23f11609b228d8b9d8de1df9e22`。所有本轮正常结束命令均保留PID/creation、原始流摘要及owned cleanup COMPLETE，无超时强杀；早期watchdog与构造失败保持FAIL。
 
 本次主代理按caesura-review核对修复的缓存所有权、SoLoud参数位置、注册表访问和夹具释放；子代理额度不可用，未伪称独立子代理审查。没有新增公共接口签名、后端单例入口或跨模块依赖，耦合检查通过。行/分支覆盖率未测量，真实D3D11/WinMM之外的后端未测量。后续冻结提交的完整Debug门禁单独记录；正式维护的时长/事件验收入口、上下文重建、跨进程冷恢复、主动资源/阻塞/坏档/时限负控、>=120秒短跑和>=3600秒长跑继续未完成，U27整体保持未完成。
+
+### 两处生产修复后的完整 Windows 门禁
+
+干净提交`10089617fd6168c8dbb87083da9257485fbc5625`的run`aad62a4b-b44e-408c-81c3-d5e0f333e736`完成全量Debug构建，C++1477/1477、444441断言、0失败/0跳过，Lua147/147与56/56全通过。CTest60项中59通过、0失败、仅预声明可选AI服务跳过，用时636.15秒。execute、collector、strict verifier均退出0，源码/fixture首尾稳定，owned进程清理完整，无超时强杀。
+
+原始`artifacts/validation/u27-device-texture-full-01/raw/run.json` SHA256为`3252c0a365052541c1e734557514fa48dfd630a96bd11a4fe98e01c313e4ff54`；根重新校验29份流/报告并解析CTest XML，`root-green-review-01.json` SHA256为`1d9ba8c7a7620f094507a142fc4c46f452d8968ac35bad07148c464cbed6d050`。子进程精确筛选的doctest日志另有1476未选中，完整末尾总结仍是1477全部发现/通过，未混淆二者。此门禁覆盖该冻结提交及新探针的实际Debug编译，不把未执行的GPU/Device opt-in探针、短跑、长跑或恢复负控写成CTest已验证。U27余项继续执行。
