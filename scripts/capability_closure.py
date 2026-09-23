@@ -1380,11 +1380,11 @@ def render_markdown(records, private, declared_total, oos, generated_at, fp, sus
                   if platform_reported((r.get("override") or {}).get("platform_tested")))
     n_pkg4 = sum(1 for r in records
                  if packaged_reported((r.get("override") or {}).get("packaged")))
-    L.append("- **四层闭包（2026-09-04）**：Structural Closed=" + str(n_closed)
-             + " · Runtime 测试证据=" + str(n_test)
-             + " · Platform=" + str(n_plat4) + " · Packaged=" + str(n_pkg4))
-    L.append("  - 列注记：Platform/Packaged 两列随 Phase2 分发逐项真实验证填充（当前无证据=诚实 0）；"
-             "Runtime=语义测试证据存在（非全部效果面验证）。")
+    L.append("- **结构扫描与人工声明**：Structural Closed=" + str(n_closed)
+             + " · Test references=" + str(n_test)
+             + " · Platform declarations=" + str(n_plat4) + " · Package declarations=" + str(n_pkg4))
+    L.append("  - 列注记：测试引用只表示源码中发现引用；未读取运行日志，不代表执行、通过或覆盖率。"
+             "Platform/Package/Observable 为人工声明，原始平台、包和设备证据未由本扫描器重验。")
     all_phantom = []
     seen_ph = set()
     for r in records:
@@ -1445,7 +1445,7 @@ def render_markdown(records, private, declared_total, oos, generated_at, fp, sus
         L.append("")
     L.append("## Commands")
     L.append("")
-    L.append("| Command | Declared | Dispatched | Consumed | Structural | Runtime | Platform | Packaged | Observable | 证据 |")
+    L.append("| Command | Declared | Dispatched | Consumed | Structural | Test references | Platform declaration | Package declaration | Observable declaration | 结构与声明来源 |")
     L.append("|---|---|---|---|---|---|---|---|---|---|")
     for r in sorted(records, key=lambda x: x["name"]):
         ov = r.get("override") or {}
@@ -1459,7 +1459,7 @@ def render_markdown(records, private, declared_total, oos, generated_at, fp, sus
                  + ("Y" if r["dispatched"] else "n") + " | "
                  + ("Y" if r["consumed_v5"] else "n") + " | "
                  + r["status"] + (mark if (r.get("override") or {}).get("status") else "") + " | "
-                 + ("✓" + str(r["tested_count"]) if r["tested_count"] else "-") + " | "
+                 + (str(r["tested_count"]) if r["tested_count"] else "-") + " | "
                  + pt + mark + " | " + pk + mark + " | "
                  + obs + mark + " | "
                  + (r["evidence"] or "-") + " |")
@@ -1649,6 +1649,8 @@ def main():
     OUT_JSON.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "generated_at": generated_at,
+        "evidence_scope": "STATIC_SCAN_AND_MANUAL_DECLARATIONS",
+        "runtime_evidence_verification": "NOT_RUN",
         "source_fingerprint": fp,
         "scanner": "scripts/capability_closure.py",
         "sources": {

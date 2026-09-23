@@ -10,14 +10,14 @@
 | U2 | 已有 Windows 门禁、历史 Expo 三 lane 及隔离 sanitizer 证据 | 当前源码对应的完整跨平台、sanitizer 和基线仍须补齐；历史额度失败不写成新运行 |
 | U11–U21 | 恢复、语言、缓存、GPU、输入、RPC、能力、Web 音频和作者路径已交付；U21 PR #24 合并为 `65e5b425` | 各记录保留设备、物理音频与历史性能失败边界；不重新打开已完成的实现工作 |
 | U22 | [最终包记录](2026-09-13-013-final-package-isolation-execution.md)已有三桌面/Web 托管门禁与实际 Mac 最终容器、安装、映像闭包证明 | 最终整合及 PR 审查仍未完成；ad-hoc 签名不等于 Developer ID/公证，软件混音不等于物理输出 |
-| U23 | [发布输入记录](2026-09-19-014-release-input-provenance-execution.md)：`f87f7aa7` 本机完整 Debug 和 run35901948988 的 12 个托管作业成功；9 required jobs、11 artifacts、45 outputs 聚合及 AE7 摘要负控通过 | 服务端 required-check 有效绑定、带版本/tag 的只读演练和最终整合仍须完成；无发布或部署 |
+| U23 | [发布输入记录](2026-09-19-014-release-input-provenance-execution.md)：`f87f7aa7` 本机完整 Debug、12 个托管作业、9 required jobs/11 artifacts/45 outputs 聚合及 AE7 摘要负控通过；本地版本参数演练完整下载并复核480675784字节 | 真实旧tag指向错误源码已被拒绝；正向匹配tag入口、服务端 required-check 有效绑定与整合验收仍须完成；无发布或部署 |
 | U24–U25 | Android 与 Apple 的构建、包、设备证据分别管理 | 编译、模拟器、真实设备、签名不可互相替代；未验设备范围继续保留 |
-| U26 | 独立分支已有 SDK ON 编译/链接及未初始化查询；协调器 `08bfc276` 完整 Debug、Windows/Linux 冷进程恢复通过 | 完整 SDK ON、真实 Live2D 模型/动作、Steam 账号与真实云服务协作仍未验收，分支尚待整合 |
-| U27 | 独立分支已有历史正式 Release 的 180 测量/36 预热样本；新 `c25d81eb` 的冷恢复、实际故障对照、短跑和完整 Debug 证据已回核 | 当前候选 Release 全门禁、同政策 CPU 比较、至少一小时长跑及最终整合仍在推进；历史样本不替代新候选 |
-| U28 | 生成矩阵和各执行记录已有分层证据；本轮同步过期的计划入口 | 公开能力/平台声明仍须按最终证据统一核对，不以此文档更新关闭 U28 |
-| U29 | 固定候选、范围和 AE1–AE8 的验收要求保持 | 仍须整合候选并完成所选 required 项、最终包及回退演练；不自动发布 |
+| U26 | 独立分支已有 SDK ON 编译/链接及未初始化查询；协调器 `08bfc276` 完整 Debug、Windows/Linux 冷进程恢复通过；源码已进入U29隔离整合树 | 整合候选门禁、完整 SDK ON、真实 Live2D 模型/动作、Steam 账号与真实云服务协作仍未验收 |
+| U27 | 独立分支已有历史正式 Release 的 180 测量/36 预热样本；新 `c25d81eb` 的冷恢复、实际故障对照、短跑和完整 Debug/Release 证据已回核 | 同政策当前 CPU 比较、至少一小时长跑及整合候选验证仍在推进；历史样本不替代新候选 |
+| U28 | [证据边界修复](2026-09-24-018-platform-evidence-execution.md)：历史声明/当前重验分层，维护回归42/36/10通过，真实c25执行收据与f87最终包字节正负控通过 | 整合候选通过后继续更新公开声明；原始包运行日志、设备/账号与发布范围不由字节或文档验证推导 |
+| U29 | [隔离整合记录](2026-09-24-017-foundation-integration-execution.md)：已组合U23/U24/U26/U27增量并独立核对原blob、注册与政策，当前本地检查点 `cddec53e` | 整合树尚无完整构建/测试结论；继续冻结候选并完成所选 required 项、最终包及回退演练；不自动发布 |
 
-U26/U27 的上述结果来自各自保留的隔离工作树，不表示这些源码已经进入本 U23 分支或 master。U27 新完整 Debug 原 run SHA256 为 `6ffa1a6c3808659a1d2883fc3619477460870ee8e46182e7e2f26d00f7f75393`，短跑原 run SHA256 为 `9a62d2c86e4cdd27d14959956c444e1b66e0fb9115a9d18cca654f5866e7a6d2`；源码身份均为完整提交 `c25d81ebfb324b85b54252ce937039c6dc790f28`。证据位于该工作树的 `artifacts/validation/u27-continuous-full-01` 与 `artifacts/validation/u27-soak-workload/candidate-short-01`，后续整合必须保留这些来源边界。
+U26/U27 的运行结果来自各自保留的隔离工作树。源码现已组合到U29树，但这些结果不构成U29或master验证。U27 新完整 Debug 原 run SHA256 为 `6ffa1a6c3808659a1d2883fc3619477460870ee8e46182e7e2f26d00f7f75393`，完整Release为 `0cf9be8c600dad436153bbede51355db19f3a9fe1c1120557c29313976279a47`，短跑为 `9a62d2c86e4cdd27d14959956c444e1b66e0fb9115a9d18cca654f5866e7a6d2`；源码均为 `c25d81ebfb324b85b54252ce937039c6dc790f28`。证据分别位于该工作树的 `artifacts/validation/u27-continuous-full-01`、`u27-continuous-release-02` 与 `u27-soak-workload/candidate-short-01`。首次Release辅助调用漏传configuration，被preflight拒绝，原失败保留，未算作执行过的全量测试。
 
 ## 2026-09-13 历史接续快照
 

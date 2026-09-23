@@ -61,11 +61,12 @@ Candidate execution and remaining gaps are recorded in
   `build/CMakeCache.txt` resolves `SDL3_DIR` to that bundled package and contains
   zero vcpkg entries). Use vcpkg (`vcpkg install sdl3 --triplet x64-windows`) only
   when you deliberately want a system SDL3 — CI's release job does.
-- **Steamworks**: a `-DCAESURA_HAS_STEAM=ON` build links `steam_api64.dll`, which
-  `install()` does **not** ship. Such an executable dies at startup in a clean
-  extract with `error while loading shared libraries: steam_api64.dll` (reproduced
-  on a `cmake --install` tree), so either package the DLL or release a
-  `CAESURA_HAS_STEAM=OFF` build.
+- **Steamworks**: on Windows, a `-DCAESURA_HAS_STEAM=ON` build links
+  `steam_api64.dll`. The current install rule includes that DLL from the
+  `STEAM_LIBRARY` directory with `OPTIONAL`; the rule alone does not prove that
+  the final package contains or loads it. Verify the exact final package and
+  required dependency bytes. SDK OFF, SDK ON compilation, and actual Steam
+  account/cloud behavior are separate evidence scopes.
 
 > Releases are **tagged from `master`**. All work lands on `master` first,
 > gated green, and only then is tagged and published.

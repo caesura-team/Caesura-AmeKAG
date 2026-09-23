@@ -627,7 +627,7 @@ if(Python3_EXECUTABLE)
     # authenticate a CI run; the dry-run controller performs that separately.
     foreach(_release_contract release_inputs package_bundle execution_bundle
                               release_artifact_download release_aggregate release_policy
-                              ci_execution_lane ci_release_gate pages_artifact)
+                              ci_execution_lane ci_release_gate pages_artifact platform_evidence)
         add_test(NAME CaesuraRelease_${_release_contract}
             COMMAND ${Python3_EXECUTABLE}
                     ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_${_release_contract}.py)

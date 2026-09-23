@@ -4,13 +4,20 @@
 # Caesura (AmeKAG) — Unified Platform Status Matrix
 
 > **Single Source of Truth**: [`docs/status/platform-matrix.yaml`](platform-matrix.yaml)<br>
-> **Evidence HEAD Commit**: `c13451c461b4d352e00adbfbac8d0df0f02b95c2`<br>
-> **Generated At**: `2026-09-19T20:42:13.797765+00:00`<br>
-> **Verification Status**: 100% Evidence-Backed (Zero Undocumented Claims)
+> **Documentation Synchronization Commit**: `cddec53e20a0fc20542e74d090a20ef02a28f0b7`<br>
+> **Generated At**: `2026-09-23T21:48:14.300748+00:00`<br>
+> **Recorded Evidence Validation**: `NOT_REVERIFIED` — schema and document references checked; original logs, packages and devices are not revalidated by this table.
+> Capability statuses below preserve their recorded commits and dates. The synchronization commit is not an execution identity or release approval.
+
+## Explicitly Selected Current Evidence
+
+Verification result: `NOT_RUN`. Publication approval: not granted.
+No original execution or package bytes were selected for verification in this generation.
+
 
 ---
 
-## 1. Global Platform Status Summary
+## 1. Recorded Platform Status Summary
 
 | Platform | Tier | Summary Status | Build | Runtime | First-VN | Device / Browser | Package / Sign | Release Gate |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
@@ -25,8 +32,8 @@
 
 | Enum | Symbol | Definition & Release Rules |
 |---|---|---|
-| `verified` | 🟢 `verified` | Fully implemented and verified with automated test / physical device execution evidence attached. |
-| `probe` | 🟡 `probe` | Verified at compiler / toolchain / shader asset probe level in CI; windowed or device runtime pending. |
+| `verified` | 🟢 `verified` | Historical verification recorded at the row's commit and date; original execution is not reverified by document-reference validation. |
+| `probe` | 🟡 `probe` | Recorded compiler / toolchain / shader probe scope; windowed or device runtime is not implied. |
 | `pending` | ⏳ `pending` | Capability planned or currently undergoing implementation / verification. |
 | `hardware-gated` | 🔒 `hardware-gated` | Blocked exclusively by physical absence of target hardware (e.g., physical Apple Silicon Mac / iPhone). |
 | `credential-gated` | 🔑 `credential-gated` | Blocked exclusively by missing production certificates or deployment credentials (e.g. Apple Developer ID). |
@@ -195,7 +202,7 @@
 
 ## 3. Global Evidence Registry Index
 
-All `verified` and `probe` capabilities are anchored by concrete evidence artifacts in the repository:
+These links locate recorded declarations and execution references. An existing source, workflow or document is not proof that its command ran or that an original log or package is available:
 
 | Platform | Capability | Status | Anchor Document | Execution Test Command | Commit SHA |
 |---|---|:---:|---|---|:---:|
@@ -240,11 +247,13 @@ All `verified` and `probe` capabilities are anchored by concrete evidence artifa
 
 ## 4. Release Candidate Gate & Blockers
 
-- [x] **Windows (Tier 1)**: Clean local windows-debug run 12183991-ef9b-4bbf-b814-66da967a9f24 at 0278910e: runner, collector and strict verifier exit 0; 45 CTest entries, 44 passed, zero failed, only predeclared CaesuraHeadlessAiSmoke skipped. HTTP smoke actually passed. Outcome: artifacts/validation/u22-foundation/candidate-0278910e-01-outcome.json. Not hosted Windows, final-package, First-VN revalidation or release approval; those older rows retain their own commits. (commit `0278910e0ff735fda4458a1ffd4386e846ad37ea`); First-VN E2E verified.
-- [x] **Linux (Tier 1)**: 11/11 CTest targets verified, headless Xvfb bundle boot verified.
-- [x] **Web (Tier 1)**: Vitest suite green (cd web && npm test; 368 tests / 27 files, all run and passed with the story bundle and web dist present, measured 2026-08-28), CDP real-browser unlock and reload save persistence verified.
-- [x] **Android (Tier 1)**: Real device Redmi K40 (M2012K11AC, haydn, Snapdragon 870 / Adreno 650 / Android 13) -- CJK RGBA8 atlas, multi-texture batching, IME bridge, and V1/V2/V3 release signing verified.
-- [ ] **macOS (Tier 2)**: CI compile probe verified; physical Apple Silicon hardware gated.
-- [ ] **iOS (Tier 2)**: Xcode / Metal shader compilation probe verified; physical device / TestFlight hardware & credential gated.
+The following values come from the recorded matrix. They are not a current candidate gate and do not grant publication approval.
+
+- **Windows (x64)**: build=`verified`; runtime=`verified`; first_vn=`verified`; packaging=`verified`; release=`pending`. Original evidence: `NOT_REVERIFIED`.
+- **Linux (x64 / Ubuntu 24.04 / WSL)**: build=`verified`; runtime=`verified`; first_vn=`verified`; packaging=`verified`; release=`pending`. Original evidence: `NOT_REVERIFIED`.
+- **Web Player (WASM / DOM)**: build=`verified`; runtime=`verified`; first_vn=`verified`; browser=`verified`; release_candidate=`verified`; packaging=`verified`. Original evidence: `NOT_REVERIFIED`.
+- **Android (ARM64)**: build=`verified`; runtime=`verified`; first_vn=`verified`; real_device=`verified`; signing=`verified`; aab=`verified`; release=`pending`. Original evidence: `NOT_REVERIFIED`.
+- **macOS (Apple Silicon / Intel)**: build=`probe`; runtime=`pending`; first_vn=`pending`; real_device=`hardware-gated`; release=`pending`. Original evidence: `NOT_REVERIFIED`.
+- **iOS (Track I / Metal)**: build=`probe`; metal=`probe`; runtime=`pending`; first_vn=`pending`; real_device=`hardware-gated`; signing=`credential-gated`; testflight=`credential-gated`; release=`pending`. Original evidence: `NOT_REVERIFIED`.
 
 <!-- End of auto-generated platform status matrix -->

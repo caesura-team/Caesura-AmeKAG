@@ -4,7 +4,7 @@
 
 进度显示：[当前待办清单](2026-09-05-003-runtime-foundation-todo.md)。详细证据见 [执行记录](2026-09-05-002-runtime-foundation-execution.md)。
 
-2026-09-24 当前接续：[U22 最终包](2026-09-13-013-final-package-isolation-execution.md)已取得完整托管与 Mac 实际最终容器闭包证据；[U23 发布输入](2026-09-19-014-release-input-provenance-execution.md)的 `f87f7aa7` 候选完成本机完整 Debug、12 个托管作业、11 份产物聚合及 AE7 摘要负控。服务端 required-check、带版本/tag 的只读演练和最终整合仍未闭合。独立 U26/U27 分支的 SDK/协调器、正式性能样本、冷恢复、故障对照与短跑进展见[当前待办](2026-09-05-003-runtime-foundation-todo.md)；真实设备和账号范围、当前候选至少一小时长跑及 U28/U29 继续完成。下方日期段落均是历史进展，不能覆盖这一接续状态，也不能将不同源码的通过相加成整合候选通过。
+2026-09-24 当前接续：[U22 最终包](2026-09-13-013-final-package-isolation-execution.md)已取得完整托管与 Mac 实际最终容器闭包证据；[U23 发布输入](2026-09-19-014-release-input-provenance-execution.md)的 `f87f7aa7` 完成本机完整 Debug、12 个托管作业、11 份产物聚合、AE7 摘要负控及本地全部产物字节复核。版本参数演练通过，真实旧标签与该源码不符时被拒绝；正向匹配标签入口、服务端 required-check 和最终验收仍未闭合。[U29 隔离整合](2026-09-24-017-foundation-integration-execution.md)已保留 U23/U24/U26/U27 增量并完成独立静态审查，尚无整合候选完整构建/测试结论。c25 分支完整 Debug/Release、冷恢复、故障对照与短跑已有证据，一小时长跑与新 CPU 比较继续推进。完整状态见[当前待办](2026-09-05-003-runtime-foundation-todo.md)；真实设备和账号范围及 U28/U29 继续完成。下方日期段落均是历史进展，不能覆盖这一接续状态，也不能将不同源码的通过相加成整合候选通过。
 
 2026-09-09：U12、[U13语言等价语料](2026-09-08-002-u13-language-parity-execution.md)、[U14缓存兼容](2026-09-08-004-u14-cache-compatibility-execution.md)和[U15截图/帧生命周期](2026-09-08-005-u15-screenshot-lifecycle-execution.md)已交付；PR18合并后的masterCI10/10成功。[U16原生图像回归](2026-09-09-007-native-render-effects-execution.md)首个完整D3D11/OpenGL矩阵为3/18、整体FAIL，正在按固定像素合同修复。[Expo Apple三lane](2026-09-08-003-u2-expo-apple-validation.md)在记录源码上通过，第七次因配额未执行；用户要求继续其余开发。[U27共同Web成本修复](2026-09-09-006-u27-web-cost-execution.md)已有完整Web511/511；其多进程Release基线/长跑以及U17–U29仍须继续完成。
 

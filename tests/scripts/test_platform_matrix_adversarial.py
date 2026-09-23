@@ -543,5 +543,122 @@ platforms:
         )
 
 
+class TestPublishedEvidenceClaims(unittest.TestCase):
+    def data(self):
+        return gps.load_yaml(REPO_ROOT / 'docs/status/platform-matrix.yaml')
+
+    def render(self, data):
+        return gps.generate_markdown(data, head_commit=data['evidence_head_commit'])
+
+    def test_document_references_are_not_execution_proof(self):
+        md = self.render(self.data())
+        self.assertNotIn('100% Evidence-Backed', md)
+        self.assertIn('NOT_REVERIFIED', md)
+
+    def test_footer_does_not_invent_fixed_test_totals(self):
+        md = self.render(self.data()).split('## 4. Release Candidate Gate & Blockers', 1)[1]
+        for stale in ('11/11 CTest', '368 tests / 27 files'):
+            with self.subTest(stale=stale):
+                self.assertNotIn(stale, md)
+
+    def test_pending_capabilities_cannot_create_checked_pass(self):
+        data = self.data()
+        for platform in data['platforms'].values():
+            platform['summary_status'] = 'pending'
+            for capability in platform['capabilities'].values():
+                capability['status'] = 'pending'
+                capability.pop('evidence', None)
+        data['platforms']['ios']['capabilities']['real_device']['status'] = 'hardware-gated'
+        self.assertEqual([], gps.validate_matrix(data, REPO_ROOT))
+        footer = self.render(data).split('## 4. Release Candidate Gate & Blockers', 1)[1]
+        self.assertNotIn('- [x]', footer)
+        self.assertNotIn('E2E verified', footer)
+        self.assertIn('`pending`', footer)
+        self.assertIn('`hardware-gated`', footer)
+
+    def test_json_separates_recorded_status_from_execution_verification(self):
+        summary = json.loads(gps.export_json(self.data()))
+        self.assertEqual('NOT_REVERIFIED', summary['recorded_evidence_validation'])
+        self.assertFalse(summary['release_ready'])
+        self.assertEqual('NOT_RUN', summary['current_evidence']['status'])
+
+
+class TestEvidenceCliOutputOwnership(unittest.TestCase):
+    """Actual CLI against byte fixtures; no claimed engine or hosted execution."""
+    def setUp(self):
+        import hashlib
+        import test_package_bundle as fixtures
+        self.fixtures = fixtures
+        self.f = fixtures.PackageBundleTests()
+        self.f.setUp()
+        self.addCleanup(self.f.doCleanups)
+        self.selection = self.f.base / 'selection.json'
+        claim = dict(id='package-bytes', kind='package_receipt', platform='windows',
+                     configuration='Release', bundle='download', manifest_sha256=self.f.manifest_sha,
+                     version=fixtures.VERSION, producer=fixtures.PRODUCER,
+                     expected_files={self.f.name:dict(kind='file', sha256=self.f.final_sha)})
+        self.selection.write_text(json.dumps(dict(schema='caesura.platform-evidence-selection.v1',
+                                  source_sha=fixtures.SOURCE, claims=[claim])), encoding='utf-8')
+        self.original_selection = self.selection.read_bytes()
+        self.report = self.f.base / 'report.json'
+        self.output = self.f.base / 'matrix.md'
+        self.arguments = [sys.executable, '-X', 'utf8', '-B', str(REPO_ROOT / 'scripts/generate_platform_status.py'),
+                          '--evidence-selection', str(self.selection), '--evidence-selection-sha256',
+                          hashlib.sha256(self.original_selection).hexdigest(), '--candidate-source', fixtures.SOURCE,
+                          '--evidence-root', str(self.f.base), '--evidence-profile',
+                          str(REPO_ROOT / 'scripts/validation_profiles.json')]
+
+    def cli(self, *, report=None, output=None, extra=()):
+        return subprocess.run(self.arguments + ['--evidence-report', str(report or self.report),
+                              '--output', str(output or self.output)] + list(extra),
+                              cwd=REPO_ROOT, capture_output=True, encoding='utf-8', timeout=30)
+
+    def test_report_cannot_alias_markdown_output(self):
+        result = self.cli(output=self.report)
+        self.assertNotEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertFalse(self.report.exists())
+
+    def test_report_cannot_alias_json_output_after_normalization(self):
+        alias = self.report.parent / '.' / self.report.name
+        result = self.cli(extra=['--json-output', str(alias)])
+        self.assertNotEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertFalse(self.report.exists())
+        self.assertFalse(self.output.exists())
+
+    def test_existing_output_is_preserved(self):
+        self.output.write_bytes(b'original accepted output\n')
+        result = self.cli()
+        self.assertNotEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertEqual(b'original accepted output\n', self.output.read_bytes())
+        self.assertFalse(self.report.exists())
+
+    def test_output_cannot_overwrite_selected_input(self):
+        result = self.cli(output=self.selection)
+        self.assertNotEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertEqual(self.original_selection, self.selection.read_bytes())
+        self.assertFalse(self.report.exists())
+
+    def test_distinct_outputs_preserve_report_and_narrow_scope(self):
+        result = self.cli()
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        report = json.loads(self.report.read_text(encoding='utf-8'))
+        self.assertEqual('caesura.platform-evidence-verification.v1', report['schema'])
+        self.assertFalse(report['release_ready'])
+        self.assertEqual('NOT_PERFORMED', report['hosted_authentication'])
+        md = self.output.read_text(encoding='utf-8')
+        self.assertIn('FINAL_PACKAGE_BYTES_AND_RECORDED_RECEIPTS', md)
+        self.assertIn('RAW_STAGE_LOGS_NOT_INCLUDED_NOT_REPLAYED', md)
+
+    def test_wrong_source_preserves_failure_report_without_markdown(self):
+        index = self.arguments.index('--candidate-source') + 1
+        self.arguments[index] = 'a' * 40
+        result = self.cli()
+        self.assertEqual(1, result.returncode, result.stdout + result.stderr)
+        report = json.loads(self.report.read_text(encoding='utf-8'))
+        self.assertEqual('FAIL', report['status'])
+        self.assertFalse(report['current_verified'])
+        self.assertFalse(self.output.exists())
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

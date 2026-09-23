@@ -256,9 +256,9 @@ default/range/type 破坏性改变；已发布参数移除；i18n 语言键与�
 
 | 维度 | 值 | 权威来源 |
 |------|----|---------|
-| C++ API 接口 | **34** 个接口头 / **412** 纯虚方法 | `docs/api/api-stats.md`（自动生成源；数字随 `python scripts/api_stats.py` 同步） |
+| C++ API 接口 | 由当前源码扫描生成；接口头数、类数和方法数分别理解 | [API普查](api/api-stats.md) |
 | KAG Neo-Genesis 命令 | **134** 个契约命令 | `docs/api/command-contracts.md` |
-| 能力闭环矩阵 | **134 = CLOSED 129 + PARTIAL 2 + UNWIRED 0 + EXPERIMENTAL 3**（EXTRA 31 = 注册但无合约，属设计行为；四层口径见矩阵统计行：Structural Closed=129 · Runtime 测试证据=139 · Platform=0 · Packaged=0） | `docs/design/capability-closure-matrix.md` |
+| 能力闭环矩阵 | 结构扫描、测试源码引用和人工平台/包声明；不表示运行通过或覆盖率 | [能力矩阵](design/capability-closure-matrix.md)；实际执行见[当前待办](plans/2026-09-05-003-runtime-foundation-todo.md) |
 | KAG3 兼容 | 裸位置参数 **13** families / TJS 表达式 / `%f.x%` / `[elsif]` / `[call *label]` / `[end]` / `[goto]`→`[jump]` | `docs/api/kag-commands.md`、`kag-expression-language.md` |
 | 存档格式 | JSON + AES-256-GCM + `CAES` 信封 | `docs/design/save-security-audit.md`、`engine-architecture-topology.md` |
 | 存档 schema | 迁移链 **v1 → v5**（自动升级，步数上限 64） | `engine-capability-matrix.md` (C4) |
@@ -267,7 +267,7 @@ default/range/type 破坏性改变；已发布参数移除；i18n 语言键与�
 | 项目布局 | `entry.lua` + `assets/` 子目录 + 可选 `mods/` | `docs/guides/asset-pipeline.md`、`template-quickstart.md` |
 | 当前版本 | **v1.0.1** | `CHANGELOG.md` |
 
-> 数字更新须随 `python scripts/api_stats.py` 与 schema 文档重新生成保持同步；本文档数字在 Phase 0 稳定化中被视为权威承诺基线。
+> 数量以维护中的生成器和当前源码为准，不是固定兼容承诺。平台历史记录的SHA与日期不因重新生成文档而改变；实际运行声明需要对应原始日志与产物身份，见[开发指南](team/development-guide.md)。
 
 ## 附录 A：已审计缺口（2026-08-28 全量核验，t51）
 

@@ -185,3 +185,13 @@ run35901948988/attempt1随后实际完成，12个作业全部success，包括聚
 AE7原计划要求“更换一个package digest，或让一个required job被取消”，本次覆盖其中摘要替换分支；真实取消分支仍NOT_RUN，不沿用历史缺输出失败代替它。原run摘要 `b1f0e99509c7338790471e47948571e138901258f5a53e47d9633046ebaffce4`，根回核28份API正文的审查摘要 `e7be1b72db7c625d3ccc3ef8e43634c5b59925d918336a85bcb068473a71bb60`。初版辅助审查未归一化API摘要的sha256前缀而失败；第二版只按生产已支持的格式归一化，原脚本/失败保留，未重跑或修改正负控。
 
 此进展关闭非注入托管聚合和AE7摘要负控的证据缺口。有效服务端required-check绑定、带版本/tag的发布演练与最终整合仍待完成；两个PR仍为draft、REVIEW_REQUIRED，无审批。没有发布、部署、合并master或修改服务端保护规则，U23及整个U1–U29计划保持未完成。
+
+## 2026-09-24 本地版本参数演练、完整下载与实际标签负控
+
+在保持干净的 `f87f7aa76969e8952be5e8cbf220bb2f2847eeb5` 独立 checkout 中，正式 `prepare_release_policy.py --release-tag v1.0.1` 实际退出0，产物与原锁定政策摘要 `f6873e4c5000097a172edf1b72125fe448c2a6ea58db14604959478dc8ade7c2` 相同；改为v1.0.2实际退出1并报告 `Release tag differs from engine version`，没有输出政策文件。随后通过未注入的正式 `ci_release_gate.py`，按原run35901948988/attempt1与固定11个artifact ID从GitHub完整下载480675784字节。11份归档均在各自期限内取得，原始下载收据、归档SHA256与托管digest相符，聚合和preupload复核完成，结果 `DRY_RUN_INPUTS_VERIFIED`、stage=complete、errors为空。
+
+这一次的本地复核包含全部11个源ZIP、六个execution bundle、四个平台包和独立Pages包的实际字节，补齐上一段只在托管runner重算payload的本地边界；没有重新执行各平台运行阶段。33份真实API响应正文、外部政策/选择锁、原进程stdout/stderr和清理收据均经根回读。六份Release文件选择和Pages单独计划保持 `release_ready=false` / deployment=NOT_RUN。gate SHA256为 `54aeedf69db27278ce83ed98d8cbbf4c2db73cabd67fa33cc2a1e6cf0efa2830`，outer SHA256为 `839d7a41bd3bd0ae2ddf00c25784b0c505b0da8d116c9cce972df8f1e3b699ed`；根审查 `u23-worktree/artifacts/validation/u23-hosted-f87-gate-01/tag-dry-run-01/root-review-01.json` SHA256为 `ce18bd9c84bf152094525e9331648d459298592c1f1231be2103e7f18cadcc87`。
+
+版本参数演练不等同于 `release.yml` 的已有Git标签入口。真实已有 `v1.0.1` 指向 `9aa299d4b78e5a62e25786d8771539bdc1adb65d`，不是f87。另一次受控执行从该workflow提取原始Python身份校验体，在干净f87中使用真实tag和SOURCE_SHA运行，实际退出1并报告 `Run from the selected existing tag`；没有生成GITHUB_OUTPUT。源码、workflow与原始体摘要首尾不变，owned tree cleanup=COMPLETE，无timeout/forced kill。原记录 `existing-tag-rejection-01/run.json` SHA256为 `027aaac6eb527c9a7b2c66563edd9dc01930762d1528921e98ca2e617fe6961a`。这证明已有tag指向错误源码时被拒绝；与候选完全匹配的正向tag workflow仍NOT_RUN。没有创建、移动或推送标签。
+
+同日重新回读master保护：一个PR批准仍为必需，enforce_admins=false，无required_status_checks，effective rules仍为空，ruleset17369886仍disabled。f87实际check-run的app为GitHub Actions（15368），聚合名称为 `Verify release inputs / Verify exact release inputs`；原始check-runs回读SHA256为 `d6a16d12c035a18f423d9ce2d401b28122c8169d2b6115f703f1b37a902cefd1`。PR25/26仍draft、REVIEW_REQUIRED且reviews为空。服务端强制绑定、正向tag入口及最终整合验收继续未完成；未发布、部署或修改保护规则。
