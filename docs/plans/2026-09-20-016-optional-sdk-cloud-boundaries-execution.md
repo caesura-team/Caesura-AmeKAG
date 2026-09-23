@@ -1,6 +1,6 @@
 # U26 可选 SDK 与云存档边界执行记录
 
-本记录对应当前唯一计划U26。已实证修复不可用Steam后端误替换本地provider，以及分块覆盖失败、大转小和SDK短读；969a31c9 的 SDK OFF 完整 Debug 门禁已通过；SDK ON 首轮已编译 Steam 模块并在 Live2D 动作组 API 处暴露真实编译错误。后续修复验证、双方冲突保全及真实 SDK 功能仍待执行，U26未完成。
+本记录对应当前唯一计划U26。当前已完成不可用Steam后端保留本地provider、分块发布/短读防护、typed snapshot transport，以及云分叉双方保全与跨进程恢复的本地协调器合同；最新SDK OFF完整Debug门禁绑定08bfc276，C++1455/1455、Lua147+56通过，CTest58通过及1项预声明可选服务跳过。两个独立SDK ON配置在106160f3已实际编译链接并通过未初始化查询，早期Live2D动作组编译错误已修复。完整SDK ON门禁、真实模型动作/lip-sync、Steam账号功能和真实云服务协作仍未验收，U26未完成。下文按时间保留原失败、阶段边界及当时的待办，不能把旧阶段状态当成当前未实现清单。
 
 ## 证据起点
 
@@ -16,7 +16,7 @@
 
 最终SaveManager.cpp摘要2a7ecd87f0dd1311e6706ae8e5deeac6a2aaabd18540b22346cf65b73b207583，测试摘要de01cbcd1d9fb3a89357dc3d4c68ecf4646c2335bf9f1db557720c81205aef2c与RED完全一致。storage耦合仍4/4（archive/debug/di/steam），count_coupling --ci通过，没有具体实现头依赖。独审无可行动发现，u26-null-steam/independent-review-01.md摘要a9dec6450d74e1d0854589a2e3ca02e8d1004089daf5c4be3b6af57388fd8cd7，JSON摘要395d5671472949517243968eb7eed444d3df14433142a5bd6ae2c896939ff8ba。六native profile的C++最低发现数按实际新增1方法各加一，CTest门槛不变。
 
-## 下一步
+## 初始阶段的下一步（历史记录）
 
 建立共同祖先后本地/云端分叉保留双方的合同。HTTP真实loopback超时/重试与Steam失败/重复/迟到回调、Cubism加载失败及motion释放按实际边界分别回归。只有经过真实复现的疑点才修复；尚无本轮账号、设备、商店发布或真实SDK功能验收，后续完整Debug/C++/Lua/CTest与选定SDK ON产物继续独立验证。
 
