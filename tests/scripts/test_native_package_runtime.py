@@ -1106,15 +1106,127 @@ class NativePackageRuntimeTests(unittest.TestCase):
         self.assertEqual(report["status"], "RUNTIME_PASS", report["errors"])
         self.assertEqual(report["stages"][0]["commands"][0]["observations"]["browser_mode"], "query_token")
 
-    def execute_fixture(self, *, timeout, monitor=None, controlled=False):
+    def execute_fixture(self, *, timeout, monitor=None, controlled=False, child_code=None):
         self.assertIsNotNone(runtime, "Native package runtime controller is not implemented")
         attempt = self.root / "direct"; attempt.mkdir()
         env = runtime.native_env(self.package, engine=self.package/self.engine_name,
                                  lua=self.package/self.lua_name, work=self.root,
                                  home=self.root, temp=self.root)
-        return runtime._execute(attempt, "child", [FIXTURE_PYTHON, "-I", "-c", "import time; time.sleep(30)"],
+        return runtime._execute(attempt, "child", [FIXTURE_PYTHON, "-I", "-c", child_code or "import time; time.sleep(30)"],
                                 self.root, env, timeout, 2, monitor=monitor, controlled=controlled,
                                 editor_port=self.port if controlled else None)
+
+    if os.name == "nt":
+        def execute_with_identity_lock(self, *, transient, child_exits=False):
+            """Hold a real Windows deny-share handle across the first read.
+
+            Events fix the ordering: acquire handle, attempt read, then release.
+            No timing guess or replacement of the owned process runner is used.
+            """
+            import ctypes
+            kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel.CreateFileW.argtypes = [ctypes.c_wchar_p, ctypes.c_uint32, ctypes.c_uint32,
+                                          ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_void_p]
+            kernel.CreateFileW.restype = ctypes.c_void_p
+            kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+            kernel.CloseHandle.restype = ctypes.c_int
+            ready, release = threading.Event(), threading.Event()
+            errors, denied, observed = [], [], []
+            holder = None
+            target = self.root / "direct/commands/child/control/process.json"
+            exit_request = self.root / "exit-child"
+            original = Path.read_text
+
+            def hold():
+                handle = kernel.CreateFileW(str(target), 0x80000000, 0, None, 3, 0x80, None)
+                if handle == ctypes.c_void_p(-1).value:
+                    errors.append(ctypes.get_last_error()); ready.set(); return
+                try:
+                    ready.set()
+                    if not release.wait(10): errors.append("lock release event not received")
+                finally:
+                    if not kernel.CloseHandle(handle): errors.append(ctypes.get_last_error())
+
+            def read(path, *args, **kwargs):
+                nonlocal holder
+                if path != target: return original(path, *args, **kwargs)
+                # The controller may poll before publication. Only lock an
+                # existing identity, leaving the actual publication unchanged.
+                if holder is None and path.is_file():
+                    holder = threading.Thread(target=hold)
+                    holder.start()
+                    self.assertTrue(ready.wait(5), "Windows lock owner did not signal readiness")
+                    self.assertFalse(errors, errors)
+                try:
+                    return original(path, *args, **kwargs)
+                except PermissionError as error:
+                    denied.append(error)
+                    if child_exits: exit_request.touch()
+                    if transient:
+                        release.set(); holder.join(5)
+                        self.assertFalse(holder.is_alive(), "Windows handle was not released")
+                    raise
+
+            code = None
+            if child_exits:
+                code = ("from pathlib import Path\nimport time\n"
+                        f"p=Path({str(exit_request)!r})\n"
+                        "end=time.monotonic()+10\n"
+                        "while not p.exists() and time.monotonic()<end: time.sleep(0.01)\n")
+            try:
+                with patch.object(Path, "read_text", read):
+                    report = self.execute_fixture(timeout=6, controlled=True, child_code=code,
+                        monitor=lambda identity, deadline: observed.append(identity) or {"pid":identity.pid})
+            finally:
+                release.set()
+                if holder is not None:
+                    holder.join(5)
+                    self.assertFalse(holder.is_alive(), "Windows lock owner is still running")
+            self.assertFalse(errors, errors)
+            self.assertTrue(denied, "No real Windows sharing denial was observed")
+            self.assertEqual(report["run"]["owned_tree_cleanup"], "COMPLETE", report)
+            self.assertFalse(report["run"]["forced_kill"], report)
+            return report, observed
+
+        def test_process_identity_transient_sharing_denial_reaches_real_monitor(self):
+            report, observed = self.execute_with_identity_lock(transient=True)
+            self.assertTrue(report["passed"], report)
+            self.assertEqual(len(observed), 1)
+            self.assertEqual(report["run"]["process"]["pid"], observed[0].pid)
+            self.assertEqual(report["run"]["status"], "STOPPED")
+
+        def test_process_identity_permanent_sharing_denial_keeps_readiness_deadline(self):
+            report, observed = self.execute_with_identity_lock(transient=False)
+            self.assertFalse(report["passed"], report)
+            self.assertFalse(observed)
+            self.assertIn("readiness deadline", "\n".join(report["errors"]))
+            self.assertEqual(report["run"]["status"], "STOPPED")
+            self.assertFalse(report["run"]["timed_out"])
+
+        def test_process_identity_locked_file_cannot_hide_child_exit(self):
+            report, observed = self.execute_with_identity_lock(transient=False, child_exits=True)
+            self.assertFalse(report["passed"], report)
+            self.assertFalse(observed)
+            self.assertIn("Command exited before a readable process identity", "\n".join(report["errors"]))
+            self.assertEqual(report["run"]["status"], "EXITED")
+            self.assertEqual(report["run"]["actual_exit_code"], 0)
+
+    def test_process_identity_invalid_json_is_not_retried(self):
+        original, reads, observed = Path.read_text, [], []
+        target = self.root / "direct/commands/child/control/process.json"
+        def malformed(path, *args, **kwargs):
+            if path == target and path.is_file():
+                reads.append(path)
+                return "{"
+            return original(path, *args, **kwargs)
+        with patch.object(Path, "read_text", malformed):
+            report = self.execute_fixture(timeout=6, controlled=True,
+                monitor=lambda identity, deadline: observed.append(identity))
+        self.assertFalse(report["passed"], report)
+        self.assertFalse(observed)
+        self.assertEqual(len(reads), 1)
+        self.assertIn("JSONDecodeError", "\n".join(report["errors"]))
+        self.assertEqual(report["run"]["owned_tree_cleanup"], "COMPLETE")
 
     def test_actual_command_timeout_records_reaped_failure(self):
         report = self.execute_fixture(timeout=0.3)

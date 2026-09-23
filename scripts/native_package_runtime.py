@@ -498,11 +498,20 @@ def _execute(attempt, name, argv, cwd, env, timeout, readiness_timeout, *, monit
                 if monitor:
                     deadline = time.monotonic() + readiness_timeout
                     identity_file = control / "process.json"
-                    while not identity_file.is_file():
-                        _need(not future.done(), "Command exited before an observable process identity")
-                        _need(time.monotonic() < deadline, "No owned process identity before readiness deadline")
-                        time.sleep(0.02)
-                    identity = ProcessIdentity(**json.loads(identity_file.read_text(encoding="utf-8")))
+                    while True:
+                        _need(not future.done(), "Command exited before a readable process identity")
+                        _need(time.monotonic() < deadline, "No readable owned process identity before readiness deadline")
+                        try:
+                            identity_json = identity_file.read_text(encoding="utf-8")
+                        except (FileNotFoundError, PermissionError):
+                            # Atomic publication guarantees complete JSON, but
+                            # visibility need not imply readability on Windows.
+                            # Wait only within this original readiness deadline;
+                            # completed children and malformed identities fail.
+                            time.sleep(0.02)
+                            continue
+                        identity = ProcessIdentity(**json.loads(identity_json))
+                        break
                     record["observations"] = monitor(identity, deadline)
             except Exception as error:
                 record["errors"].append(f"{type(error).__name__}: {error}")
