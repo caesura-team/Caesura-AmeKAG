@@ -289,7 +289,21 @@ int run(const Json& request) {
     auto local = fixtureSnapshot(request, "local");
     auto cloud = fixtureSnapshot(request, "cloud");
     if (mode == "seed") {
+        Json checkpoints = Json::array();
+        detail::ScopedSaveWriteTestHook trace({
+            [](detail::SaveWriteStage stage, const fs::path& temporary, void* context) {
+                static_cast<Json*>(context)->push_back(Json{{"stage", static_cast<int>(stage)},
+                    {"temporary", utf8(temporary)}});
+                return true;
+            }, &checkpoints});
         const auto result = store.preserve(context, local, cloud);
+        if (result.code != Code::Preserved || !result.record.has_value()) {
+            Json diagnostic{{"code", codeName(result.code)}, {"checkpoints", checkpoints}};
+#ifdef _WIN32
+            diagnostic["last_win32_error"] = GetLastError();
+#endif
+            std::cerr << "U26_B1B_SEED_FAILURE " << diagnostic.dump() << std::endl;
+        }
         require(result.code == Code::Preserved && result.record.has_value(), "seed did not preserve");
         emit(Json{{"event", "seed"}, {"result", resultJson(result)}});
         return 0;

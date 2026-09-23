@@ -241,13 +241,15 @@ if(Python3_EXECUTABLE)
             Caesura::Storage Caesura::Archive Caesura::BuildOptions)
         # Normal full builds already produce CaesuraTests; same output directory supplies native DLLs.
         add_dependencies(CaesuraCloudConflictRestartProbe CaesuraTests)
-        file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/artifacts/validation/cloud-conflict-restart")
+        # Keep nested UUID/case/record/temp names below legacy Windows MAX_PATH
+        # in this probe; the cold-process contract does not require long-path support.
+        file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/ccr")
         add_test(NAME CaesuraCloudConflictRestart
             COMMAND ${Python3_EXECUTABLE} -B
                 ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_cloud_conflict_restart.py
                 --source-root ${CMAKE_SOURCE_DIR}
                 --probe $<TARGET_FILE:CaesuraCloudConflictRestartProbe>
-                --attempt-root ${CMAKE_BINARY_DIR}/artifacts/validation/cloud-conflict-restart)
+                --attempt-root ${CMAKE_BINARY_DIR}/ccr)
         set_tests_properties(CaesuraCloudConflictRestart PROPERTIES
             LABELS "storage;filesystem;isolation;recovery"
             WORKING_DIRECTORY "$<TARGET_FILE_DIR:CaesuraCloudConflictRestartProbe>"

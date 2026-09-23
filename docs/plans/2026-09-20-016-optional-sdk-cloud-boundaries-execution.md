@@ -121,3 +121,14 @@ CloudConflictStore 现已实现 owner 限定的不可变本地观察记录：在
 - CTest 实际 discovery Windows/Linux 各58项，新 `CaesuraCloudConflictRestart` 各恰好一次。纯host构建注册，跨编译/Emscripten不注册；桌面profile的CTest最低发现数57→58，C++最低数不变。尚未以新增后的源码重跑全量门禁，b36的完整门禁继续只对应b36。
 
 这些证明进程终止/受控后端异常下的本地记录边界，不证明断电持久性、真实磁盘故障、OpenSSL/BCrypt实际故障、目录fsync或远端CAS。原件是opaque测试数据，B1 EqualObserved仍不是已验证CAES祖先。B2/B3的账户/key/policy/context、持久祖先游标、选择后复核和显式导出继续实施；SDK真实账号与网络侧条件未由本结果完成。
+
+
+### 冷进程门禁集成与计时诊断（2026-09-23）
+
+干净35dc5c82的完整Windows Debug run5096f19d-d24b-4178-b642-97096406c4c2实际FAIL。build、C++1440/1440（429400断言）、Lua147/56和其余独立检查通过；CTest58项中55通过、2失败、1项预声明AI服务skip，strict verifier拒绝。失败为新CloudConflictRestart与release_artifact_download。原始run/collector/verifier未改写；根重核28原始流，失败复核SHA256 d989547343b8f74e72eff670a6dec59456e67b0d12758261d3f7f25a12017cd9。
+
+重启probe增加仅失败时输出的真实writer checkpoint/code/Win32错误。原CTest深路径下seed在CreateTemporary阶段得到PublicationFailed/ERROR_PATH_NOT_FOUND(3)，未进入write。相同probe/production与原五场景使用较短的build/ccr目录后23个真实子进程全部通过，中文checkout组件仍保留；正式CTest只缩短该证据根，未改变场景、断言或480秒预算。新注册入口实际通过（含fixture为2项），证明当前路径前提下的冷进程合同，不宣称Windows任意长路径支持。Python进程的长路径CreateFile控制不等价于该C++映像，不用于补充此能力声明。
+
+原下载器超时用例再次实际复现：blob headers阻塞返回TimeoutError，但报告seconds=0.093、deadline_exceeded=false。本机Python3.12.9的monotonic使用GetTickCount64、分辨率15.625ms；perf_counter使用单调且不可调的QueryPerformanceCounter、分辨率100ns。尝试移除最后预算内的socket timeout后，Windows阻塞读取约0.8秒才返回，原四个时间断言失败；此尝试保留并撤回，未改预算或断言。最终只将七处预算/elapsed观察统一为perf_counter，保留原socket超时和owned watchdog。
+
+最终Windows原14方法通过（CTest4.14秒），Linux原14方法通过（3.247秒），另保留原header方法三个真实传输失败报告，实际0.105497/0.102813/0.105371秒均deadline_exceeded=true。合法完整传输和凭据隔离、残留字节/摘要负控仍由同一未修改suite执行。根复核两份完整五场景/23child报告共162引用及原命令流，目标修复收据01799a69e9fd05b1f25e8d564bd08a6a32b197d97bb9e3134cfbd0a4f5d29192。新修复后的完整门禁尚待执行，不能把这些定向通过拼接成35dc完整PASS。B2/B3协调器、历史导出、真实SDK/账号与条件云写入边界继续按计划未完成。
