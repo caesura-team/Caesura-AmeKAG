@@ -164,3 +164,10 @@ HTTP实际Engine PID29708/creation134343339855401940/port8028由原控制器受�
 新的完整Debug门禁与托管run/全部产物聚合将在冻结候选后执行。真实AE7取消/调包、服务端required-check有效绑定及发布dry-run仍未闭合，现有fixture通过不替代这些验证。没有发布、部署、合并到master或改变服务端规则。
 
 后继9469de8a已推送PR26并启动run35900249193，原首轮79e8b439失败继续保留。同时U22文档后继8c的Mac CI在真实libproc观察到`/bin/bash`，与进程测试夹具的`#!/bin/sh`不符，提前触发严格拒绝。整合已审U22 b51e44c1的纯夹具修正为merge363c151c：Mac显式声明bash，增加真实POSIX解释器屏障，原脚本篡改断言、生产运行器及所有来源/字节约束不变。Windows35/35、Linux41/41及源锁复核绑定原U22增量；新Mac实际执行仍待CI，不能据本地结果关闭该项。U23完整门禁在此修正后的冻结头运行，不执行先前仅准备但未启动的9469全量驱动。
+## 2026-09-24 f87f7aa7 完整 Windows 门禁
+
+整合显式Mac shell夹具后的干净提交 `f87f7aa76969e8952be5e8cbf220bb2f2847eeb5` 完成完整Windows Debug运行 `8bad4d29-d18d-42c8-b2b1-88e5bc7c3798`：全量构建、C++1415/1415及427088断言、Lua147/147与56/56通过，C++零失败零跳过。CTest实际发现60项，59通过、零失败，唯一跳过为预声明的CaesuraHeadlessAiSmoke；总耗时670.08秒。过滤子进程输出的1414个未选中项不冒充完整套件跳过。
+
+执行、collector和strict verifier均实际exit0，受控进程树全部清理，无timeout或forced kill；源码fingerprint `01449c8349b1a7c782eab5dfb7d18d130d6e1472164e06b3ecb0dc4e33d0ac3f` 首尾一致且dirty=false，fixture未变。根回读复核29个原始流/报告摘要和实际CTest XML，run.json SHA256为 `c7f534b087febc40448b9841111bd5b23a6eeef897d877f2354e5bbf3d38d66f`，审查 `artifacts/validation/u23-mac-full-02/root-green-review-01.json` SHA256为 `31922c67b8b7e321f85c0fa3fe9a0b88e0da7850066bc20ccdcbde9ff216bac3`。
+
+远端f87候选run35901948988的Linux Debug、Mac Debug已成功，其他producer及聚合仍在运行；这只是此时的只读进展，不是整次托管验收。11个artifact聚合、AE7真实取消/调包和有效服务端required-check仍未闭合。未发布、部署、合并master或改动服务端规则。
