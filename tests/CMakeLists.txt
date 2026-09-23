@@ -423,7 +423,6 @@ if(Python3_EXECUTABLE)
         RESOURCE_LOCK "global-singletons"
         FIXTURES_REQUIRED caesura-test-assets
         PASS_REGULAR_EXPRESSION "ALL HEADLESS HTTP SMOKE TESTS PASSED"
-        SKIP_RETURN_CODE 77
         TIMEOUT 90
         WORKING_DIRECTORY "$<TARGET_FILE_DIR:CaesuraAmeKAG>"
     )
@@ -505,6 +504,32 @@ if(Python3_EXECUTABLE)
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
     )
     add_test(
+        NAME CaesuraAudioOutputCli
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_audio_output_cli.py
+                --engine $<TARGET_FILE:CaesuraAmeKAG>
+    )
+    set_tests_properties(CaesuraAudioOutputCli PROPERTIES
+        LABELS "qa;cli;audio"
+        TIMEOUT 360
+        RUN_SERIAL TRUE
+        RESOURCE_LOCK "global-singletons"
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    )
+    add_test(
+        NAME CaesuraResourceCwdCli
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_resource_cwd_cli.py
+                --engine $<TARGET_FILE:CaesuraAmeKAG>
+    )
+    set_tests_properties(CaesuraResourceCwdCli PROPERTIES
+        LABELS "qa;cli;paths"
+        TIMEOUT 120
+        RUN_SERIAL TRUE
+        RESOURCE_LOCK "global-singletons"
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    )
+    add_test(
         NAME CaesuraTargetCapabilities
         COMMAND ${CMAKE_COMMAND} -E env
                 "CAESURA_ENGINE=$<TARGET_FILE:CaesuraAmeKAG>"
@@ -520,6 +545,59 @@ if(Python3_EXECUTABLE)
         TIMEOUT 240
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
     )
+    # Filesystem/protocol contract tests are separate from final package
+    # runtime acceptance. Host Lua and generator are explicitly this build's.
+    foreach(_package_contract release_package_contract native_package_contract
+                              package_runtime web_package_contract package_build_metadata
+                              package_validation_runner native_package_runtime
+                              web_package_runtime package_containers appimage_build_contract ci_package_lane
+                              package_runtime_install macos_runtime_install macos_openssl_metadata
+                              macos_runtime_coordinator)
+        add_test(
+            NAME CaesuraPackage_${_package_contract}
+            COMMAND ${CMAKE_COMMAND} -E env
+                    "CAESURA_TEST_LUA=$<TARGET_FILE:lua_cli>"
+                    "CAESURA_TEST_CMAKE_GENERATOR=${CMAKE_GENERATOR}"
+                    "CAESURA_TEST_CMAKE_INSTANCE=${CMAKE_GENERATOR_INSTANCE}"
+                    "CAESURA_TEST_CMAKE_MAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}"
+                    ${Python3_EXECUTABLE}
+                    ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_${_package_contract}.py
+        )
+        set_tests_properties(CaesuraPackage_${_package_contract} PROPERTIES
+            LABELS "qa;package;validation"
+            TIMEOUT 240
+            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+        )
+    endforeach()
+
+    # Hosted metadata, byte transfer and policy contracts do not themselves
+    # authenticate a CI run; the dry-run controller performs that separately.
+    foreach(_release_contract release_inputs package_bundle execution_bundle
+                              release_artifact_download release_aggregate release_policy
+                              ci_execution_lane ci_release_gate pages_artifact)
+        add_test(NAME CaesuraRelease_${_release_contract}
+            COMMAND ${Python3_EXECUTABLE}
+                    ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_${_release_contract}.py)
+        set_tests_properties(CaesuraRelease_${_release_contract} PROPERTIES
+            LABELS "qa;release;validation"
+            TIMEOUT 240
+            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    endforeach()
+
+    find_program(CAESURA_NODE_PROGRAM node)
+    if(CAESURA_REQUIRE_TEST_PREREQUISITES AND NOT CAESURA_NODE_PROGRAM)
+        message(FATAL_ERROR "Complete validation requires Node 22+ for package probe contracts")
+    endif()
+    if(CAESURA_NODE_PROGRAM)
+        add_test(NAME CaesuraPackage_web_probe
+            COMMAND ${CAESURA_NODE_PROGRAM} --test
+                    ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_web_package_probe.mjs)
+        set_tests_properties(CaesuraPackage_web_probe PROPERTIES
+            LABELS "qa;package;validation;web"
+            TIMEOUT 240
+            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    endif()
+
     # Web package gate (t144 design A): contract tests for
     # scripts/verify_web_package.sh against a synthetic dist/<game>/ tree.
     # SKIP_RETURN_CODE 77 when bash or node is missing from the host.

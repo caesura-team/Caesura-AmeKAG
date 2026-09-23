@@ -13,6 +13,7 @@ All runs use --out dist/<unique>; the artifact is removed in tearDown.
 """
 
 import os
+import hashlib
 import json
 import tempfile
 import shutil
@@ -65,6 +66,16 @@ class PackageGameCliTest(unittest.TestCase):
         self.assertTrue((self.out_path / "demo" / "first_vn" / "story.ks").exists())
         self.assertTrue((self.out_path / "MANIFEST.txt").exists())
         self.assertTrue((self.out_path / "scripts" / "index.json").exists())
+
+        offline = (self.out_path / 'offline-assets.js').read_text(encoding='utf-8')
+        prefix = 'self.__CAESURA_OFFLINE_MANIFEST__ = '
+        self.assertTrue(offline.startswith(prefix))
+        inventory = json.loads(offline[len(prefix):].rstrip().removesuffix(';'))
+        story = next(item for item in inventory['resources'] if item['url'] == './cache/story/story.lua')
+        delivered = (self.out_path / 'cache/story/story.lua').read_bytes()
+        self.assertEqual(story['bytes'], len(delivered))
+        self.assertEqual(story['sha256'], hashlib.sha256(delivered).hexdigest())
+        self.assertEqual(inventory['worker_sha256'], hashlib.sha256((self.out_path / 'sw.js').read_bytes()).hexdigest())
         self.assertTrue((self.out_path / "assets").is_dir())
         manifest = (self.out_path / "MANIFEST.txt").read_text(encoding="utf-8")
         self.assertIn("total KB:", manifest)
@@ -397,7 +408,7 @@ class PackageLuaSelectionCliTest(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory(prefix="u2-package-lua-", dir=ROOT / "tmp")
         self.addCleanup(self.temporary.cleanup)
         self.fixture = Path(self.temporary.name)
-        for relative in ("scripts/package_game.mjs", "scripts/copy_tree.mjs",
+        for relative in ("scripts/package_game.mjs", "scripts/copy_tree.mjs", "scripts/offline_manifest.mjs",
                          "scripts/web_capability_profile.mjs", "web/lua-value.js",
                          "web/capability-catalog.js", "web/package.json",
                          "config/runtime-capabilities.json"):
@@ -505,6 +516,11 @@ class PackageWebCapabilitiesCliTest(unittest.TestCase):
             if (ROOT / name).is_file():
                 shutil.copy2(ROOT / name, self.fixture / name)
         (self.fixture / "assets").mkdir()
+        # The real copied player now requires the icons declared by its HTML
+        # and PWA manifest. Keep these platform resources in the fixture so
+        # each test reaches its intended author/capability boundary.
+        for icon in ("icon-192.png", "icon-512.png"):
+            shutil.copy2(ROOT / "assets" / icon, self.fixture / "assets" / icon)
         self.project = self.fixture / "项目 空格"
         self.project.mkdir()
         (self.project / "story.ks").write_text("[end]\n", encoding="utf-8")

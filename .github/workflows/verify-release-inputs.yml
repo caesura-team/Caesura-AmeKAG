@@ -1,0 +1,96 @@
+name: Verify release inputs
+
+on:
+  workflow_call:
+    inputs:
+      source_sha:
+        required: true
+        type: string
+      expected_json:
+        required: true
+        type: string
+      policy_json:
+        required: true
+        type: string
+      policy_sha256:
+        required: true
+        type: string
+      producer_outputs_json:
+        required: true
+        type: string
+      release_tag:
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  verify:
+    name: Verify exact release inputs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Preserve and check the controlled caller selections
+        env:
+          EXPECTED_JSON: ${{ inputs.expected_json }}
+          POLICY_JSON: ${{ inputs.policy_json }}
+          POLICY_SHA256: ${{ inputs.policy_sha256 }}
+          PRODUCER_OUTPUTS_JSON: ${{ inputs.producer_outputs_json }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          python - <<'PY'
+          import hashlib, json, os, subprocess
+          from pathlib import Path
+          base = Path(os.environ['RUNNER_TEMP']) / 'release-gate-inputs'
+          base.mkdir()
+          for name, variable in [('expected.json', 'EXPECTED_JSON'), ('policy.json', 'POLICY_JSON'), ('producer-outputs.json', 'PRODUCER_OUTPUTS_JSON')]:
+              with (base / name).open('x', encoding='utf-8', newline='\n') as stream:
+                  stream.write(os.environ[variable] + '\n')
+          expected = json.loads(os.environ['EXPECTED_JSON'])
+          for key, variable in [('repository', 'GITHUB_REPOSITORY'), ('workflow_ref', 'GITHUB_WORKFLOW_REF'), ('workflow_sha', 'GITHUB_WORKFLOW_SHA')]:
+              assert expected[key] == os.environ[variable], 'Wrong caller ' + key
+          for key, variable in [('repository_id', 'GITHUB_REPOSITORY_ID'), ('run_id', 'GITHUB_RUN_ID'), ('run_attempt', 'GITHUB_RUN_ATTEMPT')]:
+              assert type(expected[key]) is int and expected[key] == int(os.environ[variable]), 'Wrong caller ' + key
+          assert expected['source_sha'] == os.environ['SOURCE_SHA'], 'Wrong explicit execution source'
+          assert expected['called_workflow_sha'] == os.environ['GITHUB_WORKFLOW_SHA'], 'Wrong relative validation workflow commit'
+          assert expected['called_workflow_path'] == '.github/workflows/validate-engine.yml', 'Wrong validation workflow'
+          assert Path('.git').exists(), 'Missing source checkout'
+          assert subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip() == expected['source_sha'], 'Wrong source checkout'
+          assert hashlib.sha256((base / 'policy.json').read_bytes()).hexdigest() == os.environ['POLICY_SHA256'], 'Frozen policy bytes differ'
+          PY
+      - name: Authenticate, download and recheck the exact dry-run inputs
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          POLICY_SHA256: ${{ inputs.policy_sha256 }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          args=()
+          if [ -n "$RELEASE_TAG" ]; then args=(--release-tag "$RELEASE_TAG"); fi
+          python scripts/ci_release_gate.py --repo . \
+            --expected "$RUNNER_TEMP/release-gate-inputs/expected.json" \
+            --policy "$RUNNER_TEMP/release-gate-inputs/policy.json" --policy-sha256 "$POLICY_SHA256" \
+            --producer-outputs "$RUNNER_TEMP/release-gate-inputs/producer-outputs.json" \
+            --work "$RUNNER_TEMP/release-input-gate" "${args[@]}" \
+            > "$RUNNER_TEMP/release-gate-inputs/gate-stdout.json"
+      - name: Preserve the first gate result and original diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-input-gate-evidence
+          path: |
+            ${{ runner.temp }}/release-gate-inputs/*.json
+            ${{ runner.temp }}/release-input-gate/**/*.json
+            ${{ runner.temp }}/release-input-gate/**/*.body
+            ${{ runner.temp }}/release-input-gate/**/*.log
+          if-no-files-found: warn

@@ -1,136 +1,103 @@
-# Caesura (AmeKAG) - deploy-web.yml
-name: Deploy Web Player (GitHub Pages)
-
-# Manually deploy the web player static site (vite build + package_game.sh)
-# to GitHub Pages. Pick a game in the Actions -> Run workflow dialog.
-# Fully decoupled from ci.yml: no engine build, no GPU, ubuntu-latest.
-#
-# Release-path hard gate (t144 design C): the packaged site is verified with
-# scripts/verify_web_package.sh and booted in headless Chrome by
-# scripts/web_browser_smoke.mjs -- at the root and under a /<repo>/ subpath
-# (the real project-site mount) -- BEFORE anything is uploaded to Pages. A
-# failing gate skips the deploy steps; that is the point.
-#
-# Untrusted / expression values (inputs, repository name, step outputs) reach
-# shell only through env:, never by textual ${{ }} substitution in run:.
-
-on:
+# U23 dry-run only. No release upload, Pages upload or deployment is authorized by this workflow.
+name: Web Pages input dry-run
+'on':
   workflow_dispatch:
     inputs:
       game:
-        description: >-
-          Demo directory (e.g. demo/example_game) or a single .ks file
-          (e.g. demo/galgame_demo.ks) to package into the static site.
-          Only this game story bundle is shipped.
+        description: Source game directory or .ks file to validate for Pages
         required: false
         default: demo/galgame_demo.ks
         type: string
-
+      actions:
+        description: Optional repository-relative UI actions JSON for a save point
+        required: false
+        type: string
+      actions_sha256:
+        description: Required SHA256 when actions is supplied
+        required: false
+        type: string
 permissions:
   contents: read
-  pages: write
-  id-token: write
-
-concurrency:
-  group: github-pages
-  cancel-in-progress: true
-
+  actions: read
 jobs:
-  build-and-deploy:
-    name: Build Web Player and Deploy Pages
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+  prepare:
+    name: Lock source and candidate policy
+    runs-on: ubuntu-24.04
+    outputs:
+      policy_json: ${{ steps.policy.outputs.policy_json }}
+      policy_sha256: ${{ steps.policy.outputs.policy_sha256 }}
+      profile_sha256: ${{ steps.policy.outputs.profile_sha256 }}
+      version: ${{ steps.policy.outputs.version }}
+      source_sha: ${{ steps.identity.outputs.source_sha }}
+      expected_json: ${{ steps.identity.outputs.expected_json }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      # Node 22: the smoke's CDP client uses the global WebSocket, which is
-      # behind --experimental-websocket on Node 20/21.
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-
-      - name: Install web dependencies
-        working-directory: web
-        run: npm ci --no-audit --no-fund
-
-      - name: Install Lua (POSIX interpreter)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y lua5.4
-          if command -v lua5.4 >/dev/null; then sudo ln -sf "$(command -v lua5.4)" /usr/local/bin/lua; fi
-
-      - name: Regenerate web scripts index (freshness guard)
-        run: node web/gen-index.mjs
-
-      # web/vite.config.js closeBundle copies cache/story into dist
-      # unconditionally; on a bare checkout it does not exist yet.
-      - name: Bake demo story bundle
-        run: lua scripts/ks_bake.lua --dir demo --web cache/story
-
-      - name: Build web player (vite build)
-        working-directory: web
-        run: npm run build
-
-      # --no-web-build reuses web/dist from the npm build above; the script
-      # keeps its game-specific override so only the chosen game bundle ships.
-      - name: Package game static site
-        env:
-          GAME_INPUT: ${{ inputs.game }}
-        run: bash scripts/package_game.sh --no-web-build "$GAME_INPUT"
-
-      # The exit 1 below is load-bearing: every later step reads $OUT from this
-      # output, so an empty OUT must never reach the verify/smoke/upload steps.
-      - name: Resolve packaged output directory
-        id: resolve
-        run: |
-          OUT="$(find dist -mindepth 1 -maxdepth 1 -type d | sort | head -n 1)"
-          if [ -z "$OUT" ] || [ ! -f "$OUT/index.html" ]; then
-            echo "::error::No packaged static site under dist/ (expected dist/<game>/index.html)"
-            exit 1
-          fi
-          echo "Resolved package directory: $OUT"
-          echo "out=$OUT" >> "$GITHUB_OUTPUT"
-
-      - name: Verify packaged site (25 assertions, hard gate)
-        env:
-          OUT: ${{ steps.resolve.outputs.out }}
-        run: bash scripts/verify_web_package.sh "$OUT"
-
-      # CHROME_BIN is exported by the ubuntu runner image; CI=true makes the
-      # smoke add --no-sandbox. The subpath run mirrors the project-site mount
-      # (https://<owner>.github.io/<repo>/).
-      - name: Browser smoke (root + project-site subpath, hard gate)
-        env:
-          OUT: ${{ steps.resolve.outputs.out }}
-          REPO_NAME: ${{ github.event.repository.name }}
-        run: |
-          node scripts/web_browser_smoke.mjs --root "$OUT" --browser chrome
-          node scripts/web_browser_smoke.mjs --root "$OUT" --browser chrome --subpath "$REPO_NAME"
-
-      - name: Upload smoke screenshots
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: web-smoke-screenshots
-          path: build/web-smoke/*.png
-          if-no-files-found: ignore
-
-      - name: Setup Pages
-        uses: actions/configure-pages@v5
-
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: ${{ steps.resolve.outputs.out }}
-
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+    - uses: actions/checkout@v4
+      with:
+        ref: ${{ github.sha }}
+        fetch-depth: 0
+        persist-credentials: false
+        submodules: recursive
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+    - name: Verify the explicit execution head
+      id: identity
+      env:
+        SOURCE_SHA: ${{ github.sha }}
+      run: |
+        python - <<'PY'
+        import json, os, re, subprocess
+        from pathlib import Path
+        assert Path('.git').exists(), 'Missing Git checkout'
+        source = os.environ['SOURCE_SHA']
+        assert re.fullmatch('[0-9a-f]{40}', source), 'Full source SHA required'
+        assert subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip() == source, 'Wrong checkout'
+        expected = dict(schema_version=1, repository=os.environ['GITHUB_REPOSITORY'],
+            repository_id=int(os.environ['GITHUB_REPOSITORY_ID']), source_sha=source, trigger_head_sha=source,
+            run_id=int(os.environ['GITHUB_RUN_ID']), run_attempt=int(os.environ['GITHUB_RUN_ATTEMPT']),
+            source_mode='head', workflow_path='.github/workflows/deploy-web.yml',
+            workflow_ref=os.environ['GITHUB_WORKFLOW_REF'], workflow_sha=os.environ['GITHUB_WORKFLOW_SHA'],
+            called_workflow_path='.github/workflows/validate-engine.yml', called_workflow_sha=os.environ['GITHUB_WORKFLOW_SHA'])
+        with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
+            output.write('source_sha=' + source + '\n')
+            output.write('expected_json=' + json.dumps(expected, separators=(',', ':')) + '\n')
+        PY
+    - name: Freeze the source policy before producer fanout
+      id: policy
+      env:
+        SOURCE_SHA: ${{ steps.identity.outputs.source_sha }}
+      run: python scripts/prepare_release_policy.py --repo . --output "$RUNNER_TEMP/release-policy.json" --github-output "$GITHUB_OUTPUT"
+  validate:
+    name: Validate engine
+    needs:
+    - prepare
+    uses: ./.github/workflows/validate-engine.yml
+    with:
+      source_sha: ${{ needs.prepare.outputs.source_sha }}
+      trigger_head_sha: ${{ needs.prepare.outputs.source_sha }}
+      source_mode: head
+      workflow_path: .github/workflows/deploy-web.yml
+      workflow_ref: ${{ github.workflow_ref }}
+      workflow_sha: ${{ github.workflow_sha }}
+      called_workflow_sha: ${{ github.workflow_sha }}
+      called_workflow_path: .github/workflows/validate-engine.yml
+      pull_request_number: ''
+      policy_sha256: ${{ needs.prepare.outputs.policy_sha256 }}
+      profile_sha256: ${{ needs.prepare.outputs.profile_sha256 }}
+      engine_version: ${{ needs.prepare.outputs.version }}
+      web_game: ${{ inputs.game }}
+      web_actions: ${{ inputs.actions }}
+      web_actions_sha256: ${{ inputs.actions_sha256 }}
+  aggregate:
+    name: Verify release inputs
+    if: ${{ always() }}
+    needs:
+    - prepare
+    - validate
+    uses: ./.github/workflows/verify-release-inputs.yml
+    with:
+      source_sha: ${{ needs.prepare.outputs.source_sha }}
+      expected_json: ${{ needs.prepare.outputs.expected_json }}
+      policy_json: ${{ needs.prepare.outputs.policy_json }}
+      policy_sha256: ${{ needs.prepare.outputs.policy_sha256 }}
+      producer_outputs_json: ${{ toJSON(needs.validate.outputs) }}

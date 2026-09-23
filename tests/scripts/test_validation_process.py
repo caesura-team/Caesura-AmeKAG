@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 import os
 import subprocess
 import sys
@@ -117,6 +118,120 @@ class ValidationProcessTests(unittest.TestCase):
         self.assertFalse((self.root / "injected.txt").exists())
 
     if os.name == "nt":
+        def assert_exact_descendant_handles_signaled(self, *, timed_out):
+            import ctypes
+            from ctypes import wintypes
+
+            kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+            kernel.OpenProcess.restype = wintypes.HANDLE
+            kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+            kernel.WaitForSingleObject.restype = wintypes.DWORD
+            kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+            kernel.CloseHandle.restype = wintypes.BOOL
+            identities = self.root / "descendants.json"
+            child = "import time; time.sleep(60)"
+            parent = (
+                "import subprocess,sys,json,time; from pathlib import Path; "
+                f"children=[subprocess.Popen([sys.executable,'-c',{child!r}]) for _ in range(32)]; "
+                f"Path({str(identities)!r}).write_text(json.dumps([p.pid for p in children])); "
+                + ("time.sleep(60)" if timed_out else "sys.exit(17)")
+            )
+            handles = []
+            original_cleanup = validation_process._WindowsJob.terminate_and_wait
+
+            def capture_before_termination(job):
+                self.assertTrue(identities.is_file(), "actual descendants must start before the timeout")
+                for pid in json.loads(identities.read_text()):
+                    handle = kernel.OpenProcess(0x00101000, False, pid)  # SYNCHRONIZE | QUERY_LIMITED_INFORMATION
+                    self.assertTrue(handle, f"cannot retain actual descendant handle {pid}")
+                    handles.append((pid, handle))
+                original_cleanup(job)
+
+            try:
+                with mock.patch.object(validation_process._WindowsJob, "terminate_and_wait", capture_before_termination):
+                    if timed_out:
+                        with self.assertRaises(subprocess.TimeoutExpired):
+                            self.invoke([sys.executable, "-c", parent], timeout=3)
+                    else:
+                        self.assertEqual(self.invoke([sys.executable, "-c", parent]), 17)
+                # An exact process HANDLE is signaled only after actual exit;
+                # this assertion must happen immediately at the API boundary.
+                states = [(pid, kernel.WaitForSingleObject(handle, 0)) for pid, handle in handles]
+                self.assertEqual(len(states), 32)
+                self.assertTrue(all(state == 0 for _, state in states),
+                                f"owned process handles were not signaled at return: {states}")
+            finally:
+                # Preserve the first observed failure while allowing the test
+                # directory to be removed after these exact children finish.
+                for _, handle in handles:
+                    kernel.WaitForSingleObject(handle, 10000)
+                    kernel.CloseHandle(handle)
+
+        def test_timeout_waits_for_exact_descendant_handles_before_returning(self):
+            self.assert_exact_descendant_handles_signaled(timed_out=True)
+
+        def test_parent_exit_waits_for_exact_descendant_handles_before_returning(self):
+            self.assert_exact_descendant_handles_signaled(timed_out=False)
+
+        def test_cleanup_refuses_actual_new_descendants_after_membership_seal(self):
+            attempted = self.root / "attempted.json"
+            unexpected = self.root / "new-child-ran"
+            child = f"from pathlib import Path; Path({str(unexpected)!r}).write_text('escaped')"
+            parent = (
+                "import subprocess,sys,time,json; from pathlib import Path\n"
+                f"Path({str(self.ready)!r}).write_text('ready')\n"
+                f"while not Path({str(self.release)!r}).exists(): time.sleep(0.005)\n"
+                "try:\n"
+                f"    spawned=subprocess.Popen([sys.executable,'-c',{child!r}])\n"
+                "    value={'spawned':True,'pid':spawned.pid}\n"
+                "except OSError as error:\n"
+                "    value={'spawned':False,'winerror':error.winerror}\n"
+                f"Path({str(attempted)!r}).write_text(json.dumps(value))\n"
+                "time.sleep(60)\n"
+            )
+            original_seal = validation_process._WindowsJob._stop_new_processes
+            observed = []
+
+            def seal_and_observe(job):
+                original_seal(job)
+                self.assertTrue(self.ready.is_file())
+                self.release.write_text("attempt a child after membership sealed")
+                deadline = time.monotonic() + 5
+                while not attempted.is_file() and time.monotonic() < deadline:
+                    time.sleep(0.005)
+                self.assertTrue(attempted.is_file(), "existing job member must survive sealing to attempt its spawn")
+                value = json.loads(attempted.read_text())
+                observed.append(value)
+                self.assertFalse(value["spawned"], value)
+                self.assertFalse(unexpected.exists())
+
+            with mock.patch.object(validation_process._WindowsJob, "_stop_new_processes", seal_and_observe):
+                with self.assertRaises(subprocess.TimeoutExpired):
+                    self.invoke([sys.executable, "-c", parent], timeout=1)
+            self.assertEqual(len(observed), 1)
+            self.assertFalse(unexpected.exists())
+
+        def test_reused_pid_snapshot_does_not_retain_unrelated_process_handle(self):
+            # A real unrelated child is returned at the PID-lookup boundary,
+            # modeling a PID reused between the job query and OpenProcess.
+            unrelated = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"],
+                                         cwd=self.root, creationflags=subprocess.CREATE_NO_WINDOW)
+            job = validation_process._WindowsJob()
+            handles = []
+            try:
+                with mock.patch.object(job, "_process_ids", return_value=[unrelated.pid]):
+                    job._retain_processes(handles)
+                self.assertEqual(handles, [])
+                job.terminate_and_wait()
+                self.assertIsNone(unrelated.poll(), "unrelated process must survive owned job cleanup")
+            finally:
+                for handle in handles:
+                    job._kernel.CloseHandle(handle)
+                job.close()
+                unrelated.terminate()
+                unrelated.wait(timeout=10)
+
         def test_command_waits_for_job_assignment_before_starting(self):
             original_assign = validation_process._WindowsJob.assign
 

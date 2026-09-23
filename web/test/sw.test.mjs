@@ -227,12 +227,11 @@ describe('Service Worker classic-script contract (P0 regression lock)', () => {
     expect(/^\s*import\s+(?![(])/m.test(SW_SOURCE)).toBe(false)
   })
 
-  it('sw.js is self-contained: no importScripts of files the build does not deploy', () => {
-    // web/vite.config.js closeBundle and scripts/package_game.sh copy exactly
-    // 'sw.js' by name, so any extra include would 404 at install time and break
-    // registration just as invisibly as an `export` would.
-    const codeLines = SW_SOURCE.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
-    expect(codeLines.some((l) => /importScripts\s*\(/.test(l))).toBe(false)
+  it('sw.js imports only the generated classic offline inventory', () => {
+    const includes = [...SW_SOURCE.matchAll(/\bimportScripts\s*\(['"]([^'"]+)['"]\)/g)].map(match => match[1])
+    expect(includes).toEqual(['./offline-assets.js'])
+    // Behavioral first-install, missing-manifest and final-package inventory
+    // tests live in offline-manifest.test.js and resources.test.js.
   })
 
   it('registers the service worker lifecycle handlers when loaded in a worker scope', () => {
