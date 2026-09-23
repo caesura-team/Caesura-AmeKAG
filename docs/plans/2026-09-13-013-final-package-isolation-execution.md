@@ -428,3 +428,17 @@ macOS CI新增always收集完整安装诊断目录、selection和requirements；
 协议夹具现在同时明确原来的Engine/Lua可执行替代和它专属的Mach-O闭包替代。替代仅在invoke作用域，核对真实被拥有进程必须是FIXTURE_PYTHON、包内引擎必须为固定synthetic字节，结果标为FIXTURE_ONLY/native closure NOT_VERIFIED。真实进程身份、实际模块枚举、显式required库匹配、HTTP、端口和原件变更检测保持运行；生产native_package_runtime、Mac映像解析/闭包和真实包入口零修改。新增跨主机回归先实际RED，模拟外部Mach-O导致RUNTIME_FAIL；修正后GREEN，并在退出夹具作用域后确认同一生产闭包仍拒绝外部映像。
 
 完整维护suite Windows68/68（39.265秒）、WSL69/69（30.943秒）通过，零skip。源锁、owned退出/cleanup、原始流均由root-green-review-01.json重核。实际Mac协议fixture和最终TGZ/DMG仍须由新CI执行，不能从这次本地通过宣称旧Homebrew包泄漏已关闭。平台矩阵只同步代码审阅锚点，历史能力行的commit/日期/证据不改写。
+
+### 当前候选托管门禁与实际 Mac 最终包复核（2026-09-24）
+
+PR25头为 `de70e0a702f0a0206207b51b63886bc532b6e50f`，托管run `35888002078` 的11个作业全部成功。实际CI checkout是该头与base65e5b425的合并提交 `13f6cf8b854f4c27d7092add2d6e777231729026`；lane、包和运行证据绑定此merge SHA，不把它重标成de70原树。终态API原件及摘要保存在 `u22-hosted-de70-01/transfer-03/ci-terminal.json`。
+
+macOS Package作业107277833793留下两次真实安装收据（TGZ与DragNDrop不同物理stage）。每次5处实际load-command/ID重定位，11条Apple工具命令成功，包括SSL/Crypto/Engine的3次ad-hoc签名和3次strict verify；全部owned身份、退出和cleanup已核对。最终Engine、SDL、SSL、Crypto摘要在两个stage完全相同，递归Mach-O闭包通过，非系统依赖均在包内。8个实际Engine进程覆盖两容器的显式token编辑器、生成token编辑器、有限帧引擎与Unicode新建游戏；libproc身份与实际lsof映像吻合，4个核心文件均从各自运行目录加载，没有Homebrew/Cellar映像。原始22条Apple工具及8个Engine进程均有实际OS身份。两次快速author_create Python命令正常退出且输入稳定，但最终Python映像核对前已退出，标记EXITED_BEFORE_VERIFICATION，不能宣称其最终映像已核实。
+
+证据ZIP实际30,028,218字节，SHA256 `bdec86cd2fa844a67a457825c8daca20a42f5d116ab829cfb540ea87e4098500`，与API及上传日志一致。最终包ZIP首次gh获取在240秒超时；维护下载器随后在900.1009秒期限失败，保留55,296,000字节和原FAIL报告。另建诊断性续传，两段各14,984,348字节，HTTP206/精确Content-Range/同ETag核对后拼接到新文件，完整85,264,696字节SHA256 `23344d67bbf3ce04d84dab7feef694463efc8f595b9ce8977e849fd5918a20bf`与GitHub上传摘要完全一致。此续传不冒充U23生产下载器成功，原失败及前缀零改动。
+
+最终TGZ SHA256 `f2d44a33cd2e439af1e3d1a7df5326c0d14185f703887e4ce49e01971bb75a54`，DMG `4e1c065eb466fd2ef4aacd12c97642fdec224fddb862f5af6918ade3abd2efd2`。本机安全提取TGZ后重新解析实际Engine、Lua与必需dylib闭包；实际4个核心文件逐字节摘要与安装/加载记录一致。DMG本机只核对容器字节，内容使用同摘要的真实Mac只读挂载、独立info归属、6条hdiutil成功命令及确认detach证据；其payload preparation本来accepted=false/runtime NOT_RUN，最终包运行门禁另有实际PASS，不把容器提取提升为运行。两个包均无__pycache__/pyc/pyo，文件路径集合相同；libfreetype.a、libsoloud.a、libzstd.a仍各自同大小异摘要，未证实成因，不宣称所有payload相同。
+
+根运行证据复核SHA256 `5398cb0e1748963dff2fd2c30e28f39a35bb6ac9e7c30dd5c5e8801642a05b5f`；最终包复核 `transfer-03/root-final-package-review-01.json` SHA256 `38d829a1b9602c48cefae3b49f0abf117d5170414ec49f958fb05bbc3617c67c`。两次审查脚本错误分别为把lua目录计入可执行集合、误要求仅负责提取的container收据accepted=true，修正依据实际schema；原脚本保留，产品验证器及原收据不改写。
+
+据此关闭本候选已确认的Mac绝对Homebrew运行依赖P1及Python缓存污染；这不追溯修复旧包，也不证明任意干净Mac或物理声音。音频为Software，物理输出NOT_RUN；签名为ad-hoc，未做Developer ID、公证或商店上传。PR仍为draft，TaotianZhufang审查待完成，尚未合并；最新其他平台门禁全绿不等于本段对其所有最终字节进行过同样独审。U23聚合、其余计划项与候选范围验收继续进行。
