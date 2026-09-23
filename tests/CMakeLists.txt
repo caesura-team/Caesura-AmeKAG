@@ -606,6 +606,12 @@ if(Python3_EXECUTABLE)
     set_tests_properties(CaesuraSoak_trace_contract PROPERTIES
         LABELS "qa;performance;validation" TIMEOUT 60
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    add_test(NAME CaesuraSoak_driver_contract
+        COMMAND ${Python3_EXECUTABLE} -B
+                ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_engine_soak_driver.py)
+    set_tests_properties(CaesuraSoak_driver_contract PROPERTIES
+        LABELS "qa;performance;validation" TIMEOUT 120
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     add_test(NAME CaesuraBenchmark_compiled_sampler
         COMMAND ${Python3_EXECUTABLE} -B
                 ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_cpu_benchmark_sampler.py

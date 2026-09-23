@@ -238,3 +238,14 @@ root重算红绿原流、源锁及保存的源码，确认测试正文未变；`
 真实诊断08重新配置后实际发现61项CTest，新旧两个Soak合同入口均通过；六桌面profile最低发现数据此从60提高到61。Release探针完成22周期，测量段2周期/1.2821825秒，外部控制器观察整个受控命令15.157秒，首尾源码和输入/二进制/DLL摘要稳定。维护trace验收器接受这一诊断，66张实际PNG用已有有界RGBA8解码器重新解码，每组完整像素A等于restored且不同于B。run.json摘要 `dfd5ea7c3dcae790a378f4db275496c8fd27426cbba5303cdae7fc210db305f4`，根审查摘要 `a0dea76306f275193259fa9d22b91729d0003182f16601217cb063d2e5ff4690`。
 
 本增量没有修改引擎、探针或Lua负载。之前10089617的完整Debug证据仍只绑定该源码；此新增Python合同只取得定向验证。诊断08没有完成120秒短版、3600秒长版、上下文重建、冷恢复或实际故障负控，校验器返回空错误不授予整个Soak或U27通过。受控维护运行器和这些剩余验收继续推进。
+## 2026-09-24 维护运行器与实际进程观察
+
+新增 `scripts/run_engine_soak.py`，从已配置的Windows foundation构建目录明确构建Release探针，使用全新仓外runtime及固定BMP/WAV/字体输入，记录源码、配置、二进制和DLL摘要。当前只开放diagnostic模式且始终 `accepted_soak=false`；没有把暂时未实现的短版、长版、上下文重建、冷恢复或故障负控暴露为可通过的选项。
+
+进程监督复用既有owned runner，按其原子发布的PID/creation进行OS身份观察；就绪后独立调用Windows模块枚举，要求实际探针、邻接SDL3与系统D3D11映像匹配，并保存模块路径/摘要。启动期限、进度期限、总期限、非零退出和观察异常都会失败并保留实际清理收据，不能以退出0代替工作负载验收。PNG验证复用现有有界RGBA8解码器，逐组检查整张恢复图像相同、改变后的图像不同。
+
+11项维护回归先在未实现入口上实际RED，随后11/11通过且测试方法AST完全保留。进程部分使用真实受控Python子进程；图像部分是合成PNG，均不冒充原生后端证据。新入口加入实际CTest后发现62项，三个Soak合同入口3/3通过；六桌面profile最低发现数由61更新到62。证据在 `artifacts/validation/u27-soak-workload/driver-{red,green,discovery}-01`。
+
+第一次维护诊断在MSBuild FileTracker的CommonApplicationData路径解析处失败，未运行探针。补回用户/公共目录变量后的第二次仍失败。根查阅[MSBuild FileTracker源码](https://github.com/dotnet/msbuild/blob/main/src/Utilities/TrackedDependencies/FileTracker.cs)，并使用真实.NET子进程对照：原失败环境的GetFolderPath(CommonApplicationData)为空，ExpandEnvironmentVariables保留未展开的SystemDrive；只补回SystemDrive后分别恢复为C:\ProgramData。最小修正保留该变量，原两次失败和对照进程均留档；没有修改系统环境配置、源码或验收阈值。
+
+维护诊断03在源码fingerprint `1d9c7ea9e155649be49eaf2cd87d3bde63735380f33e16ece7d614aae61b7391` 首尾稳定时通过。实际PID25788/creation134346634650684644完成22周期，测量段2周期/1.3084895秒，外部观察15.047秒。OS模块观察、全部输入/二进制/结果/事件和66张PNG摘要经根回读；原始run SHA256 `76ad0dd6fab99ddc55ea42dad4b68374e91eac6ce3128de67516ec5bd4fda763`，根审查SHA256 `58edbece71202dab448332e6a9d21199989ba144da3692a9349d56fe0ad02e7b`。全部owned收据实际exit0/cleanup COMPLETE，无超时/强杀；实际探针PID后续已不存在。新完整Debug门禁仍待冻结候选后执行，这项诊断不完成U27或整个计划。
