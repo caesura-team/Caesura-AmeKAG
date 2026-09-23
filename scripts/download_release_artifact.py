@@ -38,7 +38,9 @@ class _Deadline:
     their socket timeout. The total timer is never restarted between requests.
     """
     def __init__(self, seconds):
-        self.end = time.monotonic() + seconds
+        # perf_counter is monotonic and avoids Windows Python 3.12's coarse
+        # GetTickCount64 clock crossing a socket deadline in 15.625 ms steps.
+        self.end = time.perf_counter() + seconds
         self.lock = threading.Lock()
         self.socket = None
         self.stopped = threading.Event()
@@ -47,7 +49,7 @@ class _Deadline:
         self.worker.start()
 
     def _watch(self):
-        if self.stopped.wait(max(0, self.end - time.monotonic())):
+        if self.stopped.wait(max(0, self.end - time.perf_counter())):
             return
         with self.lock:
             self.expired = True
@@ -58,7 +60,7 @@ class _Deadline:
                     pass  # It may already have reached EOF; the caller still fails.
 
     def check(self):
-        _need(not self.expired and time.monotonic() < self.end,
+        _need(not self.expired and time.perf_counter() < self.end,
               "Artifact download exceeded time limit")
 
     def retain(self, owned_socket):
@@ -79,7 +81,7 @@ class _Deadline:
 def _owned_open(request, deadline, connection_factory):
     parsed = urlsplit(request.full_url)
     deadline.check()
-    connection = connection_factory(parsed.hostname, timeout=min(30, deadline.end - time.monotonic()))
+    connection = connection_factory(parsed.hostname, timeout=min(30, deadline.end - time.perf_counter()))
     response = None
     try:
         connection.connect()
@@ -162,7 +164,7 @@ def download_artifact(*, repository, artifact_id, expected_sha256, token, work_d
         "transport":"github" if opener is None and connection_factory is None else "fixture", "repository":repository,
         "artifact_id":artifact_id, "expected_sha256":expected_sha256, "bytes":0,
         "archive":{"path":str(archive), "sha256":None}, "errors":[]}
-    started = time.monotonic()
+    started = time.perf_counter()
     deadline = _Deadline(MAX_SECONDS)
     digest = hashlib.sha256()
     def request_open(request):
@@ -255,8 +257,8 @@ def download_artifact(*, repository, artifact_id, expected_sha256, token, work_d
         deadline.close()
         if archive.exists():
             report["archive"]["sha256"] = digest.hexdigest()
-        report["deadline_exceeded"] = deadline.expired or time.monotonic() >= deadline.end
-        report["seconds"] = time.monotonic() - started
+        report["deadline_exceeded"] = deadline.expired or time.perf_counter() >= deadline.end
+        report["seconds"] = time.perf_counter() - started
         with (work / "download.json").open("x", encoding="utf-8", newline="\n") as stream:
             json.dump(report, stream, ensure_ascii=False, indent=2)
             stream.write("\n")
