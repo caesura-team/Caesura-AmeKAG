@@ -7,6 +7,26 @@ def ksPass = System.getenv('CAESURA_ANDROID_KEYSTORE_PASS') ?: System.getenv('CA
 def kAlias = System.getenv('CAESURA_ANDROID_KEY_ALIAS') ?: System.getenv('CAESURA_KEY_ALIAS') ?: ''
 def kPass  = System.getenv('CAESURA_ANDROID_KEY_PASS') ?: System.getenv('CAESURA_KEY_PASSWORD') ?: ''
 
+// The controlled package driver supplies all five properties together. Ordinary
+// development builds retain the existing defaults and opt-in signing behavior.
+def controlledNames = ['caesuraVersionName', 'caesuraVersionCode', 'caesuraNdkVersion',
+                       'caesuraBuildToolsVersion', 'caesuraKeepJniBytes']
+def controlled = controlledNames.any { project.hasProperty(it) }
+if (controlled) {
+    if (!controlledNames.every { project.hasProperty(it) }
+            || !(project.property('caesuraVersionName').toString() ==~ /\d+\.\d+\.\d+/)
+            || !(project.property('caesuraVersionCode').toString() ==~ /[1-9]\d{0,9}/)
+            || project.property('caesuraVersionCode').toString().toLong() >= 2147483648L
+            || project.property('caesuraNdkVersion').toString() != '27.3.13750724'
+            || project.property('caesuraBuildToolsVersion').toString() != '34.0.0'
+            || project.property('caesuraKeepJniBytes').toString() != 'true') {
+        throw new GradleException('Invalid controlled Android package properties')
+    }
+    if (ksPath != null) {
+        throw new GradleException('Controlled packages must be signed outside Gradle')
+    }
+}
+
 android {
     namespace "com.caesura.app"
     compileSdkVersion 35
@@ -14,10 +34,19 @@ android {
         applicationId "com.caesura.app"
         minSdkVersion 24
         targetSdkVersion 35
-        versionCode 1
-        versionName "1.0"
+        versionCode controlled ? project.property('caesuraVersionCode').toString().toInteger() : 1
+        versionName controlled ? project.property('caesuraVersionName').toString() : "1.0"
         ndk {
             abiFilters 'arm64-v8a'
+        }
+    }
+    if (controlled) {
+        ndkVersion project.property('caesuraNdkVersion').toString()
+        buildToolsVersion project.property('caesuraBuildToolsVersion').toString()
+        packaging {
+            jniLibs {
+                keepDebugSymbols += ['**/*.so']
+            }
         }
     }
     signingConfigs {
