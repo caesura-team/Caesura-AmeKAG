@@ -200,3 +200,10 @@ Entry通过BackendRegistry取得renderer并恰好读取一次owned snapshot；ma
 干净提交 `3c5b8c0a76fbde101554550e6a2c2a06db9ec937` 的完整 Windows Debug 验证已通过：全量构建退出0，C++1477/1477、444441断言、0失败/0跳过，Lua147/147及56/56通过，CTest59项中58通过、0失败、1项预声明可选AI服务跳过。execute、collector和strict verifier均退出0，进程所有权清理完成，无超时或强杀；源码与运行输入首尾稳定。CTest用时657.33秒。
 
 运行标识为 `8f1c685b-4a76-4a36-8527-d8ccb14f49da`，源码fingerprint为 `799fe91583e786b7fc97943210d676109bb9ea10fceba3614f8ef84f9f02ac8f`。原始 `artifacts/validation/u27-render-full-01/raw/run.json` SHA256为 `90871d5ad7a6c818f9fea8ab99900c17264db52e93b343bd1c96d370ea32b481`；根复核 `root-green-review-01.json` 重新校验29份原始流/报告及CTest XML。此结果覆盖该提交的renderer/RPC集成和计时修复，不替代尚未执行的一小时Release真实后端工作负载，也不提升native unanswered readback、post-Core失败及其他平台的证据状态。U27整体继续保持未完成。
+### 2026-09-24 — 原生长跑静止点检查器
+
+新增纯观测检查器 `engine_soak_contract.py`，先以空实现运行14个冻结回归，真实得到94个失败子断言；实现后同一测试正文14/14通过。检查支持/完整性标志、实际Device/Direct3D11/DirectDrain模式、异步与音频逐阶段债务、截图队列与原生readback、11项渲染计数及固定缓存/内存预算；缺失、未知、负数、浮点和布尔冒充计数均不默认成零。上下文代次变化要求显式新基准。RSS与OS句柄只作为诊断计数，不替代private bytes。
+
+root重算红绿原流、源锁及保存的源码，确认测试正文未变；`quiet-root-review-01.json` SHA256 `99ab642916094a6562788e1490c72dab2b2e7fad9fa49be4b3cc79e2de16d978`。新增CTest入口实际执行通过，Debug实际发现60项；六桌面profile按ctest id将最低发现数59提升至60。注册脚本第一次调用路径错误，原exit2保留；改用现有 `tests/scripts/check_test_coverage.py` 后204 Lua/94 C++文件全部注册，属于注册完整性而非覆盖率。`quiet-registration-02/run.json` SHA256 `7ed16fdd7e5428dcd46a48f6ddb2dd76bc4a86220b4ef16ae8dba8241221869f`，configure/discovery/CTest/注册检查退出0，源码首尾稳定。
+
+本批输入是手工构造的观测fixture，不是原生后端或长跑证明。实际workload探针、逐周期进度/身份/时长验证、真实资源与阻塞任务负控、短跑和连续一小时运行仍待完成，不能用静止点检查器通过替代U27验收。

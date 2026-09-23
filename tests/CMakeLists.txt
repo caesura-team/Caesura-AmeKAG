@@ -586,6 +586,12 @@ if(Python3_EXECUTABLE)
     add_test(NAME CaesuraBenchmark_compare_contract
         COMMAND ${Python3_EXECUTABLE} -B
                 ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_compare_benchmarks.py)
+    add_test(NAME CaesuraSoak_quiet_contract
+        COMMAND ${Python3_EXECUTABLE} -B
+                ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_engine_soak_contract.py)
+    set_tests_properties(CaesuraSoak_quiet_contract PROPERTIES
+        LABELS "qa;performance;validation" TIMEOUT 60
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     add_test(NAME CaesuraBenchmark_compiled_sampler
         COMMAND ${Python3_EXECUTABLE} -B
                 ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_cpu_benchmark_sampler.py
