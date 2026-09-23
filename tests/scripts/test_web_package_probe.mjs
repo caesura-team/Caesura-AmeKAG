@@ -31,7 +31,11 @@ function packet(value) {
   const head = Buffer.alloc(4); head[0] = 0x81; head[1] = 126; head.writeUInt16BE(payload.length, 2)
   return Buffer.concat([head, payload])
 }
-async function protocolFixture(t, responder, versionOverride, ports = [0]) {
+// An OS-assigned port can be Fetch/WebSocket-blocked on hosts whose ephemeral
+// range includes low ports. Ordinary protocol tests need a usable WebSocket;
+// the explicit blocked-port tests below keep their own deliberate selections.
+const ordinaryFixturePorts = Array.from({ length: 64 }, (_, index) => 49152 + index)
+async function protocolFixture(t, responder, versionOverride, ports = ordinaryFixturePorts) {
   const commands = [], requests = [], sockets = new Set()
   const server = createServer((req, res) => {
     requests.push(req.url)
@@ -213,7 +217,8 @@ test('wrong browser PID is rejected before any Target or Runtime mutation', asyn
   const base = directory(t), out = join(base, 'wrong-pid')
   const f = await protocolFixture(t, call => call.method === 'SystemInfo.getProcessInfo' ? { result: { processInfo: [{ type: 'browser', id: 9999 }] } } : { error: { message: 'Unexpected command' } })
   const result = await invoke(fixtureArgs(out, f)); assert.notEqual(result.code, 0)
-  assert.deepEqual(f.commands.map(x => x.method), ['SystemInfo.getProcessInfo']); assert.equal(readReport(out).browser_pid_verified, false)
+  assert.ok(Number(new URL(f.cdp).port) >= 49152, 'Ordinary fixture must use its declared WebSocket-compatible range')
+  assert.deepEqual(f.commands.map(x => x.method), ['SystemInfo.getProcessInfo'], JSON.stringify({ endpoint: f.cdp, requests: f.requests, report: readReport(out, result), invocation: result })); assert.equal(readReport(out).browser_pid_verified, false)
 })
 test('ambiguous browser process response is refused without page fallback', async t => {
   const base = directory(t), out = join(base, 'multiple-pids')

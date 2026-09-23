@@ -249,3 +249,11 @@ root重算红绿原流、源锁及保存的源码，确认测试正文未变；`
 第一次维护诊断在MSBuild FileTracker的CommonApplicationData路径解析处失败，未运行探针。补回用户/公共目录变量后的第二次仍失败。根查阅[MSBuild FileTracker源码](https://github.com/dotnet/msbuild/blob/main/src/Utilities/TrackedDependencies/FileTracker.cs)，并使用真实.NET子进程对照：原失败环境的GetFolderPath(CommonApplicationData)为空，ExpandEnvironmentVariables保留未展开的SystemDrive；只补回SystemDrive后分别恢复为C:\ProgramData。最小修正保留该变量，原两次失败和对照进程均留档；没有修改系统环境配置、源码或验收阈值。
 
 维护诊断03在源码fingerprint `1d9c7ea9e155649be49eaf2cd87d3bde63735380f33e16ece7d614aae61b7391` 首尾稳定时通过。实际PID25788/creation134346634650684644完成22周期，测量段2周期/1.3084895秒，外部观察15.047秒。OS模块观察、全部输入/二进制/结果/事件和66张PNG摘要经根回读；原始run SHA256 `76ad0dd6fab99ddc55ea42dad4b68374e91eac6ce3128de67516ec5bd4fda763`，根审查SHA256 `58edbece71202dab448332e6a9d21199989ba144da3692a9349d56fe0ad02e7b`。全部owned收据实际exit0/cleanup COMPLETE，无超时/强杀；实际探针PID后续已不存在。新完整Debug门禁仍待冻结候选后执行，这项诊断不完成U27或整个计划。
+
+### 2026-09-24 — 完整门禁失败与 Web 协议夹具端口前提
+
+干净 `62b6ec15a2ef31bb73a87e8066836261fe22dc5b` 的完整运行 `99294a77-d52b-4a75-abb1-f812ec65f237` 被拒绝。Debug全量构建、C++1477/1477（444441断言、0失败/0跳过）及Lua147+56通过；CTest62项为60通过、1失败、1预声明可选AI跳过，用时641.09秒。唯一失败为 `CaesuraPackage_web_probe`：其33项中32通过，错误浏览器PID用例在收到预期SystemInfo查询前失败，实际命令列表为空。execute、collector及strict均非零，源码与输入稳定，owned清理完成。原run摘要 `70a0d0445411007462e5c09f7590c348496903294fd356edb9a2f11240ee9e13`，根复核29份流/报告的失败审查摘要 `9bc7375737486eb6ecb01f3b89c23d1f85cfd1dd82dd4901a335c850bf39f743`；原失败不改判为通过。
+
+原测试自动清理了子报告且未记录实际端口，无法确定这次完整运行的唯一根因。本机只读查询显示动态TCP范围为1024起、13977个端口，包含[Fetch标准受限端口](https://fetch.spec.whatwg.org/#port-blocking)。对保存的原测试副本进行一次明确6665端口负控与一次49152正控：前者真实CLI在WebSocket连接阶段失败、没有PID查询，重现相同空列表；后者确实发送唯一SystemInfo查询并拒绝9999这个错误PID，未执行Target或Runtime操作。两次源码身份稳定，原流与测试副本均保留在 `u27-web-probe-port-01/02`。这是已复现的夹具前提缺口，不把推断写成原始失败的确定归因。
+
+普通协议夹具改为独占绑定49152–49215范围内的可用端口；遇到占用或拒绝绑定才选择下一个，全不可用则明确失败，不动已有监听。故意使用受限端口的测试保留原选择。错误PID断言保留并补充实际endpoint、请求与子报告诊断。生产探针、全部原有测试正文/断言、进程期限及验收门槛不变；实际Node33/33、0失败/0跳过和定向CTest1/1通过。根回核通过记录 `u27-web-probe-port-green-01/root-review-01.json` 摘要 `69ac7b4f6e0bc4579abe2044ff4ab116a2a858d16fe957a0c6e062f2bf0f82e3`。初版审查误把源码test声明行数当动态发现数，断言失败；第二版改为比较新旧声明数相等，并继续从真实Node输出核对33项，未改测试结果。新完整门禁另起一次执行，定向通过不替代它，也不证明真实浏览器或最终包。
