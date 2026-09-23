@@ -162,3 +162,5 @@ HTTP实际Engine PID29708/creation134343339855401940/port8028由原控制器受�
 定向维护回归ci_execution_lane16/16、release_policy14/14、release_aggregate17/17通过；缓存actionlint1.7.7实际检查五份工作流退出0，shellcheck/pyflakes未启用。运行源码首尾稳定，owned退出/cleanup及原始流摘要完整。根结构比较确认除明确移植的Mac诊断与Web浏览器步骤外，其他producer字段和步骤完全相同；审计`artifacts/validation/u23-mac-integration-01/root-review-01.json` SHA256为`6713db47fde09ea3b2971ce222e9894d5b83b07ea344edefdbf9b10fab5f1acd`。首个辅助解析采用Windows默认GBK失败、首个审查脚本误写Web步骤名称，均保留原脚本与失败；修正显式UTF-8/实际名称，没有重跑configure或更改产品验收条件。
 
 新的完整Debug门禁与托管run/全部产物聚合将在冻结候选后执行。真实AE7取消/调包、服务端required-check有效绑定及发布dry-run仍未闭合，现有fixture通过不替代这些验证。没有发布、部署、合并到master或改变服务端规则。
+
+后继9469de8a已推送PR26并启动run35900249193，原首轮79e8b439失败继续保留。同时U22文档后继8c的Mac CI在真实libproc观察到`/bin/bash`，与进程测试夹具的`#!/bin/sh`不符，提前触发严格拒绝。整合已审U22 b51e44c1的纯夹具修正为merge363c151c：Mac显式声明bash，增加真实POSIX解释器屏障，原脚本篡改断言、生产运行器及所有来源/字节约束不变。Windows35/35、Linux41/41及源锁复核绑定原U22增量；新Mac实际执行仍待CI，不能据本地结果关闭该项。U23完整门禁在此修正后的冻结头运行，不执行先前仅准备但未启动的9469全量驱动。
