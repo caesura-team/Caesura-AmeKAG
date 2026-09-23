@@ -257,6 +257,23 @@ if(Python3_EXECUTABLE)
             TIMEOUT 480
             RUN_SERIAL TRUE
             RESOURCE_LOCK save-files)
+        add_executable(CaesuraCloudCoordinatorRestartProbe probes/cloud_coordinator_restart_probe.cpp)
+        target_link_libraries(CaesuraCloudCoordinatorRestartProbe PRIVATE
+            Caesura::Storage Caesura::Archive Caesura::Debug Caesura::BuildOptions)
+        add_dependencies(CaesuraCloudCoordinatorRestartProbe CaesuraTests)
+        add_test(NAME CaesuraCloudCoordinatorRestart
+            COMMAND ${Python3_EXECUTABLE} -B
+                ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_cloud_coordinator_restart.py
+                --source-root ${CMAKE_SOURCE_DIR}
+                --probe $<TARGET_FILE:CaesuraCloudCoordinatorRestartProbe>
+                --attempt-root ${CMAKE_BINARY_DIR}/ccr)
+        set_tests_properties(CaesuraCloudCoordinatorRestart PROPERTIES
+            LABELS "storage;filesystem;isolation;recovery"
+            WORKING_DIRECTORY "$<TARGET_FILE_DIR:CaesuraCloudCoordinatorRestartProbe>"
+            FIXTURES_REQUIRED caesura-test-assets
+            TIMEOUT 480
+            RUN_SERIAL TRUE
+            RESOURCE_LOCK save-files)
     endif()
     if(WIN32)
         add_executable(CaesuraPresentationColdProbe probes/presentation_cold_probe.cpp)

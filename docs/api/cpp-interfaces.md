@@ -1080,7 +1080,7 @@ SaveManager 持有读取结果，验证其 CAES/明文策略、key 和可加载�
 
 所有方法为单owner-thread合同。运行期选择绑定真实随机sessionId与单调generation；provider、key、策略、init或迁移合同变化撤销旧绑定，同实例须换scope/epoch后显式绑定。校验回调中的重入配置修改会被拒绝，旧provider/key仍存活，外层返回ContextChanged。新实例恢复同一持久命名空间仍须显式绑定与原件复验。Compatible明文只能称ValidCurrentPolicy，不能称认证存档。
 
-当前定向验证包含真实CAES、磁盘、HTTP、原子writer失败与Windows/Linux执行；独立进程协调器恢复仍在补齐。完整U26、真实SDK账号、远端CAS与断电持久性不由此API文档宣称完成。
+当前验证包含真实CAES、磁盘、HTTP、原子writer失败与Windows/Linux执行；两端还分别完成51个独立协调器进程，验证游标发布前后终止、发布后摘要异常、当前密钥拒绝、只读重放和原字节历史导出。该跨进程探针的云端使用文件测试适配器，HTTP证据来自另外的真实回环测试。具体提交、原始结果与边界见[U26执行记录](../plans/2026-09-20-016-optional-sdk-cloud-boundaries-execution.md)。完整U26、真实SDK账号、远端CAS与断电持久性不由此API文档宣称完成。
 
 ---
 

@@ -145,3 +145,15 @@ CloudConflictStore 现已实现 owner 限定的不可变本地观察记录：在
 桌面C++门槛按新增15个无平台条件方法提升15（Win1455/Linux1411/macOS1298），保留原平台保守下界；实际Linux发现1439另外记录，不能将下界冒充发现数。CTest仍58。生成api-stats与手册同步两个可选接口，纯虚方法452、接口头40来自源码扫描，不是覆盖率。
 
 本批尚缺协调器receipt/祖先游标的独立child终止/重开五场景、最终完整Debug门禁及后续审查。现有B1五场景23child只证明底层opaque记录，不代替B2/B3的CAES/选择/receipt恢复。真实Steam账号、Live2D运行与SDK ON、远端CAS、断电持久性及整个U26继续未完成。
+
+### B2/B3 完整 Windows 门禁与双平台冷进程恢复（2026-09-24）
+
+干净提交 `7f09c75aab8af82422a4cf3d34914f1166cff443` 完整Windows Debug验证通过：全量build0、C++1455/1455与433511断言（0失败、0跳过）、Lua147/147＋56/56；CTest58项中57通过、0失败、1项预声明CaesuraHeadlessAiSmoke可选服务跳过，657.90秒。执行器、collector、strict verifier均0，源码与fixture首尾稳定，owned清理完成且无超时强杀。run为 `684f120f-98f8-40e5-810a-3e3b16ed6658`，原run SHA256 `c8e739fc6ef4037b7238a077d27205da56c2352a979d9bbf95ce4605179d4f1a`；根重新核对29份流/报告与CTest XML，复核文件SHA256 `564c77d6f088457ce726f8e0614be2340e35d19574aef3c9de0d8e9677204581`。此完整结果只覆盖该提交，随后新增探针另行验证。
+
+新 `CaesuraCloudCoordinatorRestartProbe` 使用真实SaveManager/Crypto生成并load两份大于70KB的AES-256-GCM CAES存档，通过Registry取得可选协调器。云端是明确标注的文件测试适配器，两端均调用既有typed磁盘reader；旧式读取和所有端点写入均拒绝并计数，不将它称作HTTP或Steam网络验收。五场景为游标Replace前受控退出、Replace前进程自身异常终止、发布后正常返回、发布后异常终止、实际已发布游标参与真实SHA计算后抛一次异常。每个场景由不同原生进程建立基准、操作、按原receipt引用重开、重复token、错误SHA/错误钥匙负控、原始CAES历史导出与重复导出；加上真实夹具生成共51个独立进程。
+
+首次Windows构建失败于新测试目标漏连Debug日志库（LNK2019），原始 `u26-coordinator-cold-win-01` 保留；仅补齐测试target依赖后，Windows与Linux首轮分别51/51通过。原B1五场景/23进程驱动及其正文保持不变，两端重新执行均通过。进一步审查发现内容哈希不能排除相同字节重写，因此只加强driver的dev/inode、大小、mtime/ctime身份断言（不比较读取可改变的atime）；产品源码未改动。加强后Windows `u26-coordinator-cold-win-03` 与Linux `u26-coordinator-cold-linux-02` 再次分别51协调器＋23 B1进程全部通过。游标发布前未晋升新祖先；发布后Indeterminate由新进程得到RecoveredSelected；旧祖先重复token只返回Superseded，不倒退游标。错误外部SHA与新进程错误密钥均被拒绝。读取/重复操作不访问实时端点，历史树内容和文件身份不变，导出只增加独占副本且原CAES字节完全相同。
+
+加强版冻结源码fingerprint为 `811799667d5ff791796454c1769b58c4634e95c37a335752a49194547915c2e2`，各命令首末稳定，全部owned清理完成、无runner超时强杀；场景自身异常退出Windows为74、Linux为SIGKILL(-9)，受控前置退出为73，均由父进程核对真实OS身份。Windows协调器报告SHA256 `a663a64d4f361ed16aec217bb255700bed267f603ecd8a6ff46e492adcaf2908`，Linux报告 `f2c0f23461a851a4c045f82c94a2d76c845dc7b25112a1f0bd2f88b42a5d2d85`。根各复核230份原始引用、74个独立进程、全部源锁和最终真实文件树；复核文件分别为 `c76811fa9d3b99cfe3d9d1d4e99752a37935b6f9cd0032e0ca665b2ec91992d5` 与 `4992acad6c23fb577da75a751af5ccff7c0f9f11bcfe478fefe22cbc17160cd2`。Windows短临时fixture及Linux `/var/tmp` 目录全部留存，报告绑定绝对路径与物理身份；没有承诺任意Windows长路径。
+
+新增CTest只注册host构建，C++方法数不变。Windows Debug/Release实际各发现59项；发现Release原门槛漏计旧B1探针，因此六桌面profile统一最低59（Debug加1，Release补齐旧探针后加1）。该数是注册门槛，不声称其他平台完整执行。新增探针后的干净完整门禁继续进行；真实Steam账号/客户端、合法Live2D模型及SDK ON、远端CAS和断电持久性仍分别未验，整个U26尚未关闭。
