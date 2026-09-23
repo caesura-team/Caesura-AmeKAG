@@ -4,6 +4,7 @@
 #include <cctype>
 #include <filesystem>
 #include <fstream>
+#include <regex>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -294,7 +295,10 @@ TEST_CASE("Install layout includes configured demo entry script") {
     CHECK(config.find("config.thumbnail_format  = \"png\"") != std::string::npos);
 
     const std::string cmake = readFile(repoRoot / "CMakeLists.txt");
-    CHECK(cmake.find("install(DIRECTORY scripts/ DESTINATION scripts)") != std::string::npos);
+    // Install filters may follow the destination. Actual installed/CPack bytes,
+    // including cache exclusion, are checked by test_package_runtime_install.py.
+    CHECK(std::regex_search(cmake,
+        std::regex(R"(install\(DIRECTORY\s+scripts/\s+DESTINATION\s+scripts(?:\s|\)))")));
     CHECK(cmake.find("install(DIRECTORY demo/ DESTINATION demo)") != std::string::npos);
 }
 

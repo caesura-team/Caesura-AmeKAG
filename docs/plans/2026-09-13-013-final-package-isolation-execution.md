@@ -410,3 +410,10 @@ build_engine引用按冻结合同仅为原输入只读身份，CMake安装会合
 CTest新增coordinator注册，保持240秒超时；实际configure与JSON发现exit0，发现51个入口，新入口恰好一次。六个desktop profile仅按ctest check id将最低发现数50提升至51。直接调用ci_package_lane维护suite时漏传现有构建的Lua路径，34方法中的实际打包方法报环境ERROR，原失败保留。随后使用正式CTest注册入口（传递CAESURA_TEST_LUA和generator），原34方法全通过，没有改测试或产品。
 
 macOS CI新增always收集完整安装诊断目录、selection和requirements；有限Apple工具版本参数诊断仅为DIAGNOSTIC_ONLY，失败/不支持参数保留实际结果，不覆盖原包门禁。新的Apple工具和TGZ/DMG实际运行仍待托管CI；当前本地结果不关闭旧包的Homebrew绝对依赖P1。
+
+
+### 首次完整门禁与旧安装断言修正（2026-09-23）
+
+干净e5399223运行e5a9aa5c-f758-4987-babb-536936652731整体FAIL：全量build0，C++1415中1414通过/1失败（427088断言中1失败），Lua147/56通过；CTest51项中49通过、1失败、1项预声明AI skip。两个C++执行均只失败于原test_source_encoding的安装文字断言，它要求scripts安装命令在DESTINATION之后立即闭合，因新增合法PATTERN缓存排除而不匹配。实际scripts安装/CPack字节合同和新coordinator均通过；strict verifier仍明确拒绝整体运行。
+
+修正仅让原静态断言识别DESTINATION scripts之后合法的空白/参数或闭括号，保留原方法、其余断言和安装内容验证。实际重建后整个source_encoding文件23方法/315断言通过；筛选未选中的1392方法不算完整通过。原失败、命令与流均保留，新的完整门禁仍须运行。
