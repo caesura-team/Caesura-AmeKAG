@@ -1,12 +1,14 @@
-"""Owned native soak diagnostics; complete soak acceptance is not yet enabled.
+"""Owned native diagnostics and prerequisite-bound short/long soak runs.
 
 Requires an already configured Windows foundation build. Builds the actual
 Release probe, preserves one attempt and uses a fresh external runtime copy.
-Diagnostics never report short/long, cold recovery or release acceptance.
+Diagnostics never report soak acceptance. Long mode requires same-source cold,
+fault and short evidence and one continuously observed native process.
 """
 import argparse
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
+from functools import lru_cache
 import hashlib
 import json
 import math
@@ -132,6 +134,9 @@ def verify_images(output, events):
     captures = [event for event in events if event['event'] == 'capture_consumed']
     require(captures and len(captures) % 3 == 0, 'Incomplete screenshot triplets')
     rows, used = [], set()
+    # Every file is still read and hashed. An identical encoded byte string has
+    # identical CRCs and decoded pixels; bound reuse for the finite A/B fixture.
+    decoded = lru_cache(maxsize=4)(decode_png)
     for offset in range(0, len(captures), 3):
         group = captures[offset:offset+3]
         cycle = offset//3
@@ -146,7 +151,7 @@ def verify_images(output, events):
             encoded = path.read_bytes()
             require(type(detail['png_bytes']) is int and len(encoded) == detail['png_bytes'],
                     'PNG byte count differs from consumed output')
-            width, height, pixels = decode_png(encoded)
+            width, height, pixels = decoded(encoded)
             require((width, height) == (640, 360), 'Wrong PNG geometry')
             expected = (130, 35, 50) if page == 'b' else (20, 50, 90)
             pixel = (10*width+10)*4
@@ -186,13 +191,58 @@ def source_identity(repo):
     return _source_identity(repo)
 
 
-def run_diagnostic(repo, build, output, *, contexts=False):
+def verify_prerequisites(mode, selections, source, binaries, cache_sha256):
+    require(mode in ('short','long'), 'Unknown prerequisite mode')
+    kinds = ('cold','fault','short') if mode=='long' else ('cold','fault')
+    require(isinstance(selections,dict) and set(selections)==set(kinds), 'Missing or extra prerequisite selection')
+    statuses = dict(cold='COLD_CONTROLS_REVIEWED',fault='NATIVE_FAULT_CONTROLS_REVIEWED',short='SHORT_REVIEWED')
+    pins = {}
+    for kind in kinds:
+        selection=selections[kind];root=Path(selection['root']).resolve(strict=True)
+        file=safe_file(root,'run.json');digest=sha(file)
+        require(digest==selection.get('sha256'), 'Prerequisite differs from caller digest: '+kind)
+        value=json.loads(file.read_text(encoding='utf-8'))
+        require(value.get('status')==statuses[kind] and value.get('accepted_soak') is False, 'Prerequisite is not reviewed: '+kind)
+        require(value.get('source_stable') is True and value.get('source_before')==value.get('source_after')==source,
+                'Prerequisite source differs: '+kind)
+        require(value.get('binary_locks')==binaries, 'Prerequisite binary/DLL selection differs: '+kind)
+        pins[kind]=dict(root=str(root),run_sha256=digest)
+        if kind=='short':
+            require(value.get('mode')=='short' and value.get('context_restart')=='OBSERVED', 'Missing real short context run')
+            require(value.get('configuration',{}).get('cache_sha256')==cache_sha256, 'Short configuration differs')
+            for control in ('cold','fault'):
+                require(value.get('prerequisites',{}).get(control,{}).get('run_sha256')==pins[control]['run_sha256'],
+                        'Short run selected another control: '+control)
+            continue
+        baseline_root=Path(value['baseline_root']).resolve(strict=True);baseline_file=safe_file(baseline_root,'run.json')
+        baseline_digest=sha(baseline_file)
+        require(baseline_digest==value.get('baseline_run_sha256'), 'Control baseline bytes changed: '+kind)
+        baseline=json.loads(baseline_file.read_text(encoding='utf-8'))
+        require(baseline.get('status')=='DIAGNOSTIC_REVIEWED' and baseline.get('source_stable') is True
+                and baseline.get('source_before')==baseline.get('source_after')==source
+                and baseline.get('binary_locks')==binaries
+                and baseline.get('configuration',{}).get('cache_sha256')==cache_sha256, 'Control baseline identity differs: '+kind)
+        pins[kind].update(baseline_root=str(baseline_root),baseline_run_sha256=baseline_digest)
+        if kind=='cold':
+            require(value.get('cold_restart')=='OBSERVED' and value.get('corrupt_control')=='REJECTED_WITH_OLD_PAGE', 'Cold recovery/corruption control incomplete')
+        else:
+            stages=value.get('stages',[])
+            require([s.get('role') for s in stages]==['fault-resources','fault-worker','fault-stall']
+                    and all(s.get('status')=='EXPECTED_REJECTION_REVIEWED' for s in stages), 'Native fault controls incomplete')
+    return pins
+
+
+def run_diagnostic(repo, build, output, *, contexts=False, mode=None, prerequisites=None):
+    mode=mode or ('context-diagnostic' if contexts else 'diagnostic')
+    require(mode in ('diagnostic','context-diagnostic','short','long'), 'Unknown native workload mode')
+    contexts=mode!='diagnostic'
+    gated=mode in ('short','long')
     repo, build = Path(repo).resolve(strict=True), Path(build).resolve(strict=True)
     output = Path(output).absolute()
     require(os.name == 'nt', 'This native D3D11/Device lane requires Windows')
     require(not output.resolve().is_relative_to(repo), 'Runtime evidence must be outside the source checkout')
     output.mkdir()
-    report = dict(status='FAIL', mode='context-diagnostic' if contexts else 'diagnostic', accepted_soak=False,
+    report = dict(status='FAIL', mode=mode, accepted_soak=False,
                   physical_audibility='NOT_MEASURED', context_restart='NOT_RUN',
                   cold_restart='NOT_RUN', negative_controls='NOT_RUN', commands=[])
     before = None
@@ -206,6 +256,9 @@ def run_diagnostic(repo, build, output, *, contexts=False):
     env.update(PYTHONDONTWRITEBYTECODE='1', PYTHONIOENCODING='utf-8')
     try:
         before = source_identity(repo); report['source_before'] = before
+        if gated:
+            require(isinstance(prerequisites,dict) and set(prerequisites)==({'cold','fault','short'} if mode=='long' else {'cold','fault'}),
+                    'Short/long mode requires explicit prerequisite paths and original digests')
         profiles = json.loads((repo/'scripts/validation_profiles.json').read_text(encoding='utf-8'))
         cache = _validate_environment(profiles['profiles']['windows-release'], repo, build, 'Release')
         for option in ('CAESURA_ENABLE_FFMPEG', 'CAESURA_LIVE2D', 'CAESURA_HAS_STEAM'):
@@ -225,6 +278,9 @@ def run_diagnostic(repo, build, output, *, contexts=False):
         binary_locks = {str(path.resolve()):sha(path) for path in [executable, *executable.parent.glob('*.dll')]}
         sdl = (executable.parent/'SDL3.dll').resolve(strict=True)
         report['binary_locks'] = binary_locks
+        if gated:
+            report['prerequisites']=verify_prerequisites(mode,prerequisites,before,binary_locks,report['configuration']['cache_sha256'])
+            report.update(cold_restart='OBSERVED',negative_controls='EXPECTED_REJECTIONS_REVIEWED')
         home, temp = output/'home', output/'temp'
         home.mkdir(); temp.mkdir()
         system = Path(os.environ['SystemRoot']).resolve(strict=True)
@@ -252,11 +308,12 @@ def run_diagnostic(repo, build, output, *, contexts=False):
             write_json(output/'loaded-modules.json', modules)
             return modules
 
-        argv = [str(executable),str(runtime),str(probe_output),'22','0'] + (['2'] if contexts else [])
+        parameters = (['120','120','2'] if mode=='short' else ['120','3600','6']) if gated else ['22','0'] + (['2'] if contexts else [])
+        argv = [str(executable),str(runtime),str(probe_output),*parameters]
         progress_file = probe_output/('progress.jsonl' if contexts else 'events.jsonl')
         observed = run_observed_command(argv,
             runtime,probe_env,output/'probe-process',probe_output/'initialized.json',progress_file,
-            timeout=120,startup_seconds=30,progress_seconds=10,inspect=inspect)
+            timeout=4200 if mode=='long' else 600 if mode=='short' else 120,startup_seconds=30,progress_seconds=10,inspect=inspect)
         report['probe_observation'] = observed
         require(observed['status'] == 'OBSERVED', observed.get('error', 'Probe observation failed'))
         result_path = safe_file(probe_output, 'contexts.json' if contexts else 'result.json')
@@ -264,7 +321,7 @@ def run_diagnostic(repo, build, output, *, contexts=False):
         result = json.loads(result_path.read_text(encoding='utf-8'))
         if contexts:
             selected = result.get('epochs')
-            require(isinstance(selected,list) and len(selected)==2, 'Diagnostic needs exactly two contexts')
+            require(isinstance(selected,list) and (2<=len(selected)<=1000 if gated else len(selected)==2), 'Wrong bounded context count')
             epochs, epoch_files = [], []
             for index, item in enumerate(selected):
                 name = f'epoch-{index}'
@@ -277,7 +334,7 @@ def run_diagnostic(repo, build, output, *, contexts=False):
                 events = [json.loads(line) for line in trace.read_text(encoding='utf-8').splitlines()]
                 epochs.append(dict(item,events=events))
                 epoch_files.append(dict(directory=name,result_sha256=sha(raw),events_sha256=sha(trace)))
-            errors = check_epochs(result,epochs,observed['receipt']['process'],observed['owner_observed_seconds'],'diagnostic')
+            errors = check_epochs(result,epochs,observed['receipt']['process'],observed['owner_observed_seconds'],mode if gated else 'diagnostic')
             require(not errors, '; '.join(errors))
             progress = [json.loads(line) for line in event_path.read_text(encoding='utf-8').splitlines()]
             expected = []
@@ -308,10 +365,14 @@ def run_diagnostic(repo, build, output, *, contexts=False):
         require(all(sha(runtime/name) == digest for name,digest in report['input_locks'].items()), 'Runtime input bytes changed')
         require(all(sha(path) == digest for path,digest in binary_locks.items()), 'Probe binary/DLL bytes changed')
         require(all(sha(path) == digest for path,digest in observed['inspection']['required_bytes'].items()), 'Observed module bytes changed')
+        if gated:
+            require(verify_prerequisites(mode,prerequisites,before,binary_locks,report['configuration']['cache_sha256'])==report['prerequisites'],
+                    'Prerequisite evidence changed during native workload')
         report['source_after'] = source_identity(repo)
         require(before == report['source_after'], 'Source changed during diagnostic')
         report['source_stable'] = True
-        report['status'] = 'DIAGNOSTIC_REVIEWED'
+        report['status'] = 'SOAK_REVIEWED' if mode=='long' else 'SHORT_REVIEWED' if mode=='short' else 'DIAGNOSTIC_REVIEWED'
+        report['accepted_soak'] = mode=='long'
     except Exception as error:
         report['error'] = f'{type(error).__name__}: {error}'
     finally:
@@ -322,6 +383,7 @@ def run_diagnostic(repo, build, output, *, contexts=False):
                 report['status'] = 'FAIL'
         except Exception as error:
             report.update(status='FAIL', source_stable=False, source_error=f'{type(error).__name__}: {error}')
+        if report['status']=='FAIL':report['accepted_soak']=False
         build_receipt = output/'build-process/run.json'
         if build_receipt.is_file():
             report['build_receipt_sha256'] = sha(build_receipt)
@@ -334,11 +396,20 @@ def main():
     parser.add_argument('--repo-root', type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument('--build-dir', type=Path, required=True)
     parser.add_argument('--run-dir', type=Path, required=True, help='New directory under an existing parent, outside checkout')
-    parser.add_argument('--mode', choices=('diagnostic','context-diagnostic'), default='diagnostic')
+    parser.add_argument('--mode', choices=('diagnostic','context-diagnostic','short','long'), default='diagnostic')
+    for kind in ('cold','fault','short'):
+        parser.add_argument('--'+kind+'-run',type=Path)
+        parser.add_argument('--'+kind+'-sha256',help='Original caller-selected '+kind+' run digest')
     args = parser.parse_args()
-    report = run_diagnostic(args.repo_root,args.build_dir,args.run_dir,contexts=args.mode=='context-diagnostic')
+    prerequisites={}
+    for kind in ('cold','fault','short'):
+        root=getattr(args,kind+'_run');digest=getattr(args,kind+'_sha256')
+        if root is not None or digest is not None:
+            parser.error('Both prerequisite path and digest are required: '+kind) if root is None or digest is None else None
+            prerequisites[kind]=dict(root=str(root),sha256=digest)
+    report = run_diagnostic(args.repo_root,args.build_dir,args.run_dir,mode=args.mode,prerequisites=prerequisites)
     print(json.dumps({key:report[key] for key in ('status','accepted_soak','error') if key in report}))
-    return 0 if report['status'] == 'DIAGNOSTIC_REVIEWED' else 1
+    return 0 if report['status'] in ('DIAGNOSTIC_REVIEWED','SHORT_REVIEWED','SOAK_REVIEWED') else 1
 
 
 if __name__ == '__main__':

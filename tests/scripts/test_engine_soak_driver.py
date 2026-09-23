@@ -9,7 +9,7 @@ import unittest
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[2]/'scripts'))
 from package_runtime import process_identity, RuntimeContractError
-from run_engine_soak import run_observed_command, verify_images
+from run_engine_soak import run_observed_command, verify_images, verify_prerequisites, sha
 from test_render_contracts_driver import png
 
 
@@ -123,6 +123,91 @@ class ImageTests(unittest.TestCase):
     def test_output_path_traversal_is_rejected(self):
         self.events[0]['detail']['file']='../outside.png'
         with self.assertRaises(ValueError):verify_images(self.root,self.events)
+
+
+class PrerequisiteTests(unittest.TestCase):
+    """Synthetic caller-selected reports; no native control execution claim."""
+    def setUp(self):
+        self.temp=tempfile.TemporaryDirectory(prefix='soak-prerequisites-');self.root=Path(self.temp.name)
+        self.source=dict(source_sha='a'*40,dirty=False,worktree_fingerprint='b'*64)
+        self.binaries={'probe.exe':'c'*64};self.cache='d'*64
+        self.base=self.root/'baseline';self.base.mkdir()
+        self.baseline=dict(status='DIAGNOSTIC_REVIEWED',source_stable=True,source_before=self.source,source_after=self.source,
+                           binary_locks=self.binaries,configuration=dict(cache_sha256=self.cache))
+        self.write(self.base,self.baseline)
+        common=dict(source_stable=True,source_before=self.source,source_after=self.source,binary_locks=self.binaries,
+                    accepted_soak=False,baseline_root=str(self.base),baseline_run_sha256=sha(self.base/'run.json'))
+        self.reports={
+            'cold':dict(common,status='COLD_CONTROLS_REVIEWED',cold_restart='OBSERVED',corrupt_control='REJECTED_WITH_OLD_PAGE'),
+            'fault':dict(common,status='NATIVE_FAULT_CONTROLS_REVIEWED',stages=[dict(role=role,status='EXPECTED_REJECTION_REVIEWED') for role in ('fault-resources','fault-worker','fault-stall')])}
+        for kind,value in self.reports.items():
+            (self.root/kind).mkdir();self.write(self.root/kind,value)
+
+    def tearDown(self):self.temp.cleanup()
+
+    def write(self,d,value):(d/'run.json').write_text(json.dumps(value),encoding='utf-8')
+
+    def selections(self):
+        for kind,value in self.reports.items():self.write(self.root/kind,value)
+        return {kind:dict(root=str(self.root/kind),sha256=sha(self.root/kind/'run.json')) for kind in self.reports}
+
+    def verify(self,mode='short',selections=None):
+        return verify_prerequisites(mode,self.selections() if selections is None else selections,self.source,self.binaries,self.cache)
+
+    def add_short(self):
+        (self.root/'short').mkdir()
+        self.reports['short']=dict(status='SHORT_REVIEWED',mode='short',accepted_soak=False,context_restart='OBSERVED',
+            source_stable=True,source_before=self.source,source_after=self.source,binary_locks=self.binaries,
+            configuration=dict(cache_sha256=self.cache),prerequisites=self.verify())
+
+    def test_exact_matching_short_and_long_dependencies_are_pinned(self):
+        before=copy.deepcopy(self.reports);pins=self.verify()
+        self.assertEqual(set(pins),{'cold','fault'});self.assertEqual(before,self.reports)
+        for kind in pins:self.assertEqual(pins[kind]['run_sha256'],sha(self.root/kind/'run.json'))
+        self.add_short();self.assertEqual(set(self.verify('long')),{'cold','fault','short'})
+
+    def test_missing_or_extra_control_and_unknown_mode_are_rejected(self):
+        selections=self.selections();del selections['fault']
+        with self.assertRaises(ValueError):self.verify(selections=selections)
+        self.add_short()
+        with self.assertRaises(ValueError):self.verify()
+        with self.assertRaises(ValueError):self.verify('longer')
+
+    def test_caller_digest_cannot_be_substituted_by_the_report(self):
+        selections=self.selections();selections['cold']['sha256']='0'*64
+        with self.assertRaises(ValueError):self.verify(selections=selections)
+
+    def test_changed_source_or_unstable_control_is_rejected(self):
+        for key,value in [('source_stable',False),('source_before',dict(self.source,source_sha='f'*40)),('source_after',dict(self.source,dirty=True))]:
+            with self.subTest(key=key):
+                original=self.reports['fault'][key];self.reports['fault'][key]=value
+                with self.assertRaises(ValueError):self.verify()
+                self.reports['fault'][key]=original
+
+    def test_binary_configuration_and_linked_baseline_are_bound(self):
+        self.reports['cold']['binary_locks']={'probe.exe':'0'*64}
+        with self.assertRaises(ValueError):self.verify()
+        self.reports['cold']['binary_locks']=self.binaries
+        self.write(self.base,dict(self.baseline,extra='changed'))
+        with self.assertRaises(ValueError):self.verify()
+        self.reports['cold']['baseline_run_sha256']=sha(self.base/'run.json')
+        self.reports['fault']['baseline_run_sha256']=sha(self.base/'run.json')
+        self.baseline['configuration']['cache_sha256']='0'*64;self.write(self.base,self.baseline)
+        for value in self.reports.values():value['baseline_run_sha256']=sha(self.base/'run.json')
+        with self.assertRaises(ValueError):self.verify()
+
+    def test_partial_cold_or_failed_fault_controls_are_rejected(self):
+        self.reports['cold']['corrupt_control']='NOT_RUN'
+        with self.assertRaises(ValueError):self.verify()
+        self.reports['cold']['corrupt_control']='REJECTED_WITH_OLD_PAGE'
+        self.reports['fault']['stages'][1]['status']='FAIL'
+        with self.assertRaises(ValueError):self.verify()
+
+    def test_long_requires_short_with_the_same_control_digests(self):
+        self.add_short();self.reports['short']['mode']='diagnostic'
+        with self.assertRaises(ValueError):self.verify('long')
+        self.reports['short']['mode']='short';self.reports['short']['prerequisites']['cold']['run_sha256']='0'*64
+        with self.assertRaises(ValueError):self.verify('long')
 
 
 if __name__=='__main__':unittest.main(verbosity=2)
