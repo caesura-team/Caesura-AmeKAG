@@ -417,3 +417,14 @@ macOS CI新增always收集完整安装诊断目录、selection和requirements；
 干净e5399223运行e5a9aa5c-f758-4987-babb-536936652731整体FAIL：全量build0，C++1415中1414通过/1失败（427088断言中1失败），Lua147/56通过；CTest51项中49通过、1失败、1项预声明AI skip。两个C++执行均只失败于原test_source_encoding的安装文字断言，它要求scripts安装命令在DESTINATION之后立即闭合，因新增合法PATTERN缓存排除而不匹配。实际scripts安装/CPack字节合同和新coordinator均通过；strict verifier仍明确拒绝整体运行。
 
 修正仅让原静态断言识别DESTINATION scripts之后合法的空白/参数或闭括号，保留原方法、其余断言和安装内容验证。实际重建后整个source_encoding文件23方法/315断言通过；筛选未选中的1392方法不算完整通过。原失败、命令与流均保留，新的完整门禁仍须运行。
+
+
+### 完整门禁、托管失败与协议夹具边界（2026-09-24）
+
+干净 b210234b7c1a55bc7c2d68f979e95295a28f223f 的 Windows Debug run9994b9a3-fa6e-4641-9c12-0a4d0e4df923 全量构建、C++1415/1415与427088断言、Lua147/56通过；CTest51项为50通过、零失败、1项预声明AI服务skip。执行/收集/strict verifier均0，源码与fixture稳定；根重算29份原流/报告。run SHA256 0f82024a3a8f284e5f701d66025f4c0b3e27dcaf92c64c9ac7ae52af182f73e9。此干净结果不覆盖随后新增的协议回归。
+
+该头推至草稿PR25，托管run35885141511的macOS Clang作业107263245398失败于native_package_runtime：Python协议夹具使用Homebrew framework Python，它确实映射包外libcrypto/libssl，新的真实Mach-O闭包验证正确拒绝。共10失败/1错误；同作业的macOS install、metadata、coordinator三个CTest均通过，Package因上游失败跳过。原日志SHA256 738703d573883b4b3880ee1645ea41d10f4713b256bab5af07e9dba191d8e7e3，原失败保留。Linux作业107263245263的全部51项CTest通过，随后平台矩阵同步锚点仍为c3ffa4b而非b210，freshness明确失败；不是运行时测试失败。
+
+协议夹具现在同时明确原来的Engine/Lua可执行替代和它专属的Mach-O闭包替代。替代仅在invoke作用域，核对真实被拥有进程必须是FIXTURE_PYTHON、包内引擎必须为固定synthetic字节，结果标为FIXTURE_ONLY/native closure NOT_VERIFIED。真实进程身份、实际模块枚举、显式required库匹配、HTTP、端口和原件变更检测保持运行；生产native_package_runtime、Mac映像解析/闭包和真实包入口零修改。新增跨主机回归先实际RED，模拟外部Mach-O导致RUNTIME_FAIL；修正后GREEN，并在退出夹具作用域后确认同一生产闭包仍拒绝外部映像。
+
+完整维护suite Windows68/68（39.265秒）、WSL69/69（30.943秒）通过，零skip。源锁、owned退出/cleanup、原始流均由root-green-review-01.json重核。实际Mac协议fixture和最终TGZ/DMG仍须由新CI执行，不能从这次本地通过宣称旧Homebrew包泄漏已关闭。平台矩阵只同步代码审阅锚点，历史能力行的commit/日期/证据不改写。

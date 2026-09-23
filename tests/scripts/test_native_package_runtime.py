@@ -1,8 +1,11 @@
 """Real Python/HTTP fixtures exercise orchestration, never Engine acceptance.
 
-Only native Engine/Lua executable invocation is replaced with an explicit Python
-protocol fixture. The owned runner, identity/socket checks, HTTP requests, file
-copies, template provenance and mutation checks remain real.
+Native Engine/Lua invocation is replaced with an explicit Python protocol fixture.
+Only within that invocation, native Mach-O package closure is marked FIXTURE_ONLY:
+framework Python and its host libraries are not a packaged Engine. The owned runner,
+module observation, required-library matching, identity/socket checks, HTTP, copies,
+template provenance and mutation checks remain real. Native closure has its own
+unchanged positive/negative contract tests and actual final-package lane.
 """
 from __future__ import annotations
 
@@ -724,12 +727,48 @@ class NativePackageRuntimeTests(unittest.TestCase):
             if Path(executable).name in ("lua", "lua.exe"):
                 return [FIXTURE_PYTHON, "-I", "-c", "print('Lua 5.4 synthetic protocol fixture')"]
             return [FIXTURE_PYTHON, "-I", str(self.engine_script), *args]
-        with patch.object(runtime, "_native_argv", native_boundary):
+        def protocol_closure_boundary(identity, package, observation):
+            # This seam accompanies the executable replacement, never production
+            # acceptance. Reject accidental use for any real native process/image.
+            self.assertEqual(Path(identity.executable).resolve(strict=True),
+                             Path(FIXTURE_PYTHON).resolve(strict=True))
+            self.assertEqual((package / self.engine_name).read_bytes(),
+                             b"synthetic executable boundary fixture")
+            observation["dependency_images"] = {
+                "status":"FIXTURE_ONLY", "images":[],
+                "scope":"Python protocol orchestration; native Engine closure NOT_VERIFIED"}
+            return []
+        with patch.object(runtime, "_native_argv", native_boundary), \
+             patch.object(runtime, "_macos_dependency_images", protocol_closure_boundary):
             return runtime.run_native_package(self.package, self.config, attempt or self.root / "attempt",
                                               python_executable=FIXTURE_PYTHON,
                                               command_timeout=12, readiness_timeout=1,
                                               editor_port=editor_port, audio_output=audio_output,
                                               **({"launch_relative_path":launch} if launch is not None else {}))
+
+    def test_python_protocol_fixture_has_explicit_native_closure_boundary(self):
+        # Reproduce the hosted framework-Python dependency failure on any host.
+        # These bytes are a valid minimal Mach-O header, not an executed library.
+        foreign = self.root / "host-python-ssl.dylib"
+        foreign.write_bytes(struct.pack("<IIIIIIII", 0xfeedfacf, 0x100000c, 0, 6, 0, 0, 0, 0))
+        inspect = runtime._inspect_libraries
+        production = runtime._macos_dependency_images
+        def native_closure_required(identity, package, required):
+            result = inspect(identity, package, required)
+            detail = {"paths":[str(foreign)], "missing_paths":[], "inaccessible_paths":[]}
+            runtime._macos_dependency_images(identity, package, detail)
+            return {**result, "protocol_fixture_closure":detail["dependency_images"]}
+        with patch.object(runtime, "_inspect_libraries", native_closure_required):
+            report = self.invoke()
+        self.assertEqual(report["status"], "RUNTIME_PASS", report)
+        for stage in report["stages"]:
+            if not stage["name"].startswith("editor_"): continue
+            observation = stage["commands"][0]["observations"]["loaded_modules"]
+            self.assertEqual(observation["protocol_fixture_closure"]["status"], "FIXTURE_ONLY")
+        self.assertIs(runtime._macos_dependency_images, production)
+        with self.assertRaisesRegex(runtime.RuntimeContractError, "outside package"):
+            production(runtime.process_identity(os.getpid()), self.package,
+                       {"paths":[str(foreign)], "missing_paths":[], "inaccessible_paths":[]})
 
     def test_explicit_software_selection_binds_argv_and_completed_pcm_observation(self):
         report = self.invoke(audio_output='software')
