@@ -18,6 +18,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import compare_benchmarks as bench
 from collect_validation_evidence import collect_evidence
 from run_validation import run_profile
+from validation_sanitizer import MARKER, OPTION_NAMES, capture_environment, create_capture
 
 
 def sha(path):
@@ -312,6 +313,30 @@ class OwnedCollectionTests(unittest.TestCase):
         work = self.root / self._testMethodName
         result = bench.collect_benchmarks(path, sha(path), work, _fixture_commands=self.commands if commands is None else commands)
         return result, path, work
+
+    def test_parent_sanitizer_capture_matches_recorded_runtime_environment(self):
+        capture_root = self.root / "parent-capture"
+        capture_root.mkdir()
+        scope = create_capture(capture_root, run_id="benchmark-parent", check_id="contract",
+                               purpose="test-fixture")
+        controlled = capture_environment({}, scope=scope)
+        with patch.dict(os.environ, {**controlled, "CAESURA_BENCH_UNRELATED": "must-not-propagate"}):
+            result, request, work = self.collect()
+        self.assertEqual(result["status"], "FIXTURE_ONLY", result)
+        self.assertEqual(len(result["processes"]), 6)
+        for row in result["processes"]:
+            actual = json.loads(Path(row["runtime_request"]["path"]).read_text())
+            self.assertEqual(actual["env"], row["env_allowlist"])
+            for name in (*OPTION_NAMES, MARKER):
+                self.assertEqual(actual["env"][name], controlled[name])
+            self.assertNotIn("CAESURA_BENCH_UNRELATED", actual["env"])
+        collection = work / "collection.json"
+        verdict = bench.compare_collection(request, sha(request), collection, sha(collection),
+                                           self.root / "parent-capture-verdict.json")
+        self.assertEqual(verdict["status"], "FIXTURE_ONLY", verdict)
+        self.assertEqual(verdict["comparison"], "PASS")
+        self.assertFalse(verdict["gate_pass"])
+        self.assertEqual(verdict["engine_performance"], "NOT_EVALUATED")
 
     def test_owned_six_processes_interleaved_and_compare_raw_bytes_fixture_only(self):
         result, request, work = self.collect()

@@ -27,6 +27,7 @@ import uuid
 
 from collect_validation_evidence import parse_doctest
 from package_runtime import run_runtime_command
+from validation_sanitizer import capture_environment
 from verify_release_candidate import verify_evidence
 
 PROTOCOL = "caesura.cpu-benchmark.v1"
@@ -440,7 +441,9 @@ def _environment(work, variant, run_uuid, workload):
     env.update(CAESURA_BENCH_PROTOCOL=PROTOCOL, CAESURA_BENCH_RUN_UUID=run_uuid,
                CAESURA_BENCH_WORKLOAD_SHA256=workload["sha256"], CAESURA_BENCH_WARMUPS="2",
                CAESURA_BENCH_SAMPLES="10", CAESURA_BENCH_SEED="0")
-    return env
+    # Record the same controlled diagnostic transport that the owned launcher
+    # will pass to the child, while retaining the benchmark environment allowlist.
+    return capture_environment(env)
 
 
 def _run(argv, cwd, env, directory, timeout, limits):
