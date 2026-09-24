@@ -29,6 +29,10 @@ class RuntimeContractError(RuntimeError):
     """The requested package/runtime identity cannot be established."""
 
 
+class ListenerNotReady(RuntimeContractError):
+    """A live, unchanged owner has not published a listener yet."""
+
+
 @dataclass(frozen=True)
 class ProcessIdentity:
     pid: int
@@ -360,11 +364,19 @@ def loopback_listeners(port: int) -> list[dict]:
         raise RuntimeContractError(f"Cannot inspect TCP port {port}: {error}") from error
 
 
-def verify_owned_listener(identity: ProcessIdentity, port: int) -> list[dict]:
-    """Refuse wrong/reused/exited owners before and after inspecting all rows."""
+def verify_owned_listener(identity: ProcessIdentity, port: int, *, allow_not_ready: bool = False) -> list[dict]:
+    """Refuse wrong/reused/exited owners before and after inspecting all rows.
+
+    Only a caller still waiting for its first request may opt into an empty
+    listener observation. Foreign, uncertain or changing ownership stays fatal.
+    """
     if not isinstance(identity, ProcessIdentity) or process_identity(identity.pid) != identity:
         raise RuntimeContractError("Process identity no longer matches the recorded owner")
     rows = loopback_listeners(port)
+    if not rows and allow_not_ready:
+        if process_identity(identity.pid) != identity:
+            raise RuntimeContractError("Process changed before its listener was ready")
+        raise ListenerNotReady(f"TCP port {port} has no listener yet for process {identity.pid}")
     if not rows or any(row["pid"] != identity.pid for row in rows):
         raise RuntimeContractError(f"TCP port {port} is not exclusively owned by process {identity.pid}")
     # In particular, Linux obtains the socket table and fd owners separately.

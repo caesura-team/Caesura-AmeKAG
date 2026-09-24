@@ -18,7 +18,7 @@ import uuid
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 from native_package_runtime import _execute, _reserve_editor_port
-from package_runtime import RuntimeContractError, process_identity, verify_owned_listener
+from package_runtime import ListenerNotReady, RuntimeContractError, process_identity, verify_owned_listener
 
 exe = cwd = BASE = None
 port = proc = None
@@ -114,10 +114,14 @@ def request(path, data=None, timeout=30, headers=None):
 def main():
     # Wait for the HTTP server to come up.
     ready = False
+    waiting_for_listener = True
     for _ in range(80):
         if proc.poll() is not None:
             break
         try:
+            if waiting_for_listener:
+                verify_owned_listener(proc.identity, port, allow_not_ready=True)
+                waiting_for_listener = False
             _probe = urllib.request.Request(
                 BASE + "/api/ping",
                 headers={"Authorization": "Bearer " + TOKEN})
@@ -125,13 +129,14 @@ def main():
                 if r.status == 200:
                     ready = True
                     break
-        except RuntimeContractError:
-            # No listener yet is normal startup; any observed foreign listener
-            # or changed process must not be retried or contacted.
-            from package_runtime import loopback_listeners
-            if loopback_listeners(port) or proc.poll() is not None:
-                raise
+        except ListenerNotReady:
+            # This observation was empty with an unchanged live owner. A later
+            # listener may already be ours; verify it afresh before any HTTP.
             time.sleep(0.5)
+        except RuntimeContractError:
+            # Includes loss after the first verified listener or HTTP response.
+            # Never reclassify a failed ownership check using a later snapshot.
+            raise
         except Exception:
             time.sleep(0.5)
     check("server-ready", ready)

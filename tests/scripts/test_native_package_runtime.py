@@ -13,7 +13,8 @@ import importlib.util
 import base64
 import hashlib
 import http.server
-from contextlib import ExitStack, redirect_stderr
+from contextlib import ExitStack, contextmanager, redirect_stderr
+from concurrent.futures import ThreadPoolExecutor
 import io
 import json
 import os
@@ -34,6 +35,7 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
+import package_runtime as process_runtime
 MODULE = ROOT / "scripts/native_package_runtime.py"
 if MODULE.is_file():
     spec = importlib.util.spec_from_file_location("native_runtime_contract", MODULE)
@@ -1266,6 +1268,164 @@ class HttpSmokeStartupTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory(prefix='caesura-http-smoke-contract-')
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name).resolve()
+
+    def load_smoke(self):
+        spec = importlib.util.spec_from_file_location('http_smoke_readiness', ROOT/'tests/headless_http_smoke.py')
+        smoke = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(smoke)
+        return smoke
+
+    @contextmanager
+    def owned_http_startup(self, *, close_after_response=False):
+        """Real owned child: bind, wait for the host's release, then listen."""
+        folder = self.root / 'owned-http'
+        folder.mkdir()
+        code = r'''
+import http.server,json,os,sys,time
+from pathlib import Path
+from socketserver import TCPServer
+root=Path(sys.argv[1]); close_after_response=sys.argv[2]=='close'
+deadline=time.monotonic()+12
+def publish(name, value):
+    pending=root/(name+'.writing')
+    pending.write_text(json.dumps(value),encoding='utf-8')
+    pending.replace(root/name)
+def wait_release():
+    while not (root/'release').exists() and not (root/'stop').exists():
+        if time.monotonic()>=deadline: raise RuntimeError('listen barrier expired')
+        time.sleep(.01)
+class Handler(http.server.BaseHTTPRequestHandler):
+    def log_message(self,*args): pass
+    def do_GET(self):
+        print('HTTP_REQUEST:'+json.dumps({'path':self.path,'authorized':self.headers.get('Authorization')=='Bearer headless-http-smoke-token'}),flush=True)
+        body=b'{"status":"ok"}'
+        self.send_response(200); self.send_header('Content-Length',str(len(body))); self.end_headers()
+        self.wfile.write(body); self.wfile.flush()
+        if close_after_response:
+            self.server.server_close()
+            publish('closed.json',{'pid':os.getpid()})
+class Server(http.server.HTTPServer):
+    def server_bind(self):
+        TCPServer.server_bind(self)
+        self.server_name,self.server_port=self.server_address[:2]
+server=Server(('127.0.0.1',0),Handler,bind_and_activate=False)
+try:
+    server.server_bind()
+    publish('bound.json',{'pid':os.getpid(),'port':server.server_address[1]})
+    wait_release()
+    if not (root/'stop').exists():
+        server.server_activate(); server.timeout=.02
+        publish('listening.json',{'pid':os.getpid(),'port':server.server_address[1]})
+        while not (root/'stop').exists():
+            if time.monotonic()>=deadline: raise RuntimeError('HTTP fixture deadline expired')
+            if (root/'closed.json').exists(): time.sleep(.01)
+            else: server.handle_request()
+finally: server.server_close()
+print('OWNED_HTTP_FIXTURE_EXIT',flush=True)
+'''
+        env = {key: value for key, value in os.environ.items()
+               if key.lower() in {'systemroot', 'windir', 'systemdrive', 'comspec', 'pathext'}}
+        env.update(TEMP=str(folder), TMP=str(folder), PYTHONDONTWRITEBYTECODE='1')
+        with (folder/'stdout.log').open('xb') as stdout, (folder/'stderr.log').open('xb') as stderr, \
+                ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(process_runtime.run_runtime_command,
+                [FIXTURE_PYTHON, '-I', '-c', code, str(folder), 'close' if close_after_response else 'keep'],
+                folder, env, folder/'control', stdout, stderr, 15)
+            def await_json(name):
+                deadline = time.monotonic() + 6
+                while time.monotonic() < deadline:
+                    if future.done():
+                        future.result()
+                        self.fail('owned HTTP child exited before ' + name)
+                    path = folder / name
+                    if path.is_file(): return json.loads(path.read_text(encoding='utf-8'))
+                    time.sleep(.01)
+                self.fail('owned HTTP child did not publish ' + name)
+            try:
+                bound = await_json('bound.json')
+                identity = process_runtime.ProcessIdentity(**await_json('control/process.json'))
+                self.assertEqual(bound['pid'], identity.pid)
+                yield folder, bound['port'], identity, await_json
+            finally:
+                (folder/'stop').touch()
+                (folder/'release').touch()
+                receipt = future.result(timeout=20)
+                print('OWNED_HTTP_READINESS_RECEIPT:' + json.dumps(receipt), flush=True)
+                self.assertEqual(receipt['actual_exit_code'], 0, receipt)
+                self.assertEqual(receipt['owned_tree_cleanup'], 'COMPLETE', receipt)
+                self.assertFalse(receipt['timed_out'] or receipt['forced_kill'], receipt)
+
+    def test_owned_listener_starting_after_empty_observation_reaches_readiness(self):
+        smoke = self.load_smoke()
+        with self.owned_http_startup() as (folder, port, identity, await_json):
+            smoke.port, smoke.BASE = port, f'http://127.0.0.1:{port}'
+            smoke.proc = smoke._ObservedEngine(identity)
+            actual = process_runtime.loopback_listeners
+            observed = []
+            def enumerate_then_listen(selected_port):
+                rows = actual(selected_port)
+                observed.append(rows)
+                if len(observed) == 1:
+                    self.assertEqual(rows, [], 'child must still be behind its listen barrier')
+                    (folder/'release').touch()
+                    await_json('listening.json')
+                return rows  # Never synthesize ownership rows or replace verification.
+            class ReadyObserved(Exception): pass
+            def ready_checkpoint(name, ok, detail=''):
+                self.assertEqual(name, 'server-ready')
+                self.assertTrue(ok, detail)
+                raise ReadyObserved  # Stop before unrelated Engine API assertions.
+            try:
+                with patch.object(process_runtime, 'loopback_listeners', enumerate_then_listen), \
+                        patch.object(smoke, 'check', ready_checkpoint):
+                    with self.assertRaises(ReadyObserved): smoke.main()
+                self.assertGreater(len(observed), 1)
+                self.assertTrue(all(rows and all(row['pid'] == identity.pid for row in rows)
+                                    for rows in observed[1:]))
+                self.assertIn('HTTP_REQUEST:', (folder/'stdout.log').read_text(encoding='utf-8'))
+            finally:
+                (folder/'observations.json').write_text(json.dumps(observed, indent=2), encoding='utf-8')
+
+    def test_listener_loss_after_http_response_is_fatal_without_startup_retry(self):
+        smoke = self.load_smoke()
+        with self.owned_http_startup(close_after_response=True) as (folder, port, identity, await_json):
+            smoke.port, smoke.BASE = port, f'http://127.0.0.1:{port}'
+            smoke.proc = smoke._ObservedEngine(identity)
+            (folder/'release').touch()
+            await_json('listening.json')
+            actual_open, actual_sleep = smoke._opener.open, time.sleep
+            def response_then_close(*args, **kwargs):
+                response = actual_open(*args, **kwargs)
+                try:
+                    await_json('closed.json')  # Real response; real owned child stays alive.
+                except BaseException:
+                    response.close()
+                    raise
+                return response
+            def no_readiness_retry(seconds):
+                if seconds == .5:
+                    raise AssertionError('listener loss after an HTTP response must not retry startup')
+                actual_sleep(seconds)
+            with patch.object(smoke._opener, 'open', response_then_close), \
+                    patch.object(smoke.time, 'sleep', no_readiness_retry):
+                with self.assertRaisesRegex(process_runtime.RuntimeContractError, 'TCP port'):
+                    smoke.main()
+            self.assertEqual(process_runtime.process_identity(identity.pid), identity)
+            self.assertEqual(process_runtime.loopback_listeners(port), [])
+            self.assertEqual((folder/'stdout.log').read_text(encoding='utf-8').count('HTTP_REQUEST:'), 1)
+
+    def test_foreign_listener_during_startup_is_rejected_without_http_contact(self):
+        smoke = self.load_smoke()
+        with self.owned_http_startup() as (folder, _, identity, _), socket.socket() as foreign:
+            foreign.bind(('127.0.0.1', 0)); foreign.listen(); foreign.settimeout(.05)
+            port = foreign.getsockname()[1]
+            smoke.port, smoke.BASE = port, f'http://127.0.0.1:{port}'
+            smoke.proc = smoke._ObservedEngine(identity)
+            with self.assertRaisesRegex(process_runtime.RuntimeContractError, 'TCP port'):
+                smoke.main()
+            with self.assertRaises(socket.timeout): foreign.accept()
+            self.assertTrue(process_runtime.loopback_listeners(port))
+            self.assertNotIn('HTTP_REQUEST:', (folder/'stdout.log').read_text(encoding='utf-8'))
 
     def invoke(self, *, port=None):
         env = dict(os.environ)

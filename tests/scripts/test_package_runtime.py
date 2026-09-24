@@ -20,7 +20,7 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
-from package_runtime import (ProcessIdentity, RuntimeContractError, native_env,
+from package_runtime import (ListenerNotReady, ProcessIdentity, RuntimeContractError, native_env,
                              process_identity, loopback_listeners,
                              verify_owned_listener, run_runtime_command)
 import package_runtime as runtime
@@ -652,6 +652,72 @@ class PackageRuntimeTests(unittest.TestCase):
         self.assertFalse(loopback_listeners(ready["port"]))
         with self.assertRaises(RuntimeContractError):
             verify_owned_listener(process_identity(os.getpid()), ready["port"])
+
+    def test_empty_listener_is_retryable_only_with_explicit_startup_opt_in(self):
+        with socket.socket() as reserved:
+            reserved.bind(('127.0.0.1', 0))  # Bound but deliberately not listening.
+            port = reserved.getsockname()[1]
+            identity = process_identity(os.getpid())
+            with self.assertRaises(RuntimeContractError) as rejected:
+                verify_owned_listener(identity, port)
+            self.assertNotIsInstance(rejected.exception, ListenerNotReady)
+            with self.assertRaises(ListenerNotReady):
+                verify_owned_listener(identity, port, allow_not_ready=True)
+
+    def test_owner_exit_during_empty_observation_is_not_retryable(self):
+        process, _ = self.launch_listener()
+        identity = process_identity(process.pid)
+        actual = loopback_listeners
+        with socket.socket() as reserved:
+            reserved.bind(('127.0.0.1', 0))
+            port = reserved.getsockname()[1]
+            def enumerate_then_exit(selected_port):
+                rows = actual(selected_port)
+                self.assertEqual(rows, [])
+                process.terminate(); process.wait(timeout=5)
+                return rows
+            with mock.patch.object(runtime, 'loopback_listeners', enumerate_then_exit):
+                with self.assertRaises(RuntimeContractError) as rejected:
+                    verify_owned_listener(identity, port, allow_not_ready=True)
+            self.assertNotIsInstance(rejected.exception, ListenerNotReady)
+
+    def test_listener_loss_between_ownership_observations_is_not_retryable(self):
+        with socket.socket() as listener:
+            listener.bind(('127.0.0.1', 0)); listener.listen()
+            port = listener.getsockname()[1]
+            actual = loopback_listeners
+            observations = []
+            def enumerate_then_close(selected_port):
+                rows = actual(selected_port)
+                observations.append(rows)
+                if len(observations) == 1: listener.close()
+                return rows
+            with mock.patch.object(runtime, 'loopback_listeners', enumerate_then_close):
+                with self.assertRaisesRegex(RuntimeContractError, 'changed during ownership') as rejected:
+                    verify_owned_listener(process_identity(os.getpid()), port, allow_not_ready=True)
+            self.assertNotIsInstance(rejected.exception, ListenerNotReady)
+            self.assertTrue(observations[0])
+            self.assertEqual(observations[1], [])
+
+    def test_startup_opt_in_does_not_hide_foreign_or_unobservable_owners(self):
+        process, ready = self.launch_listener()
+        identity = process_identity(process.pid)
+        for supplied in (process_identity(os.getpid()), replace(identity, created=identity.created+'-old'),
+                         replace(identity, executable=str(self.engine))):
+            with self.subTest(identity=supplied), self.assertRaises(RuntimeContractError) as rejected:
+                verify_owned_listener(supplied, ready['port'], allow_not_ready=True)
+            self.assertNotIsInstance(rejected.exception, ListenerNotReady)
+        rows = loopback_listeners(ready['port'])
+        # Only OS inspection uncertainty is injected here. Verification stays
+        # real; inaccessible pid=None must not be converted to an empty port.
+        unknown = [dict(row, pid=None) for row in rows]
+        for observation in (unknown, RuntimeContractError('controlled TCP ownership query failure')):
+            with self.subTest(observation=observation), \
+                    mock.patch.object(runtime, 'loopback_listeners', side_effect=[observation]), \
+                    self.assertRaises(RuntimeContractError) as rejected:
+                verify_owned_listener(identity, ready['port'], allow_not_ready=True)
+            self.assertNotIsInstance(rejected.exception, ListenerNotReady)
+        self.assertIsNone(process.poll())
 
     def test_nonzero_exit_is_retained_and_not_reported_as_stop(self):
         report = self.invoke("import sys; print('real failure'); sys.exit(23)")
