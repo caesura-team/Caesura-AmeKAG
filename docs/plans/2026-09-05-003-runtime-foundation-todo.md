@@ -4,20 +4,20 @@
 
 完整目标仍是 U1–U29；底层优先，Studio 暂停。下方日期快照保留当时的原始计数与失败，当前状态以本节和对应执行记录为准。不同工作树的通过证据不能合并成一个未经验证的候选。
 
-**恢复后当前候选：`09601b20eeeba6053baec4758ee51a1ef0b222e9`。** 七文件修复已提交；删除前交叉审查与恢复后四关键源码树独审分别完成。最新记录树40fa的五份文档已同步，原计划范围未缩减。eda本机完整Debug独审、Release根复核及Python78/18/33/15是删除前实际观察，完整根原件当前缺失；Release独审未完成，09601两个C++改动尚未编译/运行。五份托管ZIP已整包恢复，Linux三个诊断成员仅CRC/SHA恢复；片段不替代完整门禁。可核原件及缺口详见[U29恢复后记录](2026-09-24-017-foundation-integration-execution.md#已恢复原件与当前缺口)。
+**恢复后当前源码：`53721aa9f7fe0a917575b41882ae9e8b2949280b`（三文件托管失败修复，完整新门禁尚待执行）。** 前一候选ed6已取得恢复后Windows基础Debug完整11项及根/独立复核；其托管run35969560756终态9成功/3失败，原失败完整归档已恢复。新音频测试前提改动未编译/运行；Mac协调器Windows定向23/23通过、两项补丁独审无可行动问题，但4项POSIX用例和真实Apple执行未覆盖。ed6 FFmpeg Debug02原始终态PASS且根/独审通过；ed6 SDK inputs02准备及独审通过，Live2D完整Debug已启动、无终态；旧f87最终包与冷恢复输入已核验准备、未执行冷恢复。ed6 Windows大包900秒仅取得14,024,704/40,922,792字节，保留FAILED且不续取。不同源码及准备证据不合并成当前候选通过；详见[U29恢复后记录](2026-09-24-017-foundation-integration-execution.md)。
 
 | 范围 | 已取得的证据 | 继续完成的事项 |
 |---|---|---|
 | U1、U3–U10 | [主执行记录](2026-09-05-002-runtime-foundation-execution.md)列出本机适用验收及实际 POSIX 定向结果 | 平台扩展和整个候选验证继续按 U2/U29 承接；不将本机结果写成所有平台通过 |
-| U2 | e0 Windows Debug/Release及普通GCC Linux Debug历史完整结果保留；c01/e0 Linux sanitizer原FAIL及五份240字节图形诊断保留。eda本机Debug历史独审完成、Release历史根复核完成 | eda完整Windows根证据当前缺失，Release独审未完成；09601完整Debug/Release及其他当前平台、sanitizer、SDK/FFmpeg开关仍待验。旧统计不迁移为新候选通过 |
+| U2 | e0/eda历史结果及sanitizer原FAIL保留；恢复后ed6 Windows基础Debug完整11项已由根和独立审查复核（C++1524、Lua147/56、CTest71通过及1项预准AI跳过）；ed6托管9成功/3失败 | 新53721aa9三文件补丁尚待完整门禁/CI；其他当前平台、Release、sanitizer及SDK/FFmpeg配置分别验收。eda原Windows完整根证据缺失仍保留，不以旧统计代替新候选 |
 | U11–U21 | 恢复、语言、缓存、GPU、输入、RPC、能力、Web 音频和作者路径已交付；U21 PR #24 合并为 `65e5b425` | 各记录保留设备、物理音频与历史性能失败边界；不重新打开已完成的实现工作 |
 | U22 | [最终包记录](2026-09-13-013-final-package-isolation-execution.md)已有三桌面/Web 托管门禁与实际 Mac 最终容器、安装、映像闭包证明 | 最终整合及 PR 审查仍未完成；ad-hoc 签名不等于 Developer ID/公证，软件混音不等于物理输出 |
 | U23 | [发布输入记录](2026-09-19-014-release-input-provenance-execution.md)：`f87f7aa7` 本机完整 Debug、12 个托管作业、9 required jobs/11 artifacts/45 outputs 聚合及 AE7 摘要负控通过；本地版本参数演练完整下载并复核480675784字节 | 用户批准后master已绑定唯一聚合检查及GitHub Actions App15368，误删后新只读回执确认无关保护不变（原mutation/读回收据当前缺失）；真实旧tag负控已通过，正向匹配tag入口与整合验收仍须完成；无发布或部署 |
 | U24–U25 | [Android记录](2026-09-20-015-android-package-validation-execution.md)保留历史aacc完整v2构建/包证据；e0独立源码预检6540文件/2链接通过，新请求与owned入口已准备并独审，尚未执行 | e0 Android编译/包尚未执行；当天adb列表为空；Apple、模拟器、真实设备和正式签名分别验收，旧产物不替代当前候选 |
-| U26 | 独立分支已有 SDK ON 编译/链接及未初始化查询；协调器 `08bfc276` 完整 Debug、Windows/Linux 冷进程恢复通过；源码已进入U29隔离整合树 | 保留e0/eda SDK及Haru只读调查历史；两项SDK静态疑点尚未真实复现，被删构建和输入须重新核对；完整 SDK ON、真实 Live2D 模型/动作/口型、Steam 账号与真实云服务协作仍未验收 |
+| U26 | 原协调器08bfc276和SDK历史证据保留；恢复后SDK inputs02已补齐实际Windows/D3D11闭包所需244项输入并完成独审，ed6 Live2D完整Debug已启动、无终态 | 首轮Live2D因准备遗漏CubismClippingManager.tpp而编译REJECTED的原件保留；新输入准备不等于SDK ON通过。完整SDK ON、真实Live2D模型/动作/口型、Steam账号及云服务协作仍待验收；ed6 FFmpeg Debug02原始终态PASS且根/独审通过 |
 | U27 | 独立分支已有历史正式 Release 的 180 测量/36 预热样本；新 `c25d81eb` 的冷恢复、实际故障对照、短跑和完整 Debug/Release 证据已回核 | c25长跑3647.27秒/4800周期/17280 PNG已通过；当前CPU保留180测量样本，三个指标均为INCONCLUSIVE、gate_pass=false，继续保留未决性能与整合候选验证；历史样本不替代新候选 |
 | U28 | [证据边界修复](2026-09-24-018-platform-evidence-execution.md)：历史声明/当前重验分层，维护回归42/36/10通过，真实c25执行收据与f87最终包字节正负控通过 | 整合候选通过后继续更新公开声明；原始包运行日志、设备/账号与发布范围不由字节或文档验证推导 |
-| U29 | [隔离整合记录](2026-09-24-017-foundation-integration-execution.md)：最新七文件修复09601已提交及恢复；原71c托管终态6成功/4失败/2跳过，五份失败相关ZIP及三个Linux诊断成员已恢复；原required政策9作业/11产物类与本机11项检查保持 | e0最终ZIP默认演示60帧PCM原FAIL、bbab/e0 Release中断及c01/e0 sanitizer失败均保留。eda根日志和最新完整Python报告目前缺失，仅保留历史观察；09601两份C++修改未编译/运行，完整门禁、其他平台/SDK、性能/长跑、最终包及AE1–AE8/回退仍待验，不自动发布 |
+| U29 | [隔离整合记录](2026-09-24-017-foundation-integration-execution.md)：恢复后ed6 Windows基础Debug完整根+独审通过；ed6托管9成功/3失败及完整失败归档已核对；53721aa9三文件修复已提交、两项独审无可行动问题，Mac Windows定向23/23通过 | 新C++及537完整门禁/CI尚待执行，真实Apple及4项POSIX未测。旧f87最终包/冷恢复输入仅准备；ed6 Windows包14,024,704/40,922,792字节下载FAILED，不续取。ed6 SDK inputs02完整Debug已启动无终态、FFmpeg原始终态PASS且根/独审通过；原包PCM、sanitizer及中断失败均保留，性能/长跑、最终包及AE1–AE8/回退继续，不自动发布 |
 
 U26/U27 的运行结果来自各自保留的隔离工作树。源码现已组合到U29树，但这些结果不构成U29或master验证。U27 新完整 Debug 原 run SHA256 为 `6ffa1a6c3808659a1d2883fc3619477460870ee8e46182e7e2f26d00f7f75393`，完整Release为 `0cf9be8c600dad436153bbede51355db19f3a9fe1c1120557c29313976279a47`，短跑为 `9a62d2c86e4cdd27d14959956c444e1b66e0fb9115a9d18cca654f5866e7a6d2`；源码均为 `c25d81ebfb324b85b54252ce937039c6dc790f28`。证据分别位于该工作树的 `artifacts/validation/u27-continuous-full-01`、`u27-continuous-release-02` 与 `u27-soak-workload/candidate-short-01`。首次Release辅助调用漏传configuration，被preflight拒绝，原失败保留，未算作执行过的全量测试。
 
