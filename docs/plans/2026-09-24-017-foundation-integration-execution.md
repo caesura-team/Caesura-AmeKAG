@@ -349,3 +349,24 @@ HTTP首个RED以真实owned Python进程和套接字建立barrier：第一次真
 首次独立真实Haru `load-render` 基线（allocator off）已执行，实际子进程退出1、未超时、owned cleanup COMPLETE，终态为 `DIAGNOSTIC_FAILED`，错误为 `No-motion model not stable`。原summary为 `u26-real-probe-runtime-preparation-01/attempt-load-render-off-01/summary.json`（SHA256 `9dddc4c6d980da3460d204da3f78b2c3f07fc25e881763678f28638166a8cbb5`）。对原PNG的只读复核确认两次hidden相差0个RGB像素、hidden/shown相差23921个、两次shown相差308个；报告为 `u26-real-probe-baseline-diagnosis-01/root-pixel-analysis-01.json`（SHA256 `999c5fe42270c3f80f5b43635f0837f0612a9fa5d77dcd65a364b8a9a00d8820`）。像素差本身不证明原因，原失败与阈值保留，仍在诊断，不升级U26或平台能力。
 
 本次文档仅把当前同步锚指向a047代码提交，并追加上述独立证据范围；平台逐能力的历史status、执行commit、日期及evidence保持，生成声明仍为 `NOT_REVERIFIED`。后续须对冻结新候选完成原完整门禁、实际平台和最终包验证，再推进性能/长跑、AE1–AE8及旧包冷恢复；不降低发现门槛，不将准备、单项通过或原件恢复拼成整合候选通过，不产生发布授权。
+
+
+## 2026-09-24 Pose动作与音频时钟前提修复续记
+
+当前代码为 `5cbf2e8e93e748b3d59667ee5ebf83554a1c5bd8`（`codex/u29-pose-audio-integration`），包含模型目标逐帧透明清理、CubismPose接线、动作缓存group/index与LoadMotion参数修正，以及12个音频业务合同用例的真实ManualMix时钟。新候选完整SDK/C++/Lua/CTest尚未运行。 五个代码文件已独立审查，但代码审查不替代新C++执行或实际模型验收。以下路径相对于 `E:/CaesuraRecovery/20260924-1446/`；所有旧失败与缺失原件状态保留。
+
+d531025d4b2c7ab2ebaedb43b14508ad79c67b29 的 run35988975245/attempt1 已最终失败：12项检查中10成功、2失败。Windows/macOS Debug及Release打包、Linux Debug、Web最终包和移动端静态/探测作业报告成功；Linux Release和最终required gate失败，不是完整候选通过。Linux首required C++实际exit1，1508发现/1507通过/1失败/0跳过，451107断言中2失败，唯一失败为旧 Device 短语音手动stop用例；后续独立CTest通过不覆盖它。大诊断包仍仅5个成员的范围/CRC/本地SHA验证，小包完整SHA通过。最终gate在inputs阶段拒绝空linux-release-execution ID，linux-package输出同样缺失，downloads为空，没有开始完整验包。见 `http-audio-ci-01/status-05/snapshot.json`、`linux-release-diagnosis-01/diagnosis-agent-01.json` 和 `final-gate-diagnosis-01/diagnosis-agent-01.json`（后两者均在同一http-audio-ci-01目录）。
+
+音频实际RED来自上述单例。改动保持生产音频代码与fixture不变，手动stop例改用真实ManualMix/NULLDRIVER/48kHz，显式512帧推进并要求stop与shutdown后零自然完成通知。另对同文件11个已确认依赖短音源未结束的业务合同前提进行修正；这些是静态风险，未伪称11个新运行失败。11例原82条直接断言完整保留，新增11个初始化REQUIRE与17次既有混音helper调用；76个源码TEST_CASE注册名称及顺序不变、integration4例全文不变。每例显式总输出最多32ms，低于100ms/250ms素材长度；已审退休淡出与暂停语义。报告及独审分别为 `worktrees/u29-pose-audio-integration-worktree/artifacts/validation/u29-audio-clock-completion-01/implementation-report-01.json`（SHA256 `36bab575c654bf807479a2f1bb453635006bd944dcc8d0239b811dd15dab4b59`）与 `independent-review-01.json`（SHA256 `5f2f9fa8d17a51243151e12fe266aef3092a292b5d7c0322b04b07d448473588`）。静态统计不是新运行发现数或断言数。
+
+原Haru基线shown两帧308 RGB差及exit1保留。单独Clear变体消除静态像素差，却仍显示两组手臂；其构建外层因旧map解析假设错误exit1也保留，编译/链接实际0另经只读核实。再接入模型声明的CubismPose，加载失败不发布模型，motion/expression后、模型Update前更新pose；CubismUserModel持有所有权，不增加公共接口或额外动画效果。初始load-render/off混合产物只执行一次，child21420实际0、cleanup COMPLETE，9图/33记录/201 owner frames，静止与隐藏RGBA差0，23465可见RGB像素；根与独审实际查看确认仅两臂。独审 `u26-live2d-pose-runtime-01/independent-terminal-review-01.json` SHA256 `04d29697892feb5d6c7af2616598e7b4f94e68bc52fd48b6f066e338488848d6`；这不是完整新候选、动作或无泄漏通过。
+
+该混合EXE首次motion/off在同步调用后发生访问冲突：child17648/creation134347247264376580实际3221225477（0xC0000005），launcher0、owned cleanup COMPLETE，无超时或强杀；宿主session24220外层实际-1保留。六图与初始对应RGBA一致，journal19最后为before_synchronous_call，尚未写motion_returned/child result，也未达到模型卸载或Engine shutdown。wrapper报告missing result是崩溃后的证据缺件。见 `u26-live2d-pose-matrix-runtime-01/root-motion-failure-review-01.json` SHA256 `1627d5413077dfebb7e47ce36ec15e6d8af9ee4f1274a237c7389f2f1557d94d`。
+
+只读诊断确认旧调用给LoadMotion非空modelSetting，却遗漏group/index；实际SDK默认nullptr/-1，经GetMotionFadeInTimeValue、IsExistMotionFadeIn进入JsonMap字符指针查找，并对空group进行strcmp。实际map和PDB身份已核对，调用合同缺陷与本次阶段吻合；未取得故障栈/故障IP，不能声称已确认具体崩溃指令。诊断 `u26-live2d-motion-crash-diagnosis-01/diagnosis-report-01.json` SHA256 `bfc91e857c93fb3c0f0fc951020d25704418b76b8ae154d3eced9f4af26001b1`。本改动让动作缓存保留真实group/index并随LoadMotion传入，保留model3淡入淡出覆盖、stem与group/index别名、substring选择及unknown返回false。私有map value类型已变，必须完整重编译相关翻译单元，不能继续用旧单TU混合产物代表新代码。StartMotion(false)的所有权风险本次未改，仍需独立相位分配证据。实现报告为 `worktrees/u29-pose-audio-integration-worktree/artifacts/validation/u26-motion-setting-fix-01/fix-report-01.json`，GREEN待完整新构建后的原等价探针。
+
+新SDK完整Debug入口已准备，复用逐项核对的244项SDK与91项SDL，11个required check、发现下限和唯一预准AI跳过保持。入口准备与静态独审不算配置/构建/执行通过。源码、文档与生成锚冻结后由root单独运行；U26动作/表情/释放/无Pose与异常输入、口型、Steam账号，U24设备、U25配额、U27正式性能与长跑、U28/U29完整平台/包/AE1–AE8/旧档回退均保持未完成范围。
+
+旧f87 plain basic producer-A实际子进程0、四marker各1、存档字段正确、149静态文件不变；外层仍REJECTED/exit1，因为原协议要求的frame-limit和初始化INFO字符串在该Release EXE中不存在。实际帧数和退出原因未知，不改写原协议通过。仅原样保留6820字节save11（SHA256 `f5dc1a42c6dfecf42edc4150f08b435ba81432d944a7493aae682fc78f8e1469`）作为未来冷读输入，见 `u29-old-plain-basic-a-observation-01/observation-and-retention-01.json`；未运行consumer或整个回退矩阵。
+
+U23保护fresh04与fresh03逐字节一致：唯一context `Verify release inputs / Verify exact release inputs`、GitHub Actions App15368、strict=false、一次批准、管理员例外及禁止强推/删除保持，未重复mutation。误删恢复缺失的原本机根日志继续列为缺失；以上新证据不冒充恢复的旧日志。平台逐能力历史status/执行commit/日期/evidence均保持，生成声明仍为NOT_REVERIFIED，不产生合并、标签、发布或商店授权。

@@ -4,7 +4,7 @@
 
 完整目标仍是 U1–U29；底层优先，Studio 暂停。下方日期快照保留当时的原始计数与失败，当前状态以本节和对应执行记录为准。不同工作树的通过证据不能合并成一个未经验证的候选。
 
-**恢复后当前代码提交：`a04784ea32688ebdac69753fa2660d227b52357e`（HTTP就绪与单一音频integration前提修复，完整新门禁尚待执行）。** HTTP真实RED后，Windows两套Python117/117通过、根审无可行动问题；新音频ManualMix用例尚未编译/运行。前一d61托管run35980952352终态8成功/3失败/1跳过，Windows Release成功，Linux Release、macOS Debug及聚合失败，macOS Release跳过。ed6基础Debug、FFmpeg和Live2D SDK完整Debug分别根/独审通过，不迁移为a047通过；首次真实Haru基线退出1且两shown差308像素，仍诊断。旧f87包与冷恢复输入仅准备。完整原失败及未验边界见[U29最新续记](2026-09-24-017-foundation-integration-execution.md#2026-09-24-http-就绪与音频集成前提修复续记)。
+**恢复后当前代码提交：`5cbf2e8e93e748b3d59667ee5ebf83554a1c5bd8`。** 当前代码为 `5cbf2e8e93e748b3d59667ee5ebf83554a1c5bd8`（`codex/u29-pose-audio-integration`），包含模型目标逐帧透明清理、CubismPose接线、动作缓存group/index与LoadMotion参数修正，以及12个音频业务合同用例的真实ManualMix时钟。新候选完整SDK/C++/Lua/CTest尚未运行。 原混合motion/off的C0000005及d531 CI的Linux Release/最终gate失败保持；新代码不沿用旧候选门禁通过。U23 fresh04只读保护与前次逐字节一致。旧f87实际producer生成的原存档已保留为未来冷读输入，但原协议要求的Release INFO日志缺失，外层失败和实际帧数未知边界保留；consumer及整个回退矩阵未完成。详见[U29最新续记](2026-09-24-017-foundation-integration-execution.md#2026-09-24-pose动作与音频时钟前提修复续记)。
 
 | 范围 | 已取得的证据 | 继续完成的事项 |
 |---|---|---|

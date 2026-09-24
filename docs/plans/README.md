@@ -4,7 +4,9 @@
 
 进度显示：[当前待办清单](2026-09-05-003-runtime-foundation-todo.md)。详细证据见 [执行记录](2026-09-05-002-runtime-foundation-execution.md)。
 
-2026-09-24 恢复后当前接续：完整目标仍为全部U1–U29，底层优先、Studio暂停。[U29最新续记](2026-09-24-017-foundation-integration-execution.md#2026-09-24-http-就绪与音频集成前提修复续记)的当前代码提交为 `a04784ea32688ebdac69753fa2660d227b52357e`（`codex/u29-http-readiness`）。HTTP真实进程/套接字回归经历RED后，Windows相关Python两套41+76共117/117通过，根代码及证据审查无可行动问题；另一音频integration用例改为真实ManualMix，新C++尚未编译或运行。当前代码尚无完整门禁或CI通过结论。
+2026-09-24 恢复后当前接续：完整目标仍为全部U1–U29，底层优先、Studio暂停。当前代码为 `5cbf2e8e93e748b3d59667ee5ebf83554a1c5bd8`（`codex/u29-pose-audio-integration`），包含模型目标逐帧透明清理、CubismPose接线、动作缓存group/index与LoadMotion参数修正，以及12个音频业务合同用例的真实ManualMix时钟。新候选完整SDK/C++/Lua/CTest尚未运行。 d531托管终态10成功/2失败，Linux Release和最终gate失败；原首次音频失败保留。Haru混合诊断初始姿态与静态像素已根/独审通过，但首次motion/off发生C0000005；本次group/index修复尚待完整新构建后的原探针验证。详见[U29最新续记](2026-09-24-017-foundation-integration-execution.md#2026-09-24-pose动作与音频时钟前提修复续记)。
+
+以下 a047、d61、ed6 及更早段落保留各自记录时点，不覆盖本段的新候选状态。
 
 前一候选 `d61d1939c826313f4a4eeb1db7e22d115a8f7ab9` 的托管run35980952352/attempt1已终态：12个作业中8成功、3失败、1跳过。Windows Release成功；Linux Release、macOS Debug及聚合gate失败，macOS Release跳过。Linux首次C++为1508发现/1507通过/1失败/0跳过；macOS原件证明HTTP所有权错误，未证明其历史原因就是本轮本地复现的竞态。失败与后续独立执行结果保持分开，不接受为合格新候选。
 

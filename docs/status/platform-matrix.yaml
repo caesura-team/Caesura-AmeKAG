@@ -4,7 +4,7 @@ generated_document: "docs/status/platform-status.md"
 # Review synchronization anchor only; execution commits and dates remain per capability.
 # U29 integration and U28 declaration validation are in progress.
 # A docs-only sync does not revalidate packages, devices, releases, or the code anchor.
-evidence_head_commit: a04784ea32688ebdac69753fa2660d227b52357e
+evidence_head_commit: 5cbf2e8e93e748b3d59667ee5ebf83554a1c5bd8
 
 allowed_status_enums:
   - verified
