@@ -146,6 +146,13 @@ def _host_platform() -> str:
     raise RuntimeContractError(f"No native runtime lane for this host: {sys.platform}")
 
 
+def _simulation_clock_evidence(text, audio_output):
+    expected = 'fixed; step_ms=16' if audio_output == 'software' else 'realtime'
+    rows = re.findall(r'^\[Engine\] Simulation clock: (.*)$', text, re.MULTILINE)
+    _need(rows == [expected], 'Simulation clock selection missing, duplicated or mismatched')
+    return {'mode':'fixed', 'step_ms':16} if audio_output == 'software' else {'mode':'realtime'}
+
+
 def _lsof_path(field: bytes) -> str:
     """Decode exactly one C-locale lsof name field, never Python escapes."""
     _need(field.startswith(b"/"), "lsof returned a non-absolute image path")
@@ -723,12 +730,18 @@ def run_native_package(package_root, required_configuration, attempt_dir, *, pyt
             current["status"] = "PASS"
 
         current = stage("engine_frames")
-        value = command(current, "engine_frames", _native_argv(launcher, "--frames", "60", "--audio-output", audio_output), launch_cwd, dict(env, PWD=str(launch_cwd)),
+        # Fixed frame count alone provides no lower bound on elapsed script
+        # time. Offline software mixing uses 60 x 16 ms of simulation so the
+        # unchanged demo can advance through its initial 300 ms wait. Real
+        # signal, rendering, normal exit and package stability remain required.
+        clock_args = ("--fixed-step-ms", "16") if audio_output == 'software' else ()
+        value = command(current, "engine_frames", _native_argv(launcher, "--frames", "60", "--audio-output", audio_output, *clock_args), launch_cwd, dict(env, PWD=str(launch_cwd)),
                         monitor=(lambda identity, deadline: {"loaded_modules":_loaded_libraries(identity, copy, libraries, deadline)}) if libraries else None,
                         **launch_options)
         text = _log(attempt, value)
         _need("rendering disabled (BGFX_DEBUG_IFH)" not in text and "[caesura] FATAL" not in text,
               "Ordinary engine reported a fatal boot or disabled rendering")
+        current['simulation_clock'] = _simulation_clock_evidence(text, audio_output)
         current['audio'] = _audio_evidence(text, audio_output, require_signal=True)
         current["status"] = "PASS"
 
@@ -782,11 +795,12 @@ def run_native_package(package_root, required_configuration, attempt_dir, *, pyt
             target = game / Path(relative).name
             _need(target.is_file() and _sha(target) == _sha(copy / relative), f"Created game lacks its own required library: {relative}")
             game_libraries.append(target.name)
-        value = command(current, "created_game_frames", _native_argv(game / name, "--frames", "60", "--audio-output", audio_output), game, game_env,
+        value = command(current, "created_game_frames", _native_argv(game / name, "--frames", "60", "--audio-output", audio_output, *clock_args), game, game_env,
                         monitor=(lambda identity, deadline: {"loaded_modules":_loaded_libraries(identity, game, game_libraries, deadline)}) if game_libraries else None)
         text = _log(attempt, value)
         _need("KAG Runner] Started" in text and "[caesura] FATAL" not in text
               and "rendering disabled (BGFX_DEBUG_IFH)" not in text, "Created game did not start its KAG runner with rendering enabled")
+        current['simulation_clock'] = _simulation_clock_evidence(text, audio_output)
         current['audio'] = _audio_evidence(text, audio_output, require_signal=False)
         current["status"] = "PASS"
     except Exception as error:

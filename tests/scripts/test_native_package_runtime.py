@@ -96,6 +96,11 @@ if '--editor' not in sys.argv:
     physical = 'NOT_RUN' if audio == 'software' else 'NOT_VERIFIED'
     print('[Audio] Output mode: ' + audio + '; physical_device=' + physical)
     print('[Audio] SoLoud initialized: 3 buses (BGM, VOICE, SE) ready.')
+    clock = 'realtime'
+    if '--fixed-step-ms' in sys.argv:
+        clock = 'fixed; step_ms=' + sys.argv[sys.argv.index('--fixed-step-ms') + 1]
+    if mode == 'clock-wrong': clock = 'realtime'
+    if mode != 'clock-missing': print('[Engine] Simulation clock: ' + clock)
     if audio == 'software':
         stats = dict(frames=480, samples=960, nonzero_samples=500, nonfinite_samples=0,
                      peak=0.5, absolute_energy=10.0, sample_rate=48000, channels=2,
@@ -780,6 +785,17 @@ class NativePackageRuntimeTests(unittest.TestCase):
             self.assertEqual(argv[argv.index('--audio-output')+1], 'software')
             if stage['name'].endswith('_frames'):
                 self.assertEqual(stage['audio']['statistics']['frames'], 480)
+                self.assertEqual(argv[argv.index('--fixed-step-ms')+1], '16')
+                self.assertEqual(stage['simulation_clock'], {'mode':'fixed', 'step_ms':16})
+
+    def test_software_missing_or_mismatched_clock_cannot_pass(self):
+        for mode in ('clock-missing', 'clock-wrong'):
+            with self.subTest(mode=mode):
+                report = self.invoke(audio_output='software', mode=mode, attempt=self.root/mode)
+                self.assertEqual(report['status'], 'RUNTIME_FAIL')
+                self.assertEqual(report['stages'][-1]['name'], 'engine_frames')
+                self.assertTrue(any('Simulation clock' in error for error in report['errors']))
+                self.assertEqual(report['cleanup'], 'COMPLETE')
 
     def test_software_missing_statistics_or_silent_demo_cannot_pass(self):
         for mode in ('audio-empty', 'audio-missing'):

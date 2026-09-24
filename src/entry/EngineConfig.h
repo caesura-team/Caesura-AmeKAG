@@ -65,6 +65,7 @@ struct EngineConfig {
         , enableDebugger(other.enableDebugger)
         , renderBackend(other.renderBackend)
         , frameLimit(other.frameLimit)
+        , fixedStepMs(other.fixedStepMs)
         , exportReplayFile(std::move(other.exportReplayFile))
         , exportDir(std::move(other.exportDir)) {}
 
@@ -119,6 +120,13 @@ struct EngineConfig {
     // Maximum frames to render before Engine::run() exits (0 = unlimited).
     // Enables deterministic, CI-reproducible GPU smoke runs via --frames N.
     uint32_t          frameLimit      = 0;
+
+    // Simulation dt for each owner-loop iteration: 0 keeps the real clock;
+    // 1..250 ms selects an explicit fixed step for offline playback/capture.
+    // Lua, audio and rendering share this dt. OS events, I/O and GPU work are
+    // still real; this does not make external systems deterministic or pace
+    // the loop to a wall-clock frame rate. init() rejects values above 250.
+    uint32_t          fixedStepMs     = 0;
 
     // Demo/video export (Neo-Genesis): when exportReplayFile is non-empty
     // the engine activates replay playback (scripts/replay.lua) before the

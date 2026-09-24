@@ -281,6 +281,16 @@ bool Engine::init() {
     }
     m_initAttempted = true;
 
+    if (m_config.fixedStepMs > 250) {
+        fprintf(stderr, "[Engine] fixedStepMs must be 0 (realtime) or 1..250.\n");
+        return false;
+    }
+    if (m_config.fixedStepMs == 0) {
+        printf("[Engine] Simulation clock: realtime\n");
+    } else {
+        printf("[Engine] Simulation clock: fixed; step_ms=%u\n", m_config.fixedStepMs);
+    }
+
 #if defined(__ANDROID__)
     // Android audio-focus bridge (t211): install the drain sink up front;
     // per-frame drain is a no-op until focus events arrive on the UI thread.
@@ -771,7 +781,10 @@ void Engine::run(const OwnerPump& ownerPump) {
         m_lastTick = now;
         if (dt < 0.0f) dt = 0.0f;
         if (dt > 0.25f) dt = 0.25f;
-        (void)dt; // reserved for frame-time tracking
+        // Select once so Lua, audio and all frame-driven consumers advance
+        // on the same simulation clock. The default retains real tick dt.
+        if (m_config.fixedStepMs != 0)
+            dt = static_cast<float>(m_config.fixedStepMs) / 1000.0f;
 
         // Keep reload and Lua GC stopped while a coroutine is suspended.
         // Rendering and transport pumping remain active.

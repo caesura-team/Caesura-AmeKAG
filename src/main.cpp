@@ -30,6 +30,7 @@ extern "C" {
 #include "rpc/RpcServer.h"
 #include "rpc/api/IRpcDispatcher.h"
 #include <atomic>
+#include <charconv>
 #include <cmath>
 #if defined(__ANDROID__)
 #include <android/log.h>
@@ -1270,6 +1271,7 @@ extern "C" int main(int argc, char* argv[]) {
     bool audioOutputExplicit = false;
     // Optional deterministic frame limit: --frames N (GPU smoke runs; 0 = unlimited)
     uint32_t frameLimit = 0;
+    uint32_t fixedStepMs = 0;
     // Optional demo/video export: --export-replay <replay.json> drives the
     // recorded input while each rendered frame is written as PNG into
     // --export-dir (default export_out). Bounded by --frames N.
@@ -1318,6 +1320,7 @@ extern "C" int main(int argc, char* argv[]) {
             printf("  --backend <name>      GPU backend override (opengl|vulkan|dx11|dx12|metal|webgpu)\n");
             printf("  --audio-output <mode> device (default) or software (real mixer; no physical output)\n");
             printf("  --frames <N>          deterministic frame limit (0 = unlimited)\n");
+            printf("  --fixed-step-ms <N>   fixed simulation dt, integer 1..250 ms (default: realtime)\n");
             printf("  --resolution <WxH>    render canvas size (default 1920x1080)\n");
             printf("  --export-replay <f>   replay a recorded input JSON while exporting frames\n");
             printf("  --export-dir <dir>    frame export directory (default export_out)\n");
@@ -1333,7 +1336,7 @@ extern "C" int main(int argc, char* argv[]) {
         const bool takesValue = arg == "--resource-root" || arg == "--carc-trust" ||
             arg == "--carc-public-key" || arg == "--backend" || arg == "--frames" ||
             arg == "--export-replay" || arg == "--export-dir" || arg == "--resolution" ||
-            arg == "--audio-output";
+            arg == "--audio-output" || arg == "--fixed-step-ms";
         if (takesValue && (i + 1 >= argc || argv[i + 1][0] == '\0' ||
                            std::string(argv[i + 1]).rfind("--", 0) == 0)) {
             fprintf(stderr, "[main] ERROR: %s requires a value.\n", arg.c_str());
@@ -1391,6 +1394,20 @@ extern "C" int main(int argc, char* argv[]) {
             }
             audioOutput = mode;
             audioOutputExplicit = true;
+        } else if (arg == "--fixed-step-ms") {
+            const std::string value = argv[++i];
+            uint32_t step = 0;
+            const auto parsed = std::from_chars(value.data(), value.data() + value.size(), step);
+            if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size() ||
+                step == 0 || step > 250) {
+                fprintf(stderr, "[main] ERROR: Invalid --fixed-step-ms value: %s (expected integer 1..250).\n", value.c_str());
+                return 1;
+            }
+            if (fixedStepMs != 0 && fixedStepMs != step) {
+                fprintf(stderr, "[main] ERROR: Conflicting --fixed-step-ms options.\n");
+                return 1;
+            }
+            fixedStepMs = step;
         } else if (arg == "--frames" && i + 1 < argc) {
             char* end = nullptr;
             const long v = strtol(argv[++i], &end, 10);
@@ -1505,6 +1522,7 @@ extern "C" int main(int argc, char* argv[]) {
     config.enableDebugger = headless || editorMode;
     config.renderBackend  = renderBackend.empty() ? nullptr : renderBackend.c_str();
     config.frameLimit     = frameLimit;
+    config.fixedStepMs    = fixedStepMs;
     config.exportReplayFile = exportReplayFile;
     config.exportDir        = exportDir;
     config.archiveTrustMode = archiveTrustMode;

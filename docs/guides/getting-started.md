@@ -330,8 +330,8 @@ cmake --build build --parallel
 你会看到一个窗口渲染 KAG 默认 demo（`demo/galgame_demo.ks`），日志打印
 `[Engine]` 各子系统注册行。按 **Esc** 或关闭窗口退出。
 
-**命令行参数**（引擎**没有实现 `--help`**——传了 `--help` 会被静默忽略并
-直接启动窗口；参数以本表为准，源码见 `src/main.cpp` 参数解析段）：
+**命令行参数**（`--help` / `-h` 在初始化前打印帮助并退出；源码见
+`src/main.cpp` 参数解析段）：
 
 | 参数 | 作用 |
 |------|------|
@@ -341,9 +341,18 @@ cmake --build build --parallel
 | `--editor-stdio` | stdio JSON-RPC 编辑器 |
 | `--backend <type>` | 强制渲染后端（metal/opengl/vulkan/dx11/dx12/webgpu） |
 | `--frames N` | 渲染 N 帧后确定性退出（CI/冒烟用） |
+| `--fixed-step-ms N` | 每帧使用固定模拟步长，整数 1–250 毫秒；省略时保持实时 dt |
 | `--export-replay r.json --export-dir out` | 逐帧导出 PNG 序列（§8） |
 | `--headless` | 无窗口模式（无 GPU 时给 test/determinism 用） |
 | `--resolution WxH` | 渲染画布分辨率（默认 1920x1080，窗口自适应） |
+
+离线回放或包验证需要确定的模拟时长时，可运行
+`CaesuraAmeKAG.exe --frames 60 --fixed-step-ms 16 --audio-output software`。
+同一 owner loop 的 Lua、音频和渲染更新使用统一的 16 毫秒步长；60 帧提供
+960 毫秒模拟推进。`--frames` 单独使用时只限制帧数，不保证经过多少毫秒。
+固定步长不会将 OS 输入、I/O 或 GPU 执行变成确定性的，也不会按该步长限制
+真实帧率。Software 使用真实 SoLoud 混音并丢弃输出，不能证明扬声器实际发声；
+日常游玩省略固定步长参数，继续使用默认实时行为。
 
 ---
 

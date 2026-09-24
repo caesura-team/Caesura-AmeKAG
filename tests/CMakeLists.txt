@@ -567,6 +567,19 @@ if(Python3_EXECUTABLE)
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
     )
     add_test(
+        NAME CaesuraFixedStepCli
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_fixed_step_cli.py
+                --engine $<TARGET_FILE:CaesuraAmeKAG>
+    )
+    set_tests_properties(CaesuraFixedStepCli PROPERTIES
+        LABELS "qa;cli;timing"
+        TIMEOUT 360
+        RUN_SERIAL TRUE
+        RESOURCE_LOCK "global-singletons"
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    )
+    add_test(
         NAME CaesuraResourceCwdCli
         COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_resource_cwd_cli.py
