@@ -321,3 +321,31 @@ Mac安装器按当前开发目录发现并锁定实际 `install_name_tool`，在
 另一次ed6 Windows大包恢复明确失败：artifact `10797513856` 的声明长度为40,922,792字节，本次900秒总deadline仅取得14,024,704字节，实际900.1215秒、退出1，partial SHA256为 `f1ee6b5efffca25536df5dd64bbc382276f1318d168a3098d6c003df602a540e`。完整摘要未通过，未解包、未复核内部ZIP、未运行包；本次不续取，不能写成已恢复或可用新候选。终态见 `hosted-portability-01/windows-final-recovery-01/recovery-terminal-01.json`（SHA256 `1f997ef88e6ca32402c16d552a1d3740c82cddcfda08374f1df5d088d64b843c`）。
 
 后续仍需对新提交完成完整门禁和真实平台验证，并分别完成SDK/FFmpeg、性能与长跑、最终包及AE1–AE8/回退验收。既定required集合和门槛保持，e0默认演示60帧PCM、原sanitizer、中断和本轮托管/下载失败不因准备工作或定向通过而改写；本轮不构成整个计划完成，也不产生发布授权。
+
+## 2026-09-24 HTTP 就绪与音频集成前提修复续记
+
+本次当前代码提交为 `a04784ea32688ebdac69753fa2660d227b52357e`（`codex/u29-http-readiness`），包含四个HTTP实现/测试文件及一个音频integration测试文件。提交前两项补丁均已根审；HTTP有下述Windows Python真实红绿，音频新C++尚未编译/运行。当前代码尚无完整门禁或托管CI通过结论，不沿用d61或ed6的执行身份。以下外部证据路径仍相对于 `E:/CaesuraRecovery/20260924-1446/`；前文历史快照及原失败不重写。
+
+### d61 托管终态与原失败
+
+`d61d1939c826313f4a4eeb1db7e22d115a8f7ab9` 的run `35980952352` attempt1已完成且整体failure：12个作业中8成功、3失败、1跳过。Windows Release成功；Linux Release、macOS Debug及聚合gate失败，macOS Release因前置失败跳过。实际终态见 `hosted-fixes-ci-01/final-gate-diagnosis-01/run.stdout`（SHA256 `e472ab5ceb26b7e4efaaebedd0378f200a1f1728bdd8a59e7be5ecb7927d728f`），作业快照为 `hosted-fixes-ci-01/jobs-state-06.json`（SHA256 `6dc24923c67d2f0c7867635b6ed9fa33244faedba13517f5822058972e549a91`）。聚合最终诊断为 `hosted-fixes-ci-01/final-gate-diagnosis-01/diagnosis-agent-01.json`（SHA256 `34eac961edcbfd548df6384c0fb39e2e85cea0774dd10d6d169217b1de81349c`）：原gate在 `inputs` 阶段实际退出1，按policy顺序首先遇到空 `linux_release_artifact_id`，以 `Artifact ID must be a canonical positive decimal string` 拒绝；尚未进入产物下载及最终字节复核。实际required-check context为 `Verify release inputs / Verify exact release inputs`，App15368与d61提交匹配。聚合失败不构成11包已验，也不接受d61为合格新候选。
+
+Linux Release首次独立C++实际退出1：1508发现、1507通过、1失败、0跳过；唯一失败为 `test_audio_integration.cpp` 的 `Audio: voice pool overlap does not crash (device)`，`isVoicePlaying() == true` 实际为false。原stdout记录两个非零句柄进入slot 0/1。该首次执行与后续单独CTest执行的通过分别保留。诊断见 `hosted-fixes-ci-01/linux-release-diagnosis-01/diagnosis-agent-provisional-01.json`（SHA256 `d675a47ff6d4c4ef1087a1afa33309a8c8ae130b55d298e2495f88a4e4cfff10`）：16份Range响应与五成员已重算大小、SHA、CRC、解压和run/lane/manifest绑定，**完整ZIP的SHA尚未核验**；原托管二进制只由receipt记录，未声称已取回其字节。最终诊断为同目录 `diagnosis-agent-01.json`（SHA256 `b7e3113420889eb23dc01f0c53c47092b7a5a487c95cfa097282b5876cd2640d`）：原完整下载已在900.0477秒触发总deadline，实际退出1，保留21,118,976/31,876,868字节partial（SHA256 `c2da470b58ccc867d426d154b372552b1d1d91d4f90ea273554ef65e6eb200d0`）。本次没有重试或续取，也未提取partial；下载已终态FAILED，Range继续保持CRC-only边界，不升级为整包摘要通过。
+
+macOS Debug原件确认 `CaesuraHeadlessHttpSmoke` 在完成任何route检查前出现TCP所有权错误；CTest为72发现、70通过、1失败及1项既定AI跳过。原件没有保存导致失败的lsof观测字节和初次/后次监听行，不能把下述Windows竞态复现认作已证明的线上原因。诊断为 `hosted-fixes-ci-01/macos-debug-diagnosis-01/diagnosis-agent-01.json`（SHA256 `1566b4ff1f435c04312b861967fb1f1c93205f481bec9cec9934797dfdcae7c1`）。
+
+### HTTP 真实回归与单例音频前提修正
+
+HTTP首个RED以真实owned Python进程和套接字建立barrier：第一次真实OS枚举无listener，随后同一owned进程开始监听；旧异常处理再次枚举看见合法listener，却重抛旧错误，实际1例/1 error/退出1，HTTP请求数为0。第二个RED在实际HTTP响应后关闭listener、进程保持存活，证明旧逻辑误把运行期丢失监听当成启动重试；2例中1失败，foreign监听负控保持通过。修复只将已核验进程身份下的首请求前无监听标为typed `ListenerNotReady`；首次严格验证listener后不再进入准备态。foreign、身份变化、观测不确定或验证后丢失监听立即拒绝，HTTP前后所有权检查、重定向拒绝和token边界保持。
+
+最终Windows相关Python完整入口为 `test_package_runtime.py` 41/41、`test_native_package_runtime.py` 76/76，共117/117、0失败/0 error/0跳过；其中HTTP定向7/7，新增7例、删除0例，实际进程退出0及owned cleanup COMPLETE。实现报告为 `worktrees/u29-http-readiness-worktree/artifacts/validation/u29-http-readiness-01/implementation-report-01.json`（SHA256 `7da04165da6ad0924bd8e499bcfc6d7ab9488429bd62e564a7bdd87934077e8e`）；根代码/原件复核为同目录 `root-review-01.json`（SHA256 `03c500d64243b90c23cb0bb13abeffc73e1dc334bafca2bbe1fac32b2f7de37e`），无可行动问题。它们是Windows真实Python进程/套接字合同验证，未运行Engine，未执行macOS/Linux观察器路径，不是跨平台或当前候选完整门禁通过。
+
+音频只修改上述integration单例并准确更名为 `Audio: voice pool overlap survives explicit mixing (manual mix)`：要求真实ManualMix初始化成功、NULLDRIVER/48kHz正确，各voice非零句柄在设置循环后显式混音512帧；第二次mix后两个不同句柄必须同时有效，原播放状态、stopVoice、停止后状态和shutdown检查保留。100ms非循环WAV和默认Device独立推进说明原声音寿命未受测试控制；原回调时间线没有保留，不能宣称已证明生产音频缺陷。其余三个integration用例字节不变，4例仍为4例，生产音频未改。实现报告为 `worktrees/u29-http-readiness-worktree/artifacts/validation/u29-audio-integration-clock-01/implementation-report-01.json`（SHA256 `ac188a1171e502379b452ab469ce206325bc34e67fcc2656288b5c871f912853`）；根审同目录 `root-review-01.json`（SHA256 `5362e69a6cd1ec28612ec24dcb22266796c2be028db81a71b016230000cb7ddb`）重核42引用，无可行动静态问题。**新C++尚未编译或执行，GREEN仍待新候选实际验证**；旧二进制和已有ManualMix测试通过不代替本改动。
+
+### ed6 SDK 已封存终态与首次 Haru 基线失败
+
+前文运行中的ed6 Live2D SDK Debug现已取得完整11项PASS及根/独审终态：C++1525通过、0失败/0跳过，Lua147/56通过，CTest72发现、71通过及1项预先允许的AI服务跳过。实际配置为Live2D ON，Steam/FFmpeg/sanitizer OFF；244项SDK输入、91项SDL、链接与运行能力查询分别绑定原执行。根报告 `sdk-terminal-root-review-01/review.json`（SHA256 `3bf552d4f3dc75072d1670cac5670491a53cfb26ac977280931ce43233dbe8d8`）与独审 `sdk-terminal-independent-review-01/review-01.json`（SHA256 `4258b0e9393b84320ae6f0ee79f24105fb6deacc196b6378b276cb3bb0656d10`）均无可行动问题；两者绑定原outer `7e3ccd018006d720d8ce1b2fa195b6af2c06e278d0b0ed27a19da1bd7de6dc16`、raw/run `06d049b05eb7c8397022a762ac210521db7f84579542032126be7c0159ea5a0e` 和严格manifest `59a73f223aea76091a8d143c146277c79243d2c6a355dcd7e83787d0444e5fb2`。这是 `ed6e9c267d03241aa5c01b203dd0323b44c31ca8` 的该配置通过，不迁移a047，也不证明真实Haru模型、动作、口型、Steam账号或云服务。
+
+首次独立真实Haru `load-render` 基线（allocator off）已执行，实际子进程退出1、未超时、owned cleanup COMPLETE，终态为 `DIAGNOSTIC_FAILED`，错误为 `No-motion model not stable`。原summary为 `u26-real-probe-runtime-preparation-01/attempt-load-render-off-01/summary.json`（SHA256 `9dddc4c6d980da3460d204da3f78b2c3f07fc25e881763678f28638166a8cbb5`）。对原PNG的只读复核确认两次hidden相差0个RGB像素、hidden/shown相差23921个、两次shown相差308个；报告为 `u26-real-probe-baseline-diagnosis-01/root-pixel-analysis-01.json`（SHA256 `999c5fe42270c3f80f5b43635f0837f0612a9fa5d77dcd65a364b8a9a00d8820`）。像素差本身不证明原因，原失败与阈值保留，仍在诊断，不升级U26或平台能力。
+
+本次文档仅把当前同步锚指向a047代码提交，并追加上述独立证据范围；平台逐能力的历史status、执行commit、日期及evidence保持，生成声明仍为 `NOT_REVERIFIED`。后续须对冻结新候选完成原完整门禁、实际平台和最终包验证，再推进性能/长跑、AE1–AE8及旧包冷恢复；不降低发现门槛，不将准备、单项通过或原件恢复拼成整合候选通过，不产生发布授权。
