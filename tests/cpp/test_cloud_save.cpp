@@ -2273,7 +2273,9 @@ public:
     CloudSnapshot readSnapshot(CloudSide side, const std::string& path) override {
         if (side == CloudSide::Local) ++localReads; else ++cloudReads;
         auto result = real.readSnapshot(side, path); // actual disk + actual loopback HTTP
-        auto callback = std::move(afterRead);
+        // Moving std::function leaves its source value unspecified; consume this
+        // one-shot hook explicitly before either invocation or a subsequent read.
+        auto callback = std::exchange(afterRead, {});
         if (callback) callback(side);
         return result;
     }
@@ -2480,11 +2482,16 @@ TEST_CASE("U26 coordinator: optional capability validates captured bytes once") 
     f.source.checkSources();
     {
         U26CoordinatorFixture changed;
+        int callbackCalls = 0;
         changed.provider->afterRead = [&](CloudSide side) {
+            ++callbackCalls;
             REQUIRE(side == CloudSide::Local);
+            CHECK_FALSE(changed.provider->afterRead);
             changed.setSides(changed.source.b, changed.source.a);
         };
         const auto captured = changed.api->prepareCloudSync(3, u26CoordinatorToken(19));
+        CHECK(callbackCalls == 1);
+        CHECK_FALSE(changed.provider->afterRead);
         REQUIRE(captured.code == CloudCoordinatorCode::Complete);
         REQUIRE(captured.record.has_value());
         detail::CloudConflictStore raw(changed.contextRoot() / "records");

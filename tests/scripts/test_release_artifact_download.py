@@ -11,6 +11,7 @@ import sys
 import tempfile
 import threading
 import time
+from types import SimpleNamespace
 import unittest
 from unittest import mock
 from urllib.error import HTTPError
@@ -192,7 +193,7 @@ class DownloadTests(unittest.TestCase):
         self.assertEqual(report["archive"]["sha256"], self.expected)
         self.assertEqual(report["status"], "FAIL")
 
-    def test_body_read_must_not_wait_for_requested_block_after_deadline(self):
+    def stalled_body_server(self):
         release = threading.Event()
         sent = threading.Event()
         self.addCleanup(release.set)
@@ -209,18 +210,79 @@ class DownloadTests(unittest.TestCase):
             except OSError:
                 pass
         server = self.wire_server(handle)
+        return server, release, sent
+
+    def assert_partial_body_failure(self):
+        report = json.loads((self.root / "1/download.json").read_text())
+        self.assertEqual(report["status"], "FAIL")
+        self.assertEqual(report["bytes"], 10)
+        self.assertEqual((self.root / "1/artifact.zip").read_bytes(), self.body[:10])
+        self.assertEqual(report["archive"]["sha256"], hashlib.sha256(self.body[:10]).hexdigest())
+        self.assertFalse(any(t.name == "artifact-download-deadline" for t in threading.enumerate()))
+        return report
+
+    def test_earlier_socket_timeout_is_not_a_total_deadline_expiry(self):
+        server, release, sent = self.stalled_body_server()
+        # A socket may reject the read before the independent total deadline.
+        # Keep the real transport and the strict return-time/partial-byte
+        # contract, but do not attribute this failure to the watchdog.
+        connection = lambda host, timeout: HTTPConnection(
+            "127.0.0.1", server.server_port, timeout=min(timeout, .02))
         started = time.monotonic()
         try:
-            with mock.patch.object(product, "MAX_SECONDS", .1), self.assertRaises(ValueError):
-                self.download(opener=None, connection_factory=self.wire_connection(server))
+            with mock.patch.object(product, "MAX_SECONDS", 1), self.assertRaisesRegex(
+                    ValueError, "HTTP transport failed: TimeoutError"):
+                self.download(opener=None, connection_factory=connection)
         finally:
             elapsed = time.monotonic() - started
             release.set()
         self.assertTrue(sent.is_set())
-        self.assertLess(elapsed, .5, "A blocked body read outlived the total deadline")
-        report = json.loads((self.root / "1/download.json").read_text())
-        self.assertEqual((self.root / "1/artifact.zip").read_bytes(), self.body[:10])
-        self.assertEqual(report["archive"]["sha256"], hashlib.sha256(self.body[:10]).hexdigest())
+        self.assertLess(elapsed, .5, "A blocked body read ignored its socket timeout")
+        report = self.assert_partial_body_failure()
+        self.assertEqual(report["errors"], ["HTTP transport failed: TimeoutError"])
+        self.assertFalse(report["deadline_exceeded"])
+
+    def test_body_read_checks_total_deadline_after_retaining_available_bytes(self):
+        server, release, sent = self.stalled_body_server()
+        prefix_read = threading.Event()
+        # Advance only the host clock, after ten bytes have really crossed
+        # HTTPResponse.read1. Production streaming, preservation and deadline
+        # checks remain intact. Socket timeouts keep their requested budget;
+        # this does not rely on Windows cross-thread shutdown waking select.
+        def clock():
+            return time.perf_counter() + (1 if prefix_read.is_set() else 0)
+
+        class ObservedConnection(HTTPConnection):
+            def getresponse(connection):
+                response = super().getresponse()
+                read1 = response.read1
+                received = 0
+                def observe_read1(size):
+                    nonlocal received
+                    block = read1(size)
+                    received += len(block)
+                    if received >= 10:
+                        prefix_read.set()
+                    return block
+                response.read1 = observe_read1
+                return response
+
+        connection = lambda host, timeout: ObservedConnection(
+            "127.0.0.1", server.server_port, timeout=timeout)
+        started = time.monotonic()
+        try:
+            with mock.patch.object(product, "MAX_SECONDS", .1), \
+                    mock.patch.object(product, "time", SimpleNamespace(perf_counter=clock)), \
+                    self.assertRaisesRegex(ValueError, "Artifact download exceeded time limit"):
+                self.download(opener=None, connection_factory=connection)
+        finally:
+            elapsed = time.monotonic() - started
+            release.set()
+        self.assertTrue(sent.is_set())
+        self.assertTrue(prefix_read.is_set())
+        self.assertLess(elapsed, .5, "Available body bytes did not reach the deadline check")
+        report = self.assert_partial_body_failure()
+        self.assertEqual(report["errors"], ["Artifact download exceeded time limit"])
         self.assertTrue(report["deadline_exceeded"])
 
     def test_production_connection_path_bounds_api_headers_blob_headers_and_chunk_headers(self):

@@ -16,6 +16,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 import compare_benchmarks as bench
+import package_runtime as runtime
 from collect_validation_evidence import collect_evidence
 from run_validation import run_profile
 from validation_sanitizer import MARKER, OPTION_NAMES, capture_environment, create_capture
@@ -64,7 +65,15 @@ for metric, (units, result) in metrics.items():
             emit(dict(event="sample",metric=metric,phase=phase,index=index,elapsed_ns=100000,work_units=units,correctness_ok=True,observed_result=result,**extra))
 emit(dict(event="footer",warmup_count=6,measurement_count=30,correctness_ok=True))
 print("[doctest] test cases: 3 | 3 passed | 0 failed | 1421 skipped", flush=True)
-time.sleep(.06)
+if mode != "fast":
+    # Keep this real child alive until its parent has published OS-observed
+    # identity, including both observations of the macOS framework image.
+    identity_file = Path(os.environ["TMPDIR"]).parent / "control/process.json"
+    deadline = time.monotonic() + 5
+    while not identity_file.is_file() and time.monotonic() < deadline:
+        time.sleep(.005)
+    identity = json.loads(identity_file.read_text(encoding="utf-8"))
+    assert identity["pid"] == os.getpid()
 '''
 
 
@@ -247,6 +256,23 @@ class OwnedCollectionTests(unittest.TestCase):
         cls.sampler.write_text("explicit fixture sampler; never an Engine binary")
         cls.worker = cls.root / "worker.py"
         cls.worker.write_text(WORKER, encoding="utf-8")
+        # Model a descheduled observer without inventing a PID or OS identity:
+        # Popen, child execution, wait and the later identity query remain real.
+        cls.delayed_launcher = cls.root / "delayed-observation-launcher.py"
+        cls.delayed_launcher.write_text(
+            "import json, sys\nfrom pathlib import Path\n"
+            f"sys.path.insert(0, {str(ROOT / 'scripts')!r})\n"
+            "import package_runtime as runtime\n"
+            "actual_popen = runtime.subprocess.Popen\n"
+            "def after_child_exit(*args, **kwargs):\n"
+            "    child = actual_popen(*args, **kwargs)\n"
+            "    code = child.wait(timeout=5)\n"
+            "    Path(sys.argv[2]).with_name('delayed-observation.json').write_text(\n"
+            "        json.dumps({'pid': child.pid, 'actual_exit_code': code}), encoding='utf-8')\n"
+            "    return child\n"
+            "runtime.subprocess.Popen = after_child_exit\n"
+            "raise SystemExit(runtime._runtime_launcher(Path(sys.argv[2])))\n",
+            encoding="utf-8")
         def git(*args):
             return subprocess.check_output(["git", *args], cwd=cls.repo, stderr=subprocess.PIPE, text=True).strip()
         git("init", "-q")
@@ -416,6 +442,53 @@ class OwnedCollectionTests(unittest.TestCase):
         self.assertEqual(receipt["owned_tree_cleanup"], "COMPLETE")
         self.assertIn("original intentional fixture failure", (work / "01-candidate-0/stdout.log").read_text())
         self.assertEqual(result["first_failure"]["process_index"], 1)
+
+    def test_fast_child_without_observed_identity_is_not_collected(self):
+        commands = copy.deepcopy(self.commands)
+        for command in commands.values():
+            command[3] = "fast"
+        with patch.object(runtime, "__file__", str(self.delayed_launcher)):
+            result, _, work = self.collect(commands=commands)
+        directory = work / "00-base-0"
+        receipt = json.loads((directory / "control/run.json").read_text())
+        delayed = json.loads((directory / "control/delayed-observation.json").read_text())
+        self.assertGreater(delayed["pid"], 0)
+        self.assertEqual(delayed["actual_exit_code"], 0)
+        self.assertEqual(receipt["actual_exit_code"], 0)
+        self.assertEqual(receipt["status"], "EXITED")
+        self.assertEqual(receipt["owned_tree_cleanup"], "COMPLETE")
+        self.assertIsNone(receipt["process"])
+        self.assertTrue(receipt["identity_error"])
+        bench.parse_samples((directory / "stdout.log").read_text(encoding="utf-8"),
+            result["processes"][0]["run_uuid"], self.request["workload"]["sha256"])
+        self.assertEqual(result["status"], "FAIL")
+        self.assertEqual(len(result["processes"]), 1)
+        self.assertEqual(result["first_failure"]["process_index"], 0)
+        self.assertIn("process identity", result["first_failure"]["message"])
+
+    def test_matching_missing_identities_are_rejected_during_comparison(self):
+        result, request, _ = self.collect()
+        self.assertEqual(result["status"], "FIXTURE_ONLY", result)
+        row = result["processes"][0]
+        receipt_path = Path(row["run_receipt"]["path"])
+        original = receipt_path.read_bytes()
+        try:
+            # Remove the observation from both sides and update their hashes.
+            # Equality alone must not make None == None valid provenance.
+            receipt = json.loads(original)
+            self.assertIsInstance(receipt["process"], dict)
+            receipt["process"] = None
+            row["process_identity"] = None
+            row["run_receipt"] = write(receipt_path, receipt)
+            collection = self.root / "missing-identity-collection.json"
+            write(collection, result)
+            verdict = bench.compare_collection(request, sha(request), collection, sha(collection),
+                self.root / "missing-identity-comparison.json")
+            self.assertEqual(verdict["comparison"], "INVALID")
+            self.assertFalse(verdict["gate_pass"])
+            self.assertIn("process identity", verdict["first_failure"])
+        finally:
+            receipt_path.write_bytes(original)
 
     def test_timeout_reaps_owned_process_and_keeps_first_receipt(self):
         commands = copy.deepcopy(self.commands)

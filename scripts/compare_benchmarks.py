@@ -446,6 +446,17 @@ def _environment(work, variant, run_uuid, workload):
     return capture_environment(env)
 
 
+def _observed_process_identity(receipt):
+    # The general runtime runner can retain a fast child's exit without having
+    # observed its live identity. That is insufficient benchmark provenance.
+    identity = fields(receipt.get("process"), "pid created executable source", "process identity")
+    need(type(identity["pid"]) is int and identity["pid"] > 0, "Invalid process identity PID")
+    need(all(isinstance(identity[key], str) and identity[key].strip()
+             for key in ("created", "executable", "source")), "Invalid process identity observation")
+    need(Path(identity["executable"]).is_absolute(), "Invalid process identity executable")
+    return identity
+
+
 def _run(argv, cwd, env, directory, timeout, limits):
     out_path, err_path = directory / "stdout.log", directory / "stderr.log"
     control = directory / "control"
@@ -477,6 +488,7 @@ def _run(argv, cwd, env, directory, timeout, limits):
          and receipt["actual_exit_code"] == 0 and receipt["owned_tree_cleanup"] == "COMPLETE"
          and receipt["timed_out"] is False and receipt["forced_kill"] is False
          and receipt["stop_requested"] is False, "Owned benchmark process failed")
+    _observed_process_identity(receipt)
     return receipt
 
 
@@ -653,7 +665,7 @@ def compare_collection(request_path, request_sha256, collection_path, collection
                  and receipt["actual_exit_code"] == 0 and receipt["owned_tree_cleanup"] == "COMPLETE"
                  and receipt["timed_out"] is False and receipt["forced_kill"] is False and receipt["stop_requested"] is False,
                  "Owned receipt did not succeed")
-            need(row["process_identity"] == receipt["process"], "Process identity mismatch")
+            need(row["process_identity"] == _observed_process_identity(receipt), "Process identity mismatch")
             stdout, stderr = locked(row["stdout"]), locked(row["stderr"])
             need(stdout.stat().st_size <= req["limits"]["stdout_bytes"] and stderr.stat().st_size <= req["limits"]["stderr_bytes"], "Output byte limit exceeded")
             parsed = parse_samples(stdout.read_text(encoding="utf-8"), token, req["workload"]["sha256"], req["limits"]["json_line_bytes"])

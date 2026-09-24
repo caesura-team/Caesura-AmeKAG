@@ -95,7 +95,10 @@ class OwnerTests(unittest.TestCase):
 
 class ImageTests(unittest.TestCase):
     def setUp(self):
-        self.temp=tempfile.TemporaryDirectory(prefix='soak-png-');self.root=Path(self.temp.name)
+        self.temp=tempfile.TemporaryDirectory(prefix='soak-png-')
+        # The fixture owns this root; supply its canonical path to the same
+        # strict output boundary used by real captures on every host.
+        self.root=Path(self.temp.name).resolve(strict=True)
         self.events=[]
         for page,color in [('a',(20,50,90,255)),('b',(130,35,50,255)),('restored',(20,50,90,255))]:
             raw=bytes(color)*(640*360);data=png(640,360,raw)

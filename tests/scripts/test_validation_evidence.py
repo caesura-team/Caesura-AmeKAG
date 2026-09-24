@@ -101,7 +101,7 @@ class ValidationEvidenceTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix="caesura-evidence-test-")
         self.addCleanup(self.tmp.cleanup)
-        self.f = EvidenceFixture(Path(self.tmp.name))
+        self.f = EvidenceFixture(Path(self.tmp.name).resolve(strict=True))
 
     def test_complete_fixture_can_be_diagnosed_but_never_released(self):
         result = self.f.collect()
@@ -354,7 +354,7 @@ class SanitizerEvidenceTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix="caesura-sanitizer-evidence-")
         self.addCleanup(self.tmp.cleanup)
-        self.root = Path(self.tmp.name)
+        self.root = Path(self.tmp.name).resolve(strict=True)
 
     def fixture(self, name, parser="doctest"):
         root = self.root / name
@@ -521,7 +521,9 @@ class SanitizerCaptureEvidenceTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix="caesura-sanitizer-capture-")
         self.addCleanup(self.tmp.cleanup)
-        self.root = Path(self.tmp.name)
+        # Normalize the trusted host temporary root before exercising the strict
+        # capture boundary (macOS /var and Windows short paths can be aliases).
+        self.root = Path(self.tmp.name).resolve(strict=True)
 
     def fixture(self, name):
         root = self.root / name
@@ -943,7 +945,7 @@ class EvidenceCliTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(prefix="caesura-evidence-cli-")
         self.addCleanup(temporary.cleanup)
-        self.f = EvidenceFixture(Path(temporary.name))
+        self.f = EvidenceFixture(Path(temporary.name).resolve(strict=True))
 
     def invoke(self, main, args):
         stdout, stderr = io.StringIO(), io.StringIO()
