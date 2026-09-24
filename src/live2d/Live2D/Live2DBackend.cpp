@@ -9,6 +9,7 @@
 #include <Model/CubismUserModel.hpp>
 #include <ICubismModelSetting.hpp>
 #include <CubismModelSettingJson.hpp>
+#include <Effect/CubismPose.hpp>
 #include <stb_image.h>
 #include <Motion/CubismMotion.hpp>
 #include <Motion/CubismMotionManager.hpp>
@@ -325,6 +326,27 @@ bool Live2DBackend::loadModelInternal(Live2DModel& model) {
         static_cast<csmSizeInt>(model.mocData.size())
     );
 
+    // Pose groups select mutually exclusive parts (for example, arm variants).
+    // CubismUserModel owns the parsed pose and deletes it with the model.
+    const char* poseFile = model.setting->GetPoseFileName();
+    if (poseFile && poseFile[0] != '\0') {
+        const std::string posePath = joinPath(dir, poseFile);
+        const auto poseData = readFile(posePath); // same resource-root confinement
+        if (poseData.empty()) {
+            DEBUG_ERR(SubSys::Live2D, ErrCode::Ok,
+                "[Live2D] Cannot read declared pose: %s", posePath.c_str());
+            return false;
+        }
+        model.userModel->LoadPose(
+            reinterpret_cast<const csmByte*>(poseData.data()),
+            static_cast<csmSizeInt>(poseData.size()));
+        if (!static_cast<Live2DUserModel*>(model.userModel.get())->pose()) {
+            DEBUG_ERR(SubSys::Live2D, ErrCode::Ok,
+                "[Live2D] Cannot parse declared pose: %s", posePath.c_str());
+            return false;
+        }
+    }
+
     // 4. Create renderer + bgfx texture
     if (!createRenderer(model)) return false;
 
@@ -410,10 +432,11 @@ bool Live2DBackend::loadModelInternal(Live2DModel& model) {
                 // Key the clip by its file stem and by "group/index" so
                 // playMotion(name) and playMotion("group/index") both hit.
                 const std::string stem = std::filesystem::path(fileName).stem().string();
+                CachedMotion cachedMotion{std::move(motionData), group, j};
                 if (model.motionCache.find(stem) == model.motionCache.end()) {
-                    model.motionCache[stem] = motionData;
+                    model.motionCache[stem] = cachedMotion;
                 }
-                model.motionCache[group + "/" + std::to_string(j)] = motionData;
+                model.motionCache[group + "/" + std::to_string(j)] = std::move(cachedMotion);
             }
         }
     }
@@ -460,9 +483,13 @@ void Live2DBackend::render(float dt) {
         auto* cubismModel = model->userModel->GetModel();
         if (!cubismModel) continue;
 
-        // Update model (motions, expressions)
-        static_cast<Live2DUserModel*>(model->userModel.get())->motionManager()->UpdateMotion(cubismModel, dt);
-        static_cast<Live2DUserModel*>(model->userModel.get())->expressionManager()->UpdateMotion(cubismModel, dt);
+        // Apply pose after motions/expressions, before recomputing drawables.
+        auto* userModel = static_cast<Live2DUserModel*>(model->userModel.get());
+        userModel->motionManager()->UpdateMotion(cubismModel, dt);
+        userModel->expressionManager()->UpdateMotion(cubismModel, dt);
+        if (auto* pose = userModel->pose()) {
+            pose->UpdateParameters(cubismModel, dt);
+        }
         // Recompute model vertices/deformations before drawing (csmUpdateModel).
         cubismModel->Update();
 
@@ -502,13 +529,15 @@ bool Live2DBackend::playMotion(int handle, const std::string& name) {
         return false;
     }
 
-    auto& data = mit->second;
+    auto& cachedMotion = mit->second;
+    // Model-setting fade overrides require the clip's original group/index,
+    // even when it was selected by a file-stem alias or substring match.
     auto* motion = model.userModel->LoadMotion(
-        reinterpret_cast<const csmByte*>(data.data()),
-        static_cast<csmSizeInt>(data.size()),
+        reinterpret_cast<const csmByte*>(cachedMotion.data.data()),
+        static_cast<csmSizeInt>(cachedMotion.data.size()),
         name.c_str(),
         nullptr, nullptr,
-        model.setting
+        model.setting, cachedMotion.group.c_str(), cachedMotion.index
     );
     if (!motion) return false;
 

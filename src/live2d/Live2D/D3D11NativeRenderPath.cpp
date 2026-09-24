@@ -188,6 +188,8 @@ void D3D11NativeRenderPath::beginFrame(CubismRenderer* renderer) {
     m_context->OMGetRenderTargets(1, &prevRTV, &prevDSV);
 
     m_context->OMSetRenderTargets(1, &target->rtv, nullptr);
+    const float clearColor[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+    m_context->ClearRenderTargetView(target->rtv, clearColor);
     const D3D11_VIEWPORT viewport = { 0.0f, 0.0f,
         static_cast<float>(m_width), static_cast<float>(m_height), 0.0f, 1.0f };
     m_context->RSSetViewports(1, &viewport);

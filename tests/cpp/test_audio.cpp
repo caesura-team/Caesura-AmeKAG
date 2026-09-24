@@ -535,27 +535,33 @@ TEST_CASE("SoLoudAudioEngine::unsupported format returns 0 no crash") {
 // =============================================================================
 
 TEST_CASE("SoLoudAudioEngine::playBGM and stopBGM with silence") {
-    SoLoudAudioEngine eng;
-    if (!eng.init()) {
-        MESSAGE("Audio device unavailable, skipping");
-        return;
-    }
+    SoLoudAudioEngine eng{SoLoudAudioEngine::OutputMode::ManualMix};
+    REQUIRE(eng.init());
     unsigned int h = eng.playBGM("tests/audio/silence.wav", 0.0f);
     CHECK(h > 0);
+    mixAudioContractBlock(eng);
     CHECK(eng.isBGMPlaying());
     eng.stopBGM(0.0f);
 }
 
 TEST_CASE("SoLoudAudioEngine::playVoice and stopVoice with silence") {
-    SoLoudAudioEngine eng;
-    if (!eng.init()) {
-        MESSAGE("Audio device unavailable, skipping");
-        return;
-    }
-    unsigned int h = eng.playVoice("tests/audio/silence.wav");
-    CHECK(h > 0);
+    SoLoudAudioEngine eng{SoLoudAudioEngine::OutputMode::ManualMix};
+    REQUIRE(eng.init());
+    const unsigned int h = eng.playVoice("tests/audio/silence.wav");
+    REQUIRE(h > 0);
+    // Advance 512 / 48000 seconds of the real mixer, below the 100 ms fixture.
+    // The helper requires NULLDRIVER and 48 kHz; no device callback owns time.
+    mixAudioContractBlock(eng);
+    CHECK(eng.soloud().isValidVoiceHandle(h));
     CHECK(eng.isVoicePlaying());
+    CHECK(eng.consumeVoiceCompletions() == 0);
     eng.stopVoice();
+    CHECK_FALSE(eng.isVoicePlaying());
+    CHECK(eng.consumeVoiceCompletions() == 0);
+
+    eng.shutdown();
+    CHECK(eng.activeVoiceCount() == 0);
+    CHECK_FALSE(eng.isVoicePlaying());
     CHECK(eng.consumeVoiceCompletions() == 0);
 }
 
@@ -590,14 +596,12 @@ TEST_CASE("SoLoudAudioEngine::playSE3D with silence") {
 }
 
 TEST_CASE("SoLoudAudioEngine::setSEVolume and stopSEHandle") {
-    SoLoudAudioEngine eng;
-    if (!eng.init()) {
-        MESSAGE("Audio device unavailable, skipping");
-        return;
-    }
+    SoLoudAudioEngine eng{SoLoudAudioEngine::OutputMode::ManualMix};
+    REQUIRE(eng.init());
     unsigned int h = eng.playSE("tests/audio/silence.wav");
     REQUIRE(h > 0);
     eng.setSEVolume(h, 0.5f);
+    mixAudioContractBlock(eng);
     CHECK(eng.getSEVolume(h) == doctest::Approx(0.5f));
     eng.stopSEHandle(h);
     // stopSE handle 0 should not crash
@@ -728,14 +732,13 @@ TEST_CASE("SoLoudAudioEngine keeps current BGM when replacement quota is denied"
 TEST_CASE("SoLoudAudioEngine stopSE releases every tracked handle exactly once") {
     AudioQuota quota(8);
     ScopedAudioQuota scopedQuota(quota);
-    SoLoudAudioEngine eng;
-    if (!eng.init()) {
-        MESSAGE("Audio device unavailable, skipping");
-        return;
-    }
+    SoLoudAudioEngine eng{SoLoudAudioEngine::OutputMode::ManualMix};
+    REQUIRE(eng.init());
 
     REQUIRE(eng.playSE("tests/audio/silence.wav") != 0);
+    mixAudioContractBlock(eng);
     REQUIRE(eng.playSE3D("tests/audio/silence.wav", 0.0f, 0.0f, -1.0f) != 0);
+    mixAudioContractBlock(eng);
     REQUIRE(quota.activeCount == 2);
 
     eng.stopSE();
@@ -795,15 +798,14 @@ TEST_CASE("SoLoudAudioEngine update releases naturally finished SE handles") {
 TEST_CASE("SoLoudAudioEngine BGM and voice replacement keep quota counts symmetric") {
     AudioQuota quota(8);
     ScopedAudioQuota scopedQuota(quota);
-    SoLoudAudioEngine eng;
-    if (!eng.init()) {
-        MESSAGE("Audio device unavailable, skipping");
-        return;
-    }
+    SoLoudAudioEngine eng{SoLoudAudioEngine::OutputMode::ManualMix};
+    REQUIRE(eng.init());
 
     REQUIRE(eng.playBGM("tests/audio/silence.wav", 0.0f) != 0);
+    mixAudioContractBlock(eng);
     REQUIRE(quota.activeCount == 1);
     REQUIRE(eng.playBGM("tests/audio/silence.wav", 0.0f) != 0);
+    mixAudioContractBlock(eng);
     CHECK(quota.activeCount == 1);
     CHECK(quota.releaseCalls == 1);
     CHECK(quota.peakCount == 2);
@@ -818,6 +820,8 @@ TEST_CASE("SoLoudAudioEngine BGM and voice replacement keep quota counts symmetr
     const unsigned int secondVoice = eng.playVoice("tests/audio/silence.wav");
     REQUIRE(secondVoice != 0);
     eng.soloud().setLooping(secondVoice, true);
+    // Both voices loop before mixing; do not advance the later 50 ms retirement.
+    mixAudioContractBlock(eng);
     CHECK(quota.activeCount == 2);
     CHECK(quota.releaseCalls == 2);
 
@@ -911,11 +915,8 @@ TEST_CASE("SoLoudAudioEngine rapid BGM replacement is capped including retiring 
 TEST_CASE("SoLoudAudioEngine shutdown releases all remaining handle quotas once") {
     AudioQuota quota(8);
     ScopedAudioQuota scopedQuota(quota);
-    SoLoudAudioEngine eng;
-    if (!eng.init()) {
-        MESSAGE("Audio device unavailable, skipping");
-        return;
-    }
+    SoLoudAudioEngine eng{SoLoudAudioEngine::OutputMode::ManualMix};
+    REQUIRE(eng.init());
 
     const unsigned int firstBGM = eng.playBGM("tests/audio/silence.wav", 0.0f);
     REQUIRE(firstBGM != 0);
@@ -933,6 +934,8 @@ TEST_CASE("SoLoudAudioEngine shutdown releases all remaining handle quotas once"
 
     REQUIRE(eng.playSE("tests/audio/silence.wav") != 0);
     REQUIRE(eng.playSE3D("tests/audio/silence.wav", 0.0f, 0.0f, -1.0f) != 0);
+    // One shared block preserves all six owners and the retiring BGM.
+    mixAudioContractBlock(eng);
     REQUIRE(quota.activeCount == 6);
 
     eng.shutdown();
@@ -946,8 +949,8 @@ TEST_CASE("SoLoudAudioEngine shutdown releases all remaining handle quotas once"
 
 
 TEST_CASE("SoLoudAudioEngine playRawPCM plays and stops cleanly") {
-    SoLoudAudioEngine eng;
-    if (!eng.init()) return;  // no audio device (headless CI): skip
+    SoLoudAudioEngine eng{SoLoudAudioEngine::OutputMode::ManualMix};
+    REQUIRE(eng.init());
     // init() starts the three bus voices; baseline counts them.
     const int baseline = static_cast<int>(eng.activeVoiceCount());
     CHECK(baseline >= 3);
@@ -965,6 +968,7 @@ TEST_CASE("SoLoudAudioEngine playRawPCM plays and stops cleanly") {
 
     const unsigned int h = eng.playRawPCM(pcm.data(), frames, sr, 2);
     REQUIRE(h != 0);
+    mixAudioContractBlock(eng);
     CHECK(static_cast<int>(eng.activeVoiceCount()) > baseline);
 
     // Invalid parameters are rejected without crashing.
@@ -1078,8 +1082,8 @@ TEST_CASE("SoLoudAudioEngine voice keeps overlapping characters (pool, no single
 }
 
 TEST_CASE("SoLoudAudioEngine bus volume applies to the bus (documented approximation)") {
-    SoLoudAudioEngine eng;
-    if (!eng.init()) { MESSAGE("Audio device unavailable, skipping"); return; }
+    SoLoudAudioEngine eng{SoLoudAudioEngine::OutputMode::ManualMix};
+    REQUIRE(eng.init());
 
     // The engine exposes the configured bus volume as the authoritative truth;
     // a per-handle getSEVolume() does NOT include the bus multiplier, so the
@@ -1092,6 +1096,7 @@ TEST_CASE("SoLoudAudioEngine bus volume applies to the bus (documented approxima
 
     const unsigned int h = eng.playSE("tests/audio/silence.wav");
     REQUIRE(h != 0);
+    mixAudioContractBlock(eng);
     CHECK(eng.isSEPlaying());
 
     // fadeVolume() keeps the persisted bus-volume state consistent.
@@ -1153,18 +1158,21 @@ TEST_CASE("SoLoudAudioEngine stopping all three buses clears every bus") {
 }
 
 TEST_CASE("SoLoudAudioEngine suspend pauses without dropping handles (app pause)") {
-    SoLoudAudioEngine eng;
-    if (!eng.init()) { MESSAGE("Audio device unavailable, skipping"); return; }
+    SoLoudAudioEngine eng{SoLoudAudioEngine::OutputMode::ManualMix};
+    REQUIRE(eng.init());
 
     const unsigned int bgm = eng.playBGM("tests/audio/silence.wav", 0.0f);
     REQUIRE(bgm != 0);
     eng.soloud().setLooping(bgm, true);
     const unsigned int se = eng.playSE("tests/audio/silence.wav");
     REQUIRE(se != 0);
+    // Three blocks total 32 ms; the middle block exercises the paused mixer.
+    mixAudioContractBlock(eng);
 
     // suspend() pauses the whole mixer; tracked handles stay alive so a
     // subsequent resume() continues them.
     eng.suspend();
+    mixAudioContractBlock(eng);
     CHECK(eng.isBGMPlaying());
     CHECK(eng.isSEPlaying());
     CHECK(eng.soloud().isValidVoiceHandle(bgm));
@@ -1172,6 +1180,7 @@ TEST_CASE("SoLoudAudioEngine suspend pauses without dropping handles (app pause)
 
     eng.resume();
     eng.update(0.0f);
+    mixAudioContractBlock(eng);
     CHECK(eng.isBGMPlaying());
     CHECK(eng.isSEPlaying());
 
@@ -1180,8 +1189,8 @@ TEST_CASE("SoLoudAudioEngine suspend pauses without dropping handles (app pause)
 }
 
 TEST_CASE("SoLoudAudioEngine 3D position routing left/center/right yields valid handles") {
-    SoLoudAudioEngine eng;
-    if (!eng.init()) { MESSAGE("Audio device unavailable, skipping"); return; }
+    SoLoudAudioEngine eng{SoLoudAudioEngine::OutputMode::ManualMix};
+    REQUIRE(eng.init());
 
     // IAudioBackend exposes no direct pan (left/center/right) control; the
     // spatial routing it does expose is 3D positioning via playSE3D().
@@ -1191,6 +1200,7 @@ TEST_CASE("SoLoudAudioEngine 3D position routing left/center/right yields valid 
     CHECK(left != 0);
     CHECK(center != 0);
     CHECK(right != 0);
+    mixAudioContractBlock(eng);
     CHECK(eng.isSEPlaying());
 
     // Listener at origin facing +x; the 3D mix update must run without crashing.
@@ -1282,8 +1292,8 @@ TEST_CASE("SoLoudAudioEngine setBusVolume after init applies immediately (regres
 }
 
 TEST_CASE("SoLoudAudioEngine setBusVolume(0) mutes that bus") {
-    SoLoudAudioEngine eng;
-    if (!eng.init()) { MESSAGE("Audio device unavailable, skipping"); return; }
+    SoLoudAudioEngine eng{SoLoudAudioEngine::OutputMode::ManualMix};
+    REQUIRE(eng.init());
 
     // A zero bus volume is the documented mute approximation: it persists and
     // drives the SoLoud bus to silence.
@@ -1294,6 +1304,7 @@ TEST_CASE("SoLoudAudioEngine setBusVolume(0) mutes that bus") {
     // Sanity: the SE bus still plays samples (muted bus does not block play).
     const unsigned int h = eng.playSE("tests/audio/silence.wav");
     REQUIRE(h != 0);
+    mixAudioContractBlock(eng);
     CHECK(eng.isSEPlaying());
     eng.stopSEHandle(h);
 
@@ -1410,11 +1421,12 @@ TEST_CASE("SoLoudAudioEngine voice pool rotation caps at pool+one retiring slot"
 TEST_CASE("SoLoudAudioEngine stop then immediately replay same handle is clean") {
     AudioQuota quota(8);
     ScopedAudioQuota scopedQuota(quota);
-    SoLoudAudioEngine eng;
-    if (!eng.init()) { MESSAGE("Audio device unavailable, skipping"); return; }
+    SoLoudAudioEngine eng{SoLoudAudioEngine::OutputMode::ManualMix};
+    REQUIRE(eng.init());
 
     const unsigned int first = eng.playSE("tests/audio/silence.wav");
     REQUIRE(first != 0);
+    mixAudioContractBlock(eng);
     REQUIRE(quota.activeCount == 1);
 
     // stopSEHandle frees the slot and its quota immediately.
@@ -1426,6 +1438,7 @@ TEST_CASE("SoLoudAudioEngine stop then immediately replay same handle is clean")
     // fresh, live handle and re-take the quota exactly once.
     const unsigned int again = eng.playSE("tests/audio/silence.wav");
     REQUIRE(again != 0);
+    mixAudioContractBlock(eng);
     CHECK(eng.soloud().isValidVoiceHandle(again));
     CHECK(quota.activeCount == 1);
     // Old handle remains dead.

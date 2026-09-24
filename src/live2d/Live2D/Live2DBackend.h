@@ -50,6 +50,12 @@ public:
     void setRenderDevice(IRenderDevice* device);
 
 private:
+    struct CachedMotion {
+        std::vector<char> data;
+        std::string group;
+        int index = 0;
+    };
+
     struct Live2DModel {
         std::string dir;
         std::string name;
@@ -73,7 +79,7 @@ private:
         Csm::CubismModelSettingJson* setting = nullptr;
 
         // Motion/expression cache
-        std::unordered_map<std::string, std::vector<char>> motionCache;
+        std::unordered_map<std::string, CachedMotion> motionCache;
         std::unordered_map<std::string, std::vector<char>> expressionCache;
 
 #ifdef _WIN32
