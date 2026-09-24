@@ -20,6 +20,7 @@ import uuid
 import macos_runtime_selection as selection
 import macho_dependencies as macho
 from package_runtime import run_runtime_command
+from validation_process import run_owned_command
 from verify_native_package import _configuration
 
 REQUEST_SCHEMA = 'caesura.macos-runtime-install-request.v1'
@@ -29,6 +30,7 @@ SHA256 = re.compile(r'[0-9a-f]{64}\Z')
 REQUEST_KEYS = {'schema', 'configuration', 'stage_root', 'selection', 'requirements',
                 'build_engine', 'tools', 'previous_install'}
 APPLE_TOOLS = {name: Path('/usr/bin') / name for name in ('install_name_tool', 'codesign')}
+APPLE_DISCOVERY_TOOLS = {name: Path('/usr/bin') / name for name in ('xcode-select', 'xcrun')}
 
 
 def _need(condition, message):
@@ -392,6 +394,90 @@ def _tool_environment(report):
     return env
 
 
+def _select_apple_tools(report_dir):
+    """Bind the selected tool, not /usr/bin's executable trampoline.
+
+    Discovery is a bounded owned query, not proof of a runtime process image.
+    The selected file is invoked directly by the unchanged strict runtime owner.
+    No caller pathname, PATH lookup or inherited developer override selects it.
+    """
+    report_dir = _absolute(report_dir)
+    _new_report(report_dir, ())
+    result = {'schema': 'caesura.apple-tool-selection.v1', 'status': 'REJECTED',
+              'scope': 'READ_ONLY_DISCOVERY_NOT_RUNTIME_IDENTITY', 'commands': []}
+    try:
+        with ExitStack() as held:
+            resolvers = {name: held.enter_context(_Input(path.resolve(strict=True)))
+                         for name, path in APPLE_DISCOVERY_TOOLS.items()}
+            result['resolvers'] = {name: value.reference() for name, value in resolvers.items()}
+
+            def query(name, arguments):
+                index = len(result['commands'])
+                out, err = (report_dir / f'query-{index:02d}.{suffix}' for suffix in ('stdout', 'stderr'))
+                argv = [str(resolvers[name].path), *arguments]
+                row = {'argv': argv, 'timeout_seconds': 10, 'stdout': str(out), 'stderr': str(err)}
+                result['commands'].append(row)
+                error = None
+                try:
+                    for value in resolvers.values():
+                        value.check()
+                    with out.open('xb') as stdout, err.open('xb') as stderr:
+                        row['exit_code'] = run_owned_command(argv, report_dir, stdout, stderr, 10,
+                                                            env=_tool_environment(report_dir))
+                    row['owned_tree_cleanup'] = 'COMPLETE'
+                except Exception as caught:
+                    error = caught
+                    row['error'] = f'{type(caught).__name__}: {caught}'
+                for label, path in (('stdout', out), ('stderr', err)):
+                    try:
+                        if path.is_file():
+                            row[label + '_sha256'] = _log_digest(path)
+                    except (OSError, ValueError) as caught:
+                        row.setdefault('readback_errors', []).append(str(caught))
+                        if error is None:
+                            error = caught
+                if error is not None:
+                    raise error
+                _need(row['exit_code'] == 0, f'Apple tool discovery failed: {name} exit={row["exit_code"]}')
+                _need(out.stat().st_size <= 4096, 'Apple tool discovery output exceeds bound')
+                value = out.read_text(encoding='utf-8')
+                # Exactly one nonempty line, with at most its normal final LF.
+                value = value[:-1] if value.endswith('\n') else value
+                _need(value and '\n' not in value and '\r' not in value,
+                      'Apple tool discovery must return one pathname')
+                return _absolute(value)
+
+            developer = query('xcode-select', ['--print-path']).resolve(strict=True)
+            developer_state = _directory_state(developer)
+            selected = query('xcrun', ['--find', 'install_name_tool']).resolve(strict=True)
+            _need(selected.name == 'install_name_tool' and selected.is_relative_to(developer),
+                  'Selected install_name_tool is outside the active developer directory')
+            _need(query('xcode-select', ['--print-path']).resolve(strict=True) == developer
+                  and _directory_state(developer) == developer_state,
+                  'Active developer directory changed during tool discovery')
+            paths = {'install_name_tool': selected, 'codesign': APPLE_TOOLS['codesign'].resolve(strict=True)}
+            tools = {name: held.enter_context(_Input(path)) for name, path in paths.items()}
+            for name, value in tools.items():
+                _need(os.access(value.path, os.X_OK), f'Apple tool is not executable: {name}')
+            for value in (*resolvers.values(), *tools.values()):
+                value.check()
+            result['selection'] = {'developer_directory': str(developer),
+                'developer_directory_identity': developer_state,
+                'tools': {name: value.reference() for name, value in tools.items()}}
+            result['status'] = 'SELECTED_READ_ONLY'
+    except Exception as error:
+        result['error'] = f'{type(error).__name__}: {error}'
+        raise
+    finally:
+        try:
+            _json_write(report_dir / 'selection.json', result)
+        except (OSError, ValueError) as error:
+            if 'error' in result:
+                raise RuntimeError(result['error'] + '; discovery receipt publication failed: ' + str(error)) from error
+            raise
+    return result
+
+
 def _run_tool(argv, stage, report_dir, result, runner):
     index = len(result['commands'])
     record = {'argv': argv, 'stdout': str(report_dir / f'command-{index:03d}.stdout'),
@@ -493,11 +579,15 @@ def install_macos_runtime(request_path, *, request_sha256, report_dir, runner=No
                       == json.dumps(item['path_observation'], sort_keys=True),
                       'Held source route differs from the selected identity')
                 _need(not source.resolved.is_relative_to(stage), 'SDK source is inside install stage')
+            selected_tools = None
+            if not fixture:
+                result['tool_selection_before'] = _select_apple_tools(report_dir / 'tool-selection-before')
+                selected_tools = result['tool_selection_before']['selection']
             tools = {}
             for kind in APPLE_TOOLS:
                 ref = _reference(request['tools'][kind], kind)
                 if not fixture:
-                    _need(_absolute(ref['path']) == APPLE_TOOLS[kind].resolve(strict=True), 'Production requires the selected system Apple tools')
+                    _need(ref == selected_tools['tools'][kind], 'Production requires the selected system Apple tools')
                     _need(os.access(ref['path'], os.X_OK), f'Apple tool is not executable: {kind}')
                 tools[kind] = lock(ref['path'], ref['sha256'])
             engine, libraries = _metadata(references['requirements'].json(), request, selected)
@@ -568,6 +658,10 @@ def install_macos_runtime(request_path, *, request_sha256, report_dir, runner=No
             result['closure'] = macho.inspect_package_closure(stage, [stage / engine], [stage / name for name in libraries])
             _need({item['relative_path'] for item in result['closure']['images']} == set(names),
                   'Final runtime closure differs from declared images')
+            if not fixture:
+                result['tool_selection_after'] = _select_apple_tools(report_dir / 'tool-selection-after')
+                _need(result['tool_selection_after']['selection'] == selected_tools,
+                      'Apple tool selection changed during installation')
             check()
             result['final_files'] = [{'relative_path': name, 'sha256': stage_files[name]['sha256'],
                                       'size': stage_files[name]['size']} for name in names]
@@ -628,12 +722,11 @@ def _cmake_request(args):
         selected = held.enter_context(_Input(_physical_install_path(args.selection_file), digest=args.selection_sha256))
         requirements = held.enter_context(_Input(_physical_install_path(args.requirements_file)))
         engine = held.enter_context(_Input(_physical_install_path(args.build_engine)))
-        tools = {name: held.enter_context(_Input(path.resolve(strict=True))) for name, path in APPLE_TOOLS.items()}
         request = {'schema': REQUEST_SCHEMA, 'configuration': args.configuration,
-                   'stage_root': str(_physical_install_path(args.stage_root)),
-                   'selection': selected.reference(), 'requirements': requirements.reference(),
-                   'build_engine': engine.reference(), 'tools': {name: value.reference() for name, value in tools.items()},
-                   'previous_install': None}
+                    'stage_root': str(_physical_install_path(args.stage_root)),
+                    'selection': selected.reference(), 'requirements': requirements.reference(),
+                    'build_engine': engine.reference(),
+                    'previous_install': None}
         protected = _protected_roots(request, selected.json())
         parent = _physical_install_path(args.report_parent, existing=False)
         # The parent can be new, but only below an existing safe physical parent.
@@ -643,6 +736,10 @@ def _cmake_request(args):
         _safe_report_parent(parent, protected)
         attempt = parent / ('attempt-' + uuid.uuid4().hex)
         _new_report(attempt, protected)
+        discovered = _select_apple_tools(attempt / 'tool-selection')
+        tools = {name: held.enter_context(_Input(value['path'], digest=value['sha256']))
+                 for name, value in discovered['selection']['tools'].items()}
+        request['tools'] = {name: value.reference() for name, value in tools.items()}
         request_path = attempt / 'request.json'
         _json_write(request_path, request)
         for value in (selected, requirements, engine, *tools.values()):

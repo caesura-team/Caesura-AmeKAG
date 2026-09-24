@@ -1049,20 +1049,24 @@ TEST_CASE("SoLoudAudioEngine BGM and SE buses are independent") {
 }
 
 TEST_CASE("SoLoudAudioEngine voice keeps overlapping characters (pool, no single-slot kill)") {
-    SoLoudAudioEngine eng;
-    if (!eng.init()) { MESSAGE("Audio device unavailable, skipping"); return; }
+    SoLoudAudioEngine eng{SoLoudAudioEngine::OutputMode::ManualMix};
+    REQUIRE(eng.init());
 
     // The engine uses a round-robin 4-slot voice pool: a new voice does NOT
     // hard-stop the previous one (single-slot semantics were removed). Both
     // handles coexist in the pool and stay valid independently.
     const unsigned int v1 = eng.playVoice("tests/audio/silence.wav");
     REQUIRE(v1 != 0);
+    // Set looping before advancing the mixer so the 100 ms fixture cannot
+    // naturally finish between playVoice() and setLooping().
     eng.soloud().setLooping(v1, true);
+    mixAudioContractBlock(eng);
     CHECK(eng.isVoicePlaying());
 
     const unsigned int v2 = eng.playVoice("tests/audio/silence.wav");
     REQUIRE(v2 != 0);
     eng.soloud().setLooping(v2, true);
+    mixAudioContractBlock(eng);
     CHECK(eng.isVoicePlaying());
     CHECK(eng.soloud().isValidVoiceHandle(v1));  // first voice still alive
     CHECK(eng.soloud().isValidVoiceHandle(v2));

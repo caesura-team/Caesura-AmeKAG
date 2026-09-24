@@ -6,6 +6,7 @@ Positive results MUST be FIXTURE_ONLY. Root preserves the first actual RED.
 """
 from __future__ import annotations
 import copy
+from contextlib import ExitStack
 import hashlib
 import importlib.util
 import json
@@ -15,6 +16,7 @@ import shutil
 import stat
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 import uuid
@@ -25,6 +27,7 @@ import install_macos_runtime as coordinator
 import macos_runtime_selection as selector
 from macho_dependencies import inspect_macho, inspect_package_closure
 from package_runtime import run_runtime_command
+from validation_process import run_owned_command
 
 
 def load_fixture(name, relative):
@@ -123,6 +126,140 @@ class MacRuntimeCoordinatorTests(unittest.TestCase):
         self.options = {'trace': str(self.trace)}
         write_json(self.tool_config, self.options)
         self.before_tool = None
+
+    def apple_host_fixture(self):
+        """Only the Apple host boundary is simulated; discovery owns a real child."""
+        developer = self.root / 'selected Developer'
+        tool = developer / 'Toolchains/default/usr/bin/install_name_tool'
+        tool.parent.mkdir(parents=True)
+        tool.write_bytes(b'FIXTURE_ONLY selected Apple executable boundary')
+        tool.chmod(0o755)
+        shim = self.root / 'system-install_name_tool'
+        shim.write_bytes(b'FIXTURE_ONLY trampoline, never execute')
+        shim.chmod(0o755)
+        config = self.root / 'host-query.json'
+        script = self.root / 'host-query.py'
+        script.write_text(
+            'import json,pathlib,sys\n'
+            'c=json.loads(pathlib.Path(sys.argv[1]).read_text())\n'
+            'key="developer" if sys.argv[2]=="--print-path" else "tool"\n'
+            'sys.stdout.write(c[key])\n'
+            'sys.stderr.write("FIXTURE_ONLY host discovery boundary\\n")\n'
+            'sys.exit(c.get("exit",0))\n', encoding='utf-8')
+        state = {'developer': str(developer) + '\n', 'tool': str(tool) + '\n'}
+        observed = []
+
+        def query(argv, cwd, stdout, stderr, timeout, *, env=None):
+            observed.append(list(map(str, argv)))
+            write_json(config, state)
+            return run_owned_command([str(Path(sys.executable).resolve()), '-B', str(script),
+                str(config), *map(str, argv[1:])], cwd, stdout, stderr, timeout, env=env)
+
+        def host():
+            stack = ExitStack()
+            stack.enter_context(patch.object(coordinator, 'sys', SimpleNamespace(platform='darwin')))
+            stack.enter_context(patch.object(coordinator, 'APPLE_TOOLS',
+                {'install_name_tool': shim, 'codesign': Path(sys.executable).resolve()}))
+            stack.enter_context(patch.object(coordinator, 'APPLE_DISCOVERY_TOOLS',
+                {'xcode-select': Path(sys.executable).resolve(), 'xcrun': Path(sys.executable).resolve()}, create=True))
+            stack.enter_context(patch.object(coordinator, 'run_owned_command', side_effect=query, create=True))
+            return stack
+
+        return SimpleNamespace(tool=tool, shim=shim, developer=developer, state=state,
+                               observed=observed, host=host)
+
+    def adapter_args(self, f):
+        return SimpleNamespace(selection_file=str(f['selection']),
+            selection_sha256=digest(f['selection']), requirements_file=str(f['metadata']),
+            configuration='Release', stage_root=str(f['stage']),
+            build_engine=str(f['build'] / 'Engine'), report_parent=str(f['root'] / 'adapter-reports'))
+
+    def test_production_adapter_locks_selected_tool_not_system_trampoline(self):
+        f = self.fixture(); host = self.apple_host_fixture(); captured = []
+        before = {p.name: digest(p) for p in f['stage'].iterdir()}
+
+        def dispatch(path, **kwargs):
+            request = json.loads(Path(path).read_bytes())
+            self.assertEqual(digest(path), kwargs['request_sha256'])
+            captured.append(request)
+            return {'status': 'FIXTURE_ONLY_ADAPTER_CAPTURE'}
+
+        with host.host(), patch.object(coordinator, 'install_macos_runtime', side_effect=dispatch):
+            coordinator._cmake_request(self.adapter_args(f))
+        self.assertEqual(len(captured), 1)
+        self.assertEqual(captured[0]['tools']['install_name_tool'], reference(host.tool))
+        self.assertNotEqual(captured[0]['tools']['install_name_tool']['path'], str(host.shim))
+        self.assertTrue(host.observed, 'Production adapter must query the host selection')
+        self.assertEqual({p.name: digest(p) for p in f['stage'].iterdir()}, before)
+
+    def test_production_selected_tool_reaches_owned_boundary_and_retains_nonzero(self):
+        f = self.fixture(); host = self.apple_host_fixture()
+        f['request']['tools']['install_name_tool'] = reference(host.tool)
+        self.rewrite_request(f)
+        self.options['fail_at'] = 0  # Real child returns 37; never fake Apple success.
+        report = f['root'] / 'production-boundary-rejection'
+        with host.host(), patch.object(coordinator, 'run_runtime_command', side_effect=self.runner):
+            result = coordinator.install_macos_runtime(f['request_path'],
+                request_sha256=digest(f['request_path']), report_dir=report)
+        self.assertFalse(result['success']); self.assertEqual(result['status'], 'TAINTED_NOT_ACCEPTED')
+        self.assertEqual(len(self.calls), 1, result)
+        self.assertEqual(self.calls[0][0], str(host.tool))
+        self.assertEqual(result['commands'][0]['runtime']['actual_exit_code'], 37)
+        self.assertEqual(result['commands'][0]['runtime']['owned_tree_cleanup'], 'COMPLETE')
+        self.assertIn('exit=37', result['error'])
+        for path, sha in f['originals'].items():
+            self.assertEqual(digest(path), sha)
+
+    def test_production_discovery_rejects_invalid_or_failed_selection_before_dispatch(self):
+        host = self.apple_host_fixture()
+        original = dict(host.state)
+        for name, change in (
+                ('relative', {'tool': 'relative/install_name_tool\n'}),
+                ('multiple', {'tool': str(host.tool) + '\n' + str(host.tool) + '\n'}),
+                ('outside', {'tool': str(host.shim) + '\n'}),
+                ('nonzero', {'exit': 23})):
+            with self.subTest(name=name):
+                f = self.fixture(); host.state.clear(); host.state.update(original, **change)
+                before = {p.name: digest(p) for p in f['stage'].iterdir()}
+                with host.host(), patch.object(coordinator, 'install_macos_runtime') as dispatch:
+                    with self.assertRaises((ValueError, RuntimeError)):
+                        coordinator._cmake_request(self.adapter_args(f))
+                dispatch.assert_not_called()
+                self.assertEqual({p.name: digest(p) for p in f['stage'].iterdir()}, before)
+
+    def test_production_request_cannot_substitute_another_same_named_tool(self):
+        f = self.fixture(); host = self.apple_host_fixture()
+        other = self.root / 'other' / 'install_name_tool'; other.parent.mkdir()
+        other.write_bytes(host.tool.read_bytes()); other.chmod(0o755)
+        f['request']['tools']['install_name_tool'] = reference(other)
+        self.rewrite_request(f)
+        before = {p.name: digest(p) for p in f['stage'].iterdir()}
+        with host.host(), patch.object(coordinator, 'run_runtime_command', side_effect=self.runner):
+            result = coordinator.install_macos_runtime(f['request_path'],
+                request_sha256=digest(f['request_path']), report_dir=f['root'] / 'wrong-selected-tool')
+        self.assertFalse(result['success']); self.assertEqual(self.calls, [])
+        self.assertEqual({p.name: digest(p) for p in f['stage'].iterdir()}, before)
+
+    def test_production_selection_change_after_owned_operations_rejects_acceptance(self):
+        f = self.fixture(); host = self.apple_host_fixture()
+        alternate = host.developer / 'another toolchain' / 'install_name_tool'
+        alternate.parent.mkdir(); alternate.write_bytes(host.tool.read_bytes()); alternate.chmod(0o755)
+        f['request']['tools']['install_name_tool'] = reference(host.tool)
+        self.rewrite_request(f)
+
+        def change_host_selection(index, unused):
+            if index == 0:
+                host.state['tool'] = str(alternate) + '\n'
+
+        self.before_tool = change_host_selection
+        with host.host(), patch.object(coordinator, 'run_runtime_command', side_effect=self.runner):
+            result = coordinator.install_macos_runtime(f['request_path'],
+                request_sha256=digest(f['request_path']), report_dir=f['root'] / 'changed-tool-selection')
+        self.assertEqual(len(self.calls), 11, result)
+        self.assertTrue(all(row['runtime']['actual_exit_code'] == 0 for row in result['commands']))
+        self.assertFalse(result['success']); self.assertEqual(result['status'], 'TAINTED_NOT_ACCEPTED')
+        self.assertIn('Apple tool selection changed during installation', result['error'])
+        self.assertEqual(result['final_files'], [])
 
     def fixture(self, *, linkage='shared', engine_extra=(), ssl_extra=(), wrong_cpu=False):
         root = self.root / ('fixture-' + uuid.uuid4().hex); root.mkdir()
