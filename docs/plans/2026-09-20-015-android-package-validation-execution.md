@@ -1,6 +1,6 @@
 # U24 Android 构建与包验证执行记录
 
-本记录属于当前唯一运行时可靠性计划的U24。第五次真实执行已通过受控NDK Release编译、ELF检查、Gradle打包、zipalign、APK/AAB临时测试签名和最终包字节验证，独立审计无可行动发现。AAB base manifest的身份、版本与SDK五字段现已接入v2包验证器必需门禁，并对第五次保留的最终签名字节实际验证通过；新v2完整driver的实际重新构建仍待独立执行。最近一次adb查询无连接设备，安装与设备运行仍为NOT_RUN；正式发布签名未建立。第四次签名失败和之前失败原件继续保留，整个U24及发布状态不因本地自动部分通过而关闭。
+本记录属于当前唯一运行时可靠性计划的U24。历史aacc821a第八次执行已通过受控NDK Release编译、ELF检查、offline Gradle、zipalign、临时测试签名及v2 APK/AAB检查，并保留独立审计。2026-09-24新整合候选e0仅完成独立源码工作树、完整源码预检和新请求准备，尚未实际编译或打包；旧包不升级为新候选结果。当天实际adb列表仍为空，安装与设备运行为NOT_RUN；正式发布签名未建立。历次失败和范围限制继续保留，整个U24及发布状态不因自动部分的历史通过而关闭。
 
 ## 已实现的合同
 
@@ -176,3 +176,22 @@ root-review-01.json摘要ad066c318d9a54335805802ce4b3a5551b31e7183c35831ff81b991
 同一干净源码的独立 Windows Debug 完整验证 `cbe3eea1-e9ca-4a4e-b7df-d5c8f689a52b` 已完成：完整构建退出0，C++1415/1415、427088断言、0失败0跳过；Lua147/147与56/56；CTest发现60，59通过、0失败、1项可选 CaesuraHeadlessAiSmoke 跳过。runner/process/evidence/adversarial、耦合与测试注册全部通过，execute/collect/strict 均退出0且 owned cleanup COMPLETE。root 重核49项原引用、82265352字节；`u24-output-copy-full-01/root-review-01.json` 摘要 `99894de8238f4f3e5cfb53f736a130e60f8f949bdcdaab4b612dda796a680b38`，manifest `52f8810a496ced47a9de39f9e32f46155ff27870afad541a1c792d2e0ecc275f`。这次完整 profile 不包含独立 HTTP smoke，先前75项 HTTP 证据仍按原源码和范围保存。
 
 2026-09-20 01:39:47 UTC 的独立只读 `adb devices -l` 实际退出0且列表为空，记录 `u24-device-query-01/query.json` 摘要 `5c12d36bdf7eb1a7983daea1cfb1161bd55f339622227efdf4080a688226d29e`。该 PATH 中的 adb 并非编译所选工具链的一部分。当前 compile/package/test-signature 自动链路有实际证据，install/runtime/device 仍 NOT_RUN，须有已授权、可连接的设备后执行；`release_ready=false`，预编译 SDL/OpenSSL 的上游编译来源未认证，无商店或正式签名交付结论。上述证据属于 aacc821a，后续文档提交不冒称已重新构建。
+
+
+## 2026-09-24 e0 整合候选 Android 输入准备
+
+为避免桌面验证所需的ignored SDL/FFmpeg字节混入Android严格源码枚举，从同一 `e0c019359b193d9504ca695706263bb84f36dd13` 创建独立工作树 `artifacts/validation/u29-android-e0-worktree`，分支 `codex/u29-android-e0-validation`。没有复制桌面build或修改生产源码。真实Git checkout保留两个仓内物理symlink，生产 `_source` 对6540项声明文件和两个链接的严格预检通过，源码首尾clean，当前工作树指纹 `0ba8a92c9ee37975099c45b079d4803bcafe5dd864829aed0514ecd2b6c573d4`；这是本Android工作树自己的物理字节身份。
+
+新 `artifacts/validation/u29-android-e0-01/request.json` SHA256 `c1499cca0f0a20da17080aaaf48f8bf904287fe0abe72aa2026c82d2cbbdd382`，相对实际第八次请求仅变更repo与source_sha。保留v2、Release/arm64-v8a、API24/compile-target35、JDK17/Gradle8.9/NDK27.3、offline种子、jobs2、原超时和ephemeral-test签名合同。toolchain与dependency清单原字节摘要及选定Git工具字节已复算；完整约8GB外部输入尚未在本轮重新验收，实际driver必须执行原全量检查。
+
+准备报告 `preparation-01.json` SHA256 `45e100c52077d82bcda64b89ec19476763a9454198943874b374e13d0626d3b5`，声明源清单SHA256 `992fcb9764812c8eeed8cac7637c101e17c56d66f1294e21bc50c1ce04fb1f65`。预定新独占输出为 `D:/caesura-u29-android-e0-01`，此检查点该输出尚未创建，未执行任何Android编译、包、签名或安装。历史第八次收据本轮重读摘要仍为 `1d752aebaf9d1bb03235dc59517eba3891aa4eef2e115a79f6af1f933c44939f`，不改写其旧源码范围。
+
+使用既有 `D:/green/platform-tools/adb.exe` 实际执行只读 `devices -l`，exit0、owned清理COMPLETE、输出只有标题。记录 `device-query-01/query.json` SHA256 `577b7b209dee26f6d39ef0dda7da1c9a08442981717be7804f78b3f266fb5685`；该adb不是编译toolchain的声明工具。没有连接旧IP、配对、安装、设备shell或输入，设备范围继续NOT_RUN。Apple新EAS执行仍承接原额度限制与用户先推进其余工作的决定，没有新派发或计费变更。
+
+独立只读审查已逐字段确认新旧请求仅repo/source_sha变化，复算清单与选定Git，重新执行生产源码预检得到同6540文件/2链接和相同fingerprint，六个相关生产模块原始字节及Git blob与HEAD一致。准备审查摘要 78cdf55444f6e37f3d7c6f8ac7f4651a92ea94906e800439f93c4d56eee4c012；没有运行Android构建或复算完整外部工具树，准备结论不升级为构建通过。
+
+### 2026-09-24 e0 owned 入口准备完成，构建尚未执行
+
+新run-owned-01.py已按原生产driver CLI准备，摘要a8297e74c233a867901ae3daa0fcc860feac58dcea35476abae36e919f00da00，独立复核报告owned-wrapper-independent-review-01.json摘要71b77918b3bb59803bbaadeae9ac47532ef575bd5618e6bde5b91434fc3cb6a2。实际构建前将核对生产源码身份、原请求/工具/依赖清单和真实工具；结束检查逐项保存读取错误并拒绝不稳定输入，不将入口准备当成构建通过。
+
+独审在执行前指出原辅助入口整份继承环境可能被底层request记录；已改为显式OS/path环境白名单与两个Python标记，只报告键名，原未执行版本另外保留。原请求和临时测试签名范围不变；该入口尚未执行，没有新APK、签名、安装或设备通过结论。

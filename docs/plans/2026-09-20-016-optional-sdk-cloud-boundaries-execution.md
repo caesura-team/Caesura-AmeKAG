@@ -163,3 +163,11 @@ CloudConflictStore 现已实现 owner 限定的不可变本地观察记录：在
 新增探针后的干净提交 `08bfc27645a335b91f860144c49d99cc2142d8a4` 已完成单次 Windows Debug 门禁，run `3b720275-8b5e-49aa-8ce9-ac09b494ce06`：全量构建0，C++1455/1455、433511断言、0失败/0跳过，Lua147/147＋56/56；CTest实际59项，58通过、0失败、1项预声明CaesuraHeadlessAiSmoke可选服务跳过，691.30秒。新协调器和原B1冷进程入口均在本次CTest内执行通过。
 
 执行、收集、strict verifier全部退出0；源码fingerprint `60b874c1d13708c9b2e656eab8af104de3d84f92d6ffb61092b4959a7de370e8` 与夹具首尾稳定，owned清理完成，无超时强杀。根重新核对29份原流/报告摘要及CTest XML，原run SHA256 `e307643aac530ae0fba54eca374584bac5460accf715bee56100674aeccc3764`，`u26-coordinator-cold-full-01/root-green-review-01.json` SHA256 `5b50e6c326f4e9fddfe2ca3e83a64072e5ea885da19c80127b4cd096327cae37`。前述失败和双平台定向证据继续保留；这次完整通过不扩展到Linux完整门禁、真实账号/SDK、远端写入或掉电验证，U26其他条件验收仍未完成。
+
+## 2026-09-24 e0 SDK ON 前提复核
+
+在e0桌面工作树完成一次有界只读检查，231项选定SDK/平台/工具输入全部与旧锁一致；Steam仍为1.65，Cubism为Native-5-r.5。Haru.model3.json及其25个唯一引用资源（包含4个Sound wav）全部存在并重哈希。artifacts/validation/u26-e0-preflight-01/preflight-01.json摘要99001d0f39a692fc96b5e8a01392cfbdc982432b605f9648e0159afafd8dedb9，review-01.md摘要44b1ba8597aa0c5ba4bf8295cb63e883a72b50900411bcdf63d9cd021fb6ad6b。旧SDK测试仍仅属于106160f3的两个构建与未初始化查询，不升级为e0完整ON。
+
+已核对实际进入边界：Steam ON的Engine init会调用SteamAPI_Init，失败为非致命，因此完整套件通过也不能代表账号功能。Windows Live2D成功路径需要真实bgfx D3D11 device/context；headless失败后Null回退不算模型验证。外部主仓Haru路径不在e0资源根，必须把锁定样本复制到真实资源根内，不能用外部路径/junction绕过PathConfinement；主目标POST_BUILD复制shader，单独tests构建不足以证明shader就位。
+
+当前KAG motion/expression/lip-sync仅维护ctx状态，能力目录明确command_not_wired；现有IAnimationBackend动作/表达式/参数入口可作SDK真实路径验证，但不能宣称现有KAG自动口型已闭合。新SDK ON runner仍需锁定完整91项SDL输入、实际链接库/运行DLL/shader，分别保留Steam、Live2D与双ON配置。此检查点没有configure、构建、引擎/模型运行、Steam账号或云服务操作。

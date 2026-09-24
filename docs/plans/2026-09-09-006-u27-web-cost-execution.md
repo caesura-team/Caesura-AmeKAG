@@ -1,6 +1,6 @@
 # U27：Web 成本、正式 CPU 比较与长跑执行记录
 
-本记录承接[唯一 U1–U29 计划](2026-09-05-001-refactor-runtime-foundation-plan.md)和[U15 截图生命周期](2026-09-08-005-u15-screenshot-lifecycle-execution.md)。2026-09-20 当前状态：冻结源码的完整 Web 维护套件已有 **638/638、0 失败/0 跳过**；首次正式 Release CPU 比较已保留六个独立进程的全部 180 个正式样本及 36 个预热样本，三个工作负载均通过事先锁定的噪声与 10% 回归规则，原始数据独立复算一致。真实后端至少一小时长跑仍未执行，整个 U27 未完成。下文保留各次历史失败与当时的未测状态。
+本记录承接[唯一 U1–U29 计划](2026-09-05-001-refactor-runtime-foundation-plan.md)和[U15 截图生命周期](2026-09-08-005-u15-screenshot-lifecycle-execution.md)。2026-09-24 当前状态：干净 `c25d81eb` 的完整 Debug/Release、冷恢复、实际故障对照、短跑和连续一小时 D3D11 长跑已通过并独立复核；同基线、同政策的当前 Release CPU 比较保留180个正式样本及36个预热样本，但三个指标均因超限噪声为 **INCONCLUSIVE**，`gate_pass=false`。历史 `93b8ddc2` 的正式CPU PASS仍保留，不能代替当前候选。整个U27及U29整合验收继续未完成；下文保留各次历史失败和当时状态。
 
 ## 固定诊断与原始失败
 
@@ -311,3 +311,38 @@ root重算红绿原流、源锁及保存的源码，确认测试正文未变；`
 有限A/B夹具的PNG复核增加至多4项、以完整编码字节为键的局部解码缓存；每个文件仍按原路径边界读取、校验长度、计算摘要并比较整帧像素，字节不同的图像重新经过原CRC与解码器。已有远离采样点的像素差异、CRC破坏与越界路径反例继续通过。没有改变图像容差或用摘要相似代替完全相同的字节。
 
 三个Soak CTest入口3/3通过、10.40秒，收据摘要 `45ec9a1d24ddb8de7f6a72ffb7e1a84ba090e402ac31cd8f5831d088b51ae13b`；根审查摘要 `09abc0307a0a1184e5da8ff7d736e5114078633f57a3aa67cd7430bebe7cc82e`。当前仅完成入口和回归，新的固定候选普通诊断、前置对照、实际short/long及完整门禁尚未运行；后续按该候选原始结果单独记录。
+
+
+### 2026-09-24 — c25 完整门禁、前置对照和实际短版
+
+测量工作树 `artifacts/validation/u27-soak-worktree` 保持干净 `c25d81ebfb324b85b54252ce937039c6dc790f28`，fingerprint为 `9f651c3cd9d3bf1d00d582289265ee282b0b1b74aa9b52b7088c016632b379a7`。测量后继续冻结该源码、实际二进制、DLL、cache和原始记录，以便重放；本节文档在独立 `codex/u29-validation-records` 工作树维护，不修改测量输入。
+
+Debug的完整构建及C++1477/1477、444441断言通过；Release为1477/1477、444430断言通过，二者0 failed、0 skipped。Lua均为主147/147、孤儿56/56；CTest均实际发现62项，61通过、预先声明的可选外部AI检查1项跳过。两次execute/collect/strict均实际退出0，源码和夹具指纹稳定。Debug原run摘要为 `6ffa1a6c3808659a1d2883fc3619477460870ee8e46182e7e2f26d00f7f75393`，根审计 `901b687ec446300cf622c78a2c48058bf06a35e2a2fd60f1fda712c4e9c89e23`；Release原run为 `0cf9be8c600dad436153bbede51355db19f3a9fe1c1120557c29313976279a47`，根审计 `d8c4d38cda6fd2250714adf66486b029103b9b29b0c4538f087c8c1f3bd5b190`。目录分别为该测量树下 `artifacts/validation/u27-continuous-full-01` 和 `u27-continuous-release-02`。Release首次辅助调用漏传configuration，在执行前被拒绝；full Release结论仅来自修正调用的第二次记录，首次失败未覆盖。
+
+同一冻结源码的普通22周期诊断、三个冷恢复角色及实际texture/RTT保留、已进入worker、初始化后停滞对照均重新绑定原始证据，根审计复核2197引用和200张PNG，摘要 `bcd0eee6fe8c9d64972df22ddc913a04d87af1bf5f0200a21e782a75fe5496d4`。当前冷恢复原run摘要 `f29dad256c133827f2f52a08c3a85da6e32e657f4eaab561a28e9409771425f7`，故障原run `442c94b2448699eb38a1688a34e3fee054ba4777d1d234c69620f1f6b14d50ce`。真实短版在两个上下文各完成20预热+100测量，连续测量138.2986415秒、200测量周期，720张PNG通过；原run `9a62d2c86e4cdd27d14959956c444e1b66e0fb9115a9d18cca654f5866e7a6d2`，根审计 `54a82de57ce60e891ad10311e96eb4a3d355318d199e30bffebf829897a5911f`。短版仍是SHORT_REVIEWED、accepted_soak=false，不冒充长版。
+
+### 2026-09-24 — 原进程连续一小时 D3D11 长跑通过
+
+原生进程PID26544、creation `134346718399093323` 于本地05:17:19启动，单一进程正常退出，实际进程时间3660.953572秒，独立owner观察3661.219秒。完成48个Engine/渲染上下文，generation严格为1至48；每个20预热+100测量，共4800个测量周期。第一段初始预热后的连续测量为3647.2719075秒，跨上下文重建保持同一进程、同一增长基线；未将分段运行时长相加充当一小时。
+
+所有静止点、逐周期事件、上下文销毁、10秒进度约束、前置冷恢复/故障/短版绑定及源码/二进制/cache首尾校验通过。Lua heap初始预热最大1298386字节，后续最大1307006，增加8620字节；private bytes为397647872至425611264，增加27963392字节，均在原固定预算内。没有重置上下文预算、删除异常样本或放宽阈值。17280张640×360 PNG逐文件核对原字节摘要和整帧关系，实际仅两份不同编码图像；各周期A与恢复A像素完全相同且与B不同。根审计共重核17585原始引用，并确认原生PID已退出。
+
+原报告 `C:/Users/34021/AppData/Local/Temp/caesura-long-d9eed7a82d90/run.json` 摘要 `8831a0d36ae1d83035b0052ddcdda821f41c05612d8dd0eed65440d340c75db8`，状态SOAK_REVIEWED、accepted_soak=true。根审计保存在测量树 `artifacts/validation/u27-soak-workload/candidate-long-01/root-review-01.json`，摘要 `b546d464db624a11ef8f748230c3ae9a127cacecd1f5619e09620dc550d9f0d8`。所有正常命令actual exit0、owned cleanup COMPLETE，无超时、强杀或stop请求。原生result.cold_restart为NOT_RUN；外层run.json的cold_restart=OBSERVED来自显式绑定的独立冷恢复前置对照，不混写成这一个长跑进程内部的冷启动。
+
+此结果只覆盖该Windows D3D11实际工作负载与已观测的资源所有权，不证明显存字节、GPU fence、OS设备移除、物理可听输出或其他平台。后续U29整合源码必须另行验收，不能复制本次通过状态。
+
+### 2026-09-24 — 当前候选 CPU 正式比较为 INCONCLUSIVE
+
+全部本轮自有构建/测试/原生探针结束后，在UTC22:20:58.828160至22:21:03.180160执行一次正式collection。baseline继续使用production `d418845dc62dfb9d24a04927d0fd030bedfa8ec8` / measurement `b008bc387739f50319f8095504f65fa189655b1c`；candidate生产和测量均为上述c25。采样器摘要仍为 `19a429266651c694e6c7af06dbe0707c0f143351b023e31559a555f056a86362`，原10%回归政策、工作量、AB/BA/AB顺序、每侧三个独立进程和每指标2预热+10测量完全不变；机器观察重新记录，未修改电源、优先级或亲和性。用户/OS后台活动不被声明为完全消失。
+
+新请求摘要 `90c6d83b725f28321a44e7deddb7b74e5b646ac5d47f86c8958b7132fe1d13f2` 绑定当前完整Release的实际产物。六个不同UUID/PID-creation进程均正常退出，全部180正式样本和36预热样本保留，72次SMA结果摘要与固定值一致；没有剔除慢值或追加采样。原始样本独立复算的结果如下，表中最大值取base/candidate两侧所有对应进程：
+
+| 指标 | 最大组内rMAD | 最大进程间spread | 最大首末drift | 当前判定 |
+|---|---:|---:|---:|---|
+| Lua格式化10000次 | 17.1495% | 59.4242% | 59.3119% | INCONCLUSIVE |
+| Lua table读取10000次 | 19.2517% | 81.8605% | 78.0731% | INCONCLUSIVE |
+| SMA 8192顶点×10 | 25.4671% | 41.6992% | 40.7999% | INCONCLUSIVE |
+
+原固定噪声上限分别为10%、20%、15%。所有指标先被噪声规则拒绝，因此不形成回归/改善比率结论；collection执行成功，compare实际退出2，comparison=INCONCLUSIVE、measurement_status=INCONCLUSIVE、gate_pass=false、release_ready=false。没有为了得到绿色结果再次采样，也未据此启动缺乏可重复退化证据的生产优化。
+
+collection `C:/Users/34021/AppData/Local/Temp/caesura-u27-perf-collection-44e51f5d94ba/collection.json` 摘要 `a275e0f1e9b2e3364438b6b31745926234bf741037d8344e10ae4c81e0efaeb0`；comparison同级文件 `caesura-u27-perf-collection-44e51f5d94ba-comparison.json` 摘要 `822793cc7532cbc21cc1ba9b43ff46331024d83cd38f6436512d2ff22b1df03c`。测量树 `artifacts/validation/u27-soak-workload/candidate-performance-01/outer-01.json` 摘要 `80aa1956067fb3a3440633853682997f37d65144d9b338aeab1f3290bdc75eb5`，独立原始样本复算报告 `root-review-01.json` 摘要 `07bf257c041f29b11b4cec5f3d8f94b9ece72a4244f0056497e184146003544e`。历史93b8的正式PASS保持其原源码范围；当前CPU确定性结论、U29整合候选和整个计划继续未完成。

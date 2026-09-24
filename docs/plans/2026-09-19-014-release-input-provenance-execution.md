@@ -195,3 +195,24 @@ AE7原计划要求“更换一个package digest，或让一个required job被取
 版本参数演练不等同于 `release.yml` 的已有Git标签入口。真实已有 `v1.0.1` 指向 `9aa299d4b78e5a62e25786d8771539bdc1adb65d`，不是f87。另一次受控执行从该workflow提取原始Python身份校验体，在干净f87中使用真实tag和SOURCE_SHA运行，实际退出1并报告 `Run from the selected existing tag`；没有生成GITHUB_OUTPUT。源码、workflow与原始体摘要首尾不变，owned tree cleanup=COMPLETE，无timeout/forced kill。原记录 `existing-tag-rejection-01/run.json` SHA256为 `027aaac6eb527c9a7b2c66563edd9dc01930762d1528921e98ca2e617fe6961a`。这证明已有tag指向错误源码时被拒绝；与候选完全匹配的正向tag workflow仍NOT_RUN。没有创建、移动或推送标签。
 
 同日重新回读master保护：一个PR批准仍为必需，enforce_admins=false，无required_status_checks，effective rules仍为空，ruleset17369886仍disabled。f87实际check-run的app为GitHub Actions（15368），聚合名称为 `Verify release inputs / Verify exact release inputs`；原始check-runs回读SHA256为 `d6a16d12c035a18f423d9ce2d401b28122c8169d2b6115f703f1b37a902cefd1`。PR25/26仍draft、REVIEW_REQUIRED且reviews为空。服务端强制绑定、正向tag入口及最终整合验收继续未完成；未发布、部署或修改保护规则。
+
+## 2026-09-24 服务端必需检查的最小变更提案
+
+再次实际GET确认master仍要求一次PR批准、未配置required_status_checks，enforce_admins=false、禁止force-push及分支删除；ruleset17369886仍disabled，effective rules为空。f87的12份check-run中，聚合名称唯一，check107344086525由GitHub Actions App15368提供且成功。PR25/26继续draft、REVIEW_REQUIRED；没有将这些旧检查升级为e0当前候选通过。
+
+已在记录工作树 `artifacts/validation/u23-required-check-preparation-01` 保存四份完整原GET响应、机器payload与可读提案，preparation SHA256 `ebda0f6af7876d6290b7f8a5a9739e067c25685843ba4e36fdc42f7caa31d9eb`。仅拟通过专用required_status_checks PATCH加入 `Verify release inputs / Verify exact release inputs`、app_id15368，strict=false；保留既有一次审批、管理员例外和其他保护，不启用disabled ruleset。实际写入前必须重新回读，若出现已有新checks或其他意外漂移则不写；写后比较精确context/app及无关保护字段。专用端点失败不会自动改用整套保护PUT。
+
+独立审查重哈希10个引用，核对所有外部调用均为GET、实际检查来源及payload，无新发现。已向用户单独请求这一外部管理变更的批准；在本检查点尚未收到答复，没有应用服务端变更。管理员例外仍存在，不称所有管理员操作均受强制覆盖；该配置也不代表任何候选通过、PR批准、合并或发布。
+独立提案审查摘要：`2b358169e3631537040dd08b45e48c6aa7d7152c368ae2275bcbb44148e131b0`。
+
+## 2026-09-24 经授权应用服务端唯一必需检查
+
+用户明确答复“允许应用这项最小变更”。首次按原提案向专用REST端点PATCH，GitHub实际返回404 `Required status checks not enabled`；立即GET回查与提案原保护完全相同。失败原始正文、stderr和恢复读回保留在 `u23-required-check-preparation-01/apply-01`，result SHA256 `0a7b5c15ee07fc484ea1f5d91b8011ffef9be39e01315994bb30c411188ec05c`；没有改用整套保护PUT。
+
+随后核对实际GraphQL schema及官方字段定义，准备只更新状态检查字段的等效请求：rule ID `BPR_kwDOSx-aDs4ErOc9`、requiresStatusChecks=true、requiresStrictStatusChecks=false，唯一context为 `Verify release inputs / Verify exact release inputs`，appId为GitHub Actions App15368的节点ID `MDM6QXBwMTUzNjg=`。其余审批、管理员、force-push、删除等字段均不传入。原四类REST输入与新GraphQL快照、来源check和请求字节在写入前重新精确核对；独立增量审查无可行动发现，runner SHA256 `4ae20564ac899b33f8904777cf973542f48d8f91680a73069ec4c5530870f3d9`。
+
+12:14（Asia/Shanghai）实际执行一次mutation后，REST和GraphQL分别重新读取，精确确认唯一必需检查名称与App15368、strict=false。与原快照比较，所有无关REST保护字段及所选GraphQL非状态检查字段相同，rulesets/effective rules亦未改变。一次PR批准仍必需，enforce_admins=false的管理员例外保留，force-push与分支删除继续禁止；没有启用disabled ruleset或额外要求同步master。
+
+终态 `apply-graphql-01/result.json` 为 `APPLIED_AND_READ_BACK`，SHA256 `f849b8f2ad5e022d7dfeb854f7bf8ad2befe2af926c72f191a82da3fb2ae8b3b`，10次API调用均退出0，仅一次为mutation，其余为读。没有自动重试、合并、PR批准、推送、标签或发布/部署操作。此项关闭服务端required-check配置缺口，但不代表所有管理员操作受强制覆盖，也不代表e0整合候选通过；正向匹配tag入口及U23最终整合继续未完成。
+
+独立终态审查重算10次调用的20份原始输出，重新比较REST全部无关字段、GraphQL所选非状态检查字段及rulesets/effective响应，确认精确变更与原批准一致，无新发现。`apply-graphql-01/independent-readback-review-01.json` SHA256为 `37b0e2fa1498602b16c7910088e7d111d07a3a81703004b045f65b6c03a4499a`；该审查只重读已保存的实际API正文，没有再次mutation或额外PR操作。

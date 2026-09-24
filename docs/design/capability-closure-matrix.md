@@ -1,7 +1,7 @@
 # Capability Closure Matrix (auto-generated)
 
 > 由 python scripts/capability_closure.py 生成；勿手动编辑。
-> 生成时间（输入源最新 mtime）：2026-09-23T21:46:25Z
+> 生成时间（输入源最新 mtime）：2026-09-24T05:37:23Z
 > 生成命令：python scripts/capability_closure.py
 > 源指纹（输入内容 sha256 前 16 hex）：54564d50946c4426
 > 输出确定性：同源指纹同字节（generated_at 为输入源最新 mtime；跨机 checkout 的 mtime 差异属 by-design，确定性以指纹为准）
