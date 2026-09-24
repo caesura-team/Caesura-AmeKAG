@@ -4,20 +4,20 @@
 
 完整目标仍是 U1–U29；底层优先，Studio 暂停。下方日期快照保留当时的原始计数与失败，当前状态以本节和对应执行记录为准。不同工作树的通过证据不能合并成一个未经验证的候选。
 
-**恢复后当前代码提交：`5cbf2e8e93e748b3d59667ee5ebf83554a1c5bd8`。** 当前代码为 `5cbf2e8e93e748b3d59667ee5ebf83554a1c5bd8`（`codex/u29-pose-audio-integration`），包含模型目标逐帧透明清理、CubismPose接线、动作缓存group/index与LoadMotion参数修正，以及12个音频业务合同用例的真实ManualMix时钟。新候选完整SDK/C++/Lua/CTest尚未运行。 原混合motion/off的C0000005及d531 CI的Linux Release/最终gate失败保持；新代码不沿用旧候选门禁通过。U23 fresh04只读保护与前次逐字节一致。旧f87实际producer生成的原存档已保留为未来冷读输入，但原协议要求的Release INFO日志缺失，外层失败和实际帧数未知边界保留；consumer及整个回退矩阵未完成。详见[U29最新续记](2026-09-24-017-foundation-integration-execution.md#2026-09-24-pose动作与音频时钟前提修复续记)。
+**恢复后当前代码提交：`cce1691439f2721f92291b49d3c4d0671d2e6bfd`。** 当前代码 `cce1691439f2721f92291b49d3c4d0671d2e6bfd`（`codex/u29-motion-expression-ownership`）仅补齐两处新建Cubism动作/表情对象的队列所有权，完整新候选构建与实际释放GREEN待验。 前候选59f完整SDK门禁、探针功能通过与真实释放RED分别记录；两项所有权修复已静态独审，不能沿用59f为新候选完整通过。d531 CI失败、旧F01像素失败、原SDL计数前提拒绝和误删原证据缺口均保持。旧f87四份原存档和四次同包冷读已核对，但跨候选与整个回退矩阵仍未完成。详见[U29最新续记](2026-09-24-017-foundation-integration-execution.md#2026-09-24-动作与表情所有权回归续记)。
 
 | 范围 | 已取得的证据 | 继续完成的事项 |
 |---|---|---|
 | U1、U3–U10 | [主执行记录](2026-09-05-002-runtime-foundation-execution.md)列出本机适用验收及实际 POSIX 定向结果 | 平台扩展和整个候选验证继续按 U2/U29 承接；不将本机结果写成所有平台通过 |
-| U2 | e0/eda历史结果及sanitizer原FAIL保留；恢复后ed6 Windows基础Debug完整11项根/独审通过；d61托管终态8成功/3失败/1跳过，Windows Release成功，Linux Release和macOS Debug失败 | a047完整门禁/CI尚待执行；HTTP Windows117/117仅为相关Python合同，新音频C++未编译。各平台、Release、sanitizer及SDK/FFmpeg配置分别验收，eda原Windows完整根证据缺失保留 |
+| U2 | 59f完整Windows Debug Live2D SDK门禁11项及根/独审通过，C++1525、Lua147/56、CTest71通过及1项预准AI跳过；d531托管10成功/2失败保留 | 新所有权候选完整门禁、各平台Release/sanitizer/最终包仍待验；不同源码及配置证据不拼成完整通过，误删原日志缺口保持 |
 | U11–U21 | 恢复、语言、缓存、GPU、输入、RPC、能力、Web 音频和作者路径已交付；U21 PR #24 合并为 `65e5b425` | 各记录保留设备、物理音频与历史性能失败边界；不重新打开已完成的实现工作 |
 | U22 | [最终包记录](2026-09-13-013-final-package-isolation-execution.md)已有三桌面/Web 托管门禁与实际 Mac 最终容器、安装、映像闭包证明 | 最终整合及 PR 审查仍未完成；ad-hoc 签名不等于 Developer ID/公证，软件混音不等于物理输出 |
 | U23 | [发布输入记录](2026-09-19-014-release-input-provenance-execution.md)：`f87f7aa7` 本机完整 Debug、12 个托管作业、9 required jobs/11 artifacts/45 outputs 聚合及 AE7 摘要负控通过；本地版本参数演练完整下载并复核480675784字节 | 用户批准后master已绑定唯一聚合检查及GitHub Actions App15368，误删后新只读回执确认无关保护不变（原mutation/读回收据当前缺失）；真实旧tag负控已通过，正向匹配tag入口与整合验收仍须完成；无发布或部署 |
 | U24–U25 | [Android记录](2026-09-20-015-android-package-validation-execution.md)保留历史aacc完整v2构建/包证据；e0独立源码预检6540文件/2链接通过，新请求与owned入口已准备并独审，尚未执行 | e0 Android编译/包尚未执行；当天adb列表为空；Apple、模拟器、真实设备和正式签名分别验收，旧产物不替代当前候选 |
-| U26 | 恢复后244项SDK inputs02对应的ed6 Live2D完整Debug11项已根/独审通过（C++1525、Lua147/56、CTest71通过及1项预准AI跳过）；ed6 FFmpeg Debug02亦根/独审通过 | 两配置不迁移新候选；首次真实Haru基线FAILED/退出1，两shown差308像素，继续诊断，不升级模型/动作/口型。Steam账号/云服务、其他SDK配置仍待验；首轮输入遗漏编译REJECTED保留 |
+| U26 | 59f完整SDK Debug通过；同库真实Haru初始/动作/F05表情有效，计数不可用的SDL经透明回调校准后测得动作5笔13336B与表情2笔208B余留，无动作及无效名称对照最终零 | 新代码把两类新对象交给队列自动释放，完整新SDK与同合同GREEN待验；自然结束/重复替换、无Pose/异常输入、口型、Steam账号与其他配置分别继续，原失败保持 |
 | U27 | 独立分支已有历史正式 Release 的 180 测量/36 预热样本；新 `c25d81eb` 的冷恢复、实际故障对照、短跑和完整 Debug/Release 证据已回核 | c25长跑3647.27秒/4800周期/17280 PNG已通过；当前CPU保留180测量样本，三个指标均为INCONCLUSIVE、gate_pass=false，继续保留未决性能与整合候选验证；历史样本不替代新候选 |
 | U28 | [证据边界修复](2026-09-24-018-platform-evidence-execution.md)：历史声明/当前重验分层，维护回归42/36/10通过，真实c25执行收据与f87最终包字节正负控通过 | 整合候选通过后继续更新公开声明；原始包运行日志、设备/账号与发布范围不由字节或文档验证推导 |
-| U29 | [隔离整合记录](2026-09-24-017-foundation-integration-execution.md)：a047已提交HTTP及单例音频前提修复；HTTP真实RED→Windows117/117和根审通过，音频静态根审通过但新C++GREEN待验；d61完整CI终态8成功/3失败/1跳过 | a047原完整门禁、跨平台及最终包尚待执行；Linux原1508/1507/1/0失败保留，全ZIP未验的Range证据不冒充整包。ed6 SDK/FFmpeg各自通过与Haru原失败分开；旧f87冷恢复、性能/长跑、AE1–AE8及回退继续，不自动发布 |
+| U29 | 59f完整SDK及真实功能/分配观测已根核对；旧f87两模板两路原档、四次同包plain冷读及独审完成，原basic-A producer outer1保留 | 新所有权候选完整门禁/跨平台/最终包继续；AE1–AE8、跨候选/坏摘要fallback/加密恢复、性能与长跑未完成，不自动合并或发布 |
 
 U26/U27 的运行结果来自各自保留的隔离工作树。源码现已组合到U29树，但这些结果不构成U29或master验证。U27 新完整 Debug 原 run SHA256 为 `6ffa1a6c3808659a1d2883fc3619477460870ee8e46182e7e2f26d00f7f75393`，完整Release为 `0cf9be8c600dad436153bbede51355db19f3a9fe1c1120557c29313976279a47`，短跑为 `9a62d2c86e4cdd27d14959956c444e1b66e0fb9115a9d18cca654f5866e7a6d2`；源码均为 `c25d81ebfb324b85b54252ce937039c6dc790f28`。证据分别位于该工作树的 `artifacts/validation/u27-continuous-full-01`、`u27-continuous-release-02` 与 `u27-soak-workload/candidate-short-01`。首次Release辅助调用漏传configuration，被preflight拒绝，原失败保留，未算作执行过的全量测试。
 

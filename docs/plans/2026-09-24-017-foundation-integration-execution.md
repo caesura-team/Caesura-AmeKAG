@@ -370,3 +370,22 @@ d531025d4b2c7ab2ebaedb43b14508ad79c67b29 的 run35988975245/attempt1 已最终�
 旧f87 plain basic producer-A实际子进程0、四marker各1、存档字段正确、149静态文件不变；外层仍REJECTED/exit1，因为原协议要求的frame-limit和初始化INFO字符串在该Release EXE中不存在。实际帧数和退出原因未知，不改写原协议通过。仅原样保留6820字节save11（SHA256 `f5dc1a42c6dfecf42edc4150f08b435ba81432d944a7493aae682fc78f8e1469`）作为未来冷读输入，见 `u29-old-plain-basic-a-observation-01/observation-and-retention-01.json`；未运行consumer或整个回退矩阵。
 
 U23保护fresh04与fresh03逐字节一致：唯一context `Verify release inputs / Verify exact release inputs`、GitHub Actions App15368、strict=false、一次批准、管理员例外及禁止强推/删除保持，未重复mutation。误删恢复缺失的原本机根日志继续列为缺失；以上新证据不冒充恢复的旧日志。平台逐能力历史status/执行commit/日期/evidence均保持，生成声明仍为NOT_REVERIFIED，不产生合并、标签、发布或商店授权。
+
+
+## 2026-09-24 动作与表情所有权回归续记
+
+当前代码 `cce1691439f2721f92291b49d3c4d0671d2e6bfd`（`codex/u29-motion-expression-ownership`）仅补齐两处新建Cubism动作/表情对象的队列所有权，完整新候选构建与实际释放GREEN待验。 本节为当前接续，先前各段“未运行”仅表示原记录时点。所有外部路径相对于 `E:/CaesuraRecovery/20260924-1446/`；新结果不冒充误删前原件恢复。
+
+前候选 `59f994c3e708d2d888b736aba3ae45c6b85ad794` 完整Windows Debug Live2D SDK原session23699实际0，configure/execute/collect/verify均实际0并完成清理，11项required通过。C++1525/451305断言零失败零跳过，Lua147/56，Python22/12/78/57，CTest72发现、71通过及既定AI exit77一项跳过。根与独审原终态分别为 `integration-sdk-terminal-root-review-01/review.json`、`integration-sdk-terminal-independent-review-01/review-01.json`。实际live2d开启，FFmpeg/Steam/sanitizer关闭；六条LNK4098保留。此结果只属于59f的该配置。
+
+`u26-integration-real-probe-01` 从完整59f库构建，无旧hybrid对象。V01初始load-render/OFF与motion/OFF实际0；motion的动作差分16407/15986/7320像素、完整卸载/关闭/析构经根与独审核实。原motion/ON实际1发生在安装之前：当前SDL DLL的GetNumAllocations恒返回-1，原“必须0”前提不可满足；没有执行SDK动作，不能称泄漏。原F01 expression/OFF实际1，画面差分0；F01仅MouthForm加0.27，未证明本次默认参数/上限值，不能确认饱和根因或据此判断引擎缺陷。两次原失败保持。
+
+P02只修外部探针：明确把-1记为UNAVAILABLE，验证当前四回调等于原默认回调，透明委托并验证Set成功与四hook读回；保留真实phase7分配/重分配/释放校准、原严格像素/生命周期/非零退出合同。正向表情改为原资源F05；没有改生产库或素材。P02编译/链接原session1794实际0并独立源码审查。V02初始OFF原session97551实际0，九张PNG/RGBA与V01初始原件完全相同；F05 OFF原session48052实际0，眼部173像素变化且alpha不变，根目检闭眼、独立PNG解码逐字节核实。详情 `u26-integration-real-runtime-02/independent-initial-and-expression-off-review-01.json`。
+
+V02分配观察器真实安装与校准通过：每次phase7均3 admitted/3 freed/1 realloc，最终0，aligned路径实际可见。load-render/ON、invalid-motion/ON及invalid-expression/ON实际0，最终均无所标记调用的余留。motion/ON原session93458的shell实际1、child实际3；phase1共2356 admitted/2351 freed，模型卸载、Engine shutdown及析构后仍有5笔/13336B。expression/ON原session51523 shell实际1、child实际3；phase2共40/38，最终2笔/208B。动作与表情的实际像素仍满足正控，清理COMPLETE；原非零没有改写为通过。根报告为V02的 `root-motion-on-review-01.json` 与 `root-expression-on-review-01.json`。这些是owner线程同步调用阶段归因的SDL分配，不是SDK对象数量，也不覆盖全进程所有分配。
+
+实际SDK源码显示，LoadMotion/LoadExpression每次返回新对象，而原StartMotion(..., false)使队列析构不调用ACubismMotion::Delete；资源缓存只持有字节，未另持有这些对象。当前新代码仅在两个成功加载调用点改为true并说明所有权，让实际队列负责释放，未改接口、缓存格式、group/index或头布局。真实RED、静态所有权链和精确补丁见 `u26-integration-motion-expression-ownership-review-01/ownership-review-01.json` 及新树 `artifacts/validation/u26-motion-expression-ownership-01/`。新完整SDK和匹配探针的释放GREEN仍待执行；现探针不能证明10秒Idle自然结束、多次替换队列或自动音频口型。
+
+旧f87 plain四份producer原存档均保留，basic/kag3两模板A/B四次新进程cold consumer均实际0，ENTRY/INPUT/RESTORED/DONE各1、SAVED0、slot字节不变。basic静态149文件、kag3为146。原basic-A producer因缺Release INFO而outer1/REJECTED仍保持；其同包冷读对照另成功不改写原失败。独审见 `old-plain-roles-independent-review-01/review-01.json` 与 `old-remaining-cold-consumers-independent-review-01/review-01.json`。实际帧数、精确退出原因与全部九个重放事件消费仍UNKNOWN；完整视听状态、跨候选、加密及坏摘要fallback验收仍待完成。
+
+U23 fresh04保护未再修改；正向匹配tag需要具体授权，未合并、发布或改标签。U24设备、U25配额、U26其余SDK/账号/输入边界、U27正式性能/长跑及U28/U29跨平台最终包/AE1–AE8仍保留。完整目标未完成。

@@ -4,7 +4,7 @@
 
 进度显示：[当前待办清单](2026-09-05-003-runtime-foundation-todo.md)。详细证据见 [执行记录](2026-09-05-002-runtime-foundation-execution.md)。
 
-2026-09-24 恢复后当前接续：完整目标仍为全部U1–U29，底层优先、Studio暂停。当前代码为 `5cbf2e8e93e748b3d59667ee5ebf83554a1c5bd8`（`codex/u29-pose-audio-integration`），包含模型目标逐帧透明清理、CubismPose接线、动作缓存group/index与LoadMotion参数修正，以及12个音频业务合同用例的真实ManualMix时钟。新候选完整SDK/C++/Lua/CTest尚未运行。 d531托管终态10成功/2失败，Linux Release和最终gate失败；原首次音频失败保留。Haru混合诊断初始姿态与静态像素已根/独审通过，但首次motion/off发生C0000005；本次group/index修复尚待完整新构建后的原探针验证。详见[U29最新续记](2026-09-24-017-foundation-integration-execution.md#2026-09-24-pose动作与音频时钟前提修复续记)。
+2026-09-24 恢复后当前接续：完整目标仍为U1–U29，底层优先、Studio暂停。当前代码 `cce1691439f2721f92291b49d3c4d0671d2e6bfd`（`codex/u29-motion-expression-ownership`）仅补齐两处新建Cubism动作/表情对象的队列所有权，完整新候选构建与实际释放GREEN待验。 前候选59f完整Windows Debug Live2D SDK十一项通过；真实初始、动作及F05表情功能通过，但有效校准后动作/表情分别余留5笔13336B、2笔208B，原child均exit3。旧f87两模板两路的四次同包plain冷读对照已通过；跨候选/加密/fallback仍待验。详见[U29最新续记](2026-09-24-017-foundation-integration-execution.md#2026-09-24-动作与表情所有权回归续记)。
 
 以下 a047、d61、ed6 及更早段落保留各自记录时点，不覆盖本段的新候选状态。
 
