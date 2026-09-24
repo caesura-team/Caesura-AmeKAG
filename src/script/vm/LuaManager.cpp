@@ -111,6 +111,10 @@ void LuaManager::lockdownScriptEnv() {
     }
 }
 
+LuaManager::~LuaManager() {
+    shutdown();
+}
+
 void LuaManager::shutdown() {
     if (m_L) {
         if (!GameState::stopRunner(m_L)) {

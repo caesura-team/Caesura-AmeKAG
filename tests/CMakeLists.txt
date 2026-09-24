@@ -41,6 +41,7 @@ set(TEST_SOURCES
     cpp/test_ndc_math.cpp
     cpp/test_color_filter.cpp
     cpp/test_lua_manager.cpp
+    cpp/test_lua_lifetime.cpp
     cpp/test_script_bindings.cpp
     cpp/test_script_boundary.cpp
     cpp/test_game_state.cpp
@@ -192,7 +193,7 @@ add_caesura_doctest(CaesuraStorageTests
 add_caesura_doctest(CaesuraScriptTests
     LABELS script lua
     RESOURCE_LOCK global-singletons
-    ARGS --source-file=*test_lua_manager.cpp,*test_script_bindings.cpp,*test_script_boundary.cpp,*test_managed_coroutine_lifecycle.cpp,*test_save_binding.cpp,*test_restore_binding.cpp,*test_transient_restore.cpp,*test_kag_binding.cpp,*test_kag_integration.cpp,*test_kag_execution.cpp,*test_game_state.cpp
+    ARGS --source-file=*test_lua_manager.cpp,*test_lua_lifetime.cpp,*test_script_bindings.cpp,*test_script_boundary.cpp,*test_managed_coroutine_lifecycle.cpp,*test_save_binding.cpp,*test_restore_binding.cpp,*test_transient_restore.cpp,*test_kag_binding.cpp,*test_kag_integration.cpp,*test_kag_execution.cpp,*test_game_state.cpp
 )
 add_caesura_doctest(CaesuraRenderResourceTests
     LABELS render resource
