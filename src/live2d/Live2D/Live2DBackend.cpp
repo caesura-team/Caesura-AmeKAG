@@ -541,7 +541,8 @@ bool Live2DBackend::playMotion(int handle, const std::string& name) {
     );
     if (!motion) return false;
 
-    static_cast<Live2DUserModel*>(model.userModel.get())->motionManager()->StartMotion(motion, false);
+    // Each load creates a fresh motion; the queue owns it through completion or unload.
+    static_cast<Live2DUserModel*>(model.userModel.get())->motionManager()->StartMotion(motion, true);
     return true;
 }
 
@@ -564,7 +565,8 @@ void Live2DBackend::setExpression(int handle, const std::string& name) {
     );
     if (!expression) return;
 
-    static_cast<Live2DUserModel*>(model.userModel.get())->expressionManager()->StartMotion(expression, false);
+    // Each load creates a fresh expression; the queue owns it through replacement or unload.
+    static_cast<Live2DUserModel*>(model.userModel.get())->expressionManager()->StartMotion(expression, true);
 }
 
 // ============================================================
