@@ -171,3 +171,17 @@ CloudConflictStore 现已实现 owner 限定的不可变本地观察记录：在
 已核对实际进入边界：Steam ON的Engine init会调用SteamAPI_Init，失败为非致命，因此完整套件通过也不能代表账号功能。Windows Live2D成功路径需要真实bgfx D3D11 device/context；headless失败后Null回退不算模型验证。外部主仓Haru路径不在e0资源根，必须把锁定样本复制到真实资源根内，不能用外部路径/junction绕过PathConfinement；主目标POST_BUILD复制shader，单独tests构建不足以证明shader就位。
 
 当前KAG motion/expression/lip-sync仅维护ctx状态，能力目录明确command_not_wired；现有IAnimationBackend动作/表达式/参数入口可作SDK真实路径验证，但不能宣称现有KAG自动口型已闭合。新SDK ON runner仍需锁定完整91项SDL输入、实际链接库/运行DLL/shader，分别保留Steam、Live2D与双ON配置。此检查点没有configure、构建、引擎/模型运行、Steam账号或云服务操作。
+
+## 2026-09-24 当前真实 SDK 路径的只读调查
+
+eda98b22代码与71c9732d文档候选上的有界调查已完成，165项选定Cubism输入、Haru配置及25项引用均重新核对。原生模型加载/显示可通过已有HTTP加载入口与真实D3D11观察，动作、表情和参数控制仅有C++接口；当前Lua/RPC不存在相应动态绑定，三个KAG命令仍为command_not_wired。Haru自身动作包含嘴部曲线，不能据嘴动推断音频同步。手动ParamMouthOpenY参数控制与自动语音包络接线分别记录，后者当前未实现，本次未扩大为自动音频算法开发。
+
+静态调查记录两项待真实SDK复现的问题，均为STATIC_FINDING_PENDING_REAL_REPRODUCTION，runtime_reproduction=NOT_RUN。其一，Live2DBackend::playMotion将model.setting传入LoadMotion，却省略group/index；所选Native-5-r.5默认NULL/-1，后续fade查询将组名送入无空指针保护的字符串比较。其二，LoadMotion/LoadExpression创建的每次调用实例以StartMotion(...,false)交给队列，后端只保留原始字节，SDK队列也不承担这些实例的释放。尚未记录实际崩溃、SDK对象释放计数或测得泄漏；先做真实控制，不以静态疑点替代回归。
+
+旧stage03的caesura_live2d.lib、CubismFramework.lib和CaesuraTests.exe当前字节仍与原收据一致；构建目录 `D:/caesura-u26-live2d-on-969a31c9-02`。旧实际编译输入中的Live2DBackend.cpp、.h、Live2DUserModel.h与当前eda逐字节相同，可用于明确限定的诊断复现；旧Engine库不可与当前EngineConfig/Engine头混用，整个旧产物不重新标为当前候选。后续应先做真实D3D11/Haru加载与图像控制，再分别以独立子进程观察Idle/0动作和F01表情的行为、异常及生命周期，避免一个异常遮蔽另一个问题。
+
+只读报告为eda树 `artifacts/validation/u26-fixed-step-readiness-01/readonly-review.json`，最终摘要 `2756b4c47c48879dfe201da2b48d3606da049cbd7c523095fbe59cb5ead9afcd`。没有配置、构建、SDK/原生进程、测试、账户或凭据操作，也未读取活动Debug构建目录。记录工作树中的Live2D指南已即时移除不可执行的fg/model3、motion/expression用法，改为真实接口范围，修正实际编译宏并将旧运行结论标为历史；这些文档修正未进入正在运行的71c CI候选。
+
+### 2026-09-24 误删后的证据可用性
+
+上述SDK输入、Haru引用、旧stage03构建字节与只读报告摘要均是误删前调查记录；其中旧D盘构建路径不能再作为当前可执行入口。源码已恢复至E盘，原构建和依赖输入须在后续真实验证前重新定位、逐项核对；当前没有新SDK ON构建或模型运行。两项静态疑点继续为待真实复现，不升级为已观察崩溃或泄漏。恢复范围和现存清单见[U29恢复后记录](2026-09-24-017-foundation-integration-execution.md#已恢复原件与当前缺口)，其中零散文件不补成完整SDK验收。本文与Live2D指南修正已进入09601基础上的文档整合，未改变原71c托管执行的源码。

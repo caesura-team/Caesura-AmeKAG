@@ -203,3 +203,99 @@ Linux新干净克隆位于 `/home/ailias/.local/share/caesura-validation/u29-eda
 后续最终包的编辑器静态资源已单独准备。重新核对旧真实构建收据、命令日志和进程结果，确认新旧91项前端源码/配置全部同字节，将原95个dist文件复制到忽略的暂存目录并逐项重算摘要；未复制旧原生二进制，也未修改活动构建的editor/dist。`u29-fixed-step-package-inputs-01/editor-reuse.json` 摘要 `2b835331296d04659163d7f8557bdde22f8d14aa819381afddfd55f161f30efa`，状态IDENTICAL_FRONTEND_DIST_STAGED。这是明确输入相同的复用，不是重新执行636项编辑器测试或最终包通过。
 
 托管CI预检实际发现平台文档同步锚点仍为8bcd4c4d，默认freshness检查退出1。独立文档工作树 `artifacts/validation/u29-fixed-step-docs-worktree` 从eda建立，只同步上述记录、锚点和生成文档，冻结测试树不动。矩阵逐能力status、历史commit、验证日期和证据保持原值；锚点更新不授予当前平台通过。API/命令文档生成结果无内容差异，平台及计划事实默认check已通过。该文档提交将作为另一个完整SHA进入现有只读CI工作流；本地eda证据仍归属eda，托管结果须按实际新SHA独立验收，不自动合并或发布。
+
+文档同步已提交为 `71c9732d7efd92dd7ed43a70be6b2123765f8fdb`，相对eda仅11个docs路径改变，未修改代码、测试、workflow或required策略。提交后的默认平台freshness检查也实际通过。2026-09-24 13:40推送新独立分支 `codex/u29-fixed-step-docs` 后，GitHub读回ref与完整SHA一致；没有创建或更新PR、合并、改动tag或启动发布workflow。
+
+13:41只调度一次现有CI入口，实际运行 [35961032218](https://github.com/caesura-team/Caesura-AmeKAG/actions/runs/35961032218)，attempt1、workflow ID291151646、path `.github/workflows/ci.yml`、event `workflow_dispatch`、head/source `71c9732d` 均由GitHub API读回匹配。源码及policy锁定job107509450875已success，Android静态job107509524280已success；三桌面Debug、iOS及Android审计作业执行中。9个required producer和11类artifact保持原选择，后续Release/最终包/聚合结论尚未取得。原始push、dispatch和读回记录位于文档候选树 `artifacts/validation/u29-hosted-71c9732d-01/`。不能将本机eda中途结果迁移为71c候选通过。
+
+Linux及frontend准备已独立复核：脚本变化精确限定于候选、分支及路径；实际Linux HEAD/clean/fingerprint、4条准备命令的8个原始引用、旧编辑器构建的7项锁定输入和5条owned命令，以及91项双源码输入、95项源/目标产物均重新核对一致。结论READY_PREPARATION_ONLY，报告 `u29-fixed-step-linux-01/independent-preparation-review-01.json` 摘要 `0ee2b0b80566428311292be298188dfd927ba607128a54bb69235ce514ea27f1`。
+
+另已将FFmpeg-ON的155项既有依赖复核后复制至eda树，源码首尾指纹不变；新manifest摘要 `240d2fc6bf3f715ef32456f4e3adc0baaa88d302a802d29d970c1791fef731d2`。待执行入口从已审查e0版本仅适配SHA、build目录、SDL真实来源及显式CMake路径，摘要 `125288fa2bebc157b2a0439a82961d94e18fabf64ac2599a2b9c7aaff6f4ee32`。仍未进行FFmpeg-ON配置、构建或测试，旧准备记录也未被改写成通过。
+
+
+## 2026-09-24 eda Windows Debug 终态与 Release 启动
+
+13:54已取得冻结eda98b22的完整Windows Debug终态COMPLETED_PASS。实际全量构建、C++1524/1524及451156断言、Lua147/56、Python22/12/78/57、耦合与注册全部通过；C++零失败/零跳过。CTest实际72项为71通过、0失败、1预先允许的CaesuraHeadlessAiSmoke跳过，1349.50秒，新固定步长CLI集成包含在内。configure/execute/collect/verify均exit0、owned cleanup COMPLETE，无超时/强杀。源码、91项SDL输入、cache、profile、CMake和运行器首尾稳定。
+
+原证据目录为eda树artifacts/validation/u29-fixed-step-gate-01/debug-01。outer摘要bbad7c2c85789d294508a8001a60132604a705a42f6ee17bc4663bacbf2cef16，raw/run摘要4b30d3788c9b6b98ef33a517354ec4f4108a1e08376cbcb4ceced63d2e53b017。根重新核对原始日志、进程收据、JUnit和锁定输入，重建manifest并重新严格只读验证，11项required仍全部PASS；root-review摘要32c42584a2ab3d6b5ce6d0e528934f417467c3007e262e7adbbcd37119052ef1。没有重新运行测试；此结果属于本机eda基础配置，不替代SDK/FFmpeg ON、其他平台或71c托管候选。
+
+OS确认原Debug启动器PID28172已经退出且没有其他本机引擎构建/测试后，于14:00:12启动同一冻结源码、同一经核对多配置cache的完整Windows Release。新目录release-01，隐藏PID14796、创建时间与完整argv已由OS读回；selection摘要aa0507242cc948bdb86cc32c5b779ee37b212ff0b8f14d48a19f6e2b9d0cc7c3。所有11项检查重新执行，不拼接Debug结果；此检查点正在实际编译，尚无Release终态。
+
+14:00:55另对U23进行一次只读确认，没有发送mutation。master保护、rulesets和实际生效规则均与原成功应用快照一致，记录在u23-required-check-preparation-01/readback-20260924-140051/result.json；用户授权的最小变更已完成，不重复写入。
+
+FFmpeg输入及后续入口也完成独立审查：实际155项双端依赖、91项SDL及3个库来源全部重核，入口仅有预期候选/路径/工具适配，未发现问题。u29-fixed-step-ffmpeg-01/independent-preparation-review-01.json摘要e464e30a9aaaf1841487a2a320b5dd25de27d42aa926e23873b8960972fb13d2；结论仅READY_PREPARATION_ONLY，未进行FFmpeg-ON构建。
+
+### 同次托管 CI 的首个失败
+
+14:02读回CI35961032218/attempt1：Linux Debug、Android静态与CMake审计、iOS CMake探测作业已报告success；macOS Debug作业107509524273为failure，其后macOS Release/最终包为skipped。原始作业日志显示严格U1拒绝cpp、validation-evidence和ctest三项；不能用job外层成功或其他平台通过抵消。原始job与日志已保存在71c树u29-hosted-71c9732d-01，实际保留的macOS诊断产物ID10792267914，GitHub声明ZIP摘要aad20c49d6c61a25126e0862b4a2a293922ee4ba9021666c4bd2637e7a783028；正在获取和分析原始产物，具体根因尚待核对。Windows Debug和Linux/Web后续包作业仍执行，整体候选未通过，不重复调度或修改required集合。
+
+独立Debug终态复核已完成且无发现：再次核对138个根原始引用、累计196个文件引用、43项raw/bundle内容、源码/夹具身份、全部11项检查与实际过程收据；分别重建manifest并严格验证均通过。独立报告debug-01/independent-terminal-review-01.json摘要aeffefc070ef92d2cbc5664f6fae1546b7c79708b836fc13770347fe1315fdf3，状态INDEPENDENT_ORIGINAL_EXECUTION_VERIFIED。它证明复用匹配中间产物后的单次完整Debug执行，不是全新clean build，也不扩展为Release、SDK/FFmpeg、其他平台或最终包通过。
+
+记录树的Live2D指南修正与U26静态调查记录也已独立核对当前接口、RPC解析、宏、历史范围和新增链接，零可行动发现；两份文档审查前后字节稳定。u26-docs-review-01.json摘要f4ab27da0d9e4f175fc9603c7a7840c0449e8ebe23f6ff99acb15d3ca5e367cd。指南修正仍仅在记录树，未改变活动本机及托管候选；两项SDK疑点继续等待真实复现。
+
+macOS诊断ZIP首次只读下载因240秒超时留下未完整文件，未提取或认作有效产物；原部分字节保留。1024字节Range请求实际退出0且与原前缀一致，随后14:10以独立PID30304启动分段续取；只有最终34875802字节及上述GitHub完整SHA一致后才允许提取分析。此为取回既有失败证据，不是重新执行CI或测试。
+
+## 2026-09-24 托管终态、七文件修复与误删后的接续
+
+当前代码候选为 `09601b20eeeba6053baec4758ee51a1ef0b222e9`（`codex/u29-ci-portability`），基于已执行托管 CI 的 `71c9732d7efd92dd7ed43a70be6b2123765f8fdb`。七文件修复已提交；删除前的交叉代码审查无可行动发现，恢复后关键工作树的 Git 文件、索引及实际符号链接也已独立核对。当前使用 `E:/CaesuraRecovery/20260924-1446/worktrees/u29-ci-portability-worktree`。记录树 `40fa2421a56e2833824137e17bacd58e83fd0732` 的五份文档已同步至本候选；原 D 盘证据路径在上述历史段落中保留来源含义，不作为现在仍存在的运行入口。
+
+### 原 CI 终态与已提交修复
+
+原 run [35961032218](https://github.com/caesura-team/Caesura-AmeKAG/actions/runs/35961032218)/attempt1 的实际 source 为完整 `71c9732d` 提交，终态为 **6 success、4 failure、2 skipped**。macOS Debug、Windows Debug、Linux Release 与聚合作业失败；跳过的是macOS Release/最终包作业107513999092与Windows Release/最终包作业107516599940；Web作业成功，Linux Release/最终包作业失败。恢复时重新读取的是同一次原运行及其 artifact，没有重跑 CI、修改失败结论或缩小 required 集合。
+
+恢复后的 macOS 完整诊断 ZIP 与小包均保留真实失败：`U26 coordinator: optional capability validates captured bytes once` 在 Cloud 侧再次执行本应只消费一次的 `afterRead`，`side == Local` 和随后 Complete 断言失败；独立 cpp 为1508项、1507通过、1失败、0跳过。Linux Release 独立 cpp 原件为1508项、1502通过、6失败、0跳过，共15个失败断言，均在音频业务合同测试中；日志实际输出模式为device。同次后续 CTest 中 C++ 全部通过是另一调用，不能覆盖独立 cpp 的失败。Linux 0.1秒静音夹具与后台设备混音时钟使句柄可能在业务断言前结束，是源码支持的时序解释；原日志没有逐次断言耗时，不能声称已经测得每次到期时刻。
+
+`09601b20` 的改动范围如下，原业务断言、阈值和设备验证范围保留：
+
+- `scripts/compare_benchmarks.py` 与对应 Python 测试：采集和离线复核均拒绝缺失的操作系统进程身份，不能用两个null相等认作匹配；正向工作进程等待实际 `process.json`，保留六个独立进程。
+- `tests/cpp/test_cloud_save.cpp`：用 `std::exchange(afterRead, {})` 明确消费一次回调，加强恰好一次与Local侧验证。`std::function` 移后状态未指定，单纯 `std::move` 不能保证源回调已空；删除前的小型libstdc++探针只证明其实际标准库行为，不是macOS完整集成绿灯。
+- `tests/cpp/test_audio.cpp`：六个业务合同测试改用既有真实SoLoud `ManualMix` 输出，以48kHz显式混音推进时间；通常每块512帧，退休控制为8块共4096帧，保留池满拒绝并增加退休后重试正控制。未延长wav、增加sleep、放宽断言或修改实际device验证；软件混音不证明物理音频设备。
+- `tests/scripts/test_validation_evidence.py` 与 `test_engine_soak_driver.py`：仅规范化夹具自己创建的临时根，生产路径边界不变。
+- `tests/scripts/test_release_artifact_download.py`：区分较早的socket timeout与总时限错误，明确宿主时钟边界场景；保留真实网络负控及小于0.5秒要求，生产下载实现未改，也未声称解决Windows socket shutdown的诊断现象。
+
+删除前 Python 四套完整实际计数依次为78、18、33、15，已有相关真实红负控和交叉审查。**这些完整根报告当前缺失，计数只作为历史观察。** 两个C++文件在删除前尚未编译或运行；恢复源码不改变这一验证缺口。当前未执行 `09601b20` 的完整门禁，不能由旧71c或eda的结果推导新候选通过。
+
+### eda 本机结果的历史观察边界
+
+删除前 `eda98b22` 完整Windows Debug已通过根复核和独立终态复核；完整Release后来实际完成，根复核确认11项required均通过：全量构建、C++1524项零失败零跳过、Lua147/56、Python22/12/78/57，CTest实际发现72项、71通过、0失败及1项预先允许的AI跳过。Release原 `root-review` 摘要为 `cb30f7a391fa103559591b626685c7d4ae939502a2f26a883a8b469af6e1d85c`，`raw/run` 摘要为 `0793b36687a169d08ff00ce19b4eefb7797df70a1d9c3dddb67dab47748d53bd`。
+
+误删中断了Release独立复核，**没有完成的独立复核结论**。eda Windows Debug/Release完整根证据当前未找回；上述已提交记录、对话观察和原摘要均不能替代原件，也不能把幸存的CLI或其他子用例拼成完整门禁。Debug历史独审、Release历史根复核、Release独审未完成与现在可重核的恢复文件分开记录。
+
+### 已恢复原件与当前缺口
+
+外部清理脚本误删构建和验证目录后，按用户要求停止开发并优先恢复。完整Git备份保留在C盘，E盘独立仓库恢复30个工作树；另恢复17,705个幸存文件。四个关键工作树的26,164条索引记录（26,156普通文件、8个符号链接）已独立核对；恢复副本的完整对象检查通过。恢复脚本外层曾返回1而其212个Git子命令和落盘报告均成功，这一差异保留，源码恢复结论来自后续独立核验，不改写外层退出码。
+
+恢复材料位于仓库外 `E:/CaesuraRecovery/20260924-1446/`，以下路径均相对于该外部根；它们不打包进源码仓库。该根 `README.md` 与 `CONTINUATION.md` 说明恢复范围及未完成项。本文同步时重新计算 `recovery-summary.json` 的13个引用，全部大小与SHA256相同。
+
+| 外部恢复入口 | 当前可核范围 | SHA256 |
+|---|---|---|
+| `recovery-summary.json` | 全部恢复类别与已知缺口索引 | `701fa9d6cab7af311bb2c2a8482c5391fc8dd567df8f9ea6248441dbf6b90caf` |
+| `independent-key-worktrees-review-02.json` | 四份关键源码/索引/符号链接的独立复核 | `fc37c09754ab852de15c6edec526a33274311c8538073042246940bf9943e933` |
+| `recovered-hosted-71-01/manifest-retry-02.json` | 四份小ZIP和完整macOS诊断ZIP的整包摘要、129个提取文件、原run/jobs及四份失败job文本日志 | `011e339450e03b7bdbc530498515fcc97561a18708c3b65b46f9c5e87f9a9ec5` |
+| `recovered-hosted-71-01/independent-parent-review-01.json` | 五份ZIP及全部提取成员独立复核，171个文件引用重新哈希 | `1e968ac8aaa58efc9ea3c861eee9e0f91404cf8f3c7ffdc401934a3953715929` |
+| `recovered-linux-selected-01/report.json` | Linux Release原artifact10792814010的三个诊断成员，仅成员CRC和删除前SHA匹配 | `69574a5e9dde115c41ad88ca998166a51ed28cc89eb197654c1cea86553ce6c1` |
+| `recovered-evidence-linux-temp-01/manifest.json` | Linux/Temp原件4,071文件逐项映射和摘要；包括完整恢复的四个Linux证据目录378文件、Debug/Release CLI各98文件，其余3,497文件为限深盘点片段 | `b9a0ea740d35adbd33289af46cb5f299f658c57a1b6e3189d4aa7c47ec41fb4c` |
+| `github-protection-readback-01/result.json` | 误删后的新只读服务端保护读回 | `6b41d831b7bbee457b474ff9388a854247cf7db4360f3e6fcbf786dc3c9ef244` |
+
+五份托管完整ZIP均与删除前确认的整包摘要一致；macOS续取保留首轮超时收据和部分字节，只补缺失的272,794字节后才验证整包并提取。Linux三成员报告明确 `archive_sha256_verified=false`：未下载并验证整份31MB诊断包，成员CRC/SHA不能冒充整包digest通过。重新取得失败日志属于恢复证据，不属于重新执行或接受候选。
+
+仍缺失的完整原件包括eda Windows Debug/Release根证据、七文件修复的完整Python根报告与准备manifest、U23原mutation/读回收据，以及多项被删依赖暂存和辅助运行器。已有子用例、Linux及Temp片段保留其来源与完整性范围，不补造缺失日志或原始receipt。U23新读回确认唯一required-check仍为 `Verify release inputs / Verify exact release inputs`、App15368、strict=false，一次PR批准及其他既有保护保持；它明确是误删后的新读回，不伪装成原操作收据，也不重复mutation。
+
+### 后续验收范围
+
+本次只同步文档与最新非docs提交 `09601b20` 的生成锚点，平台逐能力历史status、执行commit、日期及evidence保持原值。源码恢复、静态文档生成和通过记录不授予当前平台或发布验收。后续需重新准备并核对实际依赖输入，由根代理独占新的重型构建，对明确冻结的新候选执行原11项required完整Debug/Lua/CTest及所需Release、平台、SDK/FFmpeg、最终包、AE1–AE8和回退；发现门槛不降低。
+
+U24设备未测、U25配额边界、U26两项SDK静态疑点待真实复现、U27三个CPU指标INCONCLUSIVE及其历史长跑范围均保留。完整目标仍为全部U1–U29，当前没有整合候选全项通过；Studio继续暂停，不自动创建PR、重跑CI、合并或发布。
+
+
+### 本次文档同步检查
+
+在恢复后的09601工作树执行现有 `generate_platform_status.py`、`generate_plan_status.py`、`api_stats.py` 和 `capability_closure.py`，全部正常返回；平台与计划的默认 `--check` 均退出0。API统计与计划事实块无内容差异；能力矩阵按现有CI规则忽略生成时间后无内容差异，其静态扫描仍明确 `runtime_evidence_verification=NOT_RUN`。为遵守本次仅docs写入边界，能力生成器只在内存中将JSON输出路径改到docs内的独占临时文件，运行原main及全部检查后删除该精确文件；未修改生成器源码或判定逻辑，未写入build目录。
+
+`git diff --check`通过；115个本次改动文档中的内部链接与锚点全部存在。实际diff仅8个docs文件；Live2D指南与40fa记录树字节一致，U26/U29原记录作为完整前缀保留，当前todo下方历史快照不变。平台YAML除同步锚点外逐字相同，生成平台文档仅改变同步提交和生成时间。没有在本次文档任务中构建、运行引擎或测试套件、访问真实SDK/设备、调度CI、提交或推送。
+
+### 恢复后 Linux 定向 Python 验证
+
+15:19，独立Linux克隆在完整 `09601b20eeeba6053baec4758ee51a1ef0b222e9` 上顺序执行四个原Python入口，实际发现及通过分别为benchmark33、validation-evidence78、soak-driver18、artifact-download15，共144项、0失败、0跳过。实际解释器为Python3.14.4，各项实际退出与launcher退出均为0，owned cleanup COMPLETE；源码前后clean且指纹相同，锁定输入保持稳定。它仅证明四套Python合同，不是完整Linux/C++/Lua/CTest或真实GPU/设备验证，也不替代缺失的历史Windows日志。
+
+原始日志和收据已逐字节复制到恢复根 `linux-portability-prep-01/directed-python-01/`，`summary.json` 摘要为 `788bd465d5fa842a2eb829b5d00cc56fc89ddf709a8acb085badcc4efd89787a`。根复核重新计算17个原始引用，核对完整unittest输出及真实进程收据，零发现；同目录 `root-review-01.json` 保留这次只读复核，不重新运行测试。
