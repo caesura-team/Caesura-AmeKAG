@@ -13,6 +13,7 @@ from pathlib import Path
 import re
 
 from ci_package_lane import _new_work
+from execution_transport import prepare_execution_transport
 from package_verification import _sha256_file, prepare_package, verify_stable
 from run_validation import _source_identity
 from verify_execution_bundle import (_no_links, _snapshot, verify_execution_bundle,
@@ -50,6 +51,11 @@ def _stable(report):
         _file_lock(Path(lock["path"]), lock["sha256"], "Verified source input changed")
     for prepared in report["transports"].values():
         verify_stable(prepared)
+    _need(isinstance(report.get("execution_transports"), dict) and
+          set(report["execution_transports"]) == set(report["executions"]),
+          "Missing or extra execution transport preparations")
+    for prepared in report["execution_transports"].values():
+        verify_stable(prepared)
     for package in report["packages"].values():
         verify_bundle_stable(package)
     for execution in report["executions"].values():
@@ -80,7 +86,7 @@ def verify_downloaded_inputs(*, hosted, policy_path, policy_sha256, archives,
     receipt_path = work / "aggregate.json"
     report = {"schema":SCHEMA, "status":"FAIL", "release_ready":False,
         "receipt_path":str(receipt_path), "transport":hosted.get("transport"),
-        "source_locks":[], "transports":{}, "packages":{}, "executions":{}, "pages":{}, "pages_specs":{}, "upload_files":[], "errors":[]}
+        "source_locks":[], "transports":{}, "execution_transports":{}, "packages":{}, "executions":{}, "pages":{}, "pages_specs":{}, "upload_files":[], "errors":[]}
     try:
         _need(hosted.get("kind") == "caesura.hosted-inputs.v1"
               and hosted.get("status") == "HOSTED_INPUTS_VERIFIED" and hosted.get("errors") == []
@@ -167,6 +173,9 @@ def verify_downloaded_inputs(*, hosted, policy_path, policy_sha256, archives,
                 report["packages"][role] = value
                 report["upload_files"].extend(value["files"])
             elif role in execution_specs:
+                contents = prepare_execution_transport(payload, work / ("execution-contents-" + role))
+                report["execution_transports"][role] = contents
+                payload = Path(contents["package_path"])
                 spec, claim = execution_specs[role], execution_claims[role]
                 _need(isinstance(claim, dict) and set(claim) == {"receipt_sha256", "run_id"}, "Invalid independent execution claim")
                 context = {"run_id":claim["run_id"], "run_attempt":expected["run_attempt"],

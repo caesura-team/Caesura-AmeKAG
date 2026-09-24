@@ -240,7 +240,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: u23-windows-debug-${{ github.run_id }}-${{ github.run_attempt }}
-        path: ${{ steps.execution.outputs.bundle_dir }}
+        path: ${{ steps.execution.outputs.transport_file }}
         if-no-files-found: error
     - name: Static contract check (.ks scenes)
       shell: pwsh
@@ -428,7 +428,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: u23-macos-debug-${{ github.run_id }}-${{ github.run_attempt }}
-        path: ${{ steps.execution.outputs.bundle_dir }}
+        path: ${{ steps.execution.outputs.transport_file }}
         if-no-files-found: error
     - name: Expo validation driver unit tests
       run: python3 scripts/eas/test_run_apple_validation.py
@@ -544,7 +544,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: u23-linux-debug-${{ github.run_id }}-${{ github.run_attempt }}
-        path: ${{ steps.execution.outputs.bundle_dir }}
+        path: ${{ steps.execution.outputs.transport_file }}
         if-no-files-found: error
     - name: Bundled layout boot smoke (xvfb; A3/R6 contract)
       run: |
@@ -746,7 +746,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: u23-windows-release-${{ github.run_id }}-${{ github.run_attempt }}
-        path: ${{ steps.execution.outputs.bundle_dir }}
+        path: ${{ steps.execution.outputs.transport_file }}
         if-no-files-found: error
     - name: Static contract check (.ks scenes)
       shell: pwsh
@@ -965,7 +965,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: u23-linux-release-${{ github.run_id }}-${{ github.run_attempt }}
-        path: ${{ steps.execution.outputs.bundle_dir }}
+        path: ${{ steps.execution.outputs.transport_file }}
         if-no-files-found: error
     - name: Build editor IDE (editor/dist ships in the package)
       run: |
@@ -1114,7 +1114,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: u23-macos-release-${{ github.run_id }}-${{ github.run_attempt }}
-        path: ${{ steps.execution.outputs.bundle_dir }}
+        path: ${{ steps.execution.outputs.transport_file }}
         if-no-files-found: error
     - name: SDL3 link evidence (otool)
       run: otool -L build/CaesuraAmeKAG | grep -i sdl3 || true

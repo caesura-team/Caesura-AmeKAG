@@ -2,13 +2,16 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 from pathlib import Path
 import platform
 import subprocess
 import sys
 import tempfile
+import tarfile
 import unittest
+import zipfile
 from unittest.mock import patch
 
 import yaml
@@ -16,6 +19,9 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 import ci_execution_lane as lane
+from package_verification import PackageVerificationError, prepare_package
+from execution_transport import TRANSPORT_NAME, create_execution_transport, prepare_execution_transport
+from verify_execution_bundle import verify_execution_bundle, verify_execution_bundle_stable
 
 
 def sha(path):
@@ -76,6 +82,135 @@ class ExecutionLaneTests(unittest.TestCase):
         self.assertFalse(raw.is_relative_to(bundle))
         self.assertEqual((bundle / "execution-receipt.json").read_bytes(), raw.read_bytes())
         lane.verify_lane(result["lane_receipt"], sha(Path(result["lane_receipt"])))
+
+    def downloaded_payload(self, result):
+        archive = self.root / "actions.zip"
+        # The real Actions transport stores file leaves, not empty directories.
+        workflow = yaml.safe_load((ROOT / ".github/workflows/validate-engine.yml").read_text(encoding="utf-8"))
+        upload = next(s for s in workflow["jobs"]["build-windows-debug"]["steps"]
+                      if s.get("id") == "execution_upload")
+        key = upload["with"]["path"].removeprefix("${{ steps.execution.outputs.").removesuffix(" }}")
+        selected = Path(result[key])
+        with zipfile.ZipFile(archive, "w") as stream:
+            stream.write(selected, selected.name)
+        prepared = prepare_package(archive, self.root / "download", expected_sha256=sha(archive))
+        contents = prepare_execution_transport(prepared["package_path"], self.root / "contents")
+        return Path(contents["package_path"])
+
+    def verify_download(self, result, payload):
+        raw = json.loads(Path(result["raw_receipt"]).read_bytes())
+        return verify_execution_bundle(payload,
+            manifest_sha256=result["manifest_sha256"], receipt_sha256=result["receipt_sha256"],
+            profile_path=self.profile, profile_sha256=sha(self.profile), profile_name=self.name,
+            source_sha=self.head, expected_context={key:raw[key] for key in
+                ("run_id", "run_attempt", "repository", "workflow", "platform", "configuration")},
+            trusted_dir=self.root / "trusted")
+
+    def rewrite_transport(self, result, transform):
+        archive = Path(result["transport_file"])
+        with tarfile.open(archive, "r") as stream:
+            records = [(item, stream.extractfile(item).read() if item.isfile() else None)
+                       for item in stream.getmembers()]
+        with tarfile.open(archive, "w") as stream:
+            for item, data in transform(records):
+                if data is not None:
+                    item.size = len(data)
+                stream.addfile(item, io.BytesIO(data) if data is not None else None)
+
+    def test_empty_capture_survives_file_only_artifact_roundtrip(self):
+        result = self.run_lane()
+        capture = Path(result["bundle_dir"]) / "inputs/probe/sanitizer"
+        self.assertTrue(capture.is_dir())
+        self.assertEqual(list(capture.iterdir()), [])
+        payload = self.downloaded_payload(result)
+        self.assertTrue((payload / "inputs/probe/sanitizer").is_dir())
+        self.assertEqual(list((payload / "inputs/probe/sanitizer").iterdir()), [])
+        verified = self.verify_download(result, payload)
+        self.assertEqual(verified["status"], "EXECUTION_BUNDLE_VERIFIED")
+        verify_execution_bundle_stable(verified)
+        (payload / "inputs/probe/sanitizer").rmdir()
+        with self.assertRaisesRegex(ValueError, "changed"):
+            verify_execution_bundle_stable(verified)
+
+    def test_missing_capture_directory_in_tar_is_still_rejected(self):
+        result = self.run_lane()
+        self.rewrite_transport(result, lambda rows: [(i,d) for i,d in rows
+            if i.name.rstrip("/") != "inputs/probe/sanitizer"])
+        with self.assertRaisesRegex(ValueError, "sanitizer"):
+            self.verify_download(result, self.downloaded_payload(result))
+
+    def test_extra_capture_record_in_tar_is_still_rejected(self):
+        result = self.run_lane()
+        extra = tarfile.TarInfo("inputs/probe/sanitizer/sanitizer.123")
+        self.rewrite_transport(result, lambda rows: rows + [(extra, b"unbound diagnostic")])
+        with self.assertRaisesRegex(ValueError, "inventory differs"):
+            self.verify_download(result, self.downloaded_payload(result))
+
+    def test_tampered_bound_report_in_tar_is_still_rejected(self):
+        result = self.run_lane()
+        self.rewrite_transport(result, lambda rows: [(i, b"replacement" if i.name == "inputs/probe/stdout" else d)
+            for i,d in rows])
+        with self.assertRaisesRegex(ValueError, "hash mismatch|digest|bytes|mismatch"):
+            self.verify_download(result, self.downloaded_payload(result))
+
+    def test_real_child_diagnostic_remains_failure_after_transport(self):
+        # This child emits transport-fixture diagnostic bytes. It does not claim
+        # that a compiler sanitizer found a defect in the engine.
+        probe = self.repo / "probe.py"
+        probe.write_text(probe.read_text().replace("raise SystemExit(int(sys.argv[2]))", "") +
+            "import json, os\n"
+            "scope=json.loads(os.environ['CAESURA_VALIDATION_SANITIZER_CAPTURE'])\n"
+            "(Path(scope['directory']) / ('sanitizer.'+str(os.getpid()))).write_text('ERROR: AddressSanitizer: transport-fixture diagnostic\\n')\n",
+            encoding="utf-8")
+        self.commit_profile()
+        with self.assertRaisesRegex(ValueError, "sanitizer|Sanitizer"):
+            self.run_lane(source_sha=self.head, profile_sha256=sha(self.profile))
+        result = json.loads((self.root / "attempt/lane.json").read_bytes())
+        payload = self.downloaded_payload(result)
+        logs = list((payload / "inputs/probe/sanitizer").iterdir())
+        self.assertEqual(len(logs), 1)
+        self.assertIn(b"transport-fixture diagnostic", logs[0].read_bytes())
+        with self.assertRaisesRegex(ValueError, "sanitizer|Sanitizer"):
+            self.verify_download(result, payload)
+
+    def test_transport_change_is_rejected_before_upload(self):
+        result = self.run_lane()
+        Path(result["transport_file"]).write_bytes(b"changed archive")
+        with self.assertRaisesRegex(ValueError, "transport changed"):
+            lane.verify_lane(result["lane_receipt"], sha(Path(result["lane_receipt"])))
+
+    def test_outer_transport_requires_exact_single_archive(self):
+        root = self.root / "outer"; root.mkdir()
+        with self.assertRaisesRegex(ValueError, "exactly"):
+            prepare_execution_transport(root, self.root / "absent")
+        (root / TRANSPORT_NAME).write_bytes(b"placeholder")
+        (root / "extra.txt").write_text("not accepted")
+        with self.assertRaisesRegex(ValueError, "exactly"):
+            prepare_execution_transport(root, self.root / "extra")
+
+    def test_nested_tar_traversal_is_rejected_by_safe_extractor(self):
+        result = self.run_lane()
+        outside = tarfile.TarInfo("../outside")
+        self.rewrite_transport(result, lambda rows: rows + [(outside, b"escape")])
+        with self.assertRaises(PackageVerificationError):
+            self.downloaded_payload(result)
+        self.assertFalse((self.root / "outside").exists())
+
+    def test_packing_change_is_rejected_and_original_archive_is_not_overwritten(self):
+        source = self.root / "packing"; source.mkdir()
+        data = source / "data"; data.write_bytes(b"original")
+        target = self.root / TRANSPORT_NAME
+        addfile = tarfile.TarFile.addfile
+        def change(stream, info, fileobj=None):
+            result = addfile(stream, info, fileobj)
+            data.write_bytes(b"changed")
+            return result
+        with patch.object(tarfile.TarFile, "addfile", change), self.assertRaisesRegex(ValueError, "changed"):
+            create_execution_transport(source, target)
+        preserved = target.read_bytes()
+        with self.assertRaises(FileExistsError):
+            create_execution_transport(source, target)
+        self.assertEqual(target.read_bytes(), preserved)
 
     def test_nonzero_command_retains_first_raw_failure_and_never_exports_ready(self):
         self.data["profiles"][self.name]["checks"][0]["command"][-1] = "23"
@@ -217,6 +352,7 @@ class WorkflowContractTests(unittest.TestCase):
                     self.assertIn(field, job["outputs"])
                 accepted = [s for s in job["steps"] if s.get("id") == "execution_upload"]
                 self.assertEqual(accepted[0]["with"]["if-no-files-found"], "error")
+                self.assertEqual(accepted[0]["with"]["path"], "${{ steps.execution.outputs.transport_file }}")
         for key in ("release", "release-linux", "release-macos", "release-web"):
             self.assertIn("package_artifact_id", self.jobs[key]["outputs"])
             self.assertTrue(any(s.get("id") == "package_upload" for s in self.jobs[key]["steps"]))

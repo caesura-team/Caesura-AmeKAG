@@ -15,6 +15,7 @@ import sys
 
 from ci_package_lane import _new_work, _outputs
 from collect_validation_evidence import collect_evidence
+from execution_transport import TRANSPORT_NAME, create_execution_transport
 from package_verification import _sha256_file, inspect_inventory
 from run_validation import _source_identity, run_profile
 from verify_release_candidate import verify_evidence
@@ -78,6 +79,11 @@ def _stable(report):
     _need(_sha256_file(Path(report["profile_file"])) == report["profile_sha256"], "Profile changed before execution upload")
     _need(_sha256_file(Path(report["raw_receipt"])) == report["receipt_sha256"], "Original receipt changed before upload")
     _need(inspect_inventory(report["bundle_dir"])["sha256"] == report["bundle_sha256"], "Execution bundle changed before upload")
+    transport = report["execution_transport"]
+    _need(transport["inventory_sha256"] == report["bundle_sha256"] and
+          transport["path"] == report["transport_file"] and
+          _sha256_file(Path(transport["path"])) == transport["sha256"],
+          "Execution transport changed before upload")
     errors = verify_evidence(Path(report["bundle_dir"]), Path(report["profile_file"]), report["profile_name"],
                              Path(report["raw_receipt"]), source_sha=report["source_sha"], release=True)
     _need(not errors, "Strict U1 verification FAIL: " + "; ".join(errors))
@@ -109,6 +115,8 @@ def run_execution_lane(*, repo, profile_file, profile_sha256, profile_name, sour
         collect_evidence(profile_file, profile_name, raw, bundle)
         report.update(manifest_sha256=_sha256_file(bundle / "manifest.json"),
                       bundle_sha256=inspect_inventory(bundle)["sha256"])
+        transport = create_execution_transport(bundle, work / TRANSPORT_NAME)
+        report.update(execution_transport=transport, transport_file=transport["path"])
         _stable(report)
         report["status"] = "EXECUTION_UPLOAD_READY"
         return report
@@ -158,7 +166,7 @@ def main(argv=None):
                 profile_sha256=args.profile_sha256, source_sha=args.source_sha, configuration=args.configuration,
                 build_dir=args.build, work_dir=args.work)
             _outputs(args.github_output, {key:report[key] for key in
-                ("bundle_dir", "manifest_sha256", "receipt_sha256", "run_uuid", "profile_sha256", "lane_receipt")} |
+                ("bundle_dir", "transport_file", "manifest_sha256", "receipt_sha256", "run_uuid", "profile_sha256", "lane_receipt")} |
                 {"lane_sha256":_sha256_file(Path(report["lane_receipt"]))})
         return 0
     except (OSError, ValueError) as error:

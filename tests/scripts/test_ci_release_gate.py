@@ -12,6 +12,7 @@ from test_validation_evidence import EvidenceFixture
 import verify_execution_bundle as execution
 from verify_release_inputs import GitHubAPI
 from download_release_artifact import download_artifact
+from execution_transport import TRANSPORT_NAME, create_execution_transport
 try:
     import ci_release_gate as gate
 except ModuleNotFoundError:
@@ -43,8 +44,12 @@ class GateTests(unittest.TestCase):
         for i,(role,directory) in enumerate((('package',self.p.root),('execution',self.e.output))):
             archive=self.root/(role+'.zip')
             with zipfile.ZipFile(archive,'w') as stream:
-                for path in directory.rglob('*'):
-                    if path.is_file():stream.write(path,path.relative_to(directory).as_posix())
+                if role=='execution':
+                    transport=create_execution_transport(directory,self.root/TRANSPORT_NAME)
+                    stream.write(transport['path'],TRANSPORT_NAME)
+                else:
+                    for path in directory.rglob('*'):
+                        if path.is_file():stream.write(path,path.relative_to(directory).as_posix())
             identifier=100+i;self.archives[identifier]=archive;prefix=self.policy['output_prefixes'][role]
             self.outputs.update({prefix+'_artifact_id':str(identifier),prefix+'_artifact_digest':sha(archive),prefix+'_manifest_sha256':sha(directory/('upload-manifest.json' if role=='package' else 'manifest.json'))})
             self.artifacts[identifier]=dict(id=identifier,name='untrusted-name-'+role,digest='sha256:'+sha(archive),expired=False,expires_at='2999-01-01T00:00:00Z',workflow_run=dict(id=producer['run_id'],repository_id=producer['repository_id'],head_repository_id=producer['repository_id'],head_sha=self.source))

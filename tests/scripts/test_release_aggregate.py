@@ -20,6 +20,7 @@ from test_validation_evidence import EvidenceFixture
 import aggregate_release_inputs as aggregate
 import verify_execution_bundle as execution_bundle
 from package_verification import PackageVerificationError
+from execution_transport import TRANSPORT_NAME, create_execution_transport
 
 
 def sha(path):
@@ -74,8 +75,12 @@ class AggregateTests(unittest.TestCase):
         for role, directory in (("package",self.p.root),("execution",self.e.output)):
             archive = self.base / (role + ".zip")
             with zipfile.ZipFile(archive,"w") as stream:
-                for path in directory.rglob("*"):
-                    if path.is_file(): stream.write(path,path.relative_to(directory).as_posix())
+                if role == "execution":
+                    transport = create_execution_transport(directory, self.base / TRANSPORT_NAME)
+                    stream.write(transport["path"], TRANSPORT_NAME)
+                else:
+                    for path in directory.rglob("*"):
+                        if path.is_file(): stream.write(path,path.relative_to(directory).as_posix())
             self.archives[role] = archive
         self.hosted = {"schema_version":1,"kind":"caesura.hosted-inputs.v1","status":"HOSTED_INPUTS_VERIFIED",
             "transport":"fixture", "errors":[], "policy":{key:copy.deepcopy(self.policy[key]) for key in
@@ -240,6 +245,26 @@ class AggregateTests(unittest.TestCase):
         self.hosted["artifacts"]["package"]["artifact_digest"]="sha256:"+sha(self.archives["package"])
         with self.assertRaisesRegex(ValueError,"source input changed.*digest"):
             self.preupload_fixture(lambda result:self.policy_path.write_text("{}"))
+
+    def test_preupload_rechecks_nested_execution_archive(self):
+        def mutate(result):
+            outer=Path(result["transports"]["execution"]["package_path"])
+            (outer/TRANSPORT_NAME).write_bytes(b"changed nested execution archive")
+        with self.assertRaisesRegex(PackageVerificationError,"inventory changed|Archive identity changed"):
+            self.preupload_fixture(mutate)
+
+    def test_preupload_rechecks_extracted_execution_contents(self):
+        def mutate(result):
+            payload=Path(result["execution_transports"]["execution"]["package_path"])
+            (payload/"inputs/cpp/stdout").write_bytes(b"changed execution report")
+        with self.assertRaisesRegex(PackageVerificationError,"inventory changed"):
+            self.preupload_fixture(mutate)
+
+    def test_nested_execution_preparation_cannot_be_omitted(self):
+        result=self.call()
+        result["execution_transports"].clear()
+        with patch.object(aggregate,"_source_identity",return_value=self.identity),self.assertRaisesRegex(ValueError,"execution transport preparations"):
+            aggregate._stable(result)
 
     def test_preupload_refuses_source_changes_since_aggregation(self):
         with self.assertRaisesRegex(ValueError,"Source checkout changed"):
