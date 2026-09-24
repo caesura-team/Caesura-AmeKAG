@@ -8,7 +8,7 @@ import signal
 import subprocess
 import sys
 import time
-from typing import BinaryIO, Sequence
+from typing import BinaryIO, Mapping, Sequence
 
 
 class _WindowsJob:
@@ -213,12 +213,14 @@ def _cleanup_posix_group(process: subprocess.Popen) -> None:
 
 
 def run_owned_command(argv: Sequence[str], cwd: str | Path, stdout: BinaryIO,
-                      stderr: BinaryIO, timeout: float) -> int:
+                      stderr: BinaryIO, timeout: float, *,
+                      env: Mapping[str, str] | None = None) -> int:
     """Return the command's exit code only after its remaining children stop.
 
     TimeoutExpired names the original argv. KeyboardInterrupt is propagated
     after cleanup. No shell, global process search, or port-based cleanup is
-    used. Commands are non-interactive (stdin is DEVNULL).
+    used. Commands are non-interactive (stdin is DEVNULL). An explicit env is
+    passed to this owned tree only; the controller's environment is unchanged.
     """
     command = list(argv)
     if not command or not all(isinstance(arg, str) for arg in command):
@@ -237,7 +239,7 @@ def run_owned_command(argv: Sequence[str], cwd: str | Path, stdout: BinaryIO,
                         "--owned-launcher", *command]
             process = subprocess.Popen(
                 launcher, cwd=cwd, stdin=subprocess.PIPE, stdout=stdout, stderr=stderr,
-                shell=False, creationflags=subprocess.CREATE_NO_WINDOW,
+                shell=False, creationflags=subprocess.CREATE_NO_WINDOW, env=env,
             )
             job.assign(process)
             process.stdin.write(b"G")
@@ -245,7 +247,7 @@ def run_owned_command(argv: Sequence[str], cwd: str | Path, stdout: BinaryIO,
         else:
             process = subprocess.Popen(
                 command, cwd=cwd, stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr,
-                shell=False, start_new_session=True,
+                shell=False, start_new_session=True, env=env,
             )
         try:
             return process.wait(timeout=max(0, timeout - (time.monotonic() - started)))

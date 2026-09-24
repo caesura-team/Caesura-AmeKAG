@@ -16,6 +16,7 @@ import sys
 import uuid
 
 from validation_process import run_owned_command
+from validation_sanitizer import capture_environment, create_capture, snapshot_capture
 
 ROOT = Path(__file__).resolve().parents[1]
 VARIABLE = re.compile(r"\{([a-z_]+)\}")
@@ -214,8 +215,11 @@ def _verify_executed_bytes(row: dict, run_dir: Path) -> None:
             row.update(exit_code=125, error="binary_changed")
 
 
-def _execute_check(check: dict, run_dir: Path) -> dict:
+def _execute_check(check: dict, run_dir: Path, *, run_id: str, purpose: str) -> dict:
     name = check["id"]
+    scope = create_capture(run_dir, run_id=run_id, check_id=name, purpose=purpose)
+    environment = capture_environment(dict(os.environ), scope=scope)
+    cleanup_complete = False
     stdout = run_dir / f"{name}.stdout.log"
     stderr = run_dir / f"{name}.stderr.log"
     row = {
@@ -242,12 +246,20 @@ def _execute_check(check: dict, run_dir: Path) -> dict:
                 try:
                     row["exit_code"] = run_owned_command(
                         command, check["cwd"], out, err, check.get("timeout_seconds", 1200),
+                        env=environment,
                     )
+                    cleanup_complete = True
                 except subprocess.TimeoutExpired:
+                    # This exception is propagated only after the owned runner's
+                    # finally has finished reclaiming the entire process tree.
+                    cleanup_complete = True
                     row.update(exit_code=124, error="timeout")
             except (OSError, ValueError) as exc:
                 row["error"] = "launch_failed"
                 err.write((str(exc) + "\n").encode("utf-8"))
+    # The wrappers may consume a native child's stderr or accept its nonzero
+    # exit. Bind the files produced in this check's scope after writers stop.
+    row["sanitizer_capture"] = snapshot_capture(run_dir, name, complete=cleanup_complete)
     row["finished_at"] = _utc_now()
     row["stdout"] = _reference(stdout, run_dir)
     row["stderr"] = _reference(stderr, run_dir)
@@ -305,16 +317,17 @@ def run_profile(*, repo: Path, profile_file: Path, profile_name: str,
     fixture_hash = fingerprint_paths(repo, fixtures)
     before = _source_identity(repo)
     run_dir.mkdir(parents=True, exist_ok=False)
+    run_id = str(uuid.uuid4())
     result = {
         **before, "schema_version": 1, "purpose": purpose, "profile_name": profile_name,
-        "run_id": str(uuid.uuid4()), "run_attempt": int(os.environ.get("GITHUB_RUN_ATTEMPT", "1")),
+        "run_id": run_id, "run_attempt": int(os.environ.get("GITHUB_RUN_ATTEMPT", "1")),
         "repository": os.environ.get("GITHUB_REPOSITORY", profile.get("repository", repo.name)),
         "workflow": os.environ.get("GITHUB_WORKFLOW_REF", "local/run_validation.py"),
         "platform": profile["platform"], "configuration": configuration,
         "started_at": _utc_now(), "toolchain": _toolchain(build_dir),
         "profile_sha256": hashlib.sha256(profile_bytes).hexdigest(),
         "fixture_sha256": fixture_hash, "profile_variables": variables,
-        "checks": [_execute_check(check, run_dir) for check in checks],
+        "checks": [_execute_check(check, run_dir, run_id=run_id, purpose=purpose) for check in checks],
     }
     result["finished_at"] = _utc_now()
     after = _source_identity(repo)

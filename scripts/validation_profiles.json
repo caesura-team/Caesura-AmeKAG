@@ -86,7 +86,7 @@
           "id": "validation-runner",
           "parser": "unittest",
           "required": true,
-          "min_discovered": 17,
+          "min_discovered": 22,
           "allowed_skips": [],
           "command": [
             "{python}",
@@ -100,7 +100,7 @@
           "id": "validation-process",
           "parser": "unittest",
           "required": true,
-          "min_discovered": 11,
+          "min_discovered": 12,
           "allowed_skips": [],
           "command": [
             "{python}",
@@ -114,7 +114,7 @@
           "id": "validation-evidence",
           "parser": "unittest",
           "required": true,
-          "min_discovered": 53,
+          "min_discovered": 78,
           "allowed_skips": [],
           "command": [
             "{python}",
@@ -185,7 +185,11 @@
           "report": "{run_dir}/ctest.xml",
           "timeout_seconds": 2400
         }
-      ]
+      ],
+      "sanitizer_capture": {
+        "version": 1,
+        "required": true
+      }
     },
     "windows-release": {
       "platform": "windows",
@@ -258,7 +262,7 @@
           "id": "validation-runner",
           "parser": "unittest",
           "required": true,
-          "min_discovered": 17,
+          "min_discovered": 22,
           "allowed_skips": [],
           "command": [
             "{python}",
@@ -272,7 +276,7 @@
           "id": "validation-process",
           "parser": "unittest",
           "required": true,
-          "min_discovered": 11,
+          "min_discovered": 12,
           "allowed_skips": [],
           "command": [
             "{python}",
@@ -286,7 +290,7 @@
           "id": "validation-evidence",
           "parser": "unittest",
           "required": true,
-          "min_discovered": 53,
+          "min_discovered": 78,
           "allowed_skips": [],
           "command": [
             "{python}",
@@ -357,7 +361,11 @@
           "report": "{run_dir}/ctest.xml",
           "timeout_seconds": 2400
         }
-      ]
+      ],
+      "sanitizer_capture": {
+        "version": 1,
+        "required": true
+      }
     },
     "linux-debug": {
       "platform": "linux",
@@ -430,7 +438,7 @@
           "id": "validation-runner",
           "parser": "unittest",
           "required": true,
-          "min_discovered": 17,
+          "min_discovered": 22,
           "allowed_skips": [],
           "command": [
             "{python}",
@@ -444,7 +452,7 @@
           "id": "validation-process",
           "parser": "unittest",
           "required": true,
-          "min_discovered": 6,
+          "min_discovered": 7,
           "allowed_skips": [],
           "command": [
             "{python}",
@@ -458,7 +466,7 @@
           "id": "validation-evidence",
           "parser": "unittest",
           "required": true,
-          "min_discovered": 53,
+          "min_discovered": 78,
           "allowed_skips": [],
           "command": [
             "{python}",
@@ -529,7 +537,11 @@
           "report": "{run_dir}/ctest.xml",
           "timeout_seconds": 2400
         }
-      ]
+      ],
+      "sanitizer_capture": {
+        "version": 1,
+        "required": true
+      }
     },
     "linux-release": {
       "platform": "linux",
@@ -602,7 +614,7 @@
           "id": "validation-runner",
           "parser": "unittest",
           "required": true,
-          "min_discovered": 17,
+          "min_discovered": 22,
           "allowed_skips": [],
           "command": [
             "{python}",
@@ -616,7 +628,7 @@
           "id": "validation-process",
           "parser": "unittest",
           "required": true,
-          "min_discovered": 6,
+          "min_discovered": 7,
           "allowed_skips": [],
           "command": [
             "{python}",
@@ -630,7 +642,7 @@
           "id": "validation-evidence",
           "parser": "unittest",
           "required": true,
-          "min_discovered": 53,
+          "min_discovered": 78,
           "allowed_skips": [],
           "command": [
             "{python}",
@@ -701,7 +713,11 @@
           "report": "{run_dir}/ctest.xml",
           "timeout_seconds": 2400
         }
-      ]
+      ],
+      "sanitizer_capture": {
+        "version": 1,
+        "required": true
+      }
     },
     "macos-debug": {
       "platform": "macos",
@@ -774,7 +790,7 @@
           "id": "validation-runner",
           "parser": "unittest",
           "required": true,
-          "min_discovered": 17,
+          "min_discovered": 22,
           "allowed_skips": [],
           "command": [
             "{python}",
@@ -788,7 +804,7 @@
           "id": "validation-process",
           "parser": "unittest",
           "required": true,
-          "min_discovered": 6,
+          "min_discovered": 7,
           "allowed_skips": [],
           "command": [
             "{python}",
@@ -802,7 +818,7 @@
           "id": "validation-evidence",
           "parser": "unittest",
           "required": true,
-          "min_discovered": 53,
+          "min_discovered": 78,
           "allowed_skips": [],
           "command": [
             "{python}",
@@ -873,7 +889,11 @@
           "report": "{run_dir}/ctest.xml",
           "timeout_seconds": 2400
         }
-      ]
+      ],
+      "sanitizer_capture": {
+        "version": 1,
+        "required": true
+      }
     },
     "macos-release": {
       "platform": "macos",
@@ -946,7 +966,7 @@
           "id": "validation-runner",
           "parser": "unittest",
           "required": true,
-          "min_discovered": 17,
+          "min_discovered": 22,
           "allowed_skips": [],
           "command": [
             "{python}",
@@ -960,7 +980,7 @@
           "id": "validation-process",
           "parser": "unittest",
           "required": true,
-          "min_discovered": 6,
+          "min_discovered": 7,
           "allowed_skips": [],
           "command": [
             "{python}",
@@ -974,7 +994,7 @@
           "id": "validation-evidence",
           "parser": "unittest",
           "required": true,
-          "min_discovered": 53,
+          "min_discovered": 78,
           "allowed_skips": [],
           "command": [
             "{python}",
@@ -1045,7 +1065,11 @@
           "report": "{run_dir}/ctest.xml",
           "timeout_seconds": 2400
         }
-      ]
+      ],
+      "sanitizer_capture": {
+        "version": 1,
+        "required": true
+      }
     }
   }
 }

@@ -70,6 +70,8 @@ def native_env(package: str | Path, *, engine: str | Path, lua: str | Path,
     executable permission, byte hashes and loaded modules belong to the static
     inspector/runtime receipt. No developer PATH, language search path, proxy,
     application override, or arbitrary secret is copied into this environment.
+    A controlled validation capture is reconstructed separately at the
+    run_runtime_command execution boundary, never copied as arbitrary OPTIONS.
     """
     package_path = _directory(package)
     binaries = [_executable(engine), _executable(lua)]
@@ -622,8 +624,14 @@ def run_runtime_command(argv: Sequence[str], cwd: str | Path, env: Mapping[str, 
     and waits across the framework stub's exec before publishing readiness.
     If that Python command exits too early, only its exit is retained; no live
     identity or verified exec transition is claimed.
+
+    Within an owned validation run, only its validated diagnostic capture scope
+    and four fixed sanitizer OPTIONS are added to the explicit environment.
+    This preserves capture through clean environments without copying unrelated
+    controller variables or accepting caller-supplied sanitizer options.
     """
     from validation_process import run_owned_command
+    from validation_sanitizer import capture_environment
     command = list(argv)
     if not command or not all(isinstance(arg, str) and "\0" not in arg for arg in command):
         raise RuntimeContractError("argv must contain literal strings without NUL")
@@ -633,7 +641,7 @@ def run_runtime_command(argv: Sequence[str], cwd: str | Path, env: Mapping[str, 
     if isinstance(timeout, bool) or not math.isfinite(timeout) or timeout <= 0:
         raise RuntimeContractError("Timeout must be positive and finite")
     contract = _exec_contract(command, expected_final_executable, exec_observation_timeout, timeout)
-    environment = dict(env)
+    environment = capture_environment(dict(env))
     if not all(isinstance(key, str) and key and "=" not in key and "\0" not in key
                and isinstance(value, str) and "\0" not in value
                for key, value in environment.items()):

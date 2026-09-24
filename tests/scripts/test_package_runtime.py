@@ -439,6 +439,42 @@ class PackageRuntimeTests(unittest.TestCase):
         self.assertEqual(report["status"], "EXITED")
         self.assertEqual(os.environ, before)
 
+    def test_controlled_capture_crosses_clean_environment_without_options_or_secret_leaks(self):
+        # Construct only the transport scope here, so this behavior test can
+        # fail against the old production boundary before the helper exists.
+        run_dir = self.root / "capture run 中文"
+        directory = run_dir / "sanitizer/runtime"
+        directory.mkdir(parents=True)
+        scope = {"version": 1, "run_id": "fixture-capture-01", "check_id": "runtime",
+                 "purpose": "test-fixture", "run_dir": str(run_dir),
+                 "directory": str(directory), "prefix": "sanitizer"}
+        names = ("ASAN_OPTIONS", "UBSAN_OPTIONS", "LSAN_OPTIONS", "TSAN_OPTIONS")
+        pollution = {name: "log_path=outside:suppressions=private-file:print_summary=0" for name in names}
+        pollution.update(CAESURA_VALIDATION_SANITIZER_CAPTURE=json.dumps(scope),
+                         UNRELATED_SECRET="must remain in the controller", NODE_OPTIONS="--require private.js")
+        code = "import json,os; print(json.dumps(dict(os.environ),ensure_ascii=True))"
+        with mock.patch.dict(os.environ, pollution):
+            before = dict(os.environ)
+            report = self.invoke(code)
+            self.assertEqual(os.environ, before)
+        self.assertEqual(report["actual_exit_code"], 0)
+        observed = json.loads((self.root / "control-out.log").read_text(encoding="utf-8"))
+        self.assertEqual(json.loads(observed["CAESURA_VALIDATION_SANITIZER_CAPTURE"]), scope)
+        expected = f'log_path="{directory / "sanitizer"}":log_exe_name=0:print_summary=1:color=never'
+        for name in names:
+            self.assertEqual(observed[name], expected)
+            self.assertNotIn(name, self.environ)
+        for name in ("UNRELATED_SECRET", "NODE_OPTIONS", "LD_PRELOAD", "DYLD_LIBRARY_PATH"):
+            self.assertNotIn(name, observed)
+        self.assertEqual(observed["PATH"], self.environ["PATH"])
+        self.assertEqual(observed["CAESURA_LUA"], str(self.lua))
+
+    def test_malformed_capture_scope_is_not_silently_dropped_at_clean_boundary(self):
+        with mock.patch.dict(os.environ, {"CAESURA_VALIDATION_SANITIZER_CAPTURE": "not valid JSON"}):
+            with self.assertRaises(ValueError):
+                self.invoke("print('must not execute without diagnostic capture')")
+        self.assertFalse((self.root / "control/process.json").exists())
+
     def test_identity_is_immutable_and_matches_actual_child(self):
         process, ready = self.launch_listener()
         identity = process_identity(process.pid)

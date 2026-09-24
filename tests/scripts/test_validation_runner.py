@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -81,6 +82,96 @@ class ValidationRunnerTests(unittest.TestCase):
         saved = json.loads((self.repo / "raw/one/run.json").read_text(encoding="utf-8"))
         self.assertEqual(saved, result)
 
+    def test_binds_sidecars_from_children_whose_wrapper_swallows_output(self):
+        # These are transport fixtures written by actual Python children, not
+        # claims that a compiler sanitizer ran. The wrapper accepts their
+        # expected nonzero exits and deliberately withholds both output streams.
+        child = (
+            "import json,os,sys; from pathlib import Path; "
+            "scope=json.loads(os.environ.get('CAESURA_VALIDATION_SANITIZER_CAPTURE','null')); "
+            "payload=('TRANSPORT FIXTURE ONLY pid='+str(os.getpid())+'\\n').encode()\n"
+            "if scope is not None:\n"
+            "    (Path(scope['directory'])/(scope['prefix']+'.'+str(os.getpid()))).write_bytes(payload)\n"
+            "print('swallowed child stdout'); print('swallowed child stderr',file=sys.stderr); "
+            "sys.exit(17)\n"
+        )
+        wrapper = (
+            "import json,subprocess,sys; "
+            f"children=[subprocess.Popen([sys.executable,'-c',{child!r}],"
+            "stdout=subprocess.PIPE,stderr=subprocess.PIPE) for _ in range(2)]\n"
+            "for child in children:\n"
+            "    stdout,stderr=child.communicate(timeout=10)\n"
+            "    assert child.returncode==17 and b'swallowed' in stdout and b'swallowed' in stderr\n"
+            "print(json.dumps({'pids':[child.pid for child in children]}))\n"
+        )
+        result = self.execute([self.check(code=wrapper, timeout_seconds=20)])
+        row = result["checks"][0]
+        self.assertEqual(row["exit_code"], 0)
+        raw = self.repo / "raw/one"
+        output = (raw / row["stdout"]["path"]).read_text(encoding="utf-8")
+        pids = json.loads(output)["pids"]
+        self.assertEqual(len(set(pids)), 2)
+        self.assertNotIn("swallowed", output)
+        self.assertEqual((raw / row["stderr"]["path"]).read_bytes(), b"")
+        capture = row["sanitizer_capture"]
+        self.assertEqual(capture["version"], 1)
+        self.assertTrue(capture["complete"])
+        self.assertEqual(capture["directory"], "sanitizer/sample")
+        self.assertEqual(capture["prefix"], "sanitizer")
+        self.assertEqual(capture["options_contract"], "llvm-common-log-path-v1")
+        self.assertEqual({ref["path"] for ref in capture["files"]},
+                         {f"sanitizer/sample/sanitizer.{pid}" for pid in pids})
+        for ref in capture["files"]:
+            payload = (raw / ref["path"]).read_bytes()
+            self.assertTrue(payload.startswith(b"TRANSPORT FIXTURE ONLY pid="))
+            self.assertEqual(ref["sha256"], hashlib.sha256(payload).hexdigest())
+            self.assertEqual(ref["size_bytes"], len(payload))
+
+    def test_clean_checks_have_separate_empty_capture_directories(self):
+        result = self.execute([self.check("first"), self.check("second")])
+        for row in result["checks"]:
+            capture = row["sanitizer_capture"]
+            self.assertTrue(capture["complete"])
+            self.assertEqual(capture["directory"], "sanitizer/" + row["id"])
+            self.assertEqual(capture["files"], [])
+            self.assertEqual(list((self.repo / "raw/one" / capture["directory"]).iterdir()), [])
+
+    def test_fixture_run_overrides_parent_capture_without_global_mutation(self):
+        names = ("ASAN_OPTIONS", "UBSAN_OPTIONS", "LSAN_OPTIONS", "TSAN_OPTIONS")
+        pollution = {name: "log_path=outside:suppressions=secret-file:print_summary=0" for name in names}
+        pollution["CAESURA_VALIDATION_SANITIZER_CAPTURE"] = "invalid outer scope must be replaced"
+        code = ("import json,os; print(json.dumps({key:os.environ.get(key) for key in "
+                + repr((*names, "CAESURA_VALIDATION_SANITIZER_CAPTURE")) + "}))")
+        with patch.dict(os.environ, pollution):
+            before = dict(os.environ)
+            result = self.execute([self.check(code=code)])
+            self.assertEqual(os.environ, before)
+        row = result["checks"][0]
+        self.assertEqual(row["exit_code"], 0)
+        observed = json.loads((self.repo / "raw/one" / row["stdout"]["path"]).read_text(encoding="utf-8"))
+        scope = json.loads(observed["CAESURA_VALIDATION_SANITIZER_CAPTURE"])
+        self.assertEqual(scope["run_id"], result["run_id"])
+        self.assertEqual(scope["check_id"], "sample")
+        self.assertEqual(scope["purpose"], "test-fixture")
+        self.assertEqual(Path(scope["directory"]), (self.repo / "raw/one/sanitizer/sample").resolve())
+        expected = f'log_path="{Path(scope["directory"]) / "sanitizer"}":log_exe_name=0:print_summary=1:color=never'
+        for name in names:
+            self.assertEqual(observed[name], expected)
+            self.assertNotIn("secret-file", observed[name])
+
+    def test_unconfirmed_owned_cleanup_cannot_claim_complete_capture(self):
+        with patch("run_validation.run_owned_command", side_effect=OSError("owned cleanup failed")):
+            result = self.execute([self.check()])
+        row = result["checks"][0]
+        self.assertNotEqual(row["exit_code"], 0)
+        self.assertFalse(row["sanitizer_capture"]["complete"])
+
+    def test_interrupt_does_not_publish_a_completed_run(self):
+        with patch("run_validation.run_owned_command", side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                self.execute([self.check()])
+        self.assertFalse((self.repo / "raw/one/run.json").exists())
+
     def test_failed_check_does_not_hide_later_required_checks(self):
         result = self.execute([
             self.check("first", "raise SystemExit(3)"),
@@ -91,7 +182,7 @@ class ValidationRunnerTests(unittest.TestCase):
     def test_timeout_is_recorded_as_failure_with_partial_output(self):
         # The process manager has real timeout/descendant integration tests.
         # Inject its boundary here so this assertion is independent of Python startup speed.
-        def timeout(argv, cwd, stdout, stderr, seconds):
+        def timeout(argv, cwd, stdout, stderr, seconds, *, env=None):
             stdout.write(b"began\n")
             stdout.flush()
             raise subprocess.TimeoutExpired(argv, seconds)
@@ -100,6 +191,7 @@ class ValidationRunnerTests(unittest.TestCase):
         check = result["checks"][0]
         self.assertNotEqual(check["exit_code"], 0)
         self.assertEqual(check["error"], "timeout")
+        self.assertTrue(check["sanitizer_capture"]["complete"])
         self.assertIn("began", (self.repo / "raw/one" / check["stdout"]["path"]).read_text())
 
     def test_refuses_to_overwrite_existing_run(self):

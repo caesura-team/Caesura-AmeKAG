@@ -77,6 +77,26 @@ class ValidationProcessTests(unittest.TestCase):
         self.assertIn(b"stdout", self.stdout_path.read_bytes())
         self.assertIn(b"stderr", self.stderr_path.read_bytes())
 
+    def test_explicit_environment_reaches_owned_target_and_descendant_only(self):
+        child = "import json,os; print(json.dumps({'value':os.environ.get('OWNED_ENV_FIXTURE')}))"
+        parent = (
+            "import json,os,subprocess,sys; "
+            f"child=subprocess.run([sys.executable,'-c',{child!r}],capture_output=True,check=True); "
+            "print(json.dumps({'target':os.environ.get('OWNED_ENV_FIXTURE'),"
+            "'descendant':json.loads(child.stdout)['value']}))"
+        )
+        before = dict(os.environ)
+        environment = dict(os.environ, OWNED_ENV_FIXTURE="literal & $(not a shell) 中文")
+        with self.stdout_path.open("wb") as out, self.stderr_path.open("wb") as err:
+            result = run_owned_command([sys.executable, "-c", parent], self.root,
+                                       out, err, 10, env=environment)
+        self.assertEqual(result, 0)
+        observed = json.loads(self.stdout_path.read_text(encoding="utf-8"))
+        self.assertEqual(observed, {"target": environment["OWNED_ENV_FIXTURE"],
+                                    "descendant": environment["OWNED_ENV_FIXTURE"]})
+        self.assertEqual(os.environ, before)
+        self.assertEqual(environment, dict(before, OWNED_ENV_FIXTURE="literal & $(not a shell) 中文"))
+
     def test_parent_exit_reclaims_descendants_before_returning(self):
         result = self.invoke(self.parent_with_child(exit_code=17))
         self.assertEqual(result, 17)

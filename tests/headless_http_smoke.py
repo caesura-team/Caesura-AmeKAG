@@ -697,7 +697,8 @@ def run_smoke(executable, output=None):
               "command":None, "checks":[], "errors":[]}
     reservation = None
     sources = [Path(exe), Path(__file__), ROOT / "scripts/native_package_runtime.py",
-               ROOT / "scripts/package_runtime.py", ROOT / "scripts/validation_process.py"]
+               ROOT / "scripts/package_runtime.py", ROOT / "scripts/validation_process.py",
+               ROOT / "scripts/validation_sanitizer.py"]
 
     def inputs():
         return {str(path.resolve()):hashlib.sha256(path.read_bytes()).hexdigest() for path in sources}

@@ -74,6 +74,29 @@
         "skipped": {"type": "integer", "minimum": 0}
       }
     },
+    "sanitizer_capture": {
+      "type": "object", "additionalProperties": false,
+      "required": ["version", "complete", "directory", "prefix", "options_contract", "files"],
+      "properties": {
+        "version": {"const": 1},
+        "complete": {"const": true},
+        "directory": {"type": "string", "pattern": "^inputs/[A-Za-z0-9][A-Za-z0-9_.-]{0,127}/sanitizer$"},
+        "prefix": {"const": "sanitizer"},
+        "options_contract": {"const": "llvm-common-log-path-v1"},
+        "files": {
+          "type": "array", "maxItems": 4096,
+          "items": {
+            "type": "object", "additionalProperties": false,
+            "required": ["path", "sha256", "size_bytes"],
+            "properties": {
+              "path": {"type": "string", "pattern": "^inputs/[A-Za-z0-9][A-Za-z0-9_.-]{0,127}/sanitizer/sanitizer\\.[1-9][0-9]*$"},
+              "sha256": {"$ref": "#/$defs/sha256"},
+              "size_bytes": {"type": "integer", "minimum": 0, "maximum": 67108864}
+            }
+          }
+        }
+      }
+    },
     "check": {
       "type": "object", "additionalProperties": false,
       "required": ["id", "parser", "required", "result", "reasons"],
@@ -90,6 +113,7 @@
         "exit_code": {"type": "integer"},
         "counts": {"$ref": "#/$defs/counts"},
         "skipped_tests": {"type": "array", "items": {"type": "string"}},
+        "sanitizer_capture": {"$ref": "#/$defs/sanitizer_capture"},
         "files": {
           "type": "object", "additionalProperties": false,
           "required": ["stdout", "stderr"],

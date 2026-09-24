@@ -33,6 +33,7 @@ SOURCE_REQUIRED = {
     "src/resource/ImageDecoder.cpp", "tests/probes/screenshot_gpu_probe.cpp",
     "tests/probes/run_screenshot_gpu_probe.py", "tests/probes/run_render_snapshot_probe.py",
     "scripts/package_runtime.py", "scripts/package_verification.py", "scripts/validation_process.py",
+    "scripts/validation_sanitizer.py",
     "scripts/run_validation.py", "external/bgfx/bgfx/include/bgfx/bgfx.h",
     "external/bgfx/bgfx/src/bgfx.cpp", "external/bgfx/bgfx/src/bgfx_p.h",
     "external/bgfx/bgfx/src/renderer_d3d11.cpp",

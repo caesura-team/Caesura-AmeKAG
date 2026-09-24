@@ -73,6 +73,7 @@ def main():
         "src/storage/ISaveProvider.cpp", "src/storage/AtomicSaveFile.h",
         "src/storage/api/ICloudSaveSnapshotTransport.h", "src/archive/CryptoEngine.cpp",
         "scripts/package_runtime.py", "scripts/validation_process.py", "scripts/package_verification.py",
+        "scripts/validation_sanitizer.py",
         "tests/probes/cloud_conflict_restart_probe.cpp")]
     sources.extend((probe, Path(__file__).resolve()))
     locks = {str(path): identity(path) for path in sources}

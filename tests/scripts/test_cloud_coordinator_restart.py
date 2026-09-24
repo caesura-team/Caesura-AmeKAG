@@ -60,6 +60,7 @@ def main():
         "src/storage/api/ICloudSaveSnapshotTransport.h", "src/storage/api/ISaveProvider.h",
         "src/archive/CryptoEngine.cpp", "src/archive/CryptoEngine.h",
         "scripts/package_runtime.py", "scripts/validation_process.py", "scripts/package_verification.py",
+        "scripts/validation_sanitizer.py",
         "tests/probes/cloud_coordinator_restart_probe.cpp", "tests/scripts/test_cloud_conflict_restart.py")]
     paths.extend((probe, Path(__file__).resolve()))
     locks = {str(path): identity(path) for path in paths}

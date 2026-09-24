@@ -8,10 +8,12 @@ import io
 import json
 from pathlib import Path
 import platform
+import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+import xml.etree.ElementTree as ET
 from unittest.mock import patch
 
 SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
@@ -321,6 +323,535 @@ class ValidationEvidenceTests(unittest.TestCase):
         manifest = self.f.collect()
         self.assertEqual(manifest["result"], "PASS")
         self.assertIsNone(manifest["checks"][0]["counts"])
+
+
+class SanitizerEvidenceTests(unittest.TestCase):
+    # Representative runtime report bytes are explicit fixture inputs. These
+    # exercise the real collector and verifier, not an engine or runtime probe.
+    DIAGNOSTICS = {
+        "asan": (
+            "==123==ERROR: AddressSanitizer: heap-use-after-free on address 0x602000000010\n"
+            "READ of size 4 at 0x602000000010 thread T0\n"
+        ),
+        "ubsan": (
+            "/tmp/sanitizer-control.cpp:3:12: runtime error: signed integer overflow: "
+            "2147483647 + 1 cannot be represented in type 'int'\n"
+        ),
+        "tsan": (
+            "WARNING: ThreadSanitizer: data race (pid=123)\n"
+            "  Write of size 4 at 0x7fffffffe010 by thread T1:\n"
+        ),
+    }
+    HARMLESS = (
+        "configure: -fsanitize=address,undefined -fno-sanitize-recover=undefined\n"
+        "AddressSanitizer: enabled for this validation configuration\n"
+        "Tools: UndefinedBehaviorSanitizer and ThreadSanitizer are available\n"
+        "Documentation: runtime error diagnostics make validation fail\n"
+        "No AddressSanitizer errors detected\n"
+        "WARNING: ThreadSanitizer instrumentation increases memory use\n"
+    )
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix="caesura-sanitizer-evidence-")
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+
+    def fixture(self, name, parser="doctest"):
+        root = self.root / name
+        root.mkdir()
+        fixture = EvidenceFixture(root)
+        spec = fixture.profile["profiles"]["test-debug"]["checks"][0]
+        spec.update(parser=parser, min_discovered=0 if parser == "exit-code" else 2)
+        fixture.write_profile()
+        fixture.run["profile_sha256"] = sha(fixture.profile_path)
+        summaries = {
+            "doctest": fixture.doctest(),
+            "lua": "Results: 2 passed, 0 failed, 2 total\n",
+            "unittest": "Ran 2 tests in 0.01s\n\nOK\n",
+            "exit-code": "",
+            "ctest-junit": "100% tests passed, 0 tests failed out of 2\n",
+        }
+        fixture.run["checks"][0]["stdout"] = fixture.file("cpp.stdout", summaries[parser])
+        return fixture
+
+    def add_ctest_report(self, fixture, role, text, encoded=False):
+        suite = ET.Element("testsuite", tests="2", failures="0", errors="0", skipped="0")
+        first = ET.SubElement(suite, "testcase", name="native-child", status="run")
+        ET.SubElement(first, role).text = text
+        ET.SubElement(suite, "testcase", name="positive-control", status="run")
+        report = ET.tostring(suite, encoding="unicode")
+        if encoded:
+            # XML report diagnostics must be inspected after entity decoding.
+            report = report.replace("Sanitizer", "Saniti&#122;er")
+            report = report.replace("runtime error:", "runtime&#32;error:")
+        fixture.run["checks"][0]["report"] = fixture.file("ctest.xml", report)
+
+    def assert_diagnostic_rejected(self, fixture, exit_code=0):
+        manifest = fixture.collect()
+        check = manifest["checks"][0]
+        self.assertEqual(manifest["result"], "FAIL")
+        self.assertEqual(check["result"], "FAIL")
+        self.assertEqual(check["exit_code"], exit_code)
+        self.assertTrue(any("sanitizer" in reason.lower() for reason in check["reasons"]))
+        if check["counts"] is not None:
+            # A runtime diagnostic is a gate failure, not an invented failed test.
+            self.assertEqual(check["counts"], {
+                "discovered": 2, "executed": 2, "passed": 2, "failed": 0, "skipped": 0,
+            })
+        # release=False avoids the unrelated test-fixture publication refusal.
+        self.assertTrue(any("sanitizer" in error.lower() for error in fixture.verify()))
+        return manifest
+
+    def test_sanitizer_diagnostics_fail_green_process_summaries(self):
+        for parser in ("doctest", "lua", "unittest", "exit-code"):
+            for sanitizer, diagnostic in self.DIAGNOSTICS.items():
+                for role in ("stdout", "stderr"):
+                    with self.subTest(parser=parser, sanitizer=sanitizer, role=role):
+                        fixture = self.fixture(f"{parser}-{sanitizer}-{role}", parser)
+                        check = fixture.run["checks"][0]
+                        path = fixture.raw / check[role]["path"]
+                        check[role] = fixture.file(path.name, path.read_text() + diagnostic)
+                        self.assert_diagnostic_rejected(fixture)
+
+    def test_sanitizer_diagnostics_fail_passing_ctest_output(self):
+        for sanitizer, diagnostic in self.DIAGNOSTICS.items():
+            for role in ("system-out", "system-err"):
+                for encoded in (False, True):
+                    with self.subTest(sanitizer=sanitizer, role=role, encoded=encoded):
+                        fixture = self.fixture(f"{sanitizer}-{role}-{encoded}", "ctest-junit")
+                        self.add_ctest_report(fixture, role, diagnostic, encoded)
+                        self.assert_diagnostic_rejected(fixture)
+
+    def test_colored_ubsan_diagnostic_without_summary_fails_clean_exit(self):
+        # Explicit test-fixture from Clang 21 color=always:print_summary=0 output
+        # (actual exit 0). Only the machine-specific source path is replaced;
+        # the SGR bytes and runtime-error layout are retained verbatim.
+        # Source stderr SHA-256:
+        # c6ba668ae287de753d32ddc0915669317d14ea416ea43335b16db2c3928fb01e
+        diagnostic = (
+            "\x1b[1mfixture.cpp:3:75:\x1b[1m\x1b[31m runtime error: "
+            "\x1b[1m\x1b[0m\x1b[1msigned integer overflow: "
+            "2147483647 + 1 cannot be represented in type 'int'\x1b[1m\x1b[0m\n"
+        )
+        for role in ("stdout", "stderr", "sidecar"):
+            with self.subTest(role=role):
+                fixture = self.fixture(f"colored-ubsan-{role}")
+                check = fixture.run["checks"][0]
+                if role == "sidecar":
+                    fixture.profile["profiles"]["test-debug"]["sanitizer_capture"] = {
+                        "version": 1, "required": True,
+                    }
+                    fixture.write_profile()
+                    fixture.run["profile_sha256"] = sha(fixture.profile_path)
+                    directory = "sanitizer/cpp"
+                    (fixture.raw / directory).mkdir(parents=True)
+                    path = fixture.raw / directory / "sanitizer.123"
+                    path.write_bytes(diagnostic.encode("utf-8"))
+                    check["sanitizer_capture"] = {
+                        "version": 1, "complete": True, "directory": directory,
+                        "prefix": "sanitizer", "options_contract": "llvm-common-log-path-v1",
+                        "files": [{"path": f"{directory}/{path.name}",
+                                   "sha256": sha(path), "size_bytes": path.stat().st_size}],
+                    }
+                else:
+                    path = fixture.raw / check[role]["path"]
+                    check[role] = fixture.file(path.name, path.read_text() + diagnostic)
+                manifest = self.assert_diagnostic_rejected(fixture)
+                retained = (manifest["checks"][0]["sanitizer_capture"]["files"][0]
+                            if role == "sidecar" else manifest["checks"][0]["files"][role])
+                # Classification normalization must not rewrite authenticated logs.
+                self.assertEqual((fixture.output / retained["path"]).read_bytes(), path.read_bytes())
+
+    def test_sanitizer_configuration_and_prose_are_not_diagnostics(self):
+        for parser in ("doctest", "lua", "unittest", "exit-code"):
+            with self.subTest(parser=parser):
+                fixture = self.fixture(parser, parser)
+                check = fixture.run["checks"][0]
+                stdout = fixture.raw / check["stdout"]["path"]
+                check["stdout"] = fixture.file(stdout.name, self.HARMLESS + stdout.read_text())
+                check["stderr"] = fixture.file("cpp.stderr", self.HARMLESS)
+                self.assertEqual(fixture.collect()["result"], "PASS")
+                self.assertEqual(fixture.verify(), [])
+
+    def test_sanitizer_ctest_configuration_and_prose_are_not_diagnostics(self):
+        for role in ("system-out", "system-err"):
+            with self.subTest(role=role):
+                fixture = self.fixture(role, "ctest-junit")
+                self.add_ctest_report(fixture, role, self.HARMLESS)
+                self.assertEqual(fixture.collect()["result"], "PASS")
+                self.assertEqual(fixture.verify(), [])
+
+    def test_sanitizer_diagnostic_cannot_be_relabelled_pass_in_manifest(self):
+        fixture = self.fixture("tampered-pass")
+        fixture.run["checks"][0]["stderr"] = fixture.file("cpp.stderr", self.DIAGNOSTICS["asan"])
+        manifest = self.assert_diagnostic_rejected(fixture)
+        manifest["result"] = "PASS"
+        manifest["checks"][0].update(result="PASS", reasons=[])
+        (fixture.output / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        self.assertTrue(any("differs from actual reports" in error for error in fixture.verify()))
+
+    def test_sanitizer_diagnostics_take_priority_over_exit_77(self):
+        for sanitizer, diagnostic in self.DIAGNOSTICS.items():
+            with self.subTest(sanitizer=sanitizer):
+                fixture = self.fixture(sanitizer)
+                fixture.run["checks"][0].update(
+                    exit_code=77, stderr=fixture.file("cpp.stderr", diagnostic),
+                )
+                self.assert_diagnostic_rejected(fixture, exit_code=77)
+
+    def test_exit_77_without_sanitizer_diagnostic_preserves_skip(self):
+        fixture = self.fixture("ordinary-skip")
+        fixture.run["checks"][0].update(
+            exit_code=77, stderr=fixture.file("cpp.stderr", "Optional service is unavailable\n"),
+        )
+        manifest = fixture.collect()
+        check = manifest["checks"][0]
+        self.assertEqual(check["result"], "SKIP")
+        self.assertEqual(check["exit_code"], 77)
+        self.assertEqual(check["counts"]["failed"], 0)
+        self.assertFalse(any("sanitizer" in reason.lower() for reason in check["reasons"]))
+        # This fixture's check is required: preserving SKIP must not turn it PASS.
+        self.assertEqual(manifest["result"], "FAIL")
+        self.assertTrue(any("Required check cpp: SKIP" in error for error in fixture.verify()))
+
+
+class SanitizerCaptureEvidenceTests(unittest.TestCase):
+    """Transport contracts using real temporary files and the public evidence APIs."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix="caesura-sanitizer-capture-")
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+
+    def fixture(self, name):
+        root = self.root / name
+        root.mkdir()
+        fixture = EvidenceFixture(root)
+        fixture.profile["profiles"]["test-debug"]["sanitizer_capture"] = {
+            "version": 1, "required": True,
+        }
+        fixture.write_profile()
+        fixture.run["profile_sha256"] = sha(fixture.profile_path)
+        self.add_capture(fixture, fixture.run["checks"][0])
+        return fixture
+
+    def add_capture(self, fixture, check):
+        directory = f"sanitizer/{check['id']}"
+        (fixture.raw / directory).mkdir(parents=True)
+        check["sanitizer_capture"] = {
+            "version": 1, "complete": True, "directory": directory,
+            "prefix": "sanitizer", "options_contract": "llvm-common-log-path-v1", "files": [],
+        }
+
+    def sidecar(self, fixture, text="retained control output\n", pid=123, check_id="cpp"):
+        check = next(row for row in fixture.run["checks"] if row["id"] == check_id)
+        name = f"sanitizer/{check_id}/sanitizer.{pid}"
+        path = fixture.raw / name
+        data = text.encode("utf-8")
+        path.write_bytes(data)
+        check["sanitizer_capture"]["files"].append({
+            "path": name, "sha256": sha(path), "size_bytes": len(data),
+        })
+        return path
+
+    def collect_with_capture(self, fixture):
+        manifest = fixture.collect()
+        for check in manifest["checks"]:
+            self.assertIn("sanitizer_capture", check)
+            self.assertTrue((fixture.output / "inputs" / check["id"] / "sanitizer").is_dir())
+        return manifest
+
+    def assert_bundle_rejected(self, fixture):
+        # Exercise reconstruction directly as well as the verifier. Otherwise a
+        # changed external receipt's digest could mask an ignored capture field.
+        from collect_validation_evidence import build_manifest
+        fixture.write_run()
+        with self.assertRaises(EvidenceError):
+            build_manifest(fixture.profile_path, "test-debug", fixture.run_path,
+                           collected_root=fixture.output)
+        self.assertTrue(fixture.verify())
+
+    def assert_rejected(self, fixture, scope):
+        if scope == "raw":
+            with self.assertRaises(EvidenceError):
+                fixture.collect()
+        else:
+            self.assert_bundle_rejected(fixture)
+
+    def add_second_check(self, fixture):
+        spec = copy.deepcopy(fixture.profile["profiles"]["test-debug"]["checks"][0])
+        spec["id"] = "second"
+        fixture.profile["profiles"]["test-debug"]["checks"].append(spec)
+        fixture.write_profile()
+        fixture.run["profile_sha256"] = sha(fixture.profile_path)
+        check = copy.deepcopy(fixture.run["checks"][0])
+        check["id"] = "second"
+        fixture.run["checks"].append(check)
+        self.add_capture(fixture, check)
+
+    def redirect_directory(self, directory, target):
+        directory.rename(target)
+        if sys.platform == "win32":
+            # Directory junction creation does not need symlink privilege.
+            # Both endpoints are owned by this test's TemporaryDirectory.
+            subprocess.run(
+                ["cmd", "/d", "/c", "mklink", "/J", str(directory), str(target)],
+                check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        else:
+            directory.symlink_to(target, target_is_directory=True)
+
+    def test_empty_required_capture_roundtrips_without_fabricated_logs(self):
+        fixture = self.fixture("empty")
+        manifest = self.collect_with_capture(fixture)
+        capture = manifest["checks"][0]["sanitizer_capture"]
+        self.assertEqual(capture["files"], [])
+        self.assertEqual(capture["directory"], "inputs/cpp/sanitizer")
+        self.assertEqual(list((fixture.output / capture["directory"]).iterdir()), [])
+        self.assertEqual(manifest["result"], "PASS")
+        self.assertEqual(fixture.verify(), [])
+
+    def test_sidecar_bytes_and_names_survive_collection(self):
+        fixture = self.fixture("retained-bytes")
+        originals = [self.sidecar(fixture, "first control\n", 123),
+                     self.sidecar(fixture, "second control\n", 456)]
+        manifest = self.collect_with_capture(fixture)
+        capture = manifest["checks"][0]["sanitizer_capture"]
+        self.assertEqual(capture["version"], 1)
+        self.assertIs(capture["complete"], True)
+        self.assertEqual(capture["prefix"], "sanitizer")
+        self.assertEqual(capture["options_contract"], "llvm-common-log-path-v1")
+        expected = {f"inputs/cpp/sanitizer/{path.name}": path for path in originals}
+        self.assertEqual({entry["path"] for entry in capture["files"]}, set(expected))
+        for entry in capture["files"]:
+            original = expected[entry["path"]]
+            copied = fixture.output / entry["path"]
+            self.assertEqual(copied.read_bytes(), original.read_bytes())
+            self.assertEqual(entry["sha256"], sha(original))
+            self.assertEqual(entry["size_bytes"], len(original.read_bytes()))
+        self.assertEqual(manifest["result"], "PASS")
+        self.assertEqual(fixture.verify(), [])
+
+    def test_sidecar_diagnostics_fail_even_when_outer_logs_are_clean(self):
+        for sanitizer, diagnostic in SanitizerEvidenceTests.DIAGNOSTICS.items():
+            for exit_code in (0, 77):
+                with self.subTest(sanitizer=sanitizer, exit_code=exit_code):
+                    fixture = self.fixture(f"{sanitizer}-{exit_code}")
+                    self.sidecar(fixture, diagnostic)
+                    fixture.run["checks"][0]["exit_code"] = exit_code
+                    manifest = self.collect_with_capture(fixture)
+                    check = manifest["checks"][0]
+                    self.assertEqual(check["result"], "FAIL")
+                    self.assertEqual(manifest["result"], "FAIL")
+                    self.assertEqual(check["exit_code"], exit_code)
+                    self.assertEqual(check["counts"]["passed"], 2)
+                    self.assertEqual(check["counts"]["failed"], 0)
+                    self.assertTrue(any("sanitizer" in reason.lower() for reason in check["reasons"]))
+                    self.assertTrue(any("sanitizer" in error.lower() for error in fixture.verify()))
+
+    def test_required_capture_fields_cannot_be_deleted_or_weakened(self):
+        mutations = [
+            ("capture", None), ("version", None), ("complete", None), ("directory", None),
+            ("prefix", None), ("options_contract", None), ("files", None),
+            ("version", 2), ("complete", False), ("prefix", "alternate"),
+            ("options_contract", "unknown-options"),
+        ]
+        for scope in ("raw", "bundle"):
+            for number, (field, value) in enumerate(mutations):
+                with self.subTest(scope=scope, field=field, value=value):
+                    fixture = self.fixture(f"{scope}-{number}")
+                    if scope == "bundle":
+                        self.collect_with_capture(fixture)
+                    check = fixture.run["checks"][0]
+                    if field == "capture":
+                        del check["sanitizer_capture"]
+                    elif value is None:
+                        del check["sanitizer_capture"][field]
+                    else:
+                        check["sanitizer_capture"][field] = value
+                    self.assert_rejected(fixture, scope)
+
+    def test_capture_profile_requires_explicit_supported_policy(self):
+        for scope in ("raw", "bundle"):
+            for number, policy in enumerate((
+                {"version": 1}, {"required": True}, {"version": 2, "required": True},
+                {"version": 1, "required": "true"},
+            )):
+                with self.subTest(scope=scope, policy=policy):
+                    fixture = self.fixture(f"{scope}-{number}")
+                    if scope == "bundle":
+                        self.collect_with_capture(fixture)
+                    fixture.profile["profiles"]["test-debug"]["sanitizer_capture"] = policy
+                    fixture.write_profile()
+                    fixture.run["profile_sha256"] = sha(fixture.profile_path)
+                    self.assert_rejected(fixture, scope)
+
+    def test_capture_file_metadata_is_complete_unique_and_matches_bytes(self):
+        mutations = ("duplicate", "missing-path", "missing-sha256", "missing-size_bytes",
+                     "hash", "size", "negative-size", "boolean-size")
+        for scope in ("raw", "bundle"):
+            for mutation in mutations:
+                with self.subTest(scope=scope, mutation=mutation):
+                    fixture = self.fixture(f"{scope}-{mutation}")
+                    self.sidecar(fixture)
+                    if scope == "bundle":
+                        self.collect_with_capture(fixture)
+                    entries = fixture.run["checks"][0]["sanitizer_capture"]["files"]
+                    entry = entries[0]
+                    if mutation == "duplicate":
+                        entries.append(copy.deepcopy(entry))
+                    elif mutation.startswith("missing-"):
+                        del entry[mutation.removeprefix("missing-")]
+                    elif mutation == "hash":
+                        entry["sha256"] = "0" * 64
+                    elif mutation == "size":
+                        entry["size_bytes"] += 1
+                    elif mutation == "negative-size":
+                        entry["size_bytes"] = -1
+                    else:
+                        entry["size_bytes"] = True
+                    self.assert_rejected(fixture, scope)
+
+    def test_raw_capture_inventory_rejects_missing_extra_and_unknown_check_files(self):
+        for mutation in ("listed-missing", "unlisted", "unknown-check", "unknown-empty-check"):
+            with self.subTest(mutation=mutation):
+                fixture = self.fixture(mutation)
+                original = self.sidecar(fixture)
+                if mutation == "listed-missing":
+                    original.unlink()
+                elif mutation == "unlisted":
+                    (original.parent / "sanitizer.456").write_text("unlisted\n", encoding="utf-8")
+                else:
+                    unknown = fixture.raw / "sanitizer" / "unknown"
+                    unknown.mkdir()
+                    if mutation == "unknown-check":
+                        (unknown / "sanitizer.456").write_text("unbound\n", encoding="utf-8")
+                self.assert_rejected(fixture, "raw")
+
+    def test_bundle_capture_inventory_rejects_missing_extra_and_unknown_check_files(self):
+        for mutation in ("listed-missing", "unlisted", "unknown-check", "unknown-empty-check"):
+            with self.subTest(mutation=mutation):
+                fixture = self.fixture(mutation)
+                self.sidecar(fixture)
+                self.collect_with_capture(fixture)
+                copied = fixture.output / "inputs/cpp/sanitizer/sanitizer.123"
+                if mutation == "listed-missing":
+                    copied.unlink()
+                elif mutation == "unlisted":
+                    (copied.parent / "sanitizer.456").write_text("unlisted\n", encoding="utf-8")
+                else:
+                    unknown = fixture.output / "inputs/unknown/sanitizer"
+                    unknown.mkdir(parents=True)
+                    if mutation == "unknown-check":
+                        (unknown / "sanitizer.456").write_text("unbound\n", encoding="utf-8")
+                self.assert_bundle_rejected(fixture)
+
+    def test_capture_paths_cannot_escape_or_alias_the_canonical_check_directory(self):
+        for scope in ("raw", "bundle"):
+            for number, bad_path in enumerate((
+                "../sanitizer/cpp/sanitizer.123", "sanitizer/cpp/../cpp/sanitizer.123",
+                "sanitizer/second/sanitizer.123", "sanitizer\\cpp\\sanitizer.123",
+                "sanitizer/cpp/sanitizer.0", "sanitizer/cpp/sanitizer.-1",
+                "sanitizer/cpp/sanitizer.123.extra", "absolute",
+            )):
+                with self.subTest(scope=scope, bad_path=bad_path):
+                    fixture = self.fixture(f"{scope}-{number}")
+                    original = self.sidecar(fixture)
+                    if scope == "bundle":
+                        self.collect_with_capture(fixture)
+                    capture = fixture.run["checks"][0]["sanitizer_capture"]
+                    capture["files"][0]["path"] = str(original) if bad_path == "absolute" else bad_path
+                    self.assert_rejected(fixture, scope)
+
+    def test_capture_directory_itself_must_be_the_canonical_check_directory(self):
+        for scope in ("raw", "bundle"):
+            for number, directory in enumerate(("sanitizer/second", "sanitizer/cpp/.", "../sanitizer/cpp")):
+                with self.subTest(scope=scope, directory=directory):
+                    fixture = self.fixture(f"{scope}-{number}")
+                    if scope == "bundle":
+                        self.collect_with_capture(fixture)
+                    fixture.run["checks"][0]["sanitizer_capture"]["directory"] = directory
+                    self.assert_rejected(fixture, scope)
+
+    def test_raw_capture_metadata_cannot_be_swapped_between_checks(self):
+        fixture = self.fixture("swapped-checks")
+        self.add_second_check(fixture)
+        self.sidecar(fixture, "first check\n", 123)
+        self.sidecar(fixture, "second check\n", 456, "second")
+        first, second = fixture.run["checks"]
+        first["sanitizer_capture"], second["sanitizer_capture"] = (
+            second["sanitizer_capture"], first["sanitizer_capture"],
+        )
+        self.assert_rejected(fixture, "raw")
+
+    def test_bundle_capture_bytes_cannot_be_swapped_between_checks(self):
+        fixture = self.fixture("swapped-bytes")
+        self.add_second_check(fixture)
+        self.sidecar(fixture, "first check\n", 123)
+        self.sidecar(fixture, "second check\n", 456, "second")
+        self.collect_with_capture(fixture)
+        first = fixture.output / "inputs/cpp/sanitizer/sanitizer.123"
+        second = fixture.output / "inputs/second/sanitizer/sanitizer.456"
+        first_bytes, second_bytes = first.read_bytes(), second.read_bytes()
+        first.write_bytes(second_bytes)
+        second.write_bytes(first_bytes)
+        self.assert_bundle_rejected(fixture)
+
+    def test_raw_capture_rejects_redirected_check_directory(self):
+        fixture = self.fixture("linked-raw")
+        self.sidecar(fixture)
+        self.redirect_directory(fixture.raw / "sanitizer/cpp", fixture.root / "redirected")
+        self.assert_rejected(fixture, "raw")
+
+    def test_bundle_capture_rejects_redirected_check_directory(self):
+        fixture = self.fixture("linked-bundle")
+        self.sidecar(fixture)
+        self.collect_with_capture(fixture)
+        self.redirect_directory(fixture.output / "inputs/cpp/sanitizer", fixture.root / "redirected")
+        self.assert_bundle_rejected(fixture)
+
+    def test_sanitizer_diagnostic_cannot_be_removed_from_collected_manifest(self):
+        fixture = self.fixture("forged-pass")
+        self.sidecar(fixture, SanitizerEvidenceTests.DIAGNOSTICS["ubsan"])
+        manifest = self.collect_with_capture(fixture)
+        self.assertEqual(manifest["result"], "FAIL")
+        manifest["result"] = "PASS"
+        manifest["checks"][0].update(result="PASS", reasons=[])
+        manifest["checks"][0].pop("sanitizer_capture")
+        (fixture.output / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        self.assertTrue(any("differs from actual reports" in error for error in fixture.verify()))
+
+    def test_copied_profile_cannot_remove_required_capture_policy(self):
+        fixture = self.fixture("profile-snapshot")
+        self.collect_with_capture(fixture)
+        profile_copy = fixture.output / "profile.json"
+        profile = json.loads(profile_copy.read_text(encoding="utf-8"))
+        del profile["profiles"]["test-debug"]["sanitizer_capture"]
+        profile_copy.write_text(json.dumps(profile), encoding="utf-8")
+        self.assertTrue(any("profile" in error.lower() for error in fixture.verify()))
+
+    def test_sidecar_added_during_copy_is_found_by_second_raw_inventory(self):
+        fixture = self.fixture("copy-race")
+        source = self.sidecar(fixture)
+        late = source.parent / "sanitizer.456"
+        original_copyfile = shutil.copyfile
+        injected = []
+
+        def copy_then_add(src, dst, *args, **kwargs):
+            result = original_copyfile(src, dst, *args, **kwargs)
+            if Path(src) == source and not injected:
+                late.write_text(SanitizerEvidenceTests.DIAGNOSTICS["asan"], encoding="utf-8")
+                injected.append(late)
+            return result
+
+        # Only the real file-copy boundary is controlled; collector decisions,
+        # re-enumeration and byte authentication are production behavior.
+        with patch("collect_validation_evidence.shutil.copyfile", side_effect=copy_then_add):
+            with self.assertRaises(EvidenceError):
+                fixture.collect()
+        self.assertEqual(injected, [late])
+        self.assertFalse((fixture.output / "manifest.json").exists())
 
 
 class ReportParserTests(unittest.TestCase):
