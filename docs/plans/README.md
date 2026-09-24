@@ -4,7 +4,7 @@
 
 进度显示：[当前待办清单](2026-09-05-003-runtime-foundation-todo.md)。详细证据见 [执行记录](2026-09-05-002-runtime-foundation-execution.md)。
 
-2026-09-24 恢复后当前接续：完整目标仍为U1–U29，底层优先、Studio暂停。当前代码 `cce1691439f2721f92291b49d3c4d0671d2e6bfd`（`codex/u29-motion-expression-ownership`）仅补齐两处新建Cubism动作/表情对象的队列所有权，完整新候选构建与实际释放GREEN待验。 前候选59f完整Windows Debug Live2D SDK十一项通过；真实初始、动作及F05表情功能通过，但有效校准后动作/表情分别余留5笔13336B、2笔208B，原child均exit3。旧f87两模板两路的四次同包plain冷读对照已通过；跨候选/加密/fallback仍待验。详见[U29最新续记](2026-09-24-017-foundation-integration-execution.md#2026-09-24-动作与表情所有权回归续记)。
+2026-09-25 恢复后当前接续：完整目标仍为 U1–U29，底层优先、Studio 暂停。当前代码 `3e32ddcc08f01b2933f54b8ea498edbfb98dd0d4`（`codex/u29-evidence-transport-directories`）修复 GitHub artifact 上传丢失空诊断目录的问题：执行证据先封装为含显式目录记录的单个 tar，聚合安全解包后仍执行原严格 U1。144 项定向测试与独立审查通过；新候选完整门禁、托管 CI 和最终包尚待验。前候选 a5 的完整 Windows SDK Debug、动作/表情释放回归及手动嘴参通过已分别封存；其本机 Release 因宿主中断未完成，托管 CI 因传输缺陷失败，均不改写为通过。 Web 原件已完整恢复并核验。详见[U29 最新续记](2026-09-24-017-foundation-integration-execution.md#2026-09-25-证据传输修复与实际终态续记)。
 
 以下 a047、d61、ed6 及更早段落保留各自记录时点，不覆盖本段的新候选状态。
 

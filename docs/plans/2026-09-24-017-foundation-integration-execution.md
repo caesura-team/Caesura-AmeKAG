@@ -389,3 +389,20 @@ V02分配观察器真实安装与校准通过：每次phase7均3 admitted/3 free
 旧f87 plain四份producer原存档均保留，basic/kag3两模板A/B四次新进程cold consumer均实际0，ENTRY/INPUT/RESTORED/DONE各1、SAVED0、slot字节不变。basic静态149文件、kag3为146。原basic-A producer因缺Release INFO而outer1/REJECTED仍保持；其同包冷读对照另成功不改写原失败。独审见 `old-plain-roles-independent-review-01/review-01.json` 与 `old-remaining-cold-consumers-independent-review-01/review-01.json`。实际帧数、精确退出原因与全部九个重放事件消费仍UNKNOWN；完整视听状态、跨候选、加密及坏摘要fallback验收仍待完成。
 
 U23 fresh04保护未再修改；正向匹配tag需要具体授权，未合并、发布或改标签。U24设备、U25配额、U26其余SDK/账号/输入边界、U27正式性能/长跑及U28/U29跨平台最终包/AE1–AE8仍保留。完整目标未完成。
+
+
+## 2026-09-25 证据传输修复与实际终态续记
+
+当前代码为 `3e32ddcc08f01b2933f54b8ea498edbfb98dd0d4`（`codex/u29-evidence-transport-directories`）。当前代码 `3e32ddcc08f01b2933f54b8ea498edbfb98dd0d4`（`codex/u29-evidence-transport-directories`）修复 GitHub artifact 上传丢失空诊断目录的问题：执行证据先封装为含显式目录记录的单个 tar，聚合安全解包后仍执行原严格 U1。144 项定向测试与独立审查通过；新候选完整门禁、托管 CI 和最终包尚待验。前候选 a5 的完整 Windows SDK Debug、动作/表情释放回归及手动嘴参通过已分别封存；其本机 Release 因宿主中断未完成，托管 CI 因传输缺陷失败，均不改写为通过。 本节为当前接续，先前各节保持原记录时点。以下外部路径均相对于 `E:/CaesuraRecovery/20260924-1446/`，新运行不冒充误删原日志的恢复。
+
+冻结前候选 `a5f4d40c32abae5d9335c48ea31eb62f25fad19e` 的完整 SDK Debug 原 session24354 实际0，configure/execute/collect/verify均0且cleanup COMPLETE，11项required通过；C++1525/451305断言零失败零跳过、Lua147/56、Python22/12/78/57，CTest72发现、71通过与唯一预准AI exit77。Live2D ON，FFmpeg/Steam/sanitizer OFF。P3六场真实探针均实际0、每场201帧/9图；motion阶段2356分配/2356释放，expression40/40，均在Engine关闭后归零。motion在模型卸载后仍有2笔96B，不能声称每个中间阶段归零。原59f动作5笔13336B、表情2笔208B余留失败保持。P3独审 `u26-ownership-real-runtime-01/independent-terminal-review-01.json` SHA256 `2702a126d7e4e9cdf7a390590ec650e0235ff9b644b68c3dd548aa7c3d83e10d`。
+
+P4手动嘴参原 session19052 实际0，child29744/FILETIME134347383352257849实际0、launcher0、cleanup COMPLETE，无超时或强杀。五次同步调用、十一PNG、56条journal与107个owner frames对齐；两次闭嘴到张嘴均75个RGB/RGBA像素变化，范围x310–330/y66–74；无效参数、无效handle、回零及隐藏控制精确相等。独立Pillow解码全部图像与原生RGBA逐字节一致，根与独审目检嘴部变化、正常两臂与隐藏结果。加载1→0及Engine关闭/析构完整。独审 `u26-manual-mouth-runtime-preparation-01/independent-terminal-review-02.json` SHA256 `656e503838e3a83e7073e81434438b2512aaa519695da00fddb085bb81f8b4fa`。首轮审查对未使用P3 inventory的额外断言失败保留；第二轮验证实际CPP/include/环境均绑定P4后修正观察器，无native重跑。该结果仅覆盖Registry/IAnimationBackend手动参数，allocator OFF，不证明自动PCM/voice、Lua/KAG接线、物理音频或完整U26。
+
+a5 的托管run `36011879411` attempt1终态为failure：11项producer/lock成功，最后required gate `107708379091` 在aggregate阶段失败。原Linux Debug证据声明sanitizer capture完整但文件列表为空，上传ZIP丢失该空目录，严格U1以路径不存在拒绝。原gate日志与诊断ZIP在 `ownership-ci-01/gate-failure-01/`；日志SHA256 `81744bbeb2e63ee948b379d5ceb6f7f88c3008cf69ace7e6da0e7bf0652348eb`，ZIP SHA256 `9c252e30c618a291b67d1a9201ce25ce362368994bb094b5414012f3e980abb3`。本机Release原session74973同时因宿主中断缺失完整终态，仅40/72CTest完成，outer/execute实际退出码未知；37份原件已封存，不能把局部通过替代完整通过，也未重跑旧候选。
+
+新修复由真实owned Python子进程、collector、仅文件ZIP、安全解包和严格U1链路复现RED（实际exit1）。执行lane将原始文件和全部目录装入单个 `execution-bundle.tar`，打包后重读核对记录、文件大小和SHA，拒绝输入变化及覆盖已有归档。六个execution上传点只上传该文件；聚合要求唯一指定tar，沿用安全解包器，保留并复核外层、内层和原严格U1。collector、sanitizer判断和引擎代码未改。最终lane25、aggregate20、真实HTTP/ZIP gate21和原U1 78项共144项，实际0、零失败/零跳过；负控覆盖缺目录、额外capture、原报告/归档/解包后内容篡改、路径逃逸、打包期间变化和内层准备记录遗漏。实际子进程写出的诊断夹具仍被拒绝，不伪称编译器sanitizer运行。实现交付 `u29-evidence-transport-fix-01/handoff-01.json` SHA256 `c62cf2c56e8741f99b5272cbbd1302a344422fbc0ad890ca8f7abbbfc6cebb63`；独审 `independent-review-01.json` SHA256 `74959191018ade2e1498d4e89d45a740b50770b1dfdbde16bab214bfddcc7053`。旧平铺格式不再被新聚合接受；tar增加本地完整副本及校验读取，未宣称大型产物性能。
+
+原Web artifact10814077091恢复完成：复核七个已完整段后只补缺失5107367字节，原session86432实际0、cleanup COMPLETE。整包40858929字节、GitHub SHA256 `1abadc324ef5c0bb693e69c5b0f8ad6711d4b81613032e853fd8590a1d79fcc0`、ZIP CRC、安全解包、内部bundle清单及独立producer/context全部通过；根报告 `ownership-ci-01/web-artifact-03/root-package-review-01.json` SHA256 `b43eab0df025a39ea02a9a24e8c8fdfd909942fd51ff1f545c426671a0d2d859`。旧900秒超时、宿主中断及detached supervisor仍在宿主Job内而拒绝的记录保持。恢复成功不使原CI变绿，不证明本地浏览器重放或发布。
+
+Linux完整sanitizer门禁仍未执行：外部停止入口02已用真实多层setsid写入者验证控制器死亡后的同cgroup清理，独审确认原同boot静默窗口；但正常返回可能隐藏强制清场的P2尚在修正。后一次readback的boot-id变化不算同启动周期第二次验证。U23唯一required context/App15368及strict=false等保护保持；误删脚本最新精确进程检查无匹配，未声称已终止原进程。缺失的原mutation和本机原日志继续标缺失。平台仅同步代码审查锚，不升级历史能力字段或NOT_REVERIFIED声明。U24设备、U25配额、U26剩余边界、U27正式性能/长跑、U28与U29新候选完整包/AE1–AE8/跨候选加密及回退仍待完成，完整目标保持未完成。
