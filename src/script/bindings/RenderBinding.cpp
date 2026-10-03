@@ -94,6 +94,9 @@ static RenderTextureHandle textureManagerHandle(uint32_t rawHandle) {
 }
 
 static RenderTextureHandle resolveTexture(lua_State* L, uint32_t id, IRenderDevice* dev) {
+    // Render-target IDs have a disjoint namespace. Never reinterpret a stale
+    // viewport as a TextureManager image with the same integer slot.
+    if (id & VIEWPORT_HANDLE_TAG) return dev ? dev->getViewportTexture(ViewportHandle{id}) : RenderTextureHandle{};
     auto* texture = getTexture(L);
     uint32_t rawHandle = texture ? texture->getTextureHandle(id) : 0;
     RenderTextureHandle tex = textureManagerHandle(rawHandle);
@@ -366,7 +369,7 @@ static int lua_Render_submit_transition(lua_State* L) {
         ruleTex = resolveTexture(L,ruleTexId, dev);
     }
 
-    dev->submitTransition(VIEW_MAIN, fromTex, toTex, ruleTex,
+    dev->submitTransition(VIEW_TRANSITION, fromTex, toTex, ruleTex,
                                method, progress);
     lua_pushboolean(L, 1);
     return 1;
@@ -729,6 +732,21 @@ static int lua_Render_create_viewport(lua_State* L) {
     return 1;
 }
 
+static int lua_Render_capture_scene(lua_State* L) {
+    auto* dev = getRender(L);
+    const auto snapshot = dev ? dev->captureSceneSnapshot() : SceneSnapshot{};
+    lua_pushinteger(L, static_cast<lua_Integer>(snapshot.viewport.id));
+    lua_pushinteger(L, static_cast<lua_Integer>(snapshot.frameId));
+    return 2;
+}
+
+static int lua_Render_cancel_transition(lua_State* L) {
+    auto* dev = getRender(L);
+    if (dev) dev->cancelTransition();
+    lua_pushboolean(L, dev != nullptr);
+    return 1;
+}
+
 // -- Render.destroy_viewport(handle) ----------------------------------------
 
 static int lua_Render_destroy_viewport(lua_State* L) {
@@ -868,6 +886,27 @@ static int lua_Render_video_stop(lua_State* L) {
     lua_pushboolean(L, 1); return 1;
 }
 
+// The decoder texture is already a renderer texture, not a TextureManager ID.
+// Submit only at the runner's render boundary, after the normal scene layers.
+static int lua_Render_video_draw(lua_State* L) {
+    const VideoHandle handle{static_cast<uint32_t>(luaL_checkinteger(L, 1))};
+    const float x=static_cast<float>(luaL_optnumber(L, 2, 0));
+    const float y=static_cast<float>(luaL_optnumber(L, 3, 0));
+    float width=static_cast<float>(luaL_optnumber(L, 4, 0));
+    float height=static_cast<float>(luaL_optnumber(L, 5, 0));
+    auto* video=getVideo(L);
+    auto* render=getRender(L);
+    if (!video || !render || !handle || !video->isPlaying(handle)) {
+        lua_pushboolean(L, 0); return 1;
+    }
+    const uint32_t texture=video->getTexture(handle);
+    if (!texture) { lua_pushboolean(L, 0); return 1; }
+    if (width<=0) width=static_cast<float>(render->getBackbufferWidth());
+    if (height<=0) height=static_cast<float>(render->getBackbufferHeight());
+    render->blitTexture(VIEW_MAIN,texture,x,y,width,height,255);
+    lua_pushboolean(L, 1); return 1;
+}
+
 static int lua_Render_video_update(lua_State* L) {
     VideoHandle h{ (uint32_t)luaL_checkinteger(L, 1) };
     IVideoPlayer* vp = getVideo(L);
@@ -1002,6 +1041,8 @@ static int lua_Render_text_reset_state(lua_State* L) {
 
 static const luaL_Reg render_functions[] = {
     { "create_viewport",    lua_Render_create_viewport    },
+    { "capture_scene",      lua_Render_capture_scene      },
+    { "cancel_transition",  lua_Render_cancel_transition  },
     { "destroy_viewport",   lua_Render_destroy_viewport   },
     { "draw_viewport",      lua_Render_draw_viewport      },
     { "load_texture",       lua_Render_load_texture       },
@@ -1030,6 +1071,7 @@ static const luaL_Reg render_functions[] = {
     { "cancel_async_loads",  lua_Render_cancel_async_loads  },
     { "video_play",        lua_Render_video_play        },
     { "video_stop",         lua_Render_video_stop         },
+    { "video_draw",         lua_Render_video_draw         },
     { "video_update",       lua_Render_video_update       },
     { "video_get_texture",  lua_Render_video_get_texture  },
     { "video_is_playing",   lua_Render_video_is_playing   },

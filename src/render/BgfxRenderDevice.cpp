@@ -14,12 +14,28 @@
 #include <cstdio>
 #include <cstring>
 #include <algorithm>
+#include <atomic>
+#include <limits>
 
 
 
 namespace Caesura {
 
 namespace {
+
+// Context identity is separate from capture admission and survives shutdown in
+// the instance snapshot. Zero permanently closes this process-wide allocator
+// after UINT64_MAX has been assigned; an earlier context identity is never reused.
+std::atomic<uint64_t> nextContextGeneration{1};
+uint64_t allocateContextGeneration() {
+    auto current = nextContextGeneration.load(std::memory_order_relaxed);
+    while (current != 0) {
+        const auto next = current == std::numeric_limits<uint64_t>::max() ? 0 : current + 1;
+        if (nextContextGeneration.compare_exchange_weak(current, next, std::memory_order_relaxed))
+            return current;
+    }
+    return 0;
+}
 
 RenderTextureHandle toRenderHandle(bgfx::TextureHandle handle) {
     return bgfx::isValid(handle) ? RenderTextureHandle{handle.idx} : RenderTextureHandle{};
@@ -58,6 +74,7 @@ ShaderBuildReport BgfxRenderDevice::shaderBuildReport() const {
 
 
 void BgfxRenderDevice::flushAllRTT() {
+    clearSceneSnapshots();
     if (m_bgfxInitialized && m_deviceCore) m_deviceCore->flushAllRTT();
 }
 
@@ -118,6 +135,8 @@ bool BgfxRenderDevice::init(void* nativeWindowHandle, int width, int height) {
         return false;
     }
     m_bgfxInitialized = true;
+    m_contextGeneration = allocateContextGeneration();
+    const bool screenshotsBound = m_deviceCore->bindScreenshotContext(m_contextGeneration);
     m_shaders->initEmbeddedShaders();
     // t73 (b): never submit a half-broken program. When any core embedded
     // shader failed to build (manager already printed the one-shot ERROR),
@@ -140,12 +159,13 @@ bool BgfxRenderDevice::init(void* nativeWindowHandle, int width, int height) {
     m_draw->init(&m_drawState);
     m_textRenderer = std::make_unique<TextRenderer>();
     if (!m_textRenderer->init(this)) { m_textRenderer.reset(); }
-    if (!m_shaders->coreProgramsBroken() && bgfx::getCaps()->rendererType != bgfx::RendererType::Noop
+    if (screenshotsBound && !m_shaders->coreProgramsBroken() && bgfx::getCaps()->rendererType != bgfx::RendererType::Noop
         && !m_deviceCore->deviceLost()) m_screenshots->open();
     return true;
 }
 
 void BgfxRenderDevice::beginShutdown() {
+    clearSceneSnapshots();
     m_stopping = true;
     m_screenshots->close("renderer shutting down");
     if (m_deviceCore) m_deviceCore->beginShutdown();
@@ -226,43 +246,40 @@ void BgfxRenderDevice::shutdown() {
 // Frame-management pass-throughs
 //   T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T  T
 
+bool BgfxRenderDevice::prepareSceneTargets() {
+    const int w = m_deviceCore->getWidth(), h = m_deviceCore->getHeight();
+    if (w < 1 || h < 1) return false;
+    if (bgfx::isValid(m_sceneRtt) && bgfx::isValid(m_finalSceneRtt)
+        && m_sceneRttW == w && m_sceneRttH == h) return true;
+    destroyPostFxResources();
+    auto makeTarget = [w, h]() -> bgfx::FrameBufferHandle {
+        auto tex = bgfx::createTexture2D(uint16_t(w), uint16_t(h), false, 1,
+            bgfx::TextureFormat::RGBA8, BGFX_TEXTURE_RT | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP);
+        if (!bgfx::isValid(tex)) return BGFX_INVALID_HANDLE;
+        auto fb = bgfx::createFrameBuffer(1, &tex, true);
+        if (!bgfx::isValid(fb)) bgfx::destroy(tex);
+        return fb;
+    };
+    m_sceneRtt = makeTarget();
+    m_finalSceneRtt = makeTarget();
+    m_sceneRttW = w; m_sceneRttH = h;
+    return bgfx::isValid(m_sceneRtt) && bgfx::isValid(m_finalSceneRtt);
+}
+
 void BgfxRenderDevice::beginFrame() {
-    if (canRender()) {
-        m_frameFinalized = false;
-        m_deviceCore->beginFrame();
-        // View state applies to the entire submitted frame in bgfx. Select its
-        // destination here and leave it intact until the owner advances it.
-        bgfx::setViewFrameBuffer(BgfxDeviceCore::VIEW_MAIN, BGFX_INVALID_HANDLE);
-        m_chainRetargeted = false;
-        // Round-102 post-process chain: while active the whole frame's
-        // VIEW_MAIN draws are redirected to the internal scene RTT. This must
-        // be set before any VIEW_MAIN submit this frame, so it lives here at
-        // frame start (not in commit_frame, which runs after the scene draws).
-        if (isPostFxActive()) {
-            const int W = m_deviceCore->getWidth();
-            const int H = m_deviceCore->getHeight();
-            if (!bgfx::isValid(m_sceneRtt) || m_sceneRttW != W || m_sceneRttH != H) {
-                if (bgfx::isValid(m_sceneRtt)) {
-                    bgfx::destroy(m_sceneRtt);
-                    m_sceneRtt = BGFX_INVALID_HANDLE;
-                }
-                bgfx::TextureHandle tex = bgfx::createTexture2D(
-                    static_cast<uint16_t>(W), static_cast<uint16_t>(H), false, 1,
-                    bgfx::TextureFormat::RGBA8,
-                    BGFX_TEXTURE_RT | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP);
-                if (bgfx::isValid(tex)) {
-                    m_sceneRtt = bgfx::createFrameBuffer(1, &tex, true);
-                    m_sceneRttW = W; m_sceneRttH = H;
-                }
-            }
-            if (bgfx::isValid(m_sceneRtt)) {
-                bgfx::setViewFrameBuffer(BgfxDeviceCore::VIEW_MAIN, m_sceneRtt);
-                bgfx::setViewRect(BgfxDeviceCore::VIEW_MAIN, 0, 0,
-                    static_cast<uint16_t>(W), static_cast<uint16_t>(H));
-                m_chainRetargeted = true;
-            }
-        }
-    }
+    if (!canRender()) return;
+    m_frameFinalized = false;
+    m_deviceCore->beginFrame();
+    // Keep the previous postprocessed scene until snapshot views have copied it.
+    // bgfx orders these views before MAIN, irrespective of CPU submission order.
+    m_chainRetargeted = prepareSceneTargets();
+    bgfx::setViewFrameBuffer(BgfxDeviceCore::VIEW_MAIN,
+        m_chainRetargeted ? m_sceneRtt : bgfx::FrameBufferHandle{bgfx::kInvalidHandle});
+    if (m_chainRetargeted)
+        bgfx::setViewRect(BgfxDeviceCore::VIEW_MAIN, 0, 0, uint16_t(m_sceneRttW), uint16_t(m_sceneRttH));
+    // bgfx executes a view clear only when the view has a submission. Empty
+    // scenes must clear too before finalScene can publish a new source frame.
+    bgfx::touch(BgfxDeviceCore::VIEW_MAIN);
 }
 
 
@@ -276,7 +293,15 @@ void BgfxRenderDevice::commit_frame() {
     if (!canRender() || m_frameFinalized) return;
     // The stage list can be cleared after beginFrame selected the scene RTT.
     // Such a frame still needs an identity composite to the backbuffer.
-    if (m_chainRetargeted) runPostFxChain();
+    m_sceneSubmitted = m_chainRetargeted && runPostFxChain();
+    if (!m_sceneSubmitted) m_sceneReady = false;
+    if (m_transitionDraw.pending && m_draw) {
+        m_deviceCore->configurePresentationView(BgfxDeviceCore::VIEW_TRANSITION);
+        m_draw->submitTransition(BgfxDeviceCore::VIEW_TRANSITION, toBgfx(m_transitionDraw.from),
+            toBgfx(m_transitionDraw.to), toBgfx(m_transitionDraw.rule),
+            m_transitionDraw.method, m_transitionDraw.progress);
+        m_transitionDraw.pending = false;
+    }
     m_frameFinalized = true;
 }
 
@@ -291,10 +316,24 @@ void BgfxRenderDevice::advanceFrame() {
     if (!m_stopping) {
         for (const auto& submission : m_screenshots->submit(++m_frameId)) {
             if (!canRender()) break;
+            // Publish debt before the void native call: an immediate callback
+            // must find its slot, and a silently declined request stays counted.
+            if (!m_screenshots->registerReadback(submission, m_contextGeneration)) {
+                m_screenshots->failUnissuedSubmission(submission, "screenshot readback unavailable or capacity exceeded");
+                continue;
+            }
             bgfx::requestScreenShot(BGFX_INVALID_HANDLE, submission.callbackName.c_str());
         }
     }
     m_deviceCore->advanceFrame();
+    if (m_sceneSubmitted) { ++m_sceneFrameId; m_sceneReady = true; }
+    m_sceneSubmitted = false;
+    std::erase_if(m_sceneSnapshots, [this](const SnapshotLease& lease) {
+        if (!lease.releasePending) return false;
+        m_deviceCore->destroyRenderTarget(lease.handle);
+        return true;
+    });
+    m_snapshotCopiesThisFrame = 0;
     m_frameFinalized = false;
 }
 
@@ -325,7 +364,52 @@ void BgfxRenderDevice::touch(uint16_t v) { if (canRender()) m_deviceCore->touch(
 ViewportHandle BgfxRenderDevice::createRenderTarget(int w, int h) { return canRender() ? m_deviceCore->createRenderTarget(w, h) : ViewportHandle{}; }
 
 
-void BgfxRenderDevice::destroyRenderTarget(ViewportHandle h) { if (m_bgfxInitialized && m_deviceCore) m_deviceCore->destroyRenderTarget(h); }
+SceneSnapshot BgfxRenderDevice::captureSceneSnapshot() {
+    if (!canRender() || !m_sceneReady || !m_shaders || !bgfx::isValid(m_finalSceneRtt)
+        || bgfx::getCaps()->rendererType == bgfx::RendererType::Noop
+        || !bgfx::isValid(m_shaders->getTransitionProgram())
+        || std::count_if(m_sceneSnapshots.begin(), m_sceneSnapshots.end(),
+            [](const SnapshotLease& lease) { return !lease.releasePending; }) >= 2
+        || m_snapshotCopiesThisFrame >= 2) return {};
+    auto handle = m_deviceCore->createRenderTarget(m_sceneRttW, m_sceneRttH);
+    if (!handle) return {};
+    const auto view = uint16_t(BgfxDeviceCore::VIEW_SNAPSHOT_A + m_snapshotCopiesThisFrame);
+    bgfx::setViewFrameBuffer(view, m_deviceCore->getRttFb(handle));
+    bgfx::setViewRect(view, 0, 0, uint16_t(m_sceneRttW), uint16_t(m_sceneRttH));
+    bgfx::setViewClear(view, BGFX_CLEAR_NONE);
+    // Store a texture with the same UV convention as uploaded images. On GL
+    // the unflipped RTT copy cancels destination storage's bottom-left origin.
+    if (!submitFullscreenQuad(view, m_shaders->getFallbackProgram(),
+            bgfx::getTexture(m_finalSceneRtt), m_shaders->getDefaultSampler(), false)) {
+        m_deviceCore->destroyRenderTarget(handle);
+        return {};
+    }
+    ++m_snapshotCopiesThisFrame;
+    m_sceneSnapshots.push_back({handle, false});
+    return {handle, m_sceneFrameId};
+}
+
+void BgfxRenderDevice::cancelTransition() { m_transitionDraw = {}; }
+
+void BgfxRenderDevice::clearSceneSnapshots() {
+    cancelTransition();
+    if (m_bgfxInitialized && m_deviceCore)
+        for (const auto& lease : m_sceneSnapshots) m_deviceCore->destroyRenderTarget(lease.handle);
+    m_sceneSnapshots.clear();
+    m_snapshotCopiesThisFrame = 0;
+    m_sceneReady = m_sceneSubmitted = false;
+}
+
+void BgfxRenderDevice::destroyRenderTarget(ViewportHandle h) {
+    for (auto& lease : m_sceneSnapshots) {
+        if (lease.handle.id == h.id) {
+            // The final transition submission still borrows it until advanceFrame.
+            lease.releasePending = true;
+            return;
+        }
+    }
+    if (m_bgfxInitialized && m_deviceCore) m_deviceCore->destroyRenderTarget(h);
+}
 
 
 void BgfxRenderDevice::blitViewport(ViewportHandle handle, uint16_t targetView,
@@ -338,7 +422,11 @@ void BgfxRenderDevice::blitViewport(ViewportHandle handle, uint16_t targetView,
         x, y, w, h, 255, caps && caps->originBottomLeft);
 }
 
-RenderTextureHandle BgfxRenderDevice::getViewportTexture(ViewportHandle h) { return canRender() ? toRenderHandle(m_deviceCore->getViewportTexture(h)) : RenderTextureHandle{}; }
+RenderTextureHandle BgfxRenderDevice::getViewportTexture(ViewportHandle h) {
+    for (const auto& lease : m_sceneSnapshots)
+        if (lease.handle.id == h.id && lease.releasePending) return {};
+    return canRender() ? toRenderHandle(m_deviceCore->getViewportTexture(h)) : RenderTextureHandle{};
+}
 
 RenderProgramHandle BgfxRenderDevice::getFallbackProgram() const { return m_shaders ? toRenderHandle(m_shaders->getFallbackProgram()) : RenderProgramHandle{}; }
 RenderProgramHandle BgfxRenderDevice::getModulatedTextureProgram() const { return m_shaders ? toRenderHandle(m_shaders->getModulatedTextureProgram()) : RenderProgramHandle{}; }
@@ -464,6 +552,8 @@ bool BgfxRenderDevice::recoverDevice(void* nativeWindowHandle, int width, int he
         return false;
     }
     m_bgfxInitialized = true;
+    m_contextGeneration = allocateContextGeneration();
+    const bool screenshotsBound = m_deviceCore->bindScreenshotContext(m_contextGeneration);
 
     if (hadPresentSize)
         m_deviceCore->setPresentSize(static_cast<uint16_t>(presentWidth), static_cast<uint16_t>(presentHeight));
@@ -504,16 +594,69 @@ bool BgfxRenderDevice::recoverDevice(void* nativeWindowHandle, int width, int he
         m_recoveryFailed = true;
         return false;
     }
-    m_screenshots->open();
+    if (screenshotsBound) m_screenshots->open();
     return true;
 }
 
 void BgfxRenderDevice::flagDeviceLost() {
+    clearSceneSnapshots();
     if (m_deviceCore) m_deviceCore->flagDeviceLost();
     else m_screenshots->close("device lost");
 }
 
 bool BgfxRenderDevice::consumeDeviceLost() { return m_deviceCore && m_deviceCore->consumeDeviceLost(); }
+
+RenderSnapshot BgfxRenderDevice::getSnapshot() const {
+    RenderSnapshot snapshot;
+    snapshot.supported = true;
+    snapshot.backendName = getBackendName();
+    snapshot.contextInitialized = m_bgfxInitialized && m_deviceCore;
+    snapshot.renderingAvailable = getRuntimeInfo().shaderReady;
+    snapshot.contextGeneration = m_contextGeneration;
+    snapshot.captureSubmissionFrame = m_frameId;
+    if (snapshot.contextInitialized) {
+        const auto* caps = bgfx::getCaps();
+        if (caps && caps->rendererType == bgfx::RendererType::Noop)
+            snapshot.backendKind = RenderBackendKind::Noop;
+        else if (caps && caps->rendererType > bgfx::RendererType::Noop &&
+                 caps->rendererType < bgfx::RendererType::Count)
+            snapshot.backendKind = RenderBackendKind::GraphicsApi;
+
+        // getStats owns a reused vendor buffer. Copy only these allocator
+        // values immediately, before another bgfx call or queue observation.
+        // Counts include deferred recycling; they do not establish GPU completion.
+        if (m_contextGeneration != 0) {
+            if (const auto* stats = bgfx::getStats()) {
+                snapshot.resources.dynamicIndexBuffers = stats->numDynamicIndexBuffers;
+                snapshot.resources.dynamicVertexBuffers = stats->numDynamicVertexBuffers;
+                snapshot.resources.frameBuffers = stats->numFrameBuffers;
+                snapshot.resources.indexBuffers = stats->numIndexBuffers;
+                snapshot.resources.occlusionQueries = stats->numOcclusionQueries;
+                snapshot.resources.programs = stats->numPrograms;
+                snapshot.resources.shaders = stats->numShaders;
+                snapshot.resources.textures = stats->numTextures;
+                snapshot.resources.uniforms = stats->numUniforms;
+                snapshot.resources.vertexBuffers = stats->numVertexBuffers;
+                snapshot.resources.vertexLayouts = stats->numVertexLayouts;
+                snapshot.resourceCountsAvailable = true;
+            }
+        }
+    }
+    if (m_screenshots) {
+        snapshot.screenshots = m_screenshots->getSnapshot();
+        const auto readbacks = m_screenshots->getReadbackSnapshot();
+        // Queue and ledger reads are sequential observations. Preserve raw debt
+        // even if binding failed; unavailable support must never imply idle.
+        snapshot.screenshotReadbacksOutstanding = readbacks.outstanding;
+        const bool contextMatches = m_contextGeneration != 0
+            && readbacks.contextGeneration == m_contextGeneration
+            && readbacks.contextActive == snapshot.contextInitialized;
+        snapshot.screenshotReadbackTrackingSupported = readbacks.supported && contextMatches;
+        snapshot.screenshotOwnershipComplete = readbacks.ownershipComplete
+            && snapshot.screenshotReadbackTrackingSupported;
+    }
+    return snapshot;
+}
 
 RenderRuntimeInfo BgfxRenderDevice::getRuntimeInfo() const {
     RenderRuntimeInfo info;
@@ -567,7 +710,10 @@ void BgfxRenderDevice::submitBlend(uint16_t v, RenderTextureHandle base, RenderT
 // Spec [10.2.25]: @Beta 闂?Pre-bake rule images into a LUT texture atlas for batch
 // transition rendering. Currently each transition passes its rule texture
 // individually via texture slot 2. A pre-baked atlas would reduce draw calls.
-void BgfxRenderDevice::submitTransition(uint16_t v, RenderTextureHandle from, RenderTextureHandle to, RenderTextureHandle rule, int method, float progress) { if (canRender() && m_draw) m_draw->submitTransition(v,toBgfx(from),toBgfx(to),toBgfx(rule),method,progress); }
+void BgfxRenderDevice::submitTransition(uint16_t, RenderTextureHandle from, RenderTextureHandle to, RenderTextureHandle rule, int method, float progress) {
+    if (canRender() && from.isValid() && to.isValid())
+        m_transitionDraw = {from, to, rule, method, progress, true};
+}
 
 
 // ===========================================================================
@@ -616,6 +762,10 @@ bool BgfxRenderDevice::isPostFxActive() const {
 BgfxRenderDevice::PostFxHandle BgfxRenderDevice::createPostFx(PostFxKind kind, const PostFxParams& params) {
     if (!isPostFxSupported(kind)) return 0;
     if (kind == PostFxKind::Lut3D && (!params.lutTexture.isValid() || params.lutSize < 2)) return 0;
+    unsigned passes = kind == PostFxKind::Bloom ? 4 : 1;
+    for (const auto& existing : m_postFxStages)
+        if (existing.enabled) passes += existing.kind == PostFxKind::Bloom ? 4 : 1;
+    if (passes > BgfxDeviceCore::VIEW_POSTFX_LAST - BgfxDeviceCore::VIEW_POSTFX) return 0;
     PostFxStage stage;
     stage.kind = kind;
     stage.params = params;
@@ -674,10 +824,11 @@ BgfxRenderDevice::PostFxRt BgfxRenderDevice::getScratchRt(int slot, int w, int h
     return rt;
 }
 
-void BgfxRenderDevice::submitFullscreenQuad(uint16_t viewId, bgfx::ProgramHandle program,
-                                            bgfx::TextureHandle tex, bgfx::UniformHandle sampler) {
-    if (!bgfx::isValid(program)) return;
-    if (!bgfx::isValid(tex)) return;
+bool BgfxRenderDevice::submitFullscreenQuad(uint16_t viewId, bgfx::ProgramHandle program,
+                                            bgfx::TextureHandle tex, bgfx::UniformHandle sampler, bool renderTargetOrigin,
+                                            float offsetX, float offsetY) {
+    if (!bgfx::isValid(program)) return false;
+    if (!bgfx::isValid(tex)) return false;
     struct FsVertex { float x, y, u, v; };
     bgfx::TransientVertexBuffer tvb;
     bgfx::VertexLayout layout;
@@ -685,37 +836,36 @@ void BgfxRenderDevice::submitFullscreenQuad(uint16_t viewId, bgfx::ProgramHandle
         .add(bgfx::Attrib::Position, 2, bgfx::AttribType::Float)
         .add(bgfx::Attrib::TexCoord0, 2, bgfx::AttribType::Float)
         .end();
-    if (bgfx::getAvailTransientVertexBuffer(4, layout) < 4) return;
+    if (bgfx::getAvailTransientVertexBuffer(4, layout) < 4) return false;
     bgfx::allocTransientVertexBuffer(&tvb, 4, layout);
     auto* v = reinterpret_cast<FsVertex*>(tvb.data);
     // This helper samples an engine render target. Its texture origin differs
     // from CPU-uploaded images on bottom-left backends such as OpenGL.
-    const bool bottomLeft = bgfx::getCaps()->originBottomLeft;
+    const bool bottomLeft = renderTargetOrigin && bgfx::getCaps()->originBottomLeft;
     const float topV = bottomLeft ? 1.0f : 0.0f, bottomV = 1.0f - topV;
-    v[0] = { -1.0f,  1.0f,  0.0f, topV };
-    v[1] = {  1.0f,  1.0f,  1.0f, topV };
-    v[2] = {  1.0f, -1.0f,  1.0f, bottomV };
-    v[3] = { -1.0f, -1.0f,  0.0f, bottomV };
+    v[0] = { -1.0f + offsetX,  1.0f + offsetY,  0.0f, topV };
+    v[1] = {  1.0f + offsetX,  1.0f + offsetY,  1.0f, topV };
+    v[2] = {  1.0f + offsetX, -1.0f + offsetY,  1.0f, bottomV };
+    v[3] = { -1.0f + offsetX, -1.0f + offsetY,  0.0f, bottomV };
     uint16_t indices[6] = { 0, 1, 2, 0, 2, 3 };
     bgfx::TransientIndexBuffer tib;
-    if (bgfx::getAvailTransientIndexBuffer(6) < 6) return;
+    if (bgfx::getAvailTransientIndexBuffer(6) < 6) return false;
     bgfx::allocTransientIndexBuffer(&tib, 6);
     bx::memCopy(tib.data, indices, sizeof(indices));
-    uint64_t state = BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A
-                   | BGFX_STATE_BLEND_FUNC(BGFX_STATE_BLEND_SRC_ALPHA,
-                                           BGFX_STATE_BLEND_INV_SRC_ALPHA);
+    uint64_t state = BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A;
     bgfx::setVertexBuffer(0, &tvb);
     bgfx::setIndexBuffer(&tib);
     bgfx::setState(state);
     if (bgfx::isValid(tex) && bgfx::isValid(sampler))
         bgfx::setTexture(0, sampler, tex);
     bgfx::submit(viewId, program);
+    return true;
 }
 
 // Helper: submit a full-screen quad without binding a source texture
 // (used for the composite view when texture slots are set explicitly).
-static void submitFullscreenQuadNoTex(uint16_t viewId, bgfx::ProgramHandle program) {
-    if (!bgfx::isValid(program)) return;
+static bool submitFullscreenQuadNoTex(uint16_t viewId, bgfx::ProgramHandle program) {
+    if (!bgfx::isValid(program)) return false;
     struct FsVertex { float x, y, u, v; };
     bgfx::TransientVertexBuffer tvb;
     bgfx::VertexLayout layout;
@@ -723,7 +873,7 @@ static void submitFullscreenQuadNoTex(uint16_t viewId, bgfx::ProgramHandle progr
         .add(bgfx::Attrib::Position, 2, bgfx::AttribType::Float)
         .add(bgfx::Attrib::TexCoord0, 2, bgfx::AttribType::Float)
         .end();
-    if (bgfx::getAvailTransientVertexBuffer(4, layout) < 4) return;
+    if (bgfx::getAvailTransientVertexBuffer(4, layout) < 4) return false;
     bgfx::allocTransientVertexBuffer(&tvb, 4, layout);
     auto* v = reinterpret_cast<FsVertex*>(tvb.data);
     const bool bottomLeft = bgfx::getCaps()->originBottomLeft;
@@ -734,205 +884,106 @@ static void submitFullscreenQuadNoTex(uint16_t viewId, bgfx::ProgramHandle progr
     v[3] = { -1.0f, -1.0f,  0.0f, bottomV };
     uint16_t indices[6] = { 0, 1, 2, 0, 2, 3 };
     bgfx::TransientIndexBuffer tib;
-    if (bgfx::getAvailTransientIndexBuffer(6) < 6) return;
+    if (bgfx::getAvailTransientIndexBuffer(6) < 6) return false;
     bgfx::allocTransientIndexBuffer(&tib, 6);
     bx::memCopy(tib.data, indices, sizeof(indices));
-    uint64_t state = BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A
-                   | BGFX_STATE_BLEND_FUNC(BGFX_STATE_BLEND_SRC_ALPHA,
-                                           BGFX_STATE_BLEND_INV_SRC_ALPHA);
+    uint64_t state = BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A;
     bgfx::setVertexBuffer(0, &tvb);
     bgfx::setIndexBuffer(&tib);
     bgfx::setState(state);
     bgfx::submit(viewId, program);
+    return true;
 }
 
-void BgfxRenderDevice::runPostFxChain() {
-    if (!m_bgfxInitialized || !m_deviceCore || !m_chainRetargeted) return;
-    if (!m_shaders || !bgfx::isValid(m_shaders->getPostFxParams())) return;
-    {
-        static bool s_chainRan = false;
-        if (!s_chainRan) {
-            printf("[RENDER][INFO] PostFx chain executing (stages=%zu)\n",
-                   m_postFxStages.size());
-            s_chainRan = true;
+bool BgfxRenderDevice::runPostFxChain() {
+    if (!canRender() || !m_chainRetargeted || !m_shaders
+        || !bgfx::isValid(m_sceneRtt) || !bgfx::isValid(m_finalSceneRtt)) return false;
+    const int w = m_sceneRttW, h = m_sceneRttH;
+    auto result = bgfx::getTexture(m_sceneRtt);
+    const auto sampler = m_shaders->getDefaultSampler();
+    const auto uniform = m_shaders->getPostFxParams();
+    uint16_t view = BgfxDeviceCore::VIEW_POSTFX;
+    int outputSlot = 0;
+    if (isPostFxActive()) {
+        static bool logged = false;
+        if (!logged) {
+            printf("[RENDER][INFO] PostFx chain executing (stages=%zu)\n", m_postFxStages.size());
+            logged = true;
         }
     }
-
-    const int W = m_deviceCore->getWidth();
-    const int H = m_deviceCore->getHeight();
-    if (W < 1 || H < 1) return;
-
-    static const uint16_t kPostFxView = BgfxDeviceCore::VIEW_POSTFX;
-    bgfx::setViewRect(kPostFxView, 0, 0, static_cast<uint16_t>(W), static_cast<uint16_t>(H));
-    bgfx::setViewClear(kPostFxView, BGFX_CLEAR_NONE, 0x00000000, 1.0f, 0);
-
-    // Only composite the scene actually selected at beginFrame. Recreating an
-    // empty target here would discard the scene that has already been drawn.
-    if (!bgfx::isValid(m_sceneRtt)) return;
-    const bgfx::TextureHandle sceneTex = bgfx::getTexture(m_sceneRtt, 0);
-    if (!bgfx::isValid(sceneTex)) return;
-
-    bgfx::UniformHandle uParams = m_shaders->getPostFxParams();
-    bgfx::UniformHandle uS0     = m_shaders->getDefaultSampler();
-    bgfx::UniformHandle uS1     = m_shaders->getSampler1();
-
-    // Scene is sampled; if the chain has only one stage we composite straight
-    // to the backbuffer, otherwise we ping-pong through scratch RTTs.
-    bgfx::TextureHandle resultTex = sceneTex;
-    const size_t stageCount = m_postFxStages.size();
-    const bool single = stageCount == 1;
-
-    const auto executable = [this](const PostFxStage& stage) {
-        return stage.enabled && isPostFxSupported(stage.kind)
-            && (stage.kind != PostFxKind::Lut3D || (bgfx::isValid(stage.lutTex) && stage.lutSize >= 2));
+    auto target = [&](bgfx::FrameBufferHandle fb, int tw, int th) {
+        bgfx::setViewFrameBuffer(view, fb);
+        bgfx::setViewRect(view, 0, 0, uint16_t(tw), uint16_t(th));
+        bgfx::setViewClear(view, BGFX_CLEAR_NONE);
     };
-    // A disabled or invalid tail must not divert the preceding valid result.
-    size_t lastEnabledIdx = 0;
-    bool hasEnabled = false;
-    for (size_t i = 0; i < stageCount; ++i) {
-        if (executable(m_postFxStages[i])) { lastEnabledIdx = i; hasEnabled = true; }
-    }
-    if (!hasEnabled) {
-        bgfx::setViewFrameBuffer(kPostFxView, BGFX_INVALID_HANDLE);
-        bgfx::setViewRect(kPostFxView, 0, 0, static_cast<uint16_t>(m_deviceCore->presentWidth()),
-            static_cast<uint16_t>(m_deviceCore->presentHeight()));
-        submitFullscreenQuad(kPostFxView, m_shaders->getFallbackProgram(), sceneTex, uS0);
-        return;
-    }
-
-    for (size_t i = 0; i < stageCount; ++i) {
-        const PostFxStage& st = m_postFxStages[i];
-        if (!executable(st)) continue;
-        const bool last = (i == lastEnabledIdx);
-        if (last) bgfx::setViewRect(kPostFxView, 0, 0, static_cast<uint16_t>(m_deviceCore->presentWidth()),
-            static_cast<uint16_t>(m_deviceCore->presentHeight()));
-        PostFxKind kind = st.kind;
-        bgfx::ProgramHandle prog = m_shaders->getPostFxProgram(static_cast<int>(kind));
-        if (!bgfx::isValid(prog)) prog = m_shaders->getFallbackProgram();
-        if (!bgfx::isValid(prog)) continue;
-
-        auto setParams = [&](float s, float r, float a, float lm,
-                             float tintR, float tintG, float tintB,
-                             float texelW, float texelH) {
-            float params[16] = {
-                s, r, a, lm,
-                tintR, tintG, tintB, 1.0f,
-                texelW, texelH, 0.0f, 0.0f,
-                0.0f, 0.0f, 0.0f, 0.0f
-            };
-            bgfx::setUniform(uParams, params, 4);
-        };
-
-        if (kind == PostFxKind::Lut3D) {
-            // 3D LUT (t214): scene t0 + 2D-packed LUT t1, single pass.
-            // Borrowed texture: guard each frame (palette.unload can destroy
-            // it out from under the stage -- then the stage is skipped).
-            if (!bgfx::isValid(st.lutTex) || st.lutSize < 2) continue;
-            {
-                static bool s_lut3dRan = false; // one-shot diagnostics (t214)
-                if (!s_lut3dRan) {
-                    printf("[RENDER][INFO] PostFx Lut3D stage executing (N=%u)\n",
-                           st.lutSize);
-                    s_lut3dRan = true;
-                }
-            }
-            const int slot = static_cast<int>(i % 2);
-            PostFxRt out{};
-            if (last || single) {
-                bgfx::setViewFrameBuffer(kPostFxView, BGFX_INVALID_HANDLE);
-            } else {
-                out = getScratchRt(slot, W, H);
-                if (!bgfx::isValid(out.fb)) continue;
-                bgfx::setViewFrameBuffer(kPostFxView, out.fb);
-            }
-            float params[16] = {
-                st.params.strength, 0.0f, 0.0f, 0.0f,
-                1.0f, 1.0f, 1.0f, 1.0f,
-                1.0f / float(W), 1.0f / float(H), float(st.lutSize), 0.0f,
-                0.0f, 0.0f, 0.0f, 0.0f
-            };
-            bgfx::setUniform(uParams, params, 4);
-            bgfx::setTexture(0, uS0, resultTex);
-            bgfx::setTexture(1, m_shaders->getLutSampler(), st.lutTex);
-            submitFullscreenQuadNoTex(kPostFxView, prog);
-            resultTex = (last || single)
-                ? bgfx::TextureHandle{}
-                : bgfx::getTexture(out.fb, 0);
-        } else if (kind == PostFxKind::Bloom) {
-            // Internal multi-pass: bright-extract (½ res) -> blur ¼ -> blur ¼ -> add.
-            static const int slot = 4; // bloom scratch slots (0..3 used by single-pass chain)
-            const int hw = std::max(W / 2, 1), hh = std::max(H / 2, 1);
-            const int qw = std::max(W / 4, 1), qh = std::max(H / 4, 1);
-            PostFxRt e0 = getScratchRt(slot,     hw, hh);
-            PostFxRt e1 = getScratchRt(slot + 1, qw, qh);
-            PostFxRt e2 = getScratchRt(slot + 2, qw, qh);
-            if (!bgfx::isValid(e0.fb) || !bgfx::isValid(e1.fb) || !bgfx::isValid(e2.fb)) {
-                continue; // cannot run bloom; skip stage (graceful)
-            }
-            // Pass 1: bright-pass extract + downsample -> e0 (bloom FS, bloom slot unbound).
-            bgfx::setViewFrameBuffer(kPostFxView, e0.fb);
-            setParams(st.params.strength, st.params.radius, st.params.amount, st.params.lutMix,
-                      st.params.r, st.params.g, st.params.b,
-                      1.0f / float(hw), 1.0f / float(hh));
-            submitFullscreenQuad(kPostFxView, prog, resultTex, uS0);
-            // Pass 2-3: soft blur e0 -> e1 -> e2 (uses SoftBlur FS at ¼ res).
-            bgfx::ProgramHandle blurProg = m_shaders->getPostFxProgram((int)PostFxKind::SoftBlur);
-            if (!bgfx::isValid(blurProg)) blurProg = m_shaders->getFallbackProgram();
-            {
-                bgfx::setViewFrameBuffer(kPostFxView, e1.fb);
-                setParams(1.0f, st.params.radius, st.params.amount, 0.0f,
-                          st.params.r, st.params.g, st.params.b,
-                          1.0f / float(qw), 1.0f / float(qh));
-                submitFullscreenQuad(kPostFxView, blurProg, bgfx::getTexture(e0.fb, 0), uS0);
-            }
-            {
-                bgfx::setViewFrameBuffer(kPostFxView, e2.fb);
-                setParams(1.0f, st.params.radius, st.params.amount, 0.0f,
-                          st.params.r, st.params.g, st.params.b,
-                          1.0f / float(qw), 1.0f / float(qh));
-                submitFullscreenQuad(kPostFxView, blurProg, bgfx::getTexture(e1.fb, 0), uS0);
-            }
-            // Pass 4: composite scene + blurred bloom (additive) to backbuffer.
-            bgfx::setViewFrameBuffer(kPostFxView, BGFX_INVALID_HANDLE);
-            setParams(st.params.strength, st.params.radius, st.params.amount, st.params.lutMix,
-                      st.params.r, st.params.g, st.params.b,
-                      1.0f / float(W), 1.0f / float(H));
-            // bloom FS: t0 = scene, t1 = bloom texture (or scene if absent).
-            bgfx::TextureHandle bloomTex = bgfx::getTexture(e2.fb, 0);
-            bgfx::setTexture(0, uS0, resultTex);
-            bgfx::setTexture(1, uS1, bgfx::isValid(bloomTex) ? bloomTex : resultTex);
-            submitFullscreenQuadNoTex(kPostFxView, prog);
-            resultTex = {}; // backbuffer output; nothing more to read
-            // Any subsequent stage has nowhere to read from a real chain;
-            // bloom is typically last. Keep going (next reads invalid -> guard).
+    auto params = [&](const PostFxStage& st, float strength, int tw, int th) {
+        const float values[16] = {strength, st.params.radius, st.params.amount, st.params.lutMix,
+            st.params.r, st.params.g, st.params.b, 1,
+            1.0f / float(tw), 1.0f / float(th), float(st.lutSize), 0, 0, 0, 0, 0};
+        bgfx::setUniform(uniform, values, 4);
+    };
+    for (const auto& st : m_postFxStages) {
+        if (!st.enabled || !isPostFxSupported(st.kind)
+            || (st.kind == PostFxKind::Lut3D && (!bgfx::isValid(st.lutTex) || st.lutSize < 2))) continue;
+        if (!bgfx::isValid(uniform)) return false;
+        const unsigned passes = st.kind == PostFxKind::Bloom ? 4 : 1;
+        // One final identity pass is always reserved. Every pass gets its own
+        // view: framebuffer/rect are view state, not per-submit state in bgfx.
+        if (view + passes > BgfxDeviceCore::VIEW_POSTFX_LAST) return false;
+        auto prog = m_shaders->getPostFxProgram(static_cast<int>(st.kind));
+        if (!bgfx::isValid(prog)) return false;
+        auto out = getScratchRt(outputSlot, w, h);
+        if (!bgfx::isValid(out.fb)) return false;
+        if (st.kind == PostFxKind::Bloom) {
+            const int hw = std::max(w / 2, 1), hh = std::max(h / 2, 1);
+            const int qw = std::max(w / 4, 1), qh = std::max(h / 4, 1);
+            auto e0 = getScratchRt(4, hw, hh);
+            auto e1 = getScratchRt(5, qw, qh);
+            auto e2 = getScratchRt(6, qw, qh);
+            auto blur = m_shaders->getPostFxProgram(static_cast<int>(PostFxKind::SoftBlur));
+            if (!bgfx::isValid(e0.fb) || !bgfx::isValid(e1.fb) || !bgfx::isValid(e2.fb)
+                || !bgfx::isValid(blur)) return false;
+            target(e0.fb, hw, hh); params(st, st.params.strength, hw, hh);
+            bgfx::setTexture(1, m_shaders->getSampler1(), result);
+            if (!submitFullscreenQuad(view++, prog, result, sampler)) return false;
+            target(e1.fb, qw, qh); params(st, 1, qw, qh);
+            if (!submitFullscreenQuad(view++, blur, bgfx::getTexture(e0.fb), sampler)) return false;
+            target(e2.fb, qw, qh); params(st, 1, qw, qh);
+            if (!submitFullscreenQuad(view++, blur, bgfx::getTexture(e1.fb), sampler)) return false;
+            target(out.fb, w, h); params(st, st.params.strength, w, h);
+            bgfx::setTexture(0, sampler, result);
+            bgfx::setTexture(1, m_shaders->getSampler1(), bgfx::getTexture(e2.fb));
+            if (!submitFullscreenQuadNoTex(view++, prog)) return false;
         } else {
-            // Single-stage full-screen pass.
-            if (last || single) {
-                bgfx::setViewFrameBuffer(kPostFxView, BGFX_INVALID_HANDLE);
-                setParams(st.params.strength, st.params.radius, st.params.amount, st.params.lutMix,
-                          st.params.r, st.params.g, st.params.b,
-                          1.0f / float(W), 1.0f / float(H));
-                submitFullscreenQuad(kPostFxView, prog, resultTex, uS0);
-                resultTex = {}; // wrote to backbuffer
-            } else {
-                // Intermediate stage: ping-pong between scratch slots 0 and 1
-                // so the stage never reads the same RTT it writes (avoids a
-                // framebuffer feedback loop). The next stage consumes resultTex.
-                const int slot = static_cast<int>(i % 2);
-                PostFxRt out = getScratchRt(slot, W, H);
-                if (!bgfx::isValid(out.fb)) continue;
-                bgfx::setViewFrameBuffer(kPostFxView, out.fb);
-                setParams(st.params.strength, st.params.radius, st.params.amount, st.params.lutMix,
-                          st.params.r, st.params.g, st.params.b,
-                          1.0f / float(W), 1.0f / float(H));
-                submitFullscreenQuad(kPostFxView, prog, resultTex, uS0);
-                resultTex = bgfx::getTexture(out.fb, 0);
-            }
+            target(out.fb, w, h); params(st, st.params.strength, w, h);
+            if (st.kind == PostFxKind::Lut3D) {
+                static bool loggedLut = false;
+                if (!loggedLut) {
+                    printf("[RENDER][INFO] PostFx Lut3D stage executing (N=%u)\n", st.lutSize);
+                    loggedLut = true;
+                }
+                bgfx::setTexture(0, sampler, result);
+                bgfx::setTexture(1, m_shaders->getLutSampler(), st.lutTex);
+                if (!submitFullscreenQuadNoTex(view++, prog)) return false;
+            } else if (!submitFullscreenQuad(view++, prog, result, sampler)) return false;
         }
+        result = bgfx::getTexture(out.fb);
+        outputSlot = 1 - outputSlot;
     }
+    target(m_finalSceneRtt, w, h);
+    if (!submitFullscreenQuad(view, m_shaders->getFallbackProgram(), result, sampler)) return false;
+    m_deviceCore->clearPresentationSurface();
+    m_deviceCore->configurePresentationView(BgfxDeviceCore::VIEW_PRESENT);
+    float offsetX = 0, offsetY = 0;
+    m_deviceCore->presentationOffsetNdc(offsetX, offsetY);
+    return submitFullscreenQuad(BgfxDeviceCore::VIEW_PRESENT, m_shaders->getFallbackProgram(),
+        bgfx::getTexture(m_finalSceneRtt), sampler, true, offsetX, offsetY);
 }
 
 void BgfxRenderDevice::destroyPostFxResources() {
+    clearSceneSnapshots();
+    if (bgfx::isValid(m_finalSceneRtt)) bgfx::destroy(m_finalSceneRtt);
+    m_finalSceneRtt = BGFX_INVALID_HANDLE;
     for (auto& rt : m_postFxRtPool) {
         if (bgfx::isValid(rt.fb)) bgfx::destroy(rt.fb);
     }

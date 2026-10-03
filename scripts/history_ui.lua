@@ -24,7 +24,7 @@ function HistoryUI._hideAll(ctx)
     local names = { "_history_bg", "_history_title", "_history_sep",
                     "_history_footer" }
     for _, n in ipairs(names) do
-        local l = layers.get(ctx, n)
+        local l = layers.get_layer(n)
         if l then l.visible = false end
     end
     for i = 1, (ctx.backlog and #ctx.backlog or 0) do

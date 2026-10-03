@@ -14,9 +14,11 @@
 #include "render/NullRenderDevice.h"
 #include "platform/NullPlatformBackend.h"
 #include "steam/NullSteamBackend.h"
+#include "live2d/NullAnimationBackend.h"
 
 #include <cstring>
 #include <string>
+#include <vector>
 
 extern "C" {
 #include <lua.h>
@@ -429,4 +431,145 @@ TEST_CASE("Bindings: Steam module registered without backend (Null fallback)") {
     REQUIRE(lua_pcall(lua.state(), 0, 1, 0) == LUA_OK);
     CHECK(lua_tointeger(lua.state(), -1) == 0);
     lua_pop(lua.state(), 2);
+}
+
+namespace {
+// Real Lua/C++ binding and Registry path; model storage alone is a fake.
+class BindingAnimation final : public NullAnimationBackend {
+public:
+    bool available = true, failLoad = false, mouthSupported = true;
+    bool automatic = false;
+    int next = 41, loads = 0;
+    float mouth = 0, x = 0, y = 0, scale = 1;
+    std::map<int, bool> models;
+    std::vector<std::string> calls;
+    std::string path, modelName;
+    bool isCubismAvailable() const override { return available; }
+    int loadModel(const std::string& p, const std::string& name) override {
+        ++loads;
+        if (failLoad) return -1;
+        path = p; modelName = name; models[++next] = true;
+        return next;
+    }
+    bool isLoaded(int handle) const override { return models.count(handle) != 0; }
+    std::size_t loadedModelCount() const override { return models.size(); }
+    void clearModels() override { models.clear(); }
+    void unloadModel(int handle) override { calls.push_back("unload"); models.erase(handle); }
+    void showModel(int, float a, float b, float c) override { calls.push_back("show"); x=a; y=b; scale=c; }
+    void hideModel(int) override { calls.push_back("hide"); }
+    bool setVoiceLipSync(int, bool enabled) override {
+        if (!mouthSupported) return false;
+        calls.push_back(enabled ? "voice-on" : "voice-off");
+        automatic = enabled; return true;
+    }
+    void setParameter(int, const std::string& parameter, float value) override {
+        calls.push_back(parameter); mouth = value;
+    }
+};
+
+class ScopedAnimationRegistration {
+public:
+    explicit ScopedAnimationRegistration(IAnimationBackend* animation)
+        : previous(BackendRegistry::instance().getAnimationBackend()) {
+        BackendRegistry::instance().setAnimationBackend(animation);
+    }
+    ~ScopedAnimationRegistration() { BackendRegistry::instance().setAnimationBackend(previous); }
+private:
+    IAnimationBackend* previous;
+};
+
+void checkAnimationScript(LuaManager& lua, const char* source) {
+    const int result = luaL_dostring(lua.state(), source);
+    INFO("Lua: " << (result == LUA_OK ? "OK" : lua_tostring(lua.state(), -1)));
+    REQUIRE(result == LUA_OK);
+}
+}
+
+TEST_CASE("Bindings U26: Live2D registration and Registry lifecycle calls") {
+    BindingAnimation animation;
+    ScopedAnimationRegistration registration(&animation);
+    LuaManager lua;
+    REQUIRE(lua.init());
+    checkAnimationScript(lua, R"lua(
+        assert(type(Live2D) == 'table')
+        for _, name in ipairs({'load','show','hide','unload','set_mouth','set_voice_lipsync'}) do
+            assert(type(Live2D[name]) == 'function', name)
+        end
+        local handle = assert(Live2D.load('assets/live2d/Haru.model3.json', 'haru'))
+        assert(handle == 42)
+        assert(Live2D.show(handle, 12, 34, 1.5))
+        assert(Live2D.set_voice_lipsync(handle, true))
+        assert(Live2D.set_mouth(handle, 0.75))
+        assert(Live2D.hide(handle))
+        assert(Live2D.unload(handle))
+        local ok, reason = Live2D.show(handle)
+        assert(ok == false and reason:find('not loaded', 1, true))
+    )lua");
+    CHECK(animation.loads == 1);
+    CHECK(animation.path == "assets/live2d/Haru.model3.json");
+    CHECK(animation.modelName == "haru");
+    CHECK(animation.x == 12);
+    CHECK(animation.y == 34);
+    CHECK(animation.scale == doctest::Approx(1.5f));
+    CHECK(animation.mouth == doctest::Approx(0.75f));
+    CHECK_FALSE(animation.automatic);
+    CHECK(animation.models.empty());
+    CHECK(animation.calls == std::vector<std::string>{"show", "voice-on", "voice-off",
+        "ParamMouthOpenY", "hide", "unload"});
+}
+
+TEST_CASE("Bindings U26: Live2D missing and fallback backends reject explicitly") {
+    ScopedAnimationRegistration registration(nullptr);
+    LuaManager lua;
+    REQUIRE(lua.init());
+    const char* unavailable = R"lua(
+        local handle, reason = Live2D.load('Haru.model3.json', 'haru')
+        assert(handle == nil and reason:find('unavailable', 1, true))
+        local ok, error = Live2D.set_voice_lipsync(1, true)
+        assert(ok == false and error:find('unavailable', 1, true))
+    )lua";
+    checkAnimationScript(lua, unavailable);
+    NullAnimationBackend fallback;
+    REQUIRE(fallback.init());
+    BackendRegistry::instance().setAnimationBackend(&fallback);
+    checkAnimationScript(lua, unavailable);
+    CHECK(fallback.loadedModelCount() == 0);
+    fallback.shutdown();
+    BackendRegistry::instance().setAnimationBackend(nullptr);
+}
+
+TEST_CASE("Bindings U26: invalid values and failed model operations preserve live model") {
+    BindingAnimation animation;
+    ScopedAnimationRegistration registration(&animation);
+    LuaManager lua;
+    REQUIRE(lua.init());
+    checkAnimationScript(lua, R"lua(
+        assert(Live2D.load('Haru.model3.json','haru') == 42)
+        local ok = Live2D.load('bad' .. string.char(0) .. 'path','new')
+        assert(ok == nil)
+        assert(Live2D.show(42, 0/0, 0, 1) == false)
+        assert(Live2D.show(42, 0, 0, math.huge) == false)
+        assert(Live2D.set_mouth(42, -1) == false)
+        assert(Live2D.set_mouth(42, 0/0) == false)
+        assert(Live2D.set_voice_lipsync(42, 'true') == false)
+        assert(Live2D.hide(42.5) == false)
+        assert(Live2D.hide(2147483648) == false)
+        assert(Live2D.set_voice_lipsync(42, true))
+    )lua");
+    CHECK(animation.loads == 1);
+    CHECK(animation.calls == std::vector<std::string>{"voice-on"});
+    animation.failLoad = true;
+    animation.mouthSupported = false;
+    checkAnimationScript(lua, R"lua(
+        local handle, reason = Live2D.load('missing.model3.json','other')
+        assert(handle == nil and reason:find('load failed',1,true))
+        local ok, message = Live2D.set_mouth(42,0.8)
+        assert(ok == false and message:find('supported mouth',1,true))
+        assert(Live2D.set_voice_lipsync(42,true) == false)
+    )lua");
+    CHECK(animation.models.size() == 1);
+    CHECK(animation.isLoaded(42));
+    CHECK(animation.automatic);
+    CHECK(animation.mouth == 0);
+    CHECK(animation.calls == std::vector<std::string>{"voice-on"});
 }

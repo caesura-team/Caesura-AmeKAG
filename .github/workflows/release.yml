@@ -1,127 +1,103 @@
-name: Caesura GA Release Pipeline
-
-on:
+# U23 dry-run only. No release upload, Pages upload or deployment is authorized by this workflow.
+name: Release input dry-run
+'on':
   push:
     tags:
-      - 'v*'
+    - v*
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release version tag (e.g. v1.0.0)'
+        description: Existing tag matching this source; verifies inputs without publishing
         required: true
-        default: 'v1.0.0'
-
+        type: string
 permissions:
-  contents: write
-
+  contents: read
+  actions: read
 jobs:
-  build-windows:
-    name: Windows x64 Release Build
-    runs-on: windows-latest
+  prepare:
+    name: Lock source and candidate policy
+    runs-on: ubuntu-24.04
+    outputs:
+      policy_json: ${{ steps.policy.outputs.policy_json }}
+      policy_sha256: ${{ steps.policy.outputs.policy_sha256 }}
+      profile_sha256: ${{ steps.policy.outputs.profile_sha256 }}
+      version: ${{ steps.policy.outputs.version }}
+      source_sha: ${{ steps.identity.outputs.source_sha }}
+      expected_json: ${{ steps.identity.outputs.expected_json }}
+      tag: ${{ steps.identity.outputs.tag }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Setup CMake and MSVC
-        uses: ilammy/msvc-dev-cmd@v1
-
-      - name: Configure CMake
-        run: |
-          cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DCAESURA_BUILD_TESTS=ON -DCPACK_PACKAGE_VERSION="${{ github.ref_name }}"
-
-      - name: Build Engine & Tools
-        run: |
-          cmake --build build --config Release --parallel
-
-      - name: Run Core Test Suite
-        run: |
-          cd build/tests/Release
-          ./CaesuraTests.exe
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      - name: Build editor IDE (editor/dist ships in the package)
-        run: |
-          cd editor
-          npm ci --no-audit --no-fund
-          npm run build
-
-      - name: Package Windows ZIP
-        run: |
-          cd build
-          cpack -C Release -G ZIP
-
-      - name: Upload Windows Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-release-zip
-          path: build/CaesuraAmeKAG-*.zip
-
-  build-web:
-    name: Web Wasm Player PWA Build
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      - name: Install dependencies & Test
-        run: |
-          cd web
-          npm ci
-          npm test
-
-      - name: Build Web Static PWA Distribution
-        run: |
-          cd web
-          npm run build
-
-      - name: Package Web Distribution
-        run: |
-          tar -czf caesura-web-pwa.tar.gz -C web/dist .
-
-      - name: Upload Web Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: web-pwa-bundle
-          path: caesura-web-pwa.tar.gz
-
-  publish-release:
-    name: Publish GitHub Release
-    needs: [build-windows, build-web]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Download all build artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: release-artifacts
-
-      - name: Generate SHA-256 Checksums
-        run: |
-          mkdir -p dist
-          find release-artifacts -type f \( -name "*.zip" -o -name "*.tar.gz" -o -name "*.apk" \) -exec cp {} dist/ \;
-          cd dist
-          sha256sum * > checksums.txt
-          cat checksums.txt
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            dist/*
-            docs/status/release-candidate-report-semantic-head.md
-          draft: false
-          prerelease: false
-          generate_release_notes: true
+    - uses: actions/checkout@v4
+      with:
+        ref: ${{ github.sha }}
+        fetch-depth: 0
+        persist-credentials: false
+        submodules: recursive
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+    - name: Verify the explicit execution head
+      id: identity
+      env:
+        SOURCE_SHA: ${{ github.sha }}
+        RELEASE_TAG: ${{ inputs.version || github.ref_name }}
+      run: |
+        python - <<'PY'
+        import json, os, re, subprocess
+        from pathlib import Path
+        assert Path('.git').exists(), 'Missing Git checkout'
+        source = os.environ['SOURCE_SHA']
+        assert re.fullmatch('[0-9a-f]{40}', source), 'Full source SHA required'
+        assert subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip() == source, 'Wrong checkout'
+        tag = os.environ['RELEASE_TAG']
+        assert re.fullmatch(r'v[0-9]+(?:\.[0-9]+){2,3}', tag), 'Explicit numeric release tag required'
+        target = subprocess.check_output(['git', 'rev-parse', '--verify', 'refs/tags/' + tag + '^{commit}'], text=True).strip()
+        assert target == source, 'Run from the selected existing tag'
+        expected = dict(schema_version=1, repository=os.environ['GITHUB_REPOSITORY'],
+            repository_id=int(os.environ['GITHUB_REPOSITORY_ID']), source_sha=source, trigger_head_sha=source,
+            run_id=int(os.environ['GITHUB_RUN_ID']), run_attempt=int(os.environ['GITHUB_RUN_ATTEMPT']),
+            source_mode='head', workflow_path='.github/workflows/release.yml',
+            workflow_ref=os.environ['GITHUB_WORKFLOW_REF'], workflow_sha=os.environ['GITHUB_WORKFLOW_SHA'],
+            called_workflow_path='.github/workflows/validate-engine.yml', called_workflow_sha=os.environ['GITHUB_WORKFLOW_SHA'])
+        with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
+            output.write('tag=' + tag + '\n')
+            output.write('source_sha=' + source + '\n')
+            output.write('expected_json=' + json.dumps(expected, separators=(',', ':')) + '\n')
+        PY
+    - name: Freeze the source policy before producer fanout
+      id: policy
+      env:
+        SOURCE_SHA: ${{ steps.identity.outputs.source_sha }}
+        RELEASE_TAG: ${{ steps.identity.outputs.tag }}
+      run: python scripts/prepare_release_policy.py --repo . --output "$RUNNER_TEMP/release-policy.json" --github-output "$GITHUB_OUTPUT" --release-tag "$RELEASE_TAG"
+  validate:
+    name: Validate engine
+    needs:
+    - prepare
+    uses: ./.github/workflows/validate-engine.yml
+    with:
+      source_sha: ${{ needs.prepare.outputs.source_sha }}
+      trigger_head_sha: ${{ needs.prepare.outputs.source_sha }}
+      source_mode: head
+      workflow_path: .github/workflows/release.yml
+      workflow_ref: ${{ github.workflow_ref }}
+      workflow_sha: ${{ github.workflow_sha }}
+      called_workflow_sha: ${{ github.workflow_sha }}
+      called_workflow_path: .github/workflows/validate-engine.yml
+      pull_request_number: ''
+      policy_sha256: ${{ needs.prepare.outputs.policy_sha256 }}
+      profile_sha256: ${{ needs.prepare.outputs.profile_sha256 }}
+      engine_version: ${{ needs.prepare.outputs.version }}
+  aggregate:
+    name: Verify release inputs
+    if: ${{ always() }}
+    needs:
+    - prepare
+    - validate
+    uses: ./.github/workflows/verify-release-inputs.yml
+    with:
+      source_sha: ${{ needs.prepare.outputs.source_sha }}
+      expected_json: ${{ needs.prepare.outputs.expected_json }}
+      policy_json: ${{ needs.prepare.outputs.policy_json }}
+      policy_sha256: ${{ needs.prepare.outputs.policy_sha256 }}
+      producer_outputs_json: ${{ toJSON(needs.validate.outputs) }}
+      release_tag: ${{ needs.prepare.outputs.tag }}

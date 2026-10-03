@@ -11,6 +11,12 @@ CarcAssetProvider::CarcAssetProvider(std::unique_ptr<CARCReader> reader,
     , m_sourceName(std::move(sourceName))
 {}
 
+::Caesura::AssetDirectoryResult CarcAssetProvider::listDirectory(const std::string&, size_t, size_t) {
+    // Current CARC indexes retain only path hashes, not recoverable names.
+    // Neither guessing names nor returning hashes is an enumeration capability.
+    return {::Caesura::AssetDirectoryStatus::Unsupported, {}};
+}
+
 std::vector<uint8_t> CarcAssetProvider::read(const std::string& path)
 {
     if (!m_reader || !m_reader->isOpen()) return {};

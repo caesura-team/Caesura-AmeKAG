@@ -6,7 +6,8 @@
       "audio.crossfade",
       "render.postfx.vignette",
       "render.postfx.bloom",
-      "render.particles"
+      "render.particles",
+      "render.blur"
     ],
     "accept_approximate": ["render.postfx.lut3d"]
   }

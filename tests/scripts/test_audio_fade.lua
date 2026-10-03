@@ -94,7 +94,7 @@ do
         { name = "positive", input = { fadeout = 250 }, seconds = 0.25 },
         { name = "ordinary zero", input = { fadeout = 0 }, seconds = 0 },
         { name = "default", input = {}, seconds = 0 },
-        { name = "coerced time shadow", input = { time = 900 }, seconds = 0 },
+        { name = "declared time alias", input = { time = 900 }, seconds = 0.9 },
         { name = "schema upper bound", input = { fadeout = 999999 }, seconds = 30 },
     }) do
         setup_owner()
@@ -110,7 +110,7 @@ do
     Audio.playbgm(ctx, schema.coerce("playbgm", { storage = "assets/bgm/next.ogg", fadein = 750 }, ctx))
     check("stop then play preserves request order, path and seconds",
         #requests == 2 and requests[1][1] == "stop_bgm" and requests[1][2] == 0.5
-        and requests[2][1] == "play_bgm" and requests[2][2] == "assets/bgm/next.ogg" and requests[2][3] == 0.75)
+        and requests[2][1] == "play_bgm" and requests[2][2] == "assets/bgm/next.ogg" and type(requests[2][3]) == "table" and requests[2][3].fadein == 0.75)
     check("stop then play cannot leave the next clip on a muted bus",
         active_path == "assets/bgm/next.ogg" and same_bus_values())
 
@@ -122,7 +122,7 @@ do
         check("playbgmstop submits one clip stop before play: " .. milliseconds,
             #requests == 2 and requests[1][1] == "stop_bgm" and requests[1][2] == milliseconds / 1000
             and requests[2][1] == "play_bgm" and requests[2][2] == "assets/bgm/replacement.ogg"
-            and requests[2][3] == 1.25)
+            and type(requests[2][3]) == "table" and requests[2][3].fadein == 1.25)
         check("playbgmstop preserves buses and replacement path: " .. milliseconds,
             same_bus_values() and active_path == "assets/bgm/replacement.ogg")
     end

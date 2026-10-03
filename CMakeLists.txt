@@ -276,48 +276,58 @@ endif()
 
 
 # Copy scripts to each config output directory
-add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-    "${CMAKE_SOURCE_DIR}/scripts"
-    "$<TARGET_FILE_DIR:${PROJECT_NAME}>/scripts"
-    COMMENT "Copying scripts to output directory..."
-)
-
-# Copy demo assets to output directory (separated from engine source)
-add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-    "${CMAKE_SOURCE_DIR}/demo"
-    "$<TARGET_FILE_DIR:${PROJECT_NAME}>/demo"
-    COMMENT "Copying demo to output directory..."
-)
-
-# Copy engine assets (fonts, etc.) to output directory
-add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-    "${CMAKE_SOURCE_DIR}/assets"
-    "$<TARGET_FILE_DIR:${PROJECT_NAME}>/assets"
-    COMMENT "Copying assets to output directory..."
-)
-
-# Copy the prebuilt web player so the editor package/web endpoint and the
-# HTTP smoke can assemble a site from the output dir (same pattern as demo).
-if(EXISTS "${CMAKE_SOURCE_DIR}/web/dist/index.html")
+# Android assets are selected and staged by the packaging driver. Desktop
+# output copies must not consume ignored web builds or local projects.
+if(NOT ANDROID)
     add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/web/dist"
-        "$<TARGET_FILE_DIR:${PROJECT_NAME}>/web/dist"
-        COMMENT "Copying web player to output directory..."
+        "${CMAKE_SOURCE_DIR}/scripts"
+        "$<TARGET_FILE_DIR:${PROJECT_NAME}>/scripts"
+        COMMENT "Copying scripts to output directory..."
+        VERBATIM
     )
-endif()
 
-# Copy PM-created projects to output (may be empty at first)
-file(MAKE_DIRECTORY "${CMAKE_SOURCE_DIR}/projects")
-add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-    "${CMAKE_SOURCE_DIR}/projects"
-    "$<TARGET_FILE_DIR:${PROJECT_NAME}>/projects"
-    COMMENT "Copying projects to output directory..."
-)
+    # Copy demo assets to output directory (separated from engine source)
+    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/demo"
+        "$<TARGET_FILE_DIR:${PROJECT_NAME}>/demo"
+        COMMENT "Copying demo to output directory..."
+        VERBATIM
+    )
+
+    # Copy engine assets (fonts, etc.) to output directory
+    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/assets"
+        "$<TARGET_FILE_DIR:${PROJECT_NAME}>/assets"
+        COMMENT "Copying assets to output directory..."
+        VERBATIM
+    )
+
+    # Copy the prebuilt web player so the editor package/web endpoint and the
+    # HTTP smoke can assemble a site from the output dir (same pattern as demo).
+    if(EXISTS "${CMAKE_SOURCE_DIR}/web/dist/index.html")
+        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_SOURCE_DIR}/web/dist"
+            "$<TARGET_FILE_DIR:${PROJECT_NAME}>/web/dist"
+            COMMENT "Copying web player to output directory..."
+            VERBATIM
+        )
+    endif()
+
+    # Copy PM-created projects to output (may be empty at first)
+    file(MAKE_DIRECTORY "${CMAKE_SOURCE_DIR}/projects")
+    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/projects"
+        "$<TARGET_FILE_DIR:${PROJECT_NAME}>/projects"
+        COMMENT "Copying projects to output directory..."
+        VERBATIM
+    )
+
+endif()
 
 # -- Steam (optional)
 if(CAESURA_HAS_STEAM)
@@ -375,16 +385,11 @@ if(CAESURA_LIVE2D)
         set(CUBISM_PLATFORM_LIBRARIES)
 
         # --- Cubism Core (prebuilt) ---
-        add_library(Live2DCubismCore STATIC IMPORTED)
         if(WIN32)
             if(NOT MSVC)
                 message(FATAL_ERROR "Live2D Cubism Core on Windows requires MSVC")
             endif()
-            set_target_properties(Live2DCubismCore PROPERTIES
-                IMPORTED_LOCATION "${CUBISM_CORE_DIR}/lib/windows/x86_64/143/Live2DCubismCore_MT.lib"
-                IMPORTED_LOCATION_DEBUG "${CUBISM_CORE_DIR}/lib/windows/x86_64/143/Live2DCubismCore_MTd.lib"
-                INTERFACE_INCLUDE_DIRECTORIES "${CUBISM_CORE_DIR}/include"
-            )
+            include(cmake/CaesuraCubismRuntime.cmake)
             set(CUBISM_FRAMEWORK_RENDERER D3D11)
             list(APPEND CUBISM_PLATFORM_LIBRARIES d3d11 d3dcompiler)
             list(APPEND CUBISM_ENGINE_RENDER_PATH_SRCS
@@ -392,6 +397,7 @@ if(CAESURA_LIVE2D)
                 src/live2d/Live2D/D3D11NativeRenderPath.cpp
             )
         elseif(APPLE)
+            add_library(Live2DCubismCore STATIC IMPORTED)
             set_target_properties(Live2DCubismCore PROPERTIES
                 IMPORTED_LOCATION "${CUBISM_CORE_DIR}/lib/macos/${CAESURA_CUBISM_ARCH}/libLive2DCubismCore.a"
                 INTERFACE_INCLUDE_DIRECTORIES "${CUBISM_CORE_DIR}/include"
@@ -409,6 +415,7 @@ if(CAESURA_LIVE2D)
                 PROPERTIES LANGUAGE OBJCXX
             )
         elseif(UNIX)
+            add_library(Live2DCubismCore STATIC IMPORTED)
             set_target_properties(Live2DCubismCore PROPERTIES
                 IMPORTED_LOCATION "${CUBISM_CORE_DIR}/lib/linux/${CAESURA_CUBISM_ARCH}/libLive2DCubismCore.a"
                 INTERFACE_INCLUDE_DIRECTORIES "${CUBISM_CORE_DIR}/include"
@@ -448,6 +455,10 @@ if(CAESURA_LIVE2D)
         )
 
         add_library(CubismFramework STATIC ${CUBISM_FRAMEWORK_SRCS})
+        if(WIN32)
+            caesura_add_windows_cubism_core(
+                Live2DCubismCore "${CUBISM_CORE_DIR}" CubismFramework)
+        endif()
         target_include_directories(CubismFramework PUBLIC
             "${CUBISM_FRAMEWORK_DIR}/src"
             "${CUBISM_CORE_DIR}/include"
@@ -552,7 +563,10 @@ install(TARGETS ${PROJECT_NAME}
     LIBRARY DESTINATION .
     BUNDLE DESTINATION .
 )
-install(DIRECTORY scripts/ DESTINATION scripts)
+install(DIRECTORY scripts/ DESTINATION scripts
+    PATTERN "__pycache__" EXCLUDE
+    PATTERN "*.pyc" EXCLUDE
+    PATTERN "*.pyo" EXCLUDE)
 install(DIRECTORY demo/ DESTINATION demo)
 install(DIRECTORY assets/ DESTINATION assets)
 install(DIRECTORY projects/ DESTINATION projects)
@@ -619,24 +633,20 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/LICENSE")
     set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_SOURCE_DIR}/LICENSE")
 endif()
 
-# Bundle the SDL3 runtime DLL on Windows only (the release artifact and CI
-# release job are Windows-targeted). On Linux/macOS TARGET_FILE resolves to a
-# platform native shared lib (libSDL3.so / .dylib); gate this to WIN32 to keep
-# the ZIP content uniform, mirroring the FFmpeg DLL gate below.
+# Bundle the SDL3 runtime DLL or native SONAME as real, self-contained bytes.
+# Imported TARGET_FILE and SONAME paths can both be versioned symlink chains.
+include(cmake/CaesuraRuntimeInstall.cmake)
 if(WIN32 AND TARGET SDL3::SDL3)
-    install(FILES "$<TARGET_FILE:SDL3::SDL3>" DESTINATION . OPTIONAL)
+    caesura_install_shared_runtime(SDL3::SDL3)
 endif()
 # Sprint6-L1: the Linux artifact must carry its own SDL3 -- CI builds SDL3
 # from source into /usr/local, and a stranger's distro has no libSDL3
 # package to fall back on (Ubuntu 24.04 ships none). Install the SONAME
-# file: that is the exact name the loader requests (install(FILES)
-# dereferences the symlink, so the package carries a real libSDL3.so.0),
+# file: that is the exact name the loader requests. Copy its resolved payload,
+# rather than installing an isolated symlink to an absent versioned file,
 # and the engine finds it beside the executable through $ORIGIN below.
 if(UNIX AND NOT APPLE AND TARGET SDL3::SDL3)
-    get_target_property(_caesura_sdl3_type SDL3::SDL3 TYPE)
-    if(_caesura_sdl3_type STREQUAL "SHARED_LIBRARY")
-        install(FILES "$<TARGET_SONAME_FILE:SDL3::SDL3>" DESTINATION . OPTIONAL)
-    endif()
+    caesura_install_shared_runtime(SDL3::SDL3)
     set_target_properties(${PROJECT_NAME} PROPERTIES INSTALL_RPATH "$ORIGIN")
 endif()
 # Sprint6-L2: macOS mirrors the Linux self-carry rule. CI builds SDL3 from
@@ -648,10 +658,7 @@ endif()
 # CMAKE_SYSTEM_NAME guard (repo convention; version-independent, unlike the
 # CMake>=3.14 builtin IOS variable).
 if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS" AND TARGET SDL3::SDL3)
-    get_target_property(_caesura_sdl3_type_mac SDL3::SDL3 TYPE)
-    if(_caesura_sdl3_type_mac STREQUAL "SHARED_LIBRARY")
-        install(FILES "$<TARGET_SONAME_FILE:SDL3::SDL3>" DESTINATION . OPTIONAL)
-    endif()
+    caesura_install_shared_runtime(SDL3::SDL3)
     set_target_properties(${PROJECT_NAME} PROPERTIES INSTALL_RPATH "@loader_path")
 endif()
 # Without the Steam runtime DLL beside the executable the process cannot even
@@ -673,6 +680,10 @@ if(CAESURA_FFMPEG_FOUND AND WIN32)
         DESTINATION . OPTIONAL)
 endif()
 
+include(cmake/CaesuraPackageRequirements.cmake)
+# Finalize every desktop Mac install after Engine and SDL.
+include(cmake/CaesuraMacOSInstall.cmake)
+caesura_install_macos_runtime(${PROJECT_NAME})
 include(CPack)
 
 # -- Tools ----------------------------------------------------------------

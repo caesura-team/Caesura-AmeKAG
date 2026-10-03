@@ -66,6 +66,7 @@ TEST_CASE("U11 font restore: bitmap and inactive selections have distinct prepar
 namespace {
 class FontAssetScope final : public IAssetReader {
 public:
+    Caesura::AssetDirectoryResult listDirectory(const std::string&, size_t, size_t) override { return {}; }
     explicit FontAssetScope(IRenderDevice* device)
         : oldReader(BackendRegistry::instance().getAssetReader()), oldDevice(BackendRegistry::instance().getRenderDevice()) {
         std::ifstream input("assets/fonts/NotoSansCJKsc-Regular.otf",std::ios::binary);

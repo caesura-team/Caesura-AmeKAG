@@ -16,20 +16,23 @@ local tokenizer = require("tokenizer")
 local schema = require("kag.schema")
 
 -- register every command module so all contracts load
-pcall(require, "kag.commands.text")
-pcall(require, "kag.commands.system")
-pcall(require, "kag.commands.audio")
-pcall(require, "kag.commands.transition")
-pcall(require, "kag.commands.layer")
-pcall(require, "kag.commands.vfx")
-pcall(require, "kag.commands.video")
-pcall(require, "kag.commands.save")
-pcall(require, "kag.commands.tween")
-pcall(require, "kag")
+require("kag.commands.text")
+require("kag.commands.system")
+require("kag.commands.audio")
+require("kag.commands.transition")
+require("kag.commands.layer")
+require("kag.commands.vfx")
+require("kag.commands.video")
+require("kag.commands.save")
+require("kag.commands.tween")
+require("kag")
+require("kag.quickmenu")
 
 -- The kag command table (handlers) -- used for the unknown-command audit.
 local kag_cmd_table = package.loaded["kag"]
 
+-- Existing capability-analysis macro classification (not the DSL allowlist).
+-- Public-name eligibility below comes exclusively from kag.schema.
 -- Flow commands handled by the scheduler itself (no kag handler, no schema).
 -- Must mirror scheduler.lua's flow_commands table: [end]/[stop] terminate
 -- the coroutine, [label] is a jump target, etc. (audit: [end]/[stop] were
@@ -258,9 +261,8 @@ local function checkScene(path, capabilitySession)
             -- runtime (with a [WARN]); flag it statically so typos (e.g.
             -- [elsif] pre-alias, [wait] vs [wiat]) fail the check.
             if type(cmd) == "string" then
-                local knownHandler = kag_cmd_table and kag_cmd_table[cmd]
-                if not knownHandler and not schema.isMigrated(cmd)
-                    and not KNOWN_NONHANDLER[cmd]
+                local knownHandler = schema.resolveHandler(cmd, kag_cmd_table)
+                if not knownHandler and not schema.isPublicCommand(cmd)
                     and not local_macros[cmd] then
                     report(path, lineOf(tok.offset or 1),
                         "unknown KAG command '" .. cmd
@@ -712,8 +714,7 @@ structuralWarnings = function(path, tokens, lineOf, sceneRegistry)
                 --     flow-special names (those can't be macro-dispatched, and are
                 --     already reported above as dead flow-shadow macros).
                 elseif not FLOW_SPECIAL[mname] then
-                    local shadow = schema.isMigrated(mname)
-                        or (kag_cmd_table and kag_cmd_table[mname] ~= nil)
+                    local shadow = schema.isPublicCommand(mname)
                     if shadow then
                         warn_scene(path, lineOf(tok.offset or 1),
                             "[macro " .. mname .. "] shadows built-in command '"

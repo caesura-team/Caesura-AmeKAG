@@ -5,6 +5,7 @@
 #include <soloud_bus.h>
 #include <soloud_wav.h>
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <unordered_map>
 #include <list>
@@ -12,6 +13,8 @@
 #include <vector>
 
 namespace Caesura {
+
+class VoiceMeter;
 
 // ---------------------------------------------------------------------------
 // SoLoudAudioEngine   Concrete IAudioBackend using SoLoud
@@ -23,10 +26,22 @@ namespace Caesura {
 
 class SoLoudAudioEngine : public IAudioBackend, public IAudioRestore {
 public:
-    enum class OutputMode { Device, ManualMix };
+    enum class OutputMode { Device, ManualMix, Software };
     // ManualMix uses the actual SoLoud mixer, advanced explicitly by its host.
-    explicit SoLoudAudioEngine(OutputMode outputMode = OutputMode::Device)
-        : m_outputMode(outputMode) {}
+    // Software uses that mixer with an update-driven discard sink; no device.
+    struct SoftwareMixStats {
+        uint64_t frames = 0;
+        uint64_t samples = 0;
+        uint64_t nonzeroSamples = 0;
+        uint64_t nonfiniteSamples = 0;
+        float peak = 0;
+        double absoluteEnergy = 0;
+        bool saturated = false;
+    };
+    // Owner-thread observations of actual discarded PCM. Retained on shutdown,
+    // reset by the next init; never evidence of a physical audio device.
+    SoftwareMixStats softwareMixStats() const { return m_softwareMixStats; }
+    explicit SoLoudAudioEngine(OutputMode outputMode = OutputMode::Device);
     ~SoLoudAudioEngine() override;
 
     SoLoudAudioEngine(const SoLoudAudioEngine&) = delete;
@@ -37,20 +52,28 @@ public:
     void shutdown() override;
     void update(float deltaTime) override;
     bool isPlaybackAvailable() const override { return m_initialized; }
+    AudioBackendSnapshot getSnapshot() override;
+    VoiceLevelSnapshot getVoiceLevel() override;
     void suspend() override;
     void resume() override;
 
     unsigned int playBGM(const std::string& file, float fadeTime = 1.0f) override;
+    unsigned int playBGM(const std::string& file, const AudioPlaybackOptions& options) override;
     void stopBGM(float fadeTime = 1.0f) override;
 
     unsigned int playVoice(const std::string& file) override;
+    unsigned int playVoice(const std::string& file, const AudioPlaybackOptions& options) override;
     void stopVoice() override;
 
     unsigned int playSE(const std::string& file) override;
+    unsigned int playSE(const std::string& file, const AudioPlaybackOptions& options) override;
     unsigned int playRawPCM(const float* samples, unsigned int numFrames,
                             unsigned int sampleRate, unsigned int channels) override;
     unsigned int playSE3D(const std::string& file, float x, float y, float z) override;
+    unsigned int playSE3D(const std::string& file, float x, float y, float z,
+                         const AudioPlaybackOptions& options) override;
     void stopSE() override;
+    void stopSE(float fadeTime) override;
     void setSEVolume(unsigned int handle, float volume) override;
     float getSEVolume(unsigned int handle) override;
     void stopSEHandle(unsigned int handle) override;
@@ -93,7 +116,12 @@ public:
     SoLoud::Bus& seBus()     { return m_seBus; }
 
 private:
+    friend struct SoLoudAudioEngineTestAccess;
     // -- Internal helpers -------------------------------------------------
+    void invalidateVoiceMeter();
+    void observeVoiceMuteLocked();
+    void rollbackInit() noexcept;
+    SoLoud::handle playBus(SoLoud::Bus& bus);
     std::shared_ptr<SoLoud::AudioSource> loadWave(const std::string& file);
     void cullFinishedHandles();
     uint64_t bgmSampleCount() const;
@@ -103,6 +131,11 @@ private:
     void stopRetiringHandles(std::vector<SoLoud::handle>& retiringHandles);
 
     const OutputMode m_outputMode;
+    SoftwareMixStats m_softwareMixStats;
+    double m_softwareFractionalFrames = 0;
+    bool m_softwareSuspended = false;
+    // Stable factory/state must outlive all buses and Soloud itself.
+    std::unique_ptr<VoiceMeter> m_voiceMeter;
     SoLoud::Soloud m_soloud;
     SoLoud::Bus    m_bgmBus;
     SoLoud::Bus    m_voiceBus;
@@ -112,6 +145,11 @@ private:
     SoLoud::handle m_bgmBusHandle   = 0;
     SoLoud::handle m_voiceBusHandle = 0;
     SoLoud::handle m_seBusHandle    = 0;
+    bool m_voiceGainMuted = false;
+    bool m_voiceFadeRecovering = false;
+    // Private allocation boundary for deterministic rollback regression.
+    // Null uses Bus::createInstance; never replaces the mixer or PCM path.
+    SoLoud::AudioSourceInstance* (*m_createBusInstance)(SoLoud::Bus&) = nullptr;
 
     static constexpr unsigned int kVoicePoolSize = 4;  // VN voice pool
     unsigned int m_voicePool[kVoicePoolSize] = { 0 };  // round-robin voice slots

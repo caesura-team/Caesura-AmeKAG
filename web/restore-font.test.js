@@ -109,3 +109,112 @@ it('failed face deletion hides the font immediately and retains ownership for re
   expect(api.clear_font()).toBe(true)
   expect(fonts.size).toBe(0)
 })
+
+function resourceSetup() {
+  const core={},fonts=new Set(),faces=[],reads=[]
+  let bytes=new Uint8Array([42,1]), missing=false
+  class Face {
+    constructor(family,buffer){this.family=family;this.bytes=new Uint8Array(buffer);this.status='unloaded';faces.push(this)}
+    async load(){if(this.bytes[0]!==42)throw new Error('invalid changed font');this.status='loaded';return this}
+  }
+  const api=createFontRestore({core,fontSet:fonts,FontFaceClass:Face,assetUrl:path=>path,
+    fetchImpl:async path=>{reads.push(path);return missing?new Response(null,{status:404}):new Response(bytes)}})
+  return {api,core,fonts,faces,reads,setBytes:value=>{bytes=new Uint8Array(value)},setMissing:value=>{missing=value}}
+}
+
+it('reuses the active decoded face only after re-reading identical bytes, including size and path changes',async()=>{
+  const {api,core,fonts,faces,reads}=resourceSetup()
+  api.apply_font(await api.prepare_font(font))
+  const original=[...fonts][0], deleted=[]
+  const remove=fonts.delete.bind(fonts);fonts.delete=face=>{deleted.push(face);return remove(face)}
+  api.apply_font(await api.prepare_font({...font,size:30}))
+  api.apply_font(await api.prepare_font({...font,path:'assets/fonts/alias.otf',size:36}))
+  expect(reads).toEqual([font.path,font.path,'assets/fonts/alias.otf'])
+  expect(faces).toHaveLength(1)
+  expect([...fonts]).toEqual([original])
+  expect(deleted).toEqual([])
+  expect(core.font.size).toBe(36)
+  expect(api.capture_font().path).toBe('assets/fonts/alias.otf')
+})
+
+it('same-path changed or missing bytes cannot hide behind a loaded face',async()=>{
+  const {api,core,fonts,faces,reads,setBytes,setMissing}=resourceSetup()
+  api.apply_font(await api.prepare_font(font))
+  const first=[...fonts][0]
+  setBytes([42,2]);api.apply_font(await api.prepare_font(font))
+  const second=[...fonts][0],selected=core.font
+  expect(second).not.toBe(first)
+  expect(faces).toHaveLength(2)
+  setBytes([0,2]);await expect(api.prepare_font(font)).rejects.toThrow('invalid changed font')
+  expect(core.font).toBe(selected);expect([...fonts]).toEqual([second])
+  setMissing(true);await expect(api.prepare_font(font)).rejects.toThrow(/404/)
+  expect(reads).toHaveLength(4)
+  expect(core.font).toBe(selected);expect([...fonts]).toEqual([second])
+})
+
+it('concurrent tickets retain their exact decoded resource across later font publication',async()=>{
+  const {api,fonts,faces,setBytes}=resourceSetup()
+  api.apply_font(await api.prepare_font(font))
+  const first=[...fonts][0]
+  const saved=await api.prepare_font({...font,size:31})
+  const discarded=await api.prepare_font({...font,size:32})
+  setBytes([42,2]);const changed=await api.prepare_font({...font,size:40})
+  api.discard_font(discarded)
+  expect([...fonts]).toEqual([first])
+  expect(()=>api.apply_font(discarded)).toThrow(/consumed/)
+  api.apply_font(changed)
+  expect([...fonts][0]).not.toBe(first)
+  api.apply_font(saved)
+  expect([...fonts]).toEqual([first])
+  expect(api.capture_font().size).toBe(31)
+  expect(faces).toHaveLength(2)
+  expect(()=>api.apply_font(saved)).toThrow(/consumed/)
+})
+
+it('re-adds an externally removed active face without decoding or deleting it',async()=>{
+  const {api,fonts,faces}=resourceSetup()
+  api.apply_font(await api.prepare_font(font))
+  const face=[...fonts][0];fonts.delete(face)
+  const ticket=await api.prepare_font({...font,size:29})
+  api.apply_font(ticket)
+  expect(faces).toHaveLength(1)
+  expect([...fonts]).toEqual([face])
+})
+
+it('a failed same-face publication does not remove the still-active face',async()=>{
+  const {api,core,fonts}=resourceSetup()
+  api.apply_font(await api.prepare_font(font))
+  const face=[...fonts][0],previous=core.font
+  const ticket=await api.prepare_font({...font,size:29})
+  const add=fonts.add.bind(fonts);fonts.add=()=>{throw new Error('font add rejected')}
+  expect(()=>api.apply_font(ticket)).toThrow('font add rejected')
+  expect([...fonts]).toEqual([face]);expect(core.font).toBe(previous)
+  fonts.add=add
+  api.apply_font(await api.prepare_font({...font,size:30}))
+  expect([...fonts]).toEqual([face])
+})
+
+it('clear releases the reusable active resource while existing tickets remain independently owned',async()=>{
+  const {api,fonts,faces}=resourceSetup()
+  api.apply_font(await api.prepare_font(font))
+  const face=[...fonts][0],prepared=await api.prepare_font({...font,size:25})
+  api.clear_font();expect(fonts.size).toBe(0)
+  api.apply_font(prepared);expect([...fonts]).toEqual([face])
+  api.clear_font()
+  api.apply_font(await api.prepare_font(font))
+  expect([...fonts][0]).not.toBe(face)
+  expect(faces).toHaveLength(2)
+})
+
+it('unloaded active faces are not reused and disposal invalidates pending shared tickets',async()=>{
+  const {api,fonts,faces}=resourceSetup()
+  api.apply_font(await api.prepare_font(font))
+  const first=[...fonts][0];first.status='error'
+  api.apply_font(await api.prepare_font(font))
+  expect(faces).toHaveLength(2);expect([...fonts][0]).not.toBe(first)
+  const shared=await api.prepare_font(font)
+  expect(faces).toHaveLength(2)
+  api.dispose();expect(fonts.size).toBe(0)
+  expect(()=>api.apply_font(shared)).toThrow(/consumed/)
+  await expect(api.prepare_font(font)).rejects.toThrow(/closed/)
+})

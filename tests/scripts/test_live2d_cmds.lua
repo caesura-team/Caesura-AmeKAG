@@ -1,6 +1,6 @@
 -- =============================================================================
 --  Caesura (AmeKAG) — test_live2d_cmds.lua
---  Unit tests for Live2D motion, expression, and lip-sync command bindings
+--  Schema/declaration tests; motion/expression ctx fields are not native proof.
 -- =============================================================================
 
 local BS = string.char(92)
@@ -49,11 +49,22 @@ charCmds.live2d_expression(ctx, val_expr)
 check(ctx.live2d["aoi"].expression == "smile", "Expression state updated")
 check(ctx.live2d["aoi"].expression_weight == 1.0, "Expression weight stored")
 
--- 4. Lip Sync
+-- 4. Lip Sync schema/declaration compatibility. The proxy below is a fake:
+-- this retained ctx assertion proves metadata only, never a native model.
 local val_lip = schema.coerce("live2d_lip_sync", { model = "aoi", value = 0.85 }, ctx, 3)
 check(val_lip.value == 0.85, "Lip sync value valid")
+local backend = require("backend")
+local previous_mouth = backend.live2d_set_mouth
+backend.live2d_set_mouth = function() return true end
+ctx._live2dHandles = {aoi = 1}
 charCmds.live2d_lip_sync(ctx, val_lip)
-check(ctx.live2d["aoi"].lip_sync == 0.85, "Lip sync stored in ctx")
+backend.live2d_set_mouth = previous_mouth
+check(ctx.live2d["aoi"].lip_sync == 0.85, "Lip sync stored in ctx (fake proxy; metadata only)")
+check(val_lip.source == "manual", "Legacy lip sync defaults to manual source (schema only)")
+check(schema.coerce("live2d_lip_sync", {model="aoi",source="voice"},ctx,3).value == nil,
+    "Voice omission remains distinct from explicit value zero")
+check(not pcall(schema.coerce,"live2d_lip_sync",{model="aoi",source="microphone"},ctx,3),
+    "Invalid lip sync source is rejected")
 
 print(string.format("\nLive2D Command Tests: %d passed, %d failed.", passed, failed))
 if failed > 0 then os.exit(1) end

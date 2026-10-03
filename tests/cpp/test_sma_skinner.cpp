@@ -6,6 +6,7 @@
 #include "render/SmaSkinner.h"
 #include "render/SmaMeshRenderer.h"
 #include <cmath>
+#include <algorithm>
 
 using namespace Caesura;
 
@@ -172,31 +173,32 @@ TEST_CASE("S5 packBonePose matches applyBonePose") {
     }
 }
 
-// Replica of the S5 compute shader (same branch structure and math) so
-// the GPU skinning formula can be validated headless against skinMesh.
+// Headless packed-formula check, not evidence that shader bytecode executed.
+// Actual compute execution and output isolation have separate render tests.
 namespace {
 void gpuSkinReplica(const SMAMesh& mesh,
                     const std::vector<BonePose>& poses,
                     std::vector<SmaSkinnedVertex>& out) {
     std::vector<float> bones;
-    packBonePoses(poses, 64, bones);
+    const size_t poseCount=std::min(poses.size(),size_t(UINT16_MAX)+1);
+    packBonePoses(poses, poseCount, bones);
     out.resize(mesh.vertices.size());
     for (size_t i = 0; i < mesh.vertices.size(); ++i) {
         const SMAMeshVertex& v = mesh.vertices[i];
-        const float wsum = v.w0 + v.w1;
         float x = v.x, y = v.y;
-        if (wsum > 0.f) {
-            const int b0 = int(v.bone0 + 0.5f);
-            const float* m0 = &bones[size_t(b0) * 4];
+        if (v.bone0 < poseCount) {
+            const float* m0 = &bones[size_t(v.bone0) * 4];
             const float p0x = m0[0] * v.x - m0[1] * v.y + m0[2];
             const float p0y = m0[1] * v.x + m0[0] * v.y + m0[3];
-            if (v.w1 > 0.f && float(v.bone1) >= 0.f && float(v.bone1) < 64.f) {
-                const int b1 = int(v.bone1 + 0.5f);
-                const float* m1 = &bones[size_t(b1) * 4];
-                const float p1x = m1[0] * v.x - m1[1] * v.y + m1[2];
-                const float p1y = m1[1] * v.x + m1[0] * v.y + m1[3];
-                x = (p0x * v.w0 + p1x * v.w1) / wsum;
-                y = (p0y * v.w0 + p1y * v.w1) / wsum;
+            if (v.bone1 < poseCount) {
+                const float wsum = v.w0 + v.w1;
+                if (!(wsum <= 0.f)) {
+                    const float* m1 = &bones[size_t(v.bone1) * 4];
+                    const float p1x = m1[0] * v.x - m1[1] * v.y + m1[2];
+                    const float p1y = m1[1] * v.x + m1[0] * v.y + m1[3];
+                    x = (p0x * v.w0 + p1x * v.w1) / wsum;
+                    y = (p0y * v.w0 + p1y * v.w1) / wsum;
+                }
             } else {
                 x = p0x;
                 y = p0y;

@@ -1,7 +1,47 @@
 #pragma once
+#include <cstdint>
 #include <string>
 
 namespace Caesura {
+
+// Selected output path, not evidence that a physical device is audible.
+enum class AudioOutputMode { Unknown, Device, ManualMix, Software };
+
+struct AudioBackendSnapshot {
+    bool supported = false;
+    bool running = false; // An initialized playback implementation.
+    AudioOutputMode outputMode = AudioOutputMode::Unknown;
+    // Actual non-bus mixer voices, including paused/virtual/retiring voices.
+    uint64_t liveVoices = 0;
+    uint64_t busVoices = 0;
+    // Owner records still held, including invalid handles awaiting culling:
+    // current BGM + occupied voice slots + SE + both retiring collections.
+    uint64_t sessionHandles = 0;
+    uint64_t retiringBGM = 0;   // Subset of sessionHandles.
+    uint64_t retiringVoice = 0; // Subset of sessionHandles.
+    uint64_t waveCacheEntries = 0; // Reusable sources may remain at idle.
+    uint64_t rawCacheEntries = 0;  // Session PCM owners, not reusable cache.
+    uint64_t voiceCompletionsPending = 0;
+    // Restored source outside the wave cache; its handle aliases a session
+    // record and must not be counted as another voice or quota allocation.
+    uint64_t restoredSources = 0;
+};
+
+struct VoiceLevelSnapshot {
+    bool supported = false;
+    bool playing = false; // Valid current VOICE handles, not only retiring tails.
+    bool sampled = false; // A valid PCM block belonging to this generation.
+    float rms = 0.0f; // Finite 0..1 source-block RMS scaled by current bus/master gain.
+    uint64_t generation = 0; // Nonreused invalidation identity; zero means unavailable.
+};
+
+// Per-play source options, independent of persistent master/bus gain. Legacy
+// overloads retain their previous defaults; callers opt into these explicitly.
+struct AudioPlaybackOptions {
+    float volume = 1.0f;
+    bool loop = false;
+    float fadeIn = 0.0f; // seconds, finite and nonnegative
+};
 
 // ---------------------------------------------------------------------------
 // IAudioBackend   Abstract audio backend interface
@@ -25,6 +65,20 @@ public:
     // Silent fallbacks return false even when their init() succeeds.
     virtual bool isPlaybackAvailable() const = 0;
 
+    // Owner/main thread only; do not race init/shutdown. Observation must not
+    // cull handles, consume completions, mix/update, flush, or release quotas.
+    // Counts are meaningful only when supported. Owner records and mixer
+    // voices describe different phases and must not be summed as resources.
+    // Device playback may finish between the mixer's individually locked
+    // reads; this is not a globally atomic or global-quiescence assertion.
+    virtual AudioBackendSnapshot getSnapshot() = 0;
+
+    // Owner/main thread only. Observe actual mixed VOICE PCM without mixing,
+    // updating, culling handles, consuming completions, or releasing quotas.
+    // BGM, SE and playRawPCM are excluded. Models must reset their envelope
+    // on generation changes before applying any new sample or frame delta.
+    virtual VoiceLevelSnapshot getVoiceLevel() = 0;
+
     // -- App-lifecycle audio suspend/resume (mobile backgrounding) ----------
     // Suspends all playback (mixer paused) without releasing loaded assets;
     // resume() continues from the suspended position. Used by the engine's
@@ -34,14 +88,17 @@ public:
 
     // -- BGM bus: background music with cross-fade support -----------------
     virtual unsigned int playBGM(const std::string& file, float fadeTime = 1.0f) = 0;
+    virtual unsigned int playBGM(const std::string& file, const AudioPlaybackOptions& options) = 0;
     virtual void stopBGM(float fadeTime = 1.0f) = 0;
 
-    // -- VOICE bus: voice lines with absolute interrupt --------------------
+    // -- VOICE bus: voice playback and explicit session interruption ------
     virtual unsigned int playVoice(const std::string& file) = 0;
+    virtual unsigned int playVoice(const std::string& file, const AudioPlaybackOptions& options) = 0;
     virtual void stopVoice() = 0;
 
     // -- SE bus: sound effects (2D and 3D spatial) ------------------------
     virtual unsigned int playSE(const std::string& file) = 0;
+    virtual unsigned int playSE(const std::string& file, const AudioPlaybackOptions& options) = 0;
 
     // -- Raw PCM playback (video audio etc.) ------------------------------
     // Plays interleaved float PCM [-1,1] on the SE bus; the engine copies the
@@ -51,7 +108,11 @@ public:
                                     unsigned int sampleRate, unsigned int channels) = 0;
     virtual unsigned int playSE3D(const std::string& file,
                                    float x, float y, float z) = 0;
+    virtual unsigned int playSE3D(const std::string& file, float x, float y, float z,
+                                 const AudioPlaybackOptions& options) = 0;
     virtual void stopSE() = 0;
+    // Fade existing sources, then stop them. Owners/quotas remain until stopped.
+    virtual void stopSE(float fadeTime) = 0;
     // [10.2.27] Per-SE-handle volume control
     virtual void setSEVolume(unsigned int handle, float volume) = 0;
     virtual float getSEVolume(unsigned int handle) = 0;

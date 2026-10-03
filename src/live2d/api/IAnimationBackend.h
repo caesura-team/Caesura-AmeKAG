@@ -42,6 +42,11 @@ public:
     virtual void setExpression(int handle, const std::string& name) = 0;
     virtual void setParameter(int handle, const std::string& param, float value) = 0;
 
+    // Opt a loaded Cubism model into the shared VOICE bus mouth drive.
+    // Defaults off. Unsupported/invalid models return false without mutation.
+    // Only models with a real ParamMouthOpenY range containing 0..1 qualify.
+    virtual bool setVoiceLipSync(int modelHandle, bool enabled) = 0;
+
     virtual const char* name() const = 0;
 };
 

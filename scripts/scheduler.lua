@@ -27,6 +27,13 @@ local invoke_capable = capabilityRuntime.invoke_command
 -- Compile-time front-end (Phase A): hoisted module reference -- the
 -- scheduler compiles every token stream once (idempotent per stream).
 local compiler = require("kag.compiler")
+local transition = require("transition")
+local immediate_visual = {bg=true, fg=true, image=true, cl=true, layopt=true, position=true}
+
+local function invoke_pending_visual(handler, ctx, params, cmd, tokens, next_index, owner)
+    if not transition.prepare_pending(ctx, tokens, next_index, owner) then return end
+    return invoke_capable(handler, ctx, params, cmd)
+end
 
 -- Rollback snapshots share the token stream and macro definitions. Retire
 -- checkpoints before mutating either reference; static AOT calls do not pass
@@ -149,6 +156,10 @@ end
 
 function scheduler.run(ctx, tokens, start_index)
     if not tokens or #tokens == 0 then return end
+    local pending_owner = {}
+    local pending_scope <close> = setmetatable({}, {__close=function()
+        transition.cancel_pending(ctx, pending_owner)
+    end})
     -- Compile-time front-end (Phase A): normalizes token format + params,
     -- builds the label index and the flow jump table ONCE. Hand-built
     -- token arrays (tests, macro splices) compile lazily on first run;
@@ -301,6 +312,12 @@ function scheduler.run(ctx, tokens, start_index)
         prune_dangling_pending_jump()
     end
     while i <= #tokens do
+        -- Consume helper jumps before selecting a token and its compiled handler.
+        if ctx._next_index then
+            i = ctx._next_index
+            ctx._next_index = nil
+            if i > #tokens then break end
+        end
         ctx._executing_index = i
         ctx._executing_command = tokens[i][1] or tokens[i].cmd
         local tok = tokens[i]
@@ -310,6 +327,12 @@ function scheduler.run(ctx, tokens, start_index)
         -- hand-built token streams may not be -- normalize defensively.
         if cmd == "elsif" then cmd = "elseif" end
         local params = tok[2] or {}
+        local pending = ctx._pending_transition
+        if pending and (pending.owner ~= pending_owner or pending.stream ~= tokens
+            or pending.index ~= i or cmd ~= "trans" or pending.scene ~= ctx.current_scene
+            or ctx._next_index ~= nil) then
+            transition.cancel_pending(ctx)
+        end
 
         -- KAG scene debugger (Neo-Genesis): breakpoint/step check BEFORE
         -- dispatch. A hit yields "__kag_pause" and waits for the runner
@@ -325,12 +348,6 @@ function scheduler.run(ctx, tokens, start_index)
 
         -- Check stop flag
         if ctx.stop_flag then return end
-
-        -- Check for Lua-initiated flow control (from [iscript] or external Lua)
-        if ctx._next_index then
-            i = ctx._next_index
-            ctx._next_index = nil
-        end
 
         -- Flow control: [jump]/[goto] (goto = KAG3 alias of jump)
         if cmd == "jump" or cmd == "goto" then
@@ -502,6 +519,11 @@ function scheduler.run(ctx, tokens, start_index)
                 ctx.current_scene = path
                 ctx.label_index = nil  -- raw tokens: run() entry rebuilds
                 refresh_compiled()
+                -- load_tokens also signals run-ending scene replacements.
+                -- This call has already entered the callee in this coroutine;
+                -- do not let a later callee-local choice inherit that signal.
+                -- Actual cross-scene jump/link replacements still set it.
+                ctx._scene_changed = false
                 i = 0
             elseif new_tokens then
                 -- [round 98] cross-scene switch budget: an A<->B [call] chain
@@ -1442,7 +1464,7 @@ function scheduler.run(ctx, tokens, start_index)
                 end
                 -- Compiled streams bind the handler at compile time; the
                 -- fallback lookup keeps hand-built streams working.
-                local handler = compiled_handlers[i] or kag[cmd]
+                local handler = schemaModule.resolveHandler(cmd, kag, compiled_handlers[i])
                 local actual_cmd = cmd
                 if not handler and type(cmd) == "string" and #cmd > 0 then
                     -- Unrecognized tag: KAG3 semantics render it as text, but
@@ -1465,7 +1487,7 @@ function scheduler.run(ctx, tokens, start_index)
                     -- Unrecognized text ?? treat as [ch] -- through the ch
                     -- contract so interpolation ($f.name) and type coercion
                     -- apply to plain dialogue lines too (the main use case).
-                    handler = kag["ch"]
+                    handler = schemaModule.resolveHandler("ch", kag)
                     if handler then
                         params = {text = cmd}
                         actual_cmd = "ch"
@@ -1475,7 +1497,16 @@ function scheduler.run(ctx, tokens, start_index)
                     end
                 end
                 if handler then
-                    local status, err = pcall(invoke_capable, handler, ctx, params, actual_cmd)
+                    local status, err
+                    local next_token = immediate_visual[actual_cmd] and tokens[i+1]
+                    local next_params = next_token and next_token[2] or {}
+                    local next_duration = tonumber(next_params.time or next_params.duration) or 500
+                    if next_token and next_token[1] == "trans" and next_duration > 0 then
+                        status, err = pcall(invoke_pending_visual, handler, ctx, params, actual_cmd,
+                            tokens, i+1, pending_owner)
+                    else
+                        status, err = pcall(invoke_capable, handler, ctx, params, actual_cmd)
+                    end
                     if not status then
                         local error_message = scheduler.error_text(err)
                         -- Lua-side error reporting (with scene:line)
@@ -1522,6 +1553,15 @@ function scheduler.run(ctx, tokens, start_index)
         -- the token stream (no [return] tag before the last token) must not
         -- leave a stale call frame -- pop it and resume at the saved return
         -- index (KAG3 semantics; also keeps ctx.lf consistent across jumps).
+        -- A completed choice/history command may stop this coroutine with a
+        -- deferred label jump, even when it is the callee's final token. The
+        -- runner must resolve that label in this scene BEFORE implicit return
+        -- restores caller labels and prunes a now-dangling callee target.
+        -- Explicit [return] handling above retains its existing t43/t49 rules.
+        if ctx.stop_flag and ctx._pendingJump then
+            ctx._resume_index = i
+            return
+        end
         while i > #tokens and ctx.call_stack and #ctx.call_stack > 0 do
             local frame = table.remove(ctx.call_stack)
             ctx.label_index = frame.label_index

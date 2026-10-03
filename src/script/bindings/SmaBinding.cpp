@@ -8,8 +8,13 @@ extern "C" {
 }
 #include "SmaBinding.h"
 #include "../../render/api/IMeshRenderer.h"
+#include "../../render/api/ITextureManager.h"
 #include "../../di/BackendRegistry.h"
+#include <cmath>
 #include <cstring>
+#include <limits>
+#include <exception>
+#include <cstdio>
 
 namespace Caesura {
 
@@ -24,65 +29,78 @@ static IMeshRenderer* getMeshRenderer() {
 // Read a SMAMesh from two Lua tables:
 //   verts:   array of {x, y, u, v, bone0, w0, bone1?, w1?}
 //   indices: array of numbers
+static void pushRecordField(lua_State* L, const char* name, lua_Integer position) {
+    // Named records remain canonical. Only an absent named field falls back
+    // to the positional records emitted by scripts/kag/sma.lua. Both reads
+    // are raw: no author metamethod may run while a mesh/pose vector is owned.
+    lua_pushstring(L, name);
+    lua_rawget(L, -2);
+    if (lua_isnil(L, -1)) {
+        lua_pop(L, 1);
+        lua_rawgeti(L, -1, position);
+    }
+}
+
+static bool readFloatField(lua_State* L, const char* name, lua_Integer position, float& value) {
+    pushRecordField(L, name, position);
+    bool valid = lua_isnil(L, -1);
+    if (lua_type(L, -1) == LUA_TNUMBER) {
+        const lua_Number number = lua_tonumber(L, -1);
+        valid = std::isfinite(number)
+            && std::abs(number) <= std::numeric_limits<float>::max();
+        if (valid) value = static_cast<float>(number);
+    }
+    lua_pop(L, 1);
+    return valid;
+}
+
+static bool readBoneField(lua_State* L, const char* name, lua_Integer position, uint16_t& value) {
+    pushRecordField(L, name, position);
+    bool valid = lua_isnil(L, -1);
+    if (lua_type(L, -1) == LUA_TNUMBER) {
+        int integral = 0;
+        const auto number = lua_tointegerx(L, -1, &integral);
+        valid = integral && number >= 0 && number <= UINT16_MAX;
+        if (valid) value = static_cast<uint16_t>(number);
+    }
+    lua_pop(L, 1);
+    return valid;
+}
+
 static bool readMesh(lua_State* L, int vertIdx, int idxIdx, SMAMesh& out) {
     if (!lua_istable(L, vertIdx) || !lua_istable(L, idxIdx)) return false;
-    const int vn = (int)lua_rawlen(L, vertIdx);
-    const int in = (int)lua_rawlen(L, idxIdx);
-    if (vn <= 0 || in <= 0 || in % 3 != 0) return false;
+    const size_t vn = lua_rawlen(L, vertIdx);
+    const size_t in = lua_rawlen(L, idxIdx);
+    // Mesh indices are uint16_t, so no vertex beyond this range is addressable.
+    if (vn == 0 || vn > size_t(UINT16_MAX) + 1 || in == 0 || in % 3 != 0) return false;
 
-    out.vertices.resize((size_t)vn);
-    for (int i = 1; i <= vn; ++i) {
-        lua_rawgeti(L, vertIdx, i); // vert table
+    out.vertices.resize(vn);
+    for (size_t i = 0; i < vn; ++i) {
+        lua_rawgeti(L, vertIdx, static_cast<lua_Integer>(i + 1));
         if (!lua_istable(L, -1)) { lua_pop(L, 1); return false; }
-        SMAMeshVertex& v = out.vertices[(size_t)(i - 1)];
-        // Field-named access (review S1-1): luaL_optnumber on the table
-        // index always yields the default; the fields must be read by name.
-        v.x     = (float)luaL_optnumber(L, -1, 1);
-        lua_getfield(L, -1, "x");
-        if (lua_isnumber(L, -1)) v.x = (float)lua_tonumber(L, -1);
+        SMAMeshVertex& v = out.vertices[i];
+        const bool valid = readFloatField(L, "x", 1, v.x) && readFloatField(L, "y", 2, v.y)
+            && readFloatField(L, "u", 3, v.u) && readFloatField(L, "v", 4, v.v)
+            && readBoneField(L, "bone0", 5, v.bone0) && readFloatField(L, "w0", 6, v.w0)
+            && readBoneField(L, "bone1", 7, v.bone1) && readFloatField(L, "w1", 8, v.w1);
         lua_pop(L, 1);
-        v.y     = (float)luaL_optnumber(L, -1, 2);
-        lua_getfield(L, -1, "y");
-        if (lua_isnumber(L, -1)) v.y = (float)lua_tonumber(L, -1);
-        lua_pop(L, 1);
-        v.u     = (float)luaL_optnumber(L, -1, 3);
-        lua_getfield(L, -1, "u");
-        if (lua_isnumber(L, -1)) v.u = (float)lua_tonumber(L, -1);
-        lua_pop(L, 1);
-        v.v     = (float)luaL_optnumber(L, -1, 4);
-        lua_getfield(L, -1, "v");
-        if (lua_isnumber(L, -1)) v.v = (float)lua_tonumber(L, -1);
-        lua_pop(L, 1);
-        v.bone0 = (uint16_t)luaL_optinteger(L, -1, 5);
-        lua_getfield(L, -1, "bone0");
-        if (lua_isnumber(L, -1)) v.bone0 = (uint16_t)lua_tointeger(L, -1);
-        lua_pop(L, 1);
-        v.w0    = (float)luaL_optnumber(L, -1, 6);
-        lua_getfield(L, -1, "w0");
-        if (lua_isnumber(L, -1)) v.w0 = (float)lua_tonumber(L, -1);
-        lua_pop(L, 1);
-        v.bone1 = (uint16_t)luaL_optinteger(L, -1, 7);
-        lua_getfield(L, -1, "bone1");
-        if (lua_isnumber(L, -1)) v.bone1 = (uint16_t)lua_tointeger(L, -1);
-        lua_pop(L, 1);
-        v.w1    = (float)luaL_optnumber(L, -1, 8);
-        lua_getfield(L, -1, "w1");
-        if (lua_isnumber(L, -1)) v.w1 = (float)lua_tonumber(L, -1);
-        lua_pop(L, 1);
-        lua_pop(L, 1);
+        if (!valid) return false;
     }
-    out.indices.resize((size_t)in);
-    for (int i = 1; i <= in; ++i) {
-        lua_rawgeti(L, idxIdx, i);
-        const lua_Integer raw = lua_tointeger(L, -1);
+    out.indices.resize(in);
+    for (size_t i = 0; i < in; ++i) {
+        lua_rawgeti(L, idxIdx, static_cast<lua_Integer>(i + 1));
+        int integral = 0;
+        const lua_Integer raw = lua_tointegerx(L, -1, &integral);
+        const bool valid = lua_type(L, -1) == LUA_TNUMBER && integral
+            && raw >= 0 && static_cast<size_t>(raw) < vn && raw <= UINT16_MAX;
         lua_pop(L, 1);
-        if (raw < 0 || raw >= vn || raw > 65535) {
+        if (!valid) {
             // Out-of-range index would either corrupt the mesh (surviving a
             // uint16 truncation) or read past the vertex buffer (review S1-1).
             out.indices.clear();
             return false;
         }
-        out.indices[(size_t)(i - 1)] = (uint16_t)raw;
+        out.indices[i] = static_cast<uint16_t>(raw);
     }
     return true;
 }
@@ -113,31 +131,19 @@ static int lua_sma_update_mesh(lua_State* L) {
     IMeshRenderer* r = getMeshRenderer();
     const MeshHandle h{ (uint32_t)luaL_optinteger(L, 1, 0) };
     if (!r || !lua_istable(L, 2)) return 0;
-    const int n = (int)lua_rawlen(L, 2);
+    const size_t n = lua_rawlen(L, 2);
+    if (n > size_t(UINT16_MAX) + 1) return 0;
     std::vector<BonePose> poses;
-    poses.resize((size_t)n);
-    for (int i = 1; i <= n; ++i) {
-        lua_rawgeti(L, 2, i); // pose table
-        if (lua_istable(L, -1)) {
-            BonePose& p = poses[(size_t)(i - 1)];
-            p.rot = (float)luaL_optnumber(L, -1, 0.0f);
-            lua_getfield(L, -1, "rot");
-            if (lua_isnumber(L, -1)) p.rot = (float)lua_tonumber(L, -1);
-            lua_pop(L, 1);
-            p.scale = (float)luaL_optnumber(L, -1, 1.0f);
-            lua_getfield(L, -1, "scale");
-            if (lua_isnumber(L, -1)) p.scale = (float)lua_tonumber(L, -1);
-            lua_pop(L, 1);
-            p.ox = (float)luaL_optnumber(L, -1, 0.0f);
-            lua_getfield(L, -1, "ox");
-            if (lua_isnumber(L, -1)) p.ox = (float)lua_tonumber(L, -1);
-            lua_pop(L, 1);
-            p.oy = (float)luaL_optnumber(L, -1, 0.0f);
-            lua_getfield(L, -1, "oy");
-            if (lua_isnumber(L, -1)) p.oy = (float)lua_tonumber(L, -1);
-            lua_pop(L, 1);
-        }
+    poses.resize(n);
+    for (size_t i = 0; i < n; ++i) {
+        lua_rawgeti(L, 2, static_cast<lua_Integer>(i + 1));
+        if (!lua_istable(L, -1)) { lua_pop(L, 1); return 0; }
+        BonePose& p = poses[i];
+        const bool valid = readFloatField(L, "rot", 1, p.rot)
+            && readFloatField(L, "scale", 2, p.scale)
+            && readFloatField(L, "ox", 3, p.ox) && readFloatField(L, "oy", 4, p.oy);
         lua_pop(L, 1);
+        if (!valid) return 0;
     }
     r->updateMesh(h, poses);
     return 0;
@@ -145,15 +151,45 @@ static int lua_sma_update_mesh(lua_State* L) {
 
 static int lua_sma_draw_mesh(lua_State* L) {
     IMeshRenderer* r = getMeshRenderer();
-    if (!r) return 0;
+    auto* textures = BackendRegistry::instance().getTextureManager();
+    if (!r || !textures) return 0;
+    // Lua obtains TextureManager logical IDs from Render.create/load_texture.
+    // A missing logical ID must never become a renderer slot (raw slot 0 may
+    // be valid, so validate ownership before resolving rather than testing the
+    // resolved value for truthiness).
+    int integral = 0;
+    const lua_Integer logical = lua_tointegerx(L, 3, &integral);
+    if (lua_type(L, 3) != LUA_TNUMBER || !integral || logical <= 0
+        || static_cast<uint64_t>(logical) > UINT32_MAX) return 0;
+    const auto textureId = static_cast<uint32_t>(logical);
+    if (!textures->isValid(textureId)) return 0;
+    const uint32_t rawTexture = textures->getTextureHandle(textureId);
+    if (rawTexture >= std::numeric_limits<uint16_t>::max()) return 0;
     const MeshHandle h{ (uint32_t)luaL_optinteger(L, 1, 0) };
     const uint16_t view = (uint16_t)luaL_optinteger(L, 2, 0);
-    const uint32_t texId = (uint32_t)luaL_optinteger(L, 3, 0);
     const float x = (float)luaL_optnumber(L, 4, 0.0);
     const float y = (float)luaL_optnumber(L, 5, 0.0);
     const float scale = (float)luaL_optnumber(L, 6, 1.0);
     const float opacity = (float)luaL_optnumber(L, 7, 1.0);
-    r->drawMesh(view, h, texId, x, y, scale, opacity);
+    char failure[192] = {};
+    try {
+        r->drawMesh(view, h, rawTexture, x, y, scale, opacity);
+    } catch (const std::exception& error) {
+        const char* message = error.what();
+        std::snprintf(failure, sizeof(failure), "SMA draw failed: %.160s",
+                      message ? message : "renderer exception");
+    } catch (...) {
+        std::snprintf(failure, sizeof(failure), "SMA draw failed: unknown renderer exception");
+    }
+    // Leave the catch scope first: Lua's C build uses longjmp, which must not
+    // skip the exception object's or renderer-owned C++ resources' destructors.
+    if (failure[0]) {
+        for (char* p = failure; *p; ++p) {
+            const auto c = static_cast<unsigned char>(*p);
+            if (c < 32 || c >= 127) *p = '?';
+        }
+        return luaL_error(L, "%s", failure);
+    }
     return 0;
 }
 

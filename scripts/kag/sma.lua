@@ -406,7 +406,7 @@ function sma.spawn(ctx, name, asset, animName, opts)
         y = opts.y or 0,
         scale = opts.scale or 1,
         opacity = opts.opacity or 1,
-        view = opts.view or 0,
+        view = opts.view or 1, -- VIEW_MAIN; explicit view 0 remains valid.
         t = 0,
         loop = opts.loop ~= false,      -- design doc §4: loop defaults true
         rate = tonumber(opts.rate) or 1,
@@ -422,10 +422,14 @@ function sma.spawn(ctx, name, asset, animName, opts)
         for _, part in ipairs(parts) do
             local variant = (part.variants or {})[part.current or "default"]
                 or (part.variants or {})[next(part.variants or {})]
+            -- Asset tex=0 is an unspecified logical TextureManager ID, not
+            -- GPU slot zero. Keep an explicit nonzero part override intact.
+            local partTex = tonumber(part.tex)
+            if partTex == nil or partTex == 0 then partTex = actor.texId end
             local entry = {
                 id = part.id,
                 handle = variant and create_part_mesh(variant) or 0,
-                texId = tonumber(part.tex) or actor.texId,
+                texId = partTex,
                 current = part.current or "default",
             }
             actor.parts[#actor.parts + 1] = entry
@@ -702,7 +706,7 @@ local function play_params(params)
         scale = tonumber(params.scale) or 1,
         texId = tonumber(params.tex) or 0,
         opacity = tonumber(params.opacity) or 1,
-        view = tonumber(params.view) or 0,
+        view = tonumber(params.view), -- Omission inherits spawn's VIEW_MAIN.
         loop = params.loop ~= false and params.loop ~= "false",
         rate = tonumber(params.rate) or 1,
         on_done_anim = params.on_done_anim,

@@ -19,40 +19,24 @@
 // cache/story is gitignored (generated locally). On CI or a fresh clone the
 // file may be absent: the whole suite is skipped via describe.skipIf so a
 // missing bundle never fails the run (web tests are not part of CI anyway).
-import { describe, it, expect, beforeAll } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { readFileSync, existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { createPlayer } from './bridge.js'
+import {DomRenderer} from './dom-renderer.js'
+import {installCanvasHost} from './test-support/canvas-host.js'
+import {createRepositoryFetch,repositoryAssetUrl} from './test-support/repository-fetch.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const rootDir = join(here, '..')
-const scriptsDir = join(rootDir, 'scripts')
-const assetsDir = join(rootDir, 'assets')
 const index = JSON.parse(readFileSync(join(here, 'scripts-index.json'), 'utf8'))
 const storyPath = join(rootDir, 'cache', 'story', 'story.lua')
 // Set at module scope so describe.skipIf can branch on it before beforeAll.
 const bundleExists = existsSync(storyPath)
 
-// In-memory file fetch: serve real scripts and assets/lang dictionaries so
-// the bridge (wasmoon) can boot offline just like flow.integration.test.js.
-const fileFetch = async (url) => {
-  const u = new URL(url)
-  if (u.pathname.startsWith('/assets/lang/')) {
-    const rel = u.pathname.replace('/assets/lang/', '')
-    const p = join(assetsDir, 'lang', ...rel.split('/'))
-    return {
-      ok: existsSync(p),
-      status: existsSync(p) ? 200 : 404,
-      text: async () => (existsSync(p) ? readFileSync(p, 'utf8') : ''),
-      json: async () => index,
-    }
-  }
-  const rel = u.pathname.replace('/scripts/', '')
-  const p = join(scriptsDir, ...rel.split('/'))
-  const ok = existsSync(p)
-  return { ok, status: ok ? 200 : 404, text: async () => (ok ? readFileSync(p, 'utf8') : ''), json: async () => index }
-}
+// Same real scripts/assets stream and Skia presenter as source-flow tests.
+const fileFetch=createRepositoryFetch(rootDir,index)
 
 // The complete scene-key set the bundle is expected to carry. It mirrors the
 // .ks files live under demo/ at the time of baking (ks_bake --dir demo
@@ -111,16 +95,20 @@ const backlogSignature = (core) =>
 
 describe.skipIf(!bundleExists)('story bundle sweep (ks_bake -> bundle -> play)', () => {
   let player = null
-  let bundle = null
+  let bundle = null, renderer = null, stage = null, restoreCanvas = null
 
   beforeAll(async () => {
+    restoreCanvas=installCanvasHost()
     player = await createPlayer({
       scriptsBase: 'http://local/scripts/',
       fetchImpl: fileFetch,
+      assetUrl:repositoryAssetUrl,audioAssetUrl:repositoryAssetUrl,
       langBase: 'http://local/assets/lang/',
       capabilities: JSON.parse(readFileSync(join(rootDir, 'demo/caesura.project.json'), 'utf8')).capabilities,
       wasmFile: join(here, 'node_modules', 'wasmoon', 'dist', 'glue.wasm'),
     })
+    stage=document.createElement('div');document.body.appendChild(stage)
+    renderer=new DomRenderer(player.core,stage)
     // Load the same bundle main.mjs loadStoryBundle() produces at boot.
     const story = readFileSync(storyPath, 'utf8')
     player.lua.global.set('STORY_SRC', story)
@@ -128,6 +116,10 @@ describe.skipIf(!bundleExists)('story bundle sweep (ks_bake -> bundle -> play)',
     const code = '  local chunk = assert(load(STORY_SRC, ' + SQ + '@story.lua' + SQ + ', ' + SQ + 't' + SQ + ', _ENV))'
       + String.fromCharCode(10) + '  return chunk()'
     bundle = await player.lua.doString(code)
+  })
+
+  afterAll(async()=>{
+    try{await player?.dispose()}finally{renderer?.destroy();stage?.remove();restoreCanvas?.()}
   })
 
   it('bundle loads: version=1 and all demo scene keys are present', () => {
@@ -153,6 +145,11 @@ describe.skipIf(!bundleExists)('story bundle sweep (ks_bake -> bundle -> play)',
     player.core.backlog.length = 0
     const out = await player.runFromBundle(bundle, key, { maxFrames: 300000, autoClick: true })
     expect(out.startsWith('DONE:'), key + ' should complete via bundle: ' + out).toBe(true)
+    if (key==='tutorial_07_saveload.ks') {
+      expect(player.core.events.filter(e=>e.kind==='save.write')).toHaveLength(1)
+      expect(player.core.events.filter(e=>e.kind==='save.read')).toHaveLength(1)
+      expect(await player.lua.doString("return __CTXREF.tf.load_result=='ok' and __CTXREF.f.coins==0")).toBe(true)
+    }
     // round 89 regression: a bundle scene must not short-circuit to DONE:1:0
     // (wasmoon userdata-proxy deserialize failure). Guard the "actually ran"
     // signal so a silent bake failure re-surfaces.

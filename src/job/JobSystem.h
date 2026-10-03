@@ -42,6 +42,7 @@ public:
     int  workerCount() const override { return m_workerCount; }
     int  pendingJobs() const override { return m_pendingJobs.load(); }
     bool isRunning()   const override { return m_running.load(); }
+    JobSystemSnapshot getSnapshot() const override;
     bool isWorkerThread() const;
 
 private:
@@ -71,6 +72,7 @@ private:
     std::atomic<bool> m_running{false};
     // Owner-thread state; workers never inspect callback dispatch state.
     uint64_t m_dispatchEpoch = 0;
+    uint64_t m_dispatchingCompletions = 0;
     bool m_polling = false;
     bool m_shuttingDown = false;
     int m_workerCount = 0;
@@ -78,7 +80,7 @@ private:
     std::vector<std::unique_ptr<WorkQueue>> m_queues;
     std::vector<std::thread>            m_workers;
 
-    std::mutex              m_mainMutex;
+    mutable std::mutex      m_mainMutex;
     std::deque<MainThreadFn> m_mainJobs;
 
     std::mutex              m_waitMutex;

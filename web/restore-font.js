@@ -12,19 +12,25 @@ function description(value) {
   return {version:1,active:true,font,path,size}
 }
 
+function sameBytes(left,right) {
+  if(left.byteLength!==right.byteLength)return false
+  for(let index=0;index<left.byteLength;index++)if(left[index]!==right[index])return false
+  return true
+}
+
 /** FontFace decodes owned bytes before its face enters the document font set.
  * Browser glyphs/bitmap presets are host-specific; this is a same-host restore
  * contract, not a claim that DOM and native glyph rasterization are identical. */
 export function createFontRestore({core,fetchImpl=globalThis.fetch,assetUrl=path=>path,
   fontSet=globalThis.document?.fonts,FontFaceClass=globalThis.FontFace}) {
   const tickets=new WeakMap(), pending=new Set()
-  let selected={version:1,active:false}, activeFace=null, closed=false, revision=0
+  let selected={version:1,active:false}, activeResource=null, closed=false, revision=0
   function consume(ticket) {
     const state=tickets.get(ticket)
     if (!state || state.used) throw new Error('Font preparation is unavailable or consumed')
     state.used=true;pending.delete(state)
-    const face=state.face;state.face=null
-    return {face,value:state.value}
+    const resource=state.resource;state.resource=null
+    return {resource,value:state.value}
   }
   function clear() {
     selected={version:1,active:false}
@@ -32,8 +38,8 @@ export function createFontRestore({core,fetchImpl=globalThis.fetch,assetUrl=path
     revision++
     // Stop glyph submission even if the host cannot release its face now.
     // Retain that face until successful deletion so cleanup can be retried.
-    if (activeFace) fontSet.delete(activeFace)
-    activeFace=null
+    if (activeResource) fontSet.delete(activeResource.face)
+    activeResource=null
     return true
   }
   const api={
@@ -42,32 +48,43 @@ export function createFontRestore({core,fetchImpl=globalThis.fetch,assetUrl=path
     async prepare_font(input) {
       if (closed) throw new Error('Font preparation host is closed')
       const value=description(input)
-      let face=null
+      let resource=null
       if (value.active && value.font===2) {
         if (!fontSet || typeof FontFaceClass!=='function') throw new Error('Browser font decoder unavailable')
         const bytes=await readAssetBytes(value.path,{fetchImpl,assetUrl,maxBytes:32*1024*1024})
-        face=new FontFaceClass('CaesuraRestoredFont'+(++familySequence),bytes.buffer)
-        await face.load()
-        if (face.status!=='loaded') throw new Error('Font decoder did not produce a loaded face')
+        if (closed) throw new Error('Font preparation host is closed')
+        // Re-read and validate every asset. Only the currently owned decoded
+        // face can be reused, and only for byte-identical content. Font size
+        // belongs to the draw state, not to the decoded OpenType resource.
+        if (activeResource?.face.status==='loaded' && sameBytes(activeResource.bytes,bytes)) {
+          resource=activeResource
+        } else {
+          const face=new FontFaceClass('CaesuraRestoredFont'+(++familySequence),bytes.buffer)
+          await face.load()
+          if (face.status!=='loaded') throw new Error('Font decoder did not produce a loaded face')
+          resource={face,bytes}
+        }
       }
       if (closed) throw new Error('Font preparation host is closed')
-      const ticket=Object.freeze({}),state={face,value,used:false}
+      // Each preparation owns this exact resource even if another ticket
+      // replaces the active selection before it is applied or discarded.
+      const ticket=Object.freeze({}),state={resource,value,used:false}
       tickets.set(ticket,state);pending.add(state)
       return ticket
     },
     apply_font(ticket) {
-      const {face,value}=consume(ticket)
+      const {resource,value}=consume(ticket)
       if (closed) throw new Error('Font preparation host is closed')
       if (!value.active) return clear()
-      const previous=activeFace
+      const face=resource?.face,previous=activeResource?.face
       try {
         if (face) fontSet.add(face)
-        if (previous) fontSet.delete(previous)
+        if (previous && previous!==face) fontSet.delete(previous)
       } catch(error) {
-        if (face) {try {fontSet.delete(face)} catch { /* Preserve original failure. */ }}
+        if (face && face!==previous) {try {fontSet.delete(face)} catch { /* Preserve original failure. */ }}
         throw error
       }
-      activeFace=face;selected=value;revision++
+      activeResource=resource;selected=value;revision++
       core.font=Object.freeze({...value,family:face?.family??'monospace'})
       return true
     },
@@ -93,7 +110,7 @@ export function createFontRestore({core,fetchImpl=globalThis.fetch,assetUrl=path
     },
     dispose() {
       closed=true
-      for (const state of pending) {state.face=null;state.used=true}
+      for (const state of pending) {state.resource=null;state.used=true}
       pending.clear()
       return clear()
     },

@@ -3,6 +3,8 @@ extern "C" {
 #include <lauxlib.h>
 }
 #include "KAGBinding.h"
+#include "AssetVideoBinding.h"
+#include "AssetDirectoryBinding.h"
 #include "../../audio/api/IAudioBackend.h"
 #include "../../render/api/IRenderDevice.h"
 #include "../../di/BackendRegistry.h"
@@ -12,6 +14,8 @@ extern "C" {
 #include <cstring>
 #include <string>
 #include <exception>
+#include <cmath>
+#include <limits>
 
 namespace Caesura {
 
@@ -105,6 +109,8 @@ void registerKAGBinding(lua_State* L) {
     invalidateKAGBindingCaches();
     luaL_newlib(L, kag_functions);
     lua_setglobal(L, "KAG");
+    registerAssetVideoBinding(L);
+    registerAssetDirectoryBinding(L);
     // P2-7: derive the API count from the table so the log cannot drift
     // from the implementation (was hardcoded "35").
     const size_t apiCount = sizeof(kag_functions) / sizeof(kag_functions[0]) - 1;
@@ -164,9 +170,48 @@ static int checkedAudioPlay(lua_State* L, Play play) {
     return 2;
 }
 
+static int invalidAudioOptions(lua_State* L) {
+    lua_pushboolean(L, false);
+    lua_pushliteral(L, "Audio options require finite volume 0..1.5, nonnegative fadein and boolean loop");
+    return 2;
+}
+
+static bool readPlaybackOptions(lua_State* L, int index, AudioPlaybackOptions& options) {
+    if (lua_isnoneornil(L, index)) return true;
+    if (!lua_istable(L, index)) return false;
+    const auto numberField = [&](const char* name, float& value, float maximum) {
+        lua_pushstring(L, name);
+        lua_rawget(L, index);
+        bool valid = lua_isnil(L, -1);
+        if (lua_type(L, -1) == LUA_TNUMBER) {
+            const auto number = lua_tonumber(L, -1);
+            valid = std::isfinite(number) && number >= 0 && number <= maximum;
+            if (valid) value = static_cast<float>(number);
+        }
+        lua_pop(L, 1);
+        return valid;
+    };
+    if (!numberField("volume", options.volume, 1.5f)
+        || !numberField("fadein", options.fadeIn, std::numeric_limits<float>::max())) return false;
+    lua_pushliteral(L, "loop");
+    lua_rawget(L, index);
+    const bool valid = lua_isnil(L, -1) || lua_isboolean(L, -1);
+    if (lua_isboolean(L, -1)) options.loop = lua_toboolean(L, -1) != 0;
+    lua_pop(L, 1);
+    return valid;
+}
+
 static int lua_KAG_play_bgm(lua_State* L) {
     const char* file = luaL_checkstring(L, 1);
+    if (lua_istable(L, 2)) {
+        AudioPlaybackOptions options;
+        if (!readPlaybackOptions(L, 2, options)) return invalidAudioOptions(L);
+        IAudioBackend* audio = getAudio(L);
+        if (!audio) { lua_pushboolean(L, 0); return 1; }
+        return checkedAudioPlay(L, [=] { return audio->playBGM(file, options); });
+    }
     float fadeTime   = (float)luaL_optnumber(L, 2, 1.0);
+    if (!std::isfinite(fadeTime) || fadeTime < 0) return invalidAudioOptions(L);
     IAudioBackend* audio = getAudio(L);
     if (!audio) { lua_pushboolean(L, 0); return 1; }
     return checkedAudioPlay(L, [=] { return audio->playBGM(file, fadeTime); });
@@ -176,8 +221,12 @@ static int lua_KAG_play_bgm(lua_State* L) {
 
 static int lua_KAG_play_voice(lua_State* L) {
     const char* file = luaL_checkstring(L, 1);
+    AudioPlaybackOptions options;
+    if (!readPlaybackOptions(L, 2, options)) return invalidAudioOptions(L);
     IAudioBackend* audio = getAudio(L);
     if (!audio) { lua_pushboolean(L, 0); return 1; }
+    if (!lua_isnoneornil(L, 2))
+        return checkedAudioPlay(L, [=] { return audio->playVoice(file, options); });
     return checkedAudioPlay(L, [=] { return audio->playVoice(file); });
 }
 
@@ -188,8 +237,13 @@ static int lua_KAG_play_se_3d(lua_State* L) {
     float x = (float)luaL_checknumber(L, 2);
     float y = (float)luaL_checknumber(L, 3);
     float z = (float)luaL_optnumber(L, 4, 0.0);
+    AudioPlaybackOptions options;
+    if (!readPlaybackOptions(L, 5, options) || !std::isfinite(x)
+        || !std::isfinite(y) || !std::isfinite(z)) return invalidAudioOptions(L);
     IAudioBackend* audio = getAudio(L);
     if (!audio) { lua_pushboolean(L, 0); return 1; }
+    if (!lua_isnoneornil(L, 5))
+        return checkedAudioPlay(L, [=] { return audio->playSE3D(file, x, y, z, options); });
     return checkedAudioPlay(L, [=] { return audio->playSE3D(file, x, y, z); });
 }
 
@@ -197,8 +251,12 @@ static int lua_KAG_play_se_3d(lua_State* L) {
 
 static int lua_KAG_play_se(lua_State* L) {
     const char* file = luaL_checkstring(L, 1);
+    AudioPlaybackOptions options;
+    if (!readPlaybackOptions(L, 2, options)) return invalidAudioOptions(L);
     IAudioBackend* audio = getAudio(L);
     if (!audio) { lua_pushboolean(L, 0); return 1; }
+    if (!lua_isnoneornil(L, 2))
+        return checkedAudioPlay(L, [=] { return audio->playSE(file, options); });
     return checkedAudioPlay(L, [=] { return audio->playSE(file); });
 }
 
@@ -206,6 +264,7 @@ static int lua_KAG_play_se(lua_State* L) {
 
 static int lua_KAG_stop_bgm(lua_State* L) {
     float fadeTime = (float)luaL_optnumber(L, 1, 1.0);
+    if (!std::isfinite(fadeTime) || fadeTime < 0) return invalidAudioOptions(L);
     IAudioBackend* audio = getAudio(L);
     if (!audio) { lua_pushboolean(L, 0); return 1; }
     audio->stopBGM(fadeTime);
@@ -226,10 +285,13 @@ static int lua_KAG_stop_voice(lua_State* L) {
 // Stops all active sound effects via the SE bus.
 
 static int lua_KAG_stop_se(lua_State* L) {
+    const float fade = static_cast<float>(luaL_optnumber(L, 1, 0));
+    if (!std::isfinite(fade) || fade < 0) return invalidAudioOptions(L);
     IAudioBackend* audio = getAudio(L);
-    if (!audio) return 0;
-    audio->stopSE();
-    return 0;
+    if (!audio) { lua_pushboolean(L, false); return 1; }
+    audio->stopSE(fade);
+    lua_pushboolean(L, true);
+    return 1;
 }
 
 // -- KAG.set_global_volume(volume) ----------------------------------------

@@ -163,6 +163,8 @@ public:
     void setViewClear(uint16_t, uint16_t, uint32_t, float, uint8_t) override {}
     void touch(uint16_t) override {}
     ViewportHandle createRenderTarget(int, int) override { return {}; }
+    SceneSnapshot captureSceneSnapshot() override { return {}; }
+    void cancelTransition() override {}
     void destroyRenderTarget(ViewportHandle) override {}
     void blitViewport(ViewportHandle, uint16_t, float, float, float, float) override {}
     RenderTextureHandle getViewportTexture(ViewportHandle) override { return {}; }
@@ -230,6 +232,7 @@ public:
     RenderProgramHandle getFallbackProgram() const override { return {}; }
     RenderProgramHandle getModulatedTextureProgram() const override { return {}; }
     const char* getBackendName() const override { return "TestRender"; }
+    RenderSnapshot getSnapshot() const override { return {}; }
     RenderRuntimeInfo getRuntimeInfo() const override {
         return {"TestRender", m_width, m_height, 0, true};
     }
@@ -243,6 +246,7 @@ private:
 
 class AudioBackend final : public IAudioBackend {
 public:
+    VoiceLevelSnapshot getVoiceLevel() override { return {}; }
     explicit AudioBackend(LifecycleProbe& probe) : m_probe(probe) {}
     ~AudioBackend() override { ++m_probe.destructorCalls; }
 
@@ -257,17 +261,27 @@ public:
         if (m_probe.onShutdown) m_probe.onShutdown();
     }
     bool isPlaybackAvailable() const override { return m_initialized; }
+    AudioBackendSnapshot getSnapshot() override {
+        AudioBackendSnapshot snapshot;
+        snapshot.running = m_initialized;
+        return snapshot; // This lifecycle double cannot observe real resources.
+    }
     void update(float) override { ++m_probe.audioUpdateCalls; }
     void suspend() override { ++m_probe.audioSuspendCalls; }
     void resume() override { ++m_probe.audioResumeCalls; }
     unsigned int playBGM(const std::string&, float) override { return 0; }
+    unsigned int playBGM(const std::string&, const AudioPlaybackOptions&) override { return 0; }
     void stopBGM(float) override {}
     unsigned int playVoice(const std::string&) override { return 0; }
+    unsigned int playVoice(const std::string&, const AudioPlaybackOptions&) override { return 0; }
     void stopVoice() override {}
     unsigned int playSE(const std::string&) override { return 0; }
+    unsigned int playSE(const std::string&, const AudioPlaybackOptions&) override { return 0; }
     unsigned int playRawPCM(const float*, unsigned int, unsigned int, unsigned int) override { return 0; }
     unsigned int playSE3D(const std::string&, float, float, float) override { return 0; }
+    unsigned int playSE3D(const std::string&, float, float, float, const AudioPlaybackOptions&) override { return 0; }
     void stopSE() override {}
+    void stopSE(float) override {}
     void setSEVolume(unsigned int, float) override {}
     float getSEVolume(unsigned int) override { return 0.0f; }
     void stopSEHandle(unsigned int) override {}
@@ -325,6 +339,7 @@ private:
 
 class AnimationBackend final : public IAnimationBackend {
 public:
+    bool setVoiceLipSync(int, bool) override { return false; }
     explicit AnimationBackend(LifecycleProbe& probe) : m_probe(probe) {}
     ~AnimationBackend() override { ++m_probe.destructorCalls; }
 

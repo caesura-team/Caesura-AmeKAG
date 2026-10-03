@@ -51,7 +51,8 @@ public:
 constexpr uint16_t VIEW_RTT   = 0;  // Offscreen render-to-texture canvas
 constexpr uint16_t VIEW_MAIN  = 1;  // Primary compositing pipeline (KAG UI)
 constexpr uint16_t VIEW_DEBUG = 2;  // Debug overlay / IMGUI
-constexpr uint16_t VIEW_TRANSITION = 99;  // Transition compositing view
+constexpr uint16_t VIEW_TRANSITION = 3;  // After scene/postfx presentation
+constexpr uint32_t VIEWPORT_HANDLE_TAG = 0x80000000u;
 
 // -- Handle types ----------------------------------------------------------
 
@@ -60,6 +61,14 @@ struct ViewportHandle {
     explicit operator bool() const { return id != 0; }
     bool operator==(const ViewportHandle& o) const { return id == o.id; }
     bool operator!=(const ViewportHandle& o) const { return id != o.id; }
+};
+
+// Owned copy of the last submitted, post-processed scene. The numeric viewport
+// is released with destroyRenderTarget; frameId identifies its actual source
+// frame, not allocation time. Empty means no real scene/capture is available.
+struct SceneSnapshot {
+    ViewportHandle viewport;
+    uint64_t frameId = 0;
 };
 
 struct RenderRuntimeInfo {
@@ -71,6 +80,63 @@ struct RenderRuntimeInfo {
     // failures do not clear this; Noop, IFH, loss and shutdown never set it.
     bool shaderReady = false;
 };
+
+// API allocator retention, including handles awaiting deferred recycling.
+// These are not unique engine-object counts, GPU bytes or fence completion.
+struct RenderResourceCounts {
+    uint64_t dynamicIndexBuffers = 0;
+    uint64_t dynamicVertexBuffers = 0;
+    uint64_t frameBuffers = 0;
+    uint64_t indexBuffers = 0;
+    uint64_t occlusionQueries = 0;
+    uint64_t programs = 0;
+    uint64_t shaders = 0;
+    uint64_t textures = 0;
+    uint64_t uniforms = 0;
+    uint64_t vertexBuffers = 0;
+    uint64_t vertexLayouts = 0;
+};
+
+// A single queue-lock observation. The three entry counts partition retained
+// tickets, including terminal tickets from older capture generations. Reserved
+// bytes are admission budget; pngBytes is logical vector size, not capacity,
+// encoder scratch memory or transferred caller-owned PNG storage.
+struct RenderScreenshotCounts {
+    bool supported = false;
+    uint64_t waiting = 0;
+    uint64_t submitted = 0;
+    uint64_t terminal = 0;
+    uint64_t reservedBytes = 0;
+    uint64_t pngBytes = 0;
+};
+
+// GraphicsApi identifies a non-Noop API backend, not a physical GPU guarantee.
+enum class RenderBackendKind { Unknown, Noop, GraphicsApi };
+
+struct RenderSnapshot {
+    bool supported = false;
+    bool contextInitialized = false;
+    bool renderingAvailable = false;
+    bool resourceCountsAvailable = false;
+    RenderBackendKind backendKind = RenderBackendKind::Unknown;
+    std::string backendName;
+    // Process-unique nonzero identity for each successful context creation,
+    // independent of capture admission. Zero means no valid context identity
+    // (never initialized, or identity exhaustion); never use it as a baseline.
+    // Retain the last identity after shutdown; never wrap/reuse an old value.
+    uint64_t contextGeneration = 0;
+    // Existing renderer-local capture submission frame, not completed frames.
+    uint64_t captureSubmissionFrame = 0;
+    RenderResourceCounts resources;
+    RenderScreenshotCounts screenshots;
+    // Callback ownership is observed separately from ticket retention. Tracking
+    // and completeness require a matching context identity/lifetime; unsupported
+    // zeroes do not prove completion or idle.
+    bool screenshotOwnershipComplete = false;
+    bool screenshotReadbackTrackingSupported = false;
+    uint64_t screenshotReadbacksOutstanding = 0;
+};
+
 
 // -- Abstract Render Device ------------------------------------------------
 
@@ -120,6 +186,8 @@ public:
 
     // Offscreen render target
     virtual ViewportHandle createRenderTarget(int width, int height) = 0;
+    virtual SceneSnapshot captureSceneSnapshot() = 0;
+    virtual void cancelTransition() = 0;
     virtual void destroyRenderTarget(ViewportHandle handle) = 0;
 
     // Draw a viewport`s texture as a full-view quad in another view
@@ -278,6 +346,12 @@ public:
 
     // Backend identification --------------------------------------------
     virtual const char* getBackendName() const = 0;
+    // Owner/API thread only. Read-only sequential component observations, not
+    // an atomic subsystem sample. Immediately copy vendor allocator counts;
+    // retain no vendor pointers. Do not frame, submit, drain, cancel, take,
+    // acknowledge loss, reopen capture or initialize a context to observe it.
+    // Counts may include deferred destruction; none prove GPU/global idle.
+    virtual RenderSnapshot getSnapshot() const = 0;
     virtual RenderRuntimeInfo getRuntimeInfo() const = 0;
     virtual bool setPreferredBackend(const char*) = 0;
 };

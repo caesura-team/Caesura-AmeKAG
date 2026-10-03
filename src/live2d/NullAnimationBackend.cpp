@@ -153,4 +153,8 @@ void NullAnimationBackend::setParameter(int /*handle*/, const std::string& /*par
     // No-op in null backend
 }
 
+bool NullAnimationBackend::setVoiceLipSync(int /*modelHandle*/, bool /*enabled*/) {
+    return false; // Static sprites do not have Cubism mouth parameters.
+}
+
 } // namespace Caesura

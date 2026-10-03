@@ -19,6 +19,29 @@ public:
     void reset() { m_shuttingDown.store(false); m_deviceLost.store(false); m_lossPending.store(false); }
     void beginShutdown() { m_shuttingDown.store(true); m_screenshots->close("renderer shutting down"); }
 
+    // Bound by Core after actual context creation, before any native screenshot
+    // dispatch. Shutdown notification belongs after the native shutdown returns.
+    bool bindScreenshotContext(uint64_t contextGeneration);
+    bool screenshotContextShutdownComplete();
+
+    // Internal deterministic callback-lifetime checkpoint. Scoped to the invoking
+    // thread; it invokes barriers after claim/complete, before retirement. It neither
+    // supplies results nor adjusts obligation counters. No hook is installed by
+    // production code. Invoked outside the queue lock, with the exact
+    // callback completion guard already alive.
+    enum class ScreenshotCheckpoint { AfterClaim, AfterComplete };
+    class ScopedScreenshotCheckpoint {
+    public:
+        using Hook = void (*)(ScreenshotCheckpoint, void*);
+        ScopedScreenshotCheckpoint(Hook hook, void* context) noexcept;
+        ~ScopedScreenshotCheckpoint() noexcept;
+        ScopedScreenshotCheckpoint(const ScopedScreenshotCheckpoint&) = delete;
+        ScopedScreenshotCheckpoint& operator=(const ScopedScreenshotCheckpoint&) = delete;
+    private:
+        Hook m_previousHook = nullptr;
+        void* m_previousContext = nullptr;
+    };
+
     // Device loss detection (set from bgfx fatal callback on any thread)
     void flagDeviceLost() {
         m_deviceLost.store(true);
@@ -52,12 +75,15 @@ public:
     void cacheWrite(uint64_t, const void*, uint32_t) override {}
     void screenShot(const char* _name, uint32_t _width, uint32_t _height,
                     uint32_t _pitch, bgfx::TextureFormat::Enum _format,
-                    const void* _data, uint32_t _size, bool _flipY) override;
+                    const void* _data, uint32_t _size, bool _flipY) noexcept override;
     void captureBegin(uint32_t, uint32_t, uint32_t, bgfx::TextureFormat::Enum, bool) override {}
     void captureEnd() override {}
     void captureFrame(const void*, uint32_t) override {}
 private:
     std::shared_ptr<Caesura::ScreenshotQueue> m_screenshots;
+    // reset() affects device flags only. Binding survives loss/close and is
+    // released only by this callback owner's exact completed context shutdown.
+    std::atomic<uint64_t> m_screenshotContext{0};
     std::atomic<bool> m_shuttingDown{false};
     std::atomic<bool> m_deviceLost{false};
     std::atomic<bool> m_lossPending{false};

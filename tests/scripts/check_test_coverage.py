@@ -5,7 +5,7 @@ check_test_coverage.py — prevent orphan-test regressions (round 14).
 
 Verifies that every test_*.lua in tests/scripts/ is registered in the main
 runner (run_lua_tests.lua), the isolated orphan runner (run_orphan_tests.lua),
-or a direct lua_cli CTest command,
+a direct lua_cli CTest command, or an explicit Lua entry in the owned CLI wrapper,
 and that every test_*.cpp in tests/cpp/ is registered in tests/CMakeLists.txt.
 
 Exit code 1 lists any unregistered test — the "silent green" failure mode.
@@ -25,6 +25,42 @@ CMAKE = os.path.join(ROOT, "tests", "CMakeLists.txt")
 def read(p):
     with io.open(p, "r", encoding="utf-8", errors="replace") as f:
         return f.read()
+
+
+def owned_cli_wrapper_tests(command):
+    """Recognize only the maintained wrapper's complete, unambiguous CTest argv.
+
+    This deliberately supports a restricted CMake token grammar, not expansion
+    or shell interpretation. A quoted argument remains one token, so text inside
+    another argument cannot invent flags. Registration requires all explicit
+    inputs although standalone wrapper callers may use its sibling-test default.
+    """
+    token = r'"[^"\r\n]*"|[^\s"]+'
+    if not re.fullmatch(r'\s*(?:' + token + r')(?:\s+(?:' + token + r'))*\s*', command):
+        return set()
+    argv = [value[1:-1] if value.startswith('"') else value
+            for value in re.findall(token, command)]
+    if (len(argv) != 12 or argv[0] != "NAME"
+            or not re.fullmatch(r"[A-Za-z0-9_]+", argv[1])
+            or argv[2:5] != ["COMMAND", "${Python3_EXECUTABLE}", "-B"]):
+        return set()
+    wrapper = "${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_cli_asset_directory.py"
+    if argv[5] != wrapper:
+        return set()
+    required = {
+        "--lua": "$<TARGET_FILE:lua_cli>",
+        "--scripts": "${CMAKE_SOURCE_DIR}/scripts",
+        "--test": wrapper[:-3] + ".lua",
+    }
+    seen = set()
+    for index in range(6, len(argv), 2):
+        flag, value = argv[index:index + 2]
+        if flag not in required or flag in seen or value != required[flag]:
+            return set()
+        seen.add(flag)
+    if seen != set(required):
+        return set()
+    return {required["--test"].rsplit("/", 1)[1][:-4]}
 
 
 def main():
@@ -49,6 +85,7 @@ def main():
             r"COMMAND\s+\$<TARGET_FILE:lua_cli>\s+"
             r"\$\{CMAKE_CURRENT_SOURCE_DIR\}/scripts/(test_[a-z0-9_]+)\.lua(?=\s|$)",
             command))
+        registered |= owned_cli_wrapper_tests(command)
     for t in lua_tests:
         if t not in registered:
             problems.append(f"Lua test not registered: tests/scripts/{t}.lua")

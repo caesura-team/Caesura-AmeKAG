@@ -8,15 +8,15 @@
 
 | Metric | Count |
 |--------|-------|
-| Module libraries (src/) | 15 |
-| API interface headers (src/*/api/I*.h) | 38 |
-| Pure-virtual interface methods | 444 |
-| Lua binding functions (luaL_Reg entries) | 182 |
+| Module libraries (src/) | 16 |
+| API interface headers (src/*/api/I*.h) | 41 |
+| Pure-virtual interface methods | 469 |
+| Lua binding functions (luaL_Reg entries) | 196 |
 | KAG command handler files | 13 |
-| KAG contract commands (command-contracts.md) | 134 |
+| KAG contract commands (command-contracts.md) | 145 |
 | RPC HTTP endpoints (EditorServer) | 36 |
 | RPC stdin JSON-RPC methods | 29 |
-| Lua runtime scripts (scripts/, excl. demo/check) | 92 |
+| Lua runtime scripts (scripts/, excl. demo/check) | 93 |
 
 ## 2. C++ interfaces by module
 
@@ -25,16 +25,17 @@
 | archive | IArchiveReader.h | 7 |
 | archive | IArchiveWriter.h | 3 |
 | archive | ICryptoEngine.h | 12 |
-| audio | IAudioBackend.h | 32 |
+| audio | IAudioBackend.h | 39 |
 | audio | IAudioFocusService.h | 5 |
 | audio | IAudioRestore.h | 5 |
 | debug | IDebugManager.h | 26 |
 | di | IDeviceLostListener.h | 2 |
 | di | ISandboxQuota.h | 5 |
 | di | ITextureBudget.h | 7 |
+| entry | IEngineHostSnapshot.h | 1 |
 | input | IInputRouter.h | 14 |
-| job | IJobSystem.h | 8 |
-| live2d | IAnimationBackend.h | 16 |
+| job | IJobSystem.h | 9 |
+| live2d | IAnimationBackend.h | 17 |
 | minigame | IMiniGameBackend.h | 13 |
 | platform | IDisplayService.h | 1 |
 | platform | ILifecycleService.h | 4 |
@@ -44,12 +45,12 @@
 | render | ILayerManager.h | 21 |
 | render | IMeshRenderer.h | 8 |
 | render | IParticleSystem.h | 10 |
-| render | IRenderDevice.h | 63 |
+| render | IRenderDevice.h | 66 |
 | render | ITextureManager.h | 18 |
-| render | IVideoPlayer.h | 19 |
-| resource | IAssetProvider.h | 5 |
-| resource | IAssetReader.h | 1 |
-| resource | IAsyncLoader.h | 9 |
+| render | IVideoPlayer.h | 20 |
+| resource | IAssetProvider.h | 6 |
+| resource | IAssetReader.h | 2 |
+| resource | IAsyncLoader.h | 10 |
 | resource | IImageDecoder.h | 1 |
 | resource | IResourceGenerationTracker.h | 4 |
 | rpc | IEditorServer.h | 9 |
@@ -57,6 +58,8 @@
 | rpc | IRpcServer.h | 5 |
 | script | ILuaManager.h | 12 |
 | steam | ISteamBackend.h | 24 |
+| storage | ICloudSaveCoordinator.h | 6 |
+| storage | ICloudSaveSnapshotTransport.h | 2 |
 | storage | ICloudSaveTransport.h | 4 |
 | storage | ISaveManager.h | 19 |
 | storage | ISaveProvider.h | 7 |
@@ -65,15 +68,18 @@
 
 | Binding file | API count | Registered globals |
 |--------------|-----------|--------------------|
-| AIBinding.cpp | 5 | _AI_CALLBACKS, _AI_CALLBACKS, AI |
+| AIBinding.cpp | 5 | _AI_CALLBACKS, AI |
+| AssetDirectoryBinding.cpp | 1 | KAG |
+| AssetVideoBinding.cpp | 4 | — |
 | AudioRestoreBinding.cpp | 5 | — |
 | DebugBinding.cpp | 10 | Debug |
 | DevCoreBinding.cpp | 13 | _CAESURA_QUIT, DevCore |
 | EngineBinding.cpp | 7 | Engine |
 | FontRestoreBinding.cpp | 6 | — |
 | KAGBinding.cpp | 36 | KAG |
+| Live2DBinding.cpp | 6 | Live2D |
 | MiniGameBinding.cpp | 5 | mini_game |
-| RenderBinding.cpp | 38 | _ASYNC_CALLBACKS, _ASYNC_CALLBACKS, Render |
+| RenderBinding.cpp | 41 | _ASYNC_CALLBACKS, Render |
 | RestoreBinding.cpp | 6 | Restore |
 | SaveBinding.cpp | 12 | KAG |
 | SmaBinding.cpp | 8 | sma |

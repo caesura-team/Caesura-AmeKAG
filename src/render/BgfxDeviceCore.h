@@ -25,10 +25,15 @@ public:
     static constexpr uint16_t VIEW_MAIN       = 1;
     static constexpr uint16_t VIEW_DEBUG      = 2;
     static constexpr uint16_t VIEW_TRANSITION = 3;
+    static constexpr uint16_t VIEW_SNAPSHOT_A = 4;
+    static constexpr uint16_t VIEW_SNAPSHOT_B = 5;
+    static constexpr uint16_t VIEW_PRESENT_CLEAR = 6;
     // Round-102 post-processing chain composite view (order: RTT -> MAIN
     // -> POSTFX -> DEBUG -> TRANSITION). Scene renders to the internal
     // scene RTT under VIEW_MAIN; POSTFX composites sceneRtt -> backbuffer.
     static constexpr uint16_t VIEW_POSTFX    = 40;
+    static constexpr uint16_t VIEW_POSTFX_LAST = 167;
+    static constexpr uint16_t VIEW_PRESENT = 168;
 
     static bool setPreferredBackend(const char* name);
     // t92: per-platform DEFAULT backend used when no --backend override is
@@ -39,6 +44,9 @@ public:
     const char* getBackendName() const;
 
     bool init(void* nativeWindowHandle, int width, int height);
+    // Called by the renderer immediately after a successful native init, before
+    // screenshot admission. The callback keeps this identity through shutdown.
+    bool bindScreenshotContext(uint64_t contextGeneration);
     // Screen-offset pan (camera/quakes): shifts VIEW_MAIN's rect each frame.
     void setScreenOffset(int dx, int dy) { m_screenOffsetX = dx; m_screenOffsetY = dy; }
     void resize(int width, int height);
@@ -56,6 +64,11 @@ public:
     bool hasExplicitPresentSize() const { return m_presentSizeExplicit; }
     // Present surface size (see IRenderDevice::setPresentSize).
     void setPresentSize(uint16_t w, uint16_t h);
+    // Final output shares the legacy surface-pixel camera/quake displacement.
+    // Scene/snapshot RTTs stay in their unshifted logical coordinate system.
+    void configurePresentationView(uint16_t viewId);
+    void presentationOffsetNdc(float& x, float& y) const;
+    void clearPresentationSurface();
     void setViewRect(uint16_t v, uint16_t x, uint16_t y, uint16_t w, uint16_t h);
     void setViewClear(uint16_t v, uint16_t f, uint32_t c, float d, uint8_t s);
     void touch(uint16_t v);
@@ -95,6 +108,7 @@ private:
 private:
     int m_screenOffsetX = 0;
     int m_screenOffsetY = 0;
+    uint32_t m_mainClearRgba = 0x303030FF;
     void setupDefaultViews();
     void updateBackbufferSize();
     int m_width  = 1280;
@@ -111,7 +125,7 @@ private:
     std::string m_backendName = "bgfx";
     bool m_shutdownComplete = false;
     struct RTTEntry { bgfx::FrameBufferHandle fb = BGFX_INVALID_HANDLE; bgfx::TextureHandle tex = BGFX_INVALID_HANDLE; uint16_t viewId = VIEW_RTT; };
-    uint32_t m_nextHandle = 1;
+    uint32_t m_nextHandle = VIEWPORT_HANDLE_TAG;
     std::unordered_map<uint32_t, RTTEntry> m_rttMap;
     bgfx::TextureHandle m_solidPixel = BGFX_INVALID_HANDLE;
     uint32_t            m_solidPixelKey = 0;

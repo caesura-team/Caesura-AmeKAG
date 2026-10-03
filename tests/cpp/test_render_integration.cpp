@@ -10,6 +10,7 @@
 #include "di/BackendRegistry.h"
 #include "di/api/ISandboxQuota.h"
 #include <stdexcept>
+#include <cstdio>
 
 #if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
@@ -22,6 +23,7 @@
 #include <array>
 #include <chrono>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <string>
@@ -596,6 +598,148 @@ TEST_CASE("Render: D3D11 SMA GPU skinning matches CPU skinning") {
     device.shutdown();
 }
 
+
+// Actual transient-pool exhaustion must refuse the whole SMA draw and allow a
+// later frame to recover. This uses the same owned real-D3D11 child context as
+// the other integration cases; it does not silently substitute a software GPU.
+constexpr wchar_t kSmaTibChildEnv[]=L"CAESURA_SMA_TIB_CHILD";
+constexpr wchar_t kSmaTibTestCase[]=L"Render: D3D11 SMA transient index exhaustion rejects and recovers";
+TEST_CASE("Render: D3D11 SMA transient index exhaustion rejects and recovers") {
+    if(!isGpuChildProcess(kSmaTibChildEnv)) {
+        CHECK(runGpuChildProcess(kSmaTibChildEnv,kSmaTibTestCase)==ERROR_SUCCESS);return;
+    }
+    constexpr uint16_t width=128,height=72,drawView=10,readView=11;
+    HiddenSdlWindow window(width,height);REQUIRE(window);REQUIRE(window.nativeHandle());
+    BgfxRenderDevice device;REQUIRE(device.setPreferredBackend("dx11"));
+    REQUIRE(device.init(window.nativeHandle(),width,height));
+    {
+        SmaMeshRenderer renderer;renderer.init();REQUIRE(renderer.gpuSkinAvailable());
+        const uint8_t white[4]={255,255,255,255};
+        BgfxTexture source(bgfx::createTexture2D(1,1,false,1,bgfx::TextureFormat::RGBA8,
+            BGFX_SAMPLER_POINT|BGFX_SAMPLER_U_CLAMP|BGFX_SAMPLER_V_CLAMP,bgfx::copy(white,4)));
+        REQUIRE(source.valid());
+        const auto target=bgfx::createTexture2D(width,height,false,1,bgfx::TextureFormat::RGBA8,
+            BGFX_TEXTURE_RT|BGFX_SAMPLER_POINT|BGFX_SAMPLER_U_CLAMP|BGFX_SAMPLER_V_CLAMP);
+        REQUIRE(bgfx::isValid(target));
+        BgfxFrameBuffer framebuffer(bgfx::createFrameBuffer(1,&target,true));REQUIRE(framebuffer.valid());
+        BgfxTexture readback(bgfx::createTexture2D(width,height,false,1,bgfx::TextureFormat::RGBA8,
+            BGFX_TEXTURE_BLIT_DST|BGFX_TEXTURE_READ_BACK));REQUIRE(readback.valid());
+        bgfx::setViewRect(drawView,0,0,width,height);
+        bgfx::setViewClear(drawView,BGFX_CLEAR_COLOR,uint32_t(0x000000ff),1.f,uint8_t(0));
+        bgfx::setViewFrameBuffer(drawView,framebuffer.get());
+        SMAMesh mesh;mesh.vertices={{0,0,0,0,0,.5f,1,.5f},{40,0,1,0,0,1,1,0},
+            {40,40,1,1,0,1,1,0},{0,40,0,1,0,1,1,0}};mesh.indices={0,1,2,0,2,3};
+        const auto handle=renderer.createMesh(mesh);REQUIRE(handle);
+        std::vector<BonePose> poses(2);poses[0].rot=.3f;poses[0].scale=1.1f;
+        poses[0].ox=30;poses[0].oy=10;poses[1].ox=60;poses[1].oy=20;
+        using Pixels=std::array<uint8_t,width*height*4>;
+        const auto readPixels=[&](Pixels& pixels) {
+            bgfx::blit(readView,readback.get(),0,0,target);
+            uint32_t frame=bgfx::frame();const auto ready=bgfx::readTexture(readback.get(),pixels.data());
+            const auto deadline=GetTickCount64()+10000;
+            while(frame<ready&&GetTickCount64()<deadline)frame=bgfx::frame();
+            return frame>=ready;
+        };
+        const auto render=[&](SkinMode mode,Pixels& pixels) {
+            renderer.setSkinMode(mode);renderer.updateMesh(handle,poses);
+            renderer.drawMesh(drawView,handle,source.get().idx,20,5,1,1);
+            return readPixels(pixels);
+        };
+        const auto whiteCount=[](const Pixels& pixels) {
+            int count=0;for(size_t i=0;i<pixels.size();i+=4)
+                if(pixels[i]>250&&pixels[i+1]>250&&pixels[i+2]>250)++count;
+            return count;
+        };
+        const auto mismatches=[](const Pixels& a,const Pixels& b) {
+            int count=0;for(size_t i=0;i<a.size();i+=4)
+                if(std::abs(int(a[i])-int(b[i]))>1)++count;
+            return count;
+        };
+        Pixels cpu{},gpu{};REQUIRE(render(SkinMode::Cpu,cpu));REQUIRE(render(SkinMode::Gpu,gpu));
+        const int whiteCpu=whiteCount(cpu),whiteGpu=whiteCount(gpu);
+        REQUIRE(whiteCpu>64);REQUIRE(whiteGpu>64);REQUIRE(mismatches(cpu,gpu)<128);
+        REQUIRE(std::abs(whiteCpu-whiteGpu)<=std::max(2,whiteGpu/50));
+        for(int i=0;i<4;++i)bgfx::frame();
+        const uint32_t pool=bgfx::getCaps()->limits.maxTransientIbSize/sizeof(uint16_t);
+        const uint32_t available=bgfx::getAvailTransientIndexBuffer(pool);REQUIRE(available>6);
+        bgfx::TransientIndexBuffer reservation;bgfx::allocTransientIndexBuffer(&reservation,available-5);
+        REQUIRE(reservation.size==(available-5)*sizeof(uint16_t));
+        REQUIRE(bgfx::getAvailTransientIndexBuffer(pool)==5);
+        renderer.setSkinMode(SkinMode::Gpu);renderer.updateMesh(handle,poses);
+        std::fprintf(stderr,"SMA_TIB_ADMISSION_READY available=5 requested=6\n");std::fflush(stderr);
+        renderer.drawMesh(drawView,handle,source.get().idx,20,5,1,1);
+        REQUIRE(bgfx::getAvailTransientIndexBuffer(pool)==5);
+        bgfx::touch(drawView);Pixels rejected{};REQUIRE(readPixels(rejected));
+        size_t colored=0;for(size_t i=0;i<rejected.size();i+=4)
+            if(rejected[i]||rejected[i+1]||rejected[i+2])++colored;
+        CHECK(colored==0);
+        REQUIRE(bgfx::getAvailTransientIndexBuffer(pool)>=6);
+        Pixels recovered{};REQUIRE(render(SkinMode::Gpu,recovered));
+        const int whiteRecovered=whiteCount(recovered);
+        CHECK(whiteRecovered>64);CHECK(mismatches(recovered,gpu)<128);
+        CHECK(std::abs(whiteRecovered-whiteGpu)<=std::max(2,whiteGpu/50));
+        bgfx::setViewFrameBuffer(drawView,BGFX_INVALID_HANDLE);renderer.destroyMesh(handle);
+        CHECK(renderer.meshCount()==0);bgfx::frame();
+    }
+    device.shutdown();
+}
+
+// Distinct actors submitted in one frame must not share the last bone upload.
+constexpr wchar_t kSmaIsolationChildEnv[]=L"CAESURA_SMA_ISOLATION_CHILD";
+constexpr wchar_t kSmaIsolationTestCase[]=L"Render: D3D11 SMA per-draw bone snapshots isolate actors and retire";
+TEST_CASE("Render: D3D11 SMA per-draw bone snapshots isolate actors and retire") {
+    if(!isGpuChildProcess(kSmaIsolationChildEnv)) {
+        CHECK(runGpuChildProcess(kSmaIsolationChildEnv,kSmaIsolationTestCase)==ERROR_SUCCESS);return;
+    }
+    constexpr uint16_t width=128,height=72,drawView=10,readView=11;
+    HiddenSdlWindow window(width,height);REQUIRE(window);REQUIRE(window.nativeHandle());
+    BgfxRenderDevice device;REQUIRE(device.setPreferredBackend("dx11"));REQUIRE(device.init(window.nativeHandle(),width,height));
+    {
+        SmaMeshRenderer renderer;renderer.init();REQUIRE(renderer.gpuSkinAvailable());
+        const uint8_t white[4]={255,255,255,255};
+        BgfxTexture texture(bgfx::createTexture2D(1,1,false,1,bgfx::TextureFormat::RGBA8,
+            BGFX_SAMPLER_POINT|BGFX_SAMPLER_U_CLAMP|BGFX_SAMPLER_V_CLAMP,bgfx::copy(white,4)));
+        REQUIRE(texture.valid());
+        const auto output=bgfx::createTexture2D(width,height,false,1,bgfx::TextureFormat::RGBA8,
+            BGFX_TEXTURE_RT|BGFX_SAMPLER_POINT|BGFX_SAMPLER_U_CLAMP|BGFX_SAMPLER_V_CLAMP);
+        REQUIRE(bgfx::isValid(output));BgfxFrameBuffer framebuffer(bgfx::createFrameBuffer(1,&output,true));REQUIRE(framebuffer.valid());
+        BgfxTexture readback(bgfx::createTexture2D(width,height,false,1,bgfx::TextureFormat::RGBA8,BGFX_TEXTURE_BLIT_DST|BGFX_TEXTURE_READ_BACK));REQUIRE(readback.valid());
+        bgfx::setViewRect(drawView,0,0,width,height);bgfx::setViewClear(drawView,BGFX_CLEAR_COLOR,0x000000ff,1.f,0);bgfx::setViewFrameBuffer(drawView,framebuffer.get());
+        SMAMesh mesh;mesh.vertices={{0,0,0,0,0,1,0,0},{12,0,1,0,0,1,0,0},{12,12,1,1,0,1,0,0},{0,12,0,1,0,1,0,0}};
+        mesh.indices={0,1,2,0,2,3};
+        const auto a=renderer.createMesh(mesh),b=renderer.createMesh(mesh);REQUIRE(a);REQUIRE(b);
+        std::vector<BonePose> poseA(1),poseB(1);poseA[0].scale=poseB[0].scale=1.f;
+        poseA[0].ox=10;poseA[0].oy=12;poseB[0].ox=84;poseB[0].oy=40;
+        for(int i=0;i<4;++i)bgfx::frame();
+        const uint16_t vertexBuffersBefore=bgfx::getStats()->numVertexBuffers;
+        using Pixels=std::array<uint8_t,width*height*4>;
+        const auto render=[&](SkinMode mode,Pixels& pixels) {
+            renderer.setSkinMode(mode);
+            renderer.updateMesh(a,poseA);renderer.drawMesh(drawView,a,texture.get().idx,0,0,1,1);
+            renderer.updateMesh(b,poseB);renderer.drawMesh(drawView,b,texture.get().idx,0,0,1,1);
+            bgfx::blit(readView,readback.get(),0,0,output);
+            uint32_t frame=bgfx::frame();const auto ready=bgfx::readTexture(readback.get(),pixels.data());
+            while(frame<ready)frame=bgfx::frame();
+        };
+        Pixels cpu{},gpu{};render(SkinMode::Cpu,cpu);render(SkinMode::Gpu,gpu);
+        int differences=0,cpuLeft=0,cpuRight=0,gpuLeft=0,gpuRight=0;
+        for(size_t y=0;y<height;++y)for(size_t x=0;x<width;++x) {
+            const size_t i=(y*width+x)*4;
+            for(size_t c=0;c<3;++c)if(std::abs(int(cpu[i+c])-int(gpu[i+c]))>1)++differences;
+            const bool cw=cpu[i]>250&&cpu[i+1]>250&&cpu[i+2]>250;
+            const bool gw=gpu[i]>250&&gpu[i+1]>250&&gpu[i+2]>250;
+            if(x<width/2){cpuLeft+=cw;gpuLeft+=gw;}else{cpuRight+=cw;gpuRight+=gw;}
+        }
+        CHECK(cpuLeft>64);CHECK(cpuRight>64);CHECK(gpuLeft>64);CHECK(gpuRight>64);
+        CHECK_MESSAGE(differences<128,"Distinct actor GPU/CPU pixel mismatches: "<<differences);
+        for(int i=0;i<4;++i)bgfx::frame();
+        CHECK(bgfx::getStats()->numVertexBuffers==vertexBuffersBefore);
+        bgfx::setViewFrameBuffer(drawView,BGFX_INVALID_HANDLE);
+        renderer.destroyMesh(a);renderer.destroyMesh(b);bgfx::frame();
+    }
+    device.shutdown();
+}
+
 // ---------------------------------------------------------------------------
 // Round 19: S5 host-side cost benchmark. The GPU compute path must reduce
 // per-frame host work versus CPU soft skinning: for a large mesh (8k
@@ -728,6 +872,207 @@ TEST_CASE("Render: D3D11 SMA GPU skin host-cost benchmark") {
         bgfx::frame();
     }
     device.shutdown();
+}
+
+
+namespace {
+using SmaContractPixels=std::array<uint8_t,128*72*4>;
+struct SmaContractFrame {SmaContractPixels pixels{};uint32_t compute=0;};
+struct SmaContractDraw {float x,y,scale;};
+SMAMesh smaContractQuad(float size,uint16_t p0=0,float w0=1,uint16_t p1=UINT16_MAX,float w1=0) {
+    SMAMesh mesh;mesh.vertices={{0,0,0,0,p0,w0,p1,w1},{size,0,1,0,p0,w0,p1,w1},
+        {size,size,1,1,p0,w0,p1,w1},{0,size,0,1,p0,w0,p1,w1}};mesh.indices={0,1,2,0,2,3};return mesh;
+}
+void checkSmaContractPixels(const SmaContractPixels& cpu,const SmaContractPixels& gpu,bool split=false) {
+    int differences=0,whiteCpu=0,whiteGpu=0,leftCpu=0,rightCpu=0,leftGpu=0,rightGpu=0;
+    for(size_t i=0;i<cpu.size();i+=4) {
+        differences+=std::abs(int(cpu[i])-int(gpu[i]))>1;
+        const bool a=cpu[i]>250&&cpu[i+1]>250&&cpu[i+2]>250,b=gpu[i]>250&&gpu[i+1]>250&&gpu[i+2]>250;
+        whiteCpu+=a;whiteGpu+=b;
+        if((i/4)%128<64){leftCpu+=a;leftGpu+=b;}else{rightCpu+=a;rightGpu+=b;}
+    }
+    CAPTURE(differences);CAPTURE(whiteCpu);CAPTURE(whiteGpu);
+    REQUIRE(whiteCpu>64);CHECK(whiteGpu>64);CHECK(differences<128);
+    CHECK(std::abs(whiteCpu-whiteGpu)<=std::max(2,whiteGpu/50));
+    if(split){REQUIRE(leftCpu>128);REQUIRE(rightCpu>128);CHECK(leftGpu>128);CHECK(rightGpu>128);}
+}
+void smaDrawContract(unsigned kind) {
+    constexpr wchar_t env[]=L"CAESURA_SMA_DRAW_CONTRACT_CHILD";
+    constexpr const wchar_t* cases[]={
+        L"Render: D3D11 SMA draw transform changes without pose update",
+        L"Render: D3D11 SMA same mesh draws isolate per-draw output",
+        L"Render: D3D11 SMA uint16 pose domain matches CPU branches"};
+    if(!isGpuChildProcess(env)){CHECK(runGpuChildProcess(env,cases[kind])==ERROR_SUCCESS);return;}
+    HiddenSdlWindow window(128,72);REQUIRE(window);REQUIRE(window.nativeHandle());
+    BgfxRenderDevice device;REQUIRE(device.setPreferredBackend("dx11"));REQUIRE(device.init(window.nativeHandle(),128,72));
+    REQUIRE(bgfx::getRendererType()==bgfx::RendererType::Direct3D11);
+    std::printf("SMA_DRAW_CONTRACT_DEVICE vendor=%u device=%u\n",unsigned(bgfx::getCaps()->vendorId),unsigned(bgfx::getCaps()->deviceId));
+    {
+        const uint8_t white[4]={255,255,255,255};
+        BgfxTexture texture(bgfx::createTexture2D(1,1,false,1,bgfx::TextureFormat::RGBA8,
+            BGFX_SAMPLER_POINT|BGFX_SAMPLER_U_CLAMP|BGFX_SAMPLER_V_CLAMP,bgfx::copy(white,4)));REQUIRE(texture.valid());
+        const auto target=bgfx::createTexture2D(128,72,false,1,bgfx::TextureFormat::RGBA8,
+            BGFX_TEXTURE_RT|BGFX_SAMPLER_POINT|BGFX_SAMPLER_U_CLAMP|BGFX_SAMPLER_V_CLAMP);REQUIRE(bgfx::isValid(target));
+        BgfxFrameBuffer framebuffer(bgfx::createFrameBuffer(1,&target,true));REQUIRE(framebuffer.valid());
+        BgfxTexture readback(bgfx::createTexture2D(128,72,false,1,bgfx::TextureFormat::RGBA8,BGFX_TEXTURE_BLIT_DST|BGFX_TEXTURE_READ_BACK));REQUIRE(readback.valid());
+        constexpr uint16_t view=10,readView=11;
+        const auto readPixels=[&](){
+            SmaContractFrame result;bgfx::blit(readView,readback.get(),0,0,target);
+            uint32_t frame=bgfx::frame();result.compute=std::max(result.compute,bgfx::getStats()->numCompute);
+            const auto ready=bgfx::readTexture(readback.get(),result.pixels.data());const auto deadline=GetTickCount64()+10000;
+            while(frame<ready&&GetTickCount64()<deadline){frame=bgfx::frame();result.compute=std::max(result.compute,bgfx::getStats()->numCompute);}
+            REQUIRE(frame>=ready);
+            for(int i=0;i<2;++i){bgfx::frame();result.compute=std::max(result.compute,bgfx::getStats()->numCompute);}
+            return result;
+        };
+        const auto one=[&](const SMAMesh& mesh,const std::vector<BonePose>& poseA,const std::vector<BonePose>& poseB,SmaContractDraw a,SmaContractDraw b){
+            CAPTURE(mesh.vertices[0].bone0);CAPTURE(mesh.vertices[0].bone1);CAPTURE(poseA.size());
+            std::array<SmaContractFrame,2> final{},seed{};std::array<uint32_t,2> compute{};
+            for(unsigned mode=0;mode<2;++mode){
+                SmaMeshRenderer renderer;renderer.init();REQUIRE(renderer.gpuSkinAvailable());
+                renderer.setSkinMode(mode==0?SkinMode::Cpu:SkinMode::Gpu);
+                const auto handle=renderer.createMesh(mesh);REQUIRE(handle);
+                bgfx::setViewRect(view,0,0,128,72);bgfx::setViewClear(view,BGFX_CLEAR_COLOR,uint32_t(0x000000ff),1.0f,uint8_t(0));
+                bgfx::setViewFrameBuffer(view,framebuffer.get());bgfx::frame();bgfx::frame();
+                renderer.updateMesh(handle,poseA);renderer.drawMesh(view,handle,texture.get().idx,a.x,a.y,a.scale,1);
+                if(kind==0){
+                    seed[mode]=readPixels();compute[mode]+=seed[mode].compute;
+                    // No updateMesh: final NDC must still follow the new draw.
+                    renderer.drawMesh(view,handle,texture.get().idx,b.x,b.y,b.scale,1);
+                }else if(kind==1){
+                    // Same handle, both draws queued before any frame call.
+                    renderer.updateMesh(handle,poseB);renderer.drawMesh(view,handle,texture.get().idx,b.x,b.y,b.scale,1);
+                }
+                final[mode]=readPixels();compute[mode]+=final[mode].compute;
+                bgfx::setViewFrameBuffer(view,BGFX_INVALID_HANDLE);renderer.destroyMesh(handle);CHECK(renderer.meshCount()==0);
+                bgfx::frame();bgfx::frame();
+            }
+            CHECK(compute[0]==0);REQUIRE(compute[1]>0);
+            checkSmaContractPixels(final[0].pixels,final[1].pixels,kind==1);
+            if(kind==0){
+                checkSmaContractPixels(seed[0].pixels,seed[1].pixels);
+                int changed=0;for(size_t i=0;i<final[0].pixels.size();i+=4)changed+=std::abs(int(seed[0].pixels[i])-int(final[0].pixels[i]))>1;
+                REQUIRE(changed>128);
+            }
+        };
+        std::vector<BonePose> poses(2),other=poses;
+        if(kind==0)one(smaContractQuad(20),poses,poses,{10,8,1},{70,30,1.25f});
+        else if(kind==1){other[0].ox=8;other[0].oy=4;one(smaContractQuad(16),poses,other,{10,8,1},{76,36,1});}
+        else {
+            std::vector<BonePose> large(65);large[64].ox=30;large[64].oy=10;
+            one(smaContractQuad(20,64),large,large,{20,10,1},{20,10,1});
+            poses[1].ox=16;poses[1].oy=6;
+            one(smaContractQuad(20,65535,.75f,1,.25f),poses,poses,{20,10,1},{20,10,1});
+            poses[0].ox=12;poses[0].oy=7;
+            one(smaContractQuad(20,0,0,2,1),poses,poses,{20,10,1},{20,10,1});
+            one(smaContractQuad(20,0,0,65535,1),poses,poses,{20,10,1},{20,10,1});
+            one(smaContractQuad(20,0,0,65535,0),poses,poses,{20,10,1},{20,10,1});
+            std::vector<BonePose> fullRange(65536);fullRange.back().ox=24;fullRange.back().oy=9;
+            one(smaContractQuad(20,0,0,65535,1),fullRange,fullRange,{20,10,1},{20,10,1});
+            one(smaContractQuad(20,65535),fullRange,fullRange,{20,10,1},{20,10,1});
+        }
+    }
+    bgfx::frame();bgfx::frame();device.shutdown();
+}
+}
+TEST_CASE("Render: D3D11 SMA draw transform changes without pose update"){smaDrawContract(0);}
+TEST_CASE("Render: D3D11 SMA same mesh draws isolate per-draw output"){smaDrawContract(1);}
+TEST_CASE("Render: D3D11 SMA uint16 pose domain matches CPU branches"){smaDrawContract(2);}
+
+TEST_CASE("Render: D3D11 SMA opacity composites independently per draw") {
+    constexpr wchar_t env[]=L"CAESURA_SMA_OPACITY_CHILD";
+    constexpr wchar_t name[]=L"Render: D3D11 SMA opacity composites independently per draw";
+    if(!isGpuChildProcess(env)) {
+        CHECK(runGpuChildProcess(env,name)==ERROR_SUCCESS);
+        return;
+    }
+    HiddenSdlWindow window(128,72);REQUIRE(window);REQUIRE(window.nativeHandle());
+    BgfxRenderDevice device;
+    REQUIRE(device.setPreferredBackend("dx11"));
+    REQUIRE(device.init(window.nativeHandle(),128,72));
+    REQUIRE(bgfx::getRendererType()==bgfx::RendererType::Direct3D11);
+    std::printf("SMA_OPACITY_DEVICE vendor=%u device=%u\n",
+        unsigned(bgfx::getCaps()->vendorId),unsigned(bgfx::getCaps()->deviceId));
+    {
+        constexpr uint16_t view=10,readView=11;
+        constexpr uint8_t background[3]={32,64,96};
+        constexpr uint8_t source[3]={224,160,80};
+        constexpr float opacities[3]={0.f,.5f,1.f};
+        constexpr float positions[3]={8.f,48.f,88.f};
+        const auto target=bgfx::createTexture2D(128,72,false,1,bgfx::TextureFormat::RGBA8,
+            BGFX_TEXTURE_RT|BGFX_SAMPLER_POINT);
+        REQUIRE(bgfx::isValid(target));
+        BgfxFrameBuffer framebuffer(bgfx::createFrameBuffer(1,&target,true));REQUIRE(framebuffer.valid());
+        BgfxTexture readback(bgfx::createTexture2D(128,72,false,1,bgfx::TextureFormat::RGBA8,
+            BGFX_TEXTURE_BLIT_DST|BGFX_TEXTURE_READ_BACK));REQUIRE(readback.valid());
+        // Cover both opaque and straight-alpha source textures. Replacing
+        // texture alpha with actor opacity, or multiplying RGB twice, fails.
+        for(const uint8_t sourceAlpha : {uint8_t(255),uint8_t(128)}) {
+            CAPTURE(sourceAlpha);
+            const uint8_t rgba[4]={source[0],source[1],source[2],sourceAlpha};
+            BgfxTexture texture(bgfx::createTexture2D(1,1,false,1,bgfx::TextureFormat::RGBA8,
+                BGFX_SAMPLER_POINT|BGFX_SAMPLER_U_CLAMP|BGFX_SAMPLER_V_CLAMP,bgfx::copy(rgba,4)));
+            REQUIRE(texture.valid());
+            std::array<SmaContractFrame,2> result{};
+            for(unsigned mode=0;mode<2;++mode) {
+                CAPTURE(mode);
+                SmaMeshRenderer renderer;renderer.init();
+                REQUIRE(renderer.gpuSkinAvailable());
+                const auto selected=mode==0?SkinMode::Cpu:SkinMode::Gpu;
+                renderer.setSkinMode(selected);REQUIRE(renderer.skinMode()==selected);
+                const auto handle=renderer.createMesh(smaContractQuad(20));REQUIRE(handle);
+                bgfx::setViewRect(view,0,0,128,72);
+                bgfx::setViewMode(view,bgfx::ViewMode::Sequential);
+                bgfx::setViewClear(view,BGFX_CLEAR_COLOR,uint32_t(0x204060ff),1.f,uint8_t(0));
+                bgfx::setViewFrameBuffer(view,framebuffer.get());
+                bgfx::frame();bgfx::frame();
+                renderer.updateMesh(handle,std::vector<BonePose>(1));
+                bgfx::touch(view);
+                // All three submits precede the frame boundary. The final
+                // opacity=1 must not overwrite earlier submissions' uniform.
+                for(unsigned draw=0;draw<3;++draw)
+                    renderer.drawMesh(view,handle,texture.get().idx,positions[draw],24.f,1.f,opacities[draw]);
+                bgfx::blit(readView,readback.get(),0,0,target);
+                uint32_t frame=bgfx::frame();
+                result[mode].compute=bgfx::getStats()->numCompute;
+                const auto ready=bgfx::readTexture(readback.get(),result[mode].pixels.data());
+                const auto deadline=GetTickCount64()+10000;
+                while(frame<ready&&GetTickCount64()<deadline) {
+                    frame=bgfx::frame();
+                    result[mode].compute=std::max(result[mode].compute,bgfx::getStats()->numCompute);
+                }
+                REQUIRE(frame>=ready);
+                for(int i=0;i<2;++i) {
+                    bgfx::frame();
+                    result[mode].compute=std::max(result[mode].compute,bgfx::getStats()->numCompute);
+                }
+                if(mode==0) CHECK(result[mode].compute==0);
+                else REQUIRE(result[mode].compute>=2); // No silent CPU fallback.
+                for(unsigned draw=0;draw<3;++draw) {
+                    CAPTURE(draw);
+                    const float alpha=(float(sourceAlpha)/255.f)*opacities[draw];
+                    // Interior samples avoid rasterization edge conventions.
+                    for(unsigned y=28;y<40;++y) for(unsigned dx=4;dx<16;++dx) {
+                        const auto offset=(y*128+unsigned(positions[draw])+dx)*4;
+                        for(unsigned channel=0;channel<3;++channel) {
+                            const int expected=int(source[channel]*alpha+background[channel]*(1.f-alpha)+.5f);
+                            CHECK(std::abs(int(result[mode].pixels[offset+channel])-expected)<=1);
+                        }
+                    }
+                }
+                // The clear itself is an independent control, outside all meshes.
+                for(unsigned channel=0;channel<3;++channel)
+                    CHECK(result[mode].pixels[(4*128+4)*4+channel]==background[channel]);
+                bgfx::setViewFrameBuffer(view,BGFX_INVALID_HANDLE);
+                renderer.destroyMesh(handle);CHECK(renderer.meshCount()==0);
+                bgfx::frame();bgfx::frame();
+            }
+            for(size_t i=0;i<result[0].pixels.size();i+=4)
+                for(unsigned channel=0;channel<3;++channel)
+                    CHECK(std::abs(int(result[0].pixels[i+channel])-int(result[1].pixels[i+channel]))<=1);
+        }
+    }
+    bgfx::frame();bgfx::frame();device.shutdown();
 }
 
 #endif

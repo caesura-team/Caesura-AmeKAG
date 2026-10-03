@@ -26,6 +26,16 @@ struct CompletedLoad {
     std::vector<uint8_t> data;
 };
 
+struct AsyncLoaderSnapshot {
+    bool supported = false;
+    bool running = false;
+    uint64_t pendingWaiters = 0;
+    uint64_t inflightKeys = 0;
+    uint64_t completedBuffered = 0;
+    uint64_t cacheEntries = 0;
+    uint64_t cacheBytes = 0;
+};
+
 class IAsyncLoader {
 public:
     virtual ~IAsyncLoader() = default;
@@ -57,6 +67,14 @@ public:
 
     virtual int  pendingCount() const = 0;
     virtual bool isRunning()   const = 0;
+    // Owner/main thread only. Counts are valid only when supported; pending
+    // includes buffered results awaiting delivery, and deduplicated waiters
+    // can outnumber inflight keys. Cache bytes are stored rgba/data bytes,
+    // not allocator capacity or GPU memory. This never reads worker results.
+    // cancelAll can clear these containers while old jobs still own work:
+    // combine with JobSystem observations. Results moved to a host or SDL
+    // event queue are outside this snapshot; zeroes do not prove global idle.
+    virtual AsyncLoaderSnapshot getSnapshot() const = 0;
 };
 
 } // namespace Caesura

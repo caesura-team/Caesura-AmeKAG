@@ -4,6 +4,12 @@
 -- wiring per task; this file is the new deliverable, registration deferred).
 package.path = "scripts/?.lua;scripts/kag/?.lua;" .. package.path
 
+-- Test handlers are explicit DSL extensions; a recording KAG table alone
+-- does not register commands. Keep the production public selector intact.
+local fixture_schema = require("kag.schema")
+fixture_schema.define("u18fail", {})
+fixture_schema.define("u18after", {})
+
 local passed, failed = 0, 0
 local function check(name, cond)
     if cond then print("PASS " .. name) passed = passed + 1

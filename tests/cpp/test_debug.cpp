@@ -12,11 +12,17 @@ extern "C" {
 #include <chrono>
 #include <cstring>
 #include <filesystem>
+#include <memory>
 #include <thread>
 
 using namespace Caesura;
 
 namespace {
+
+std::string utf8SourcePath(const std::filesystem::path& path) {
+    const auto utf8 = path.generic_u8string();
+    return {reinterpret_cast<const char*>(utf8.data()), utf8.size()};
+}
 
 constexpr const char* kStepScript =
     "local function inner()\n"
@@ -323,19 +329,58 @@ TEST_CASE("DebugProtocol matches absolute and relative breakpoint paths") {
         "source_identity.lua";
     const std::string relative = "./scripts/source_identity.lua";
 
-    protocol.setBreakpoint(absolute.string(), 17);
+    protocol.setBreakpoint(utf8SourcePath(absolute), 17);
     CHECK(protocol.hasBreakpoint(relative, 17));
     protocol.removeBreakpoint(relative, 17);
-    CHECK_FALSE(protocol.hasBreakpoint(absolute.string(), 17));
+    CHECK_FALSE(protocol.hasBreakpoint(utf8SourcePath(absolute), 17));
 
     protocol.setBreakpoint("scripts/./source_identity.lua", 23);
-    CHECK(protocol.hasBreakpoint(absolute.string(), 23));
-    protocol.removeBreakpoint(absolute.string(), 23);
+    CHECK(protocol.hasBreakpoint(utf8SourcePath(absolute), 23));
+    protocol.removeBreakpoint(utf8SourcePath(absolute), 23);
     CHECK_FALSE(protocol.hasBreakpoint(relative, 23));
 
     protocol.shutdown();
     reload.shutdown();
     lua_close(L);
+}
+
+TEST_CASE("DebugProtocol initializes and matches source paths in a Unicode working directory") {
+    namespace fs = std::filesystem;
+    const fs::path previous = fs::current_path();
+    fs::path directory = fs::temp_directory_path() /
+        ("caesura-debug-cwd-" + std::to_string(
+            std::chrono::steady_clock::now().time_since_epoch().count()));
+    directory += fs::path(u8"-作品 输出 🎵𠀀");
+    REQUIRE(fs::create_directory(directory));
+    struct RestoreDirectory {
+        fs::path previous;
+        fs::path owned;
+        ~RestoreDirectory() {
+            std::error_code error;
+            fs::current_path(previous, error);
+            // This fixture creates only this empty directory; no recursive
+            // removal can touch another test's files.
+            fs::remove(owned, error);
+        }
+    } restore{previous, directory};
+    fs::current_path(directory);
+    std::unique_ptr<lua_State, decltype(&lua_close)> state(luaL_newstate(), lua_close);
+    REQUIRE(state != nullptr);
+    HotReload reload;
+    DebugProtocol protocol(reload);
+    REQUIRE(protocol.init(state.get()));
+
+    // Match init()'s physical CWD when the host's temp root is a symlink.
+    const std::string absolute = utf8SourcePath(fs::current_path() / "scripts/source.lua");
+    protocol.setBreakpoint(absolute, 17);
+    CHECK(protocol.hasBreakpoint("scripts/source.lua", 17));
+    protocol.removeBreakpoint("./scripts/source.lua", 17);
+    CHECK_FALSE(protocol.hasBreakpoint(absolute, 17));
+    protocol.setBreakpoint("scripts/./source.lua", 23);
+    CHECK(protocol.hasBreakpoint(absolute, 23));
+    protocol.removeBreakpoint(absolute, 23);
+    CHECK_FALSE(protocol.hasBreakpoint("scripts/source.lua", 23));
+    CHECK(protocol.shutdown());
 }
 
 TEST_CASE("DebugProtocol yields a breakpoint without blocking the host") {
@@ -350,7 +395,7 @@ TEST_CASE("DebugProtocol yields a breakpoint without blocking the host") {
     const std::filesystem::path breakpointPath =
         std::filesystem::current_path() / "scripts" / "chapter" / ".." /
         "debug_nonblocking.lua";
-    protocol.setBreakpoint(breakpointPath.string(), 2);
+    protocol.setBreakpoint(utf8SourcePath(breakpointPath), 2);
     auto commands = protocol.commandSink();
     CHECK_FALSE(commands(DebugProtocol::NoPause, DebugProtocol::Command::Continue));
 

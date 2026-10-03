@@ -98,6 +98,7 @@ public:
 
 class AudioAssetFixture final : public IAssetReader {
 public:
+    Caesura::AssetDirectoryResult listDirectory(const std::string&, size_t, size_t) override { return {}; }
     AudioAssetFixture() : previous(BackendRegistry::instance().getAssetReader()) {
         BackendRegistry::instance().setAssetReader(this);
     }
@@ -732,4 +733,134 @@ TEST_CASE("U11 audio restore: public voice budgets map their complete supported 
         audio.stopSessionAudio();
         CHECK(quota.live == 0);
     }
+}
+
+
+TEST_CASE("Audio U27 snapshot: reusable waves and restored session sources have separate lifetimes") {
+    RestoreAudioQuota quota;
+    const auto bytes = silentWave();
+    AudioWaveFile file(bytes);
+    SoLoudAudioEngine audio{SoLoudAudioEngine::OutputMode::ManualMix};
+    REQUIRE(audio.init());
+    REQUIRE(audio.soloud().getBackendId() == SoLoud::Soloud::NULLDRIVER);
+    const auto checkIdle = [&](bool running, uint64_t buses, uint64_t waves) {
+        const auto state = audio.getSnapshot();
+        CHECK(state.supported);
+        CHECK(state.running == running);
+        CHECK(state.outputMode == AudioOutputMode::ManualMix);
+        CHECK(state.busVoices == buses);
+        CHECK(state.liveVoices == 0);
+        CHECK(state.sessionHandles == 0);
+        CHECK(state.retiringBGM == 0);
+        CHECK(state.retiringVoice == 0);
+        CHECK(state.rawCacheEntries == 0);
+        CHECK(state.voiceCompletionsPending == 0);
+        CHECK(state.restoredSources == 0);
+        CHECK(state.waveCacheEntries == waves);
+    };
+    checkIdle(true, 3, 0);
+    for (unsigned cycle = 0; cycle != 4; ++cycle) {
+        CAPTURE(cycle);
+        const auto handle = audio.playSE(file.path);
+        REQUIRE(handle != 0);
+        CHECK(audio.getSnapshot().waveCacheEntries == 1);
+        CHECK(audio.getSnapshot().liveVoices == 1);
+        CHECK(audio.getSnapshot().sessionHandles == 1);
+        audio.flushWaveCache(); // A playing source must remain owned.
+        CHECK(audio.getSnapshot().waveCacheEntries == 1);
+        CHECK(audio.soloud().isValidVoiceHandle(handle));
+        CHECK(quota.live == 1);
+        audio.stopSessionAudio();
+        checkIdle(true, 3, 1); // Fixed-asset cache plateau, not a live handle leak.
+        CHECK(quota.live == 0);
+    }
+    CHECK(audio.playSE(file.path + ".missing") == 0);
+    checkIdle(true, 3, 1);
+
+    const AudioRestoreState state{"assets/u27-restored.wav", 0.25, 0.75f, true};
+    auto prepared = audio.prepareAudioState(state, bytes.data(), bytes.size());
+    REQUIRE(prepared != nullptr);
+    checkIdle(true, 3, 1); // A caller-owned preparation is outside backend counts.
+    REQUIRE(audio.applyAudioState(std::move(prepared)));
+    const auto restored = audio.getSnapshot();
+    CHECK(restored.liveVoices == 1);
+    CHECK(restored.sessionHandles == 1); // Restored handle is an alias, not +1.
+    CHECK(restored.restoredSources == 1);
+    CHECK(restored.waveCacheEntries == 1); // Restore did not enter the file cache.
+    CHECK(restored.rawCacheEntries == 0);
+    CHECK(quota.live == 1);
+    audio.stopBGM(0);
+    CHECK(quota.live == 0);
+    const auto awaitingCull = audio.getSnapshot();
+    CHECK(awaitingCull.liveVoices == 0);
+    CHECK(awaitingCull.sessionHandles == 0);
+    CHECK(awaitingCull.restoredSources == 1);
+    CHECK(audio.getSnapshot().restoredSources == 1); // Observation cannot release it.
+    audio.update(0);
+    checkIdle(true, 3, 1);
+
+    prepared = audio.prepareAudioState(state, bytes.data(), bytes.size());
+    REQUIRE(prepared != nullptr);
+    REQUIRE(audio.applyAudioState(std::move(prepared)));
+    CHECK(audio.getSnapshot().restoredSources == 1);
+    audio.stopSessionAudio(); // Hard session boundary clears restored owners too.
+    checkIdle(true, 3, 1);
+    CHECK(quota.live == 0);
+    audio.flushWaveCache();
+    checkIdle(true, 3, 0);
+    audio.shutdown();
+    checkIdle(false, 0, 0);
+    REQUIRE(audio.init());
+    checkIdle(true, 3, 0);
+    audio.shutdown();
+    checkIdle(false, 0, 0);
+    CHECK(quota.live == 0);
+}
+
+TEST_CASE("Audio U26 voice level: restore preparation preserves PCM while commit invalidates the session") {
+    RestoreAudioQuota quota;
+    const auto bytes = patternWave();
+    AudioWaveFile file(bytes);
+    SoLoudAudioEngine audio{SoLoudAudioEngine::OutputMode::ManualMix};
+    REQUIRE(audio.init());
+    REQUIRE(audio.playBGM(file.path, 0) != 0);
+    const auto voice = audio.playVoice(file.path);
+    REQUIRE(voice != 0);
+    std::vector<float> pcm(4096 * 2);
+    audio.soloud().mix(pcm.data(), 4096);
+    const auto before = audio.getVoiceLevel();
+    REQUIRE(before.playing);
+    REQUIRE(before.sampled);
+    REQUIRE(before.rms > 0);
+    const auto resources = audio.getSnapshot();
+    auto state = audio.captureAudioState();
+    auto invalid = state;
+    invalid.position = -1;
+    CHECK_FALSE(audio.prepareAudioState(invalid, bytes.data(), bytes.size()));
+    CHECK_FALSE(audio.prepareAudioState(state, bytes.data(), 12));
+    CHECK(audio.getVoiceLevel().generation == before.generation);
+    CHECK(audio.getVoiceLevel().sampled);
+    CHECK(audio.getVoiceLevel().rms == before.rms);
+    CHECK(audio.getSnapshot().sessionHandles == resources.sessionHandles);
+    CHECK(audio.soloud().isValidVoiceHandle(voice));
+    CHECK(quota.live == 2);
+    auto prepared = audio.prepareAudioState(state, bytes.data(), bytes.size());
+    REQUIRE(prepared != nullptr);
+    CHECK(audio.getVoiceLevel().generation == before.generation);
+    REQUIRE(audio.applyAudioState(std::move(prepared)));
+    const auto committed = audio.getVoiceLevel();
+    CHECK(committed.supported);
+    CHECK(committed.generation != before.generation);
+    CHECK_FALSE(committed.playing);
+    CHECK_FALSE(committed.sampled);
+    CHECK(committed.rms == 0);
+    CHECK_FALSE(audio.soloud().isValidVoiceHandle(voice));
+    CHECK(audio.consumeVoiceCompletions() == 0);
+    CHECK(quota.live == 1); // the restored BGM only
+    audio.stopSessionAudio();
+    CHECK(audio.getVoiceLevel().generation != committed.generation);
+    CHECK_FALSE(audio.getVoiceLevel().sampled);
+    CHECK(audio.getSnapshot().rawCacheEntries == 0);
+    CHECK(audio.getSnapshot().sessionHandles == 0);
+    CHECK(quota.live == 0);
 }

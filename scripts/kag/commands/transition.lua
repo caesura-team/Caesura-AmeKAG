@@ -123,7 +123,7 @@ _schema2.define("fade", {
     layer = { type = "string", default = "fg" },
     from = { type = "number", default = 0, min = 0, max = 255 },
     to = { type = "number", default = 255, min = 0, max = 255 },
-    time = { type = "number", default = 500, min = 0, max = 30000 },
+    time = { type = "number", default = 500, min = 0, max = 30000, aliases = {"duration"} },
     duration = { type = "number", default = 500, min = 0, max = 30000 },
 })
 
@@ -138,7 +138,9 @@ end
 -- ═══════════════════════════════════════════════════════════════════════════
 
 local function resolve_method(params)
-    local kind = params.kind or params.type or "crossfade"
+    -- Keep omitted aliases absent through schema coercion. Only explicitly
+    -- supplied values compete: canonical method, then type, then legacy kind.
+    local kind = params.method or params.type or params.kind or "crossfade"
     local map  = {
         crossfade = "crossfade",
         rule      = "rule",
@@ -183,32 +185,33 @@ end
 local schema = require("kag.schema")
 schema.define("scroll", {
     _meta = { category = "transition", blocking = false, desc = "KAG3-compatible scroll command" },
-    text  = { type = "string", default = "" },
+    text  = { type = "string", default = "", positional_index = 1 },
     speed = { type = "number", default = 60, min = 1, max = 1000 },
     size  = { type = "number", default = 28, min = 8, max = 128 },
     color = { type = "string", default = "white" },
 })
 schema.define("trans", {
     _meta = { category = "transition", blocking = true, desc = "KAG3-compatible trans command" },
-    method = { type = "string", default = "crossfade" },
-    type = { type = "string", default = "crossfade" },  -- KAG3 alias (kind)
-    time   = { type = "number", default = 500, min = 0, max = 30000 },
-    duration = { type = "number", default = 500, min = 0, max = 30000 },
+    method = { type = "string" }, -- runtime default crossfade after alias resolution
+    type = { type = "string" },   -- KAG3 alias
+    kind = { type = "string" },   -- legacy alias
+    time   = { type = "number", min = 0, max = 30000 },
+    duration = { type = "number", min = 0, max = 30000 }, -- default 500 after alias resolution
 })
 schema.define("move", {
     _meta = { category = "transition", blocking = true, desc = "KAG3-compatible move command" },
     x = { type = "number", default = 0 },
     y = { type = "number", default = 0 },
-    time = { type = "number", default = 300, min = 0, max = 30000 },
+    time = { type = "number", default = 300, min = 0, max = 30000, aliases = {"duration"} },
     duration = { type = "number", default = 300, min = 0, max = 30000 },
-    layer = { type = "string", default = "" },  -- KAG3 layer name
+    layer = { type = "string", default = "fg", aliases = {"name"} },  -- KAG3 layer name
     name = { type = "string", default = "" },
 })
 schema.define("quake", {
     _meta = { category = "transition", blocking = true, desc = "KAG3-compatible quake command" },
-    time = { type = "number", default = 300, min = 0, max = 30000 },
+    time = { type = "number", default = 300, min = 0, max = 30000, aliases = {"duration"} },
     duration = { type = "number", default = 300, min = 0, max = 30000 },
-    intensity = { type = "number", default = 5, min = 0, max = 100 },
+    intensity = { type = "number", default = 5, min = 0, max = 100, aliases = {"amplitude"} },
     amplitude = { type = "number", default = 5, min = 0, max = 100 },
 })
 
@@ -297,82 +300,89 @@ function TransCommands.blur(ctx, params)
 end
 
 function TransCommands.trans(ctx, params)
-    local dur     = params.time or params.duration or 500
-    local method  = resolve_method(params)
-    local dir     = resolve_direction(params)
-    local rule    = params.rule or params.rule_image or nil
-
+    local dur = tonumber(params.time or params.duration) or 500
+    local ResourceCommands = require("kag.commands.resource")
     if dur <= 0 then
-        require("kag.commands.resource").promote_transition_slot()
-        if backend.render_frame then backend.render_frame() end
+        Transition.cancel_pending(ctx)
+        Transition.cancel()
+        ResourceCommands.promote_transition_slot()
         return
     end
 
+    -- Own cancellation before the first capture: standalone startup can need a
+    -- genuine render epoch even without the scheduler's adjacent-bg lease.
     local operation <close> = Operation.start(ctx)
     local ct = operation.token
-    ct:register(function() Transition.cancel() end)
+    local captureOwner = {closed=false}
+    local function close_capture_wait()
+        captureOwner.closed = true
+        Transition.clear_render_wait(ctx, captureOwner)
+    end
+    ct:register(close_capture_wait)
+    local captureScope <close> = setmetatable({}, {__close=close_capture_wait})
 
-    -- Phase G8-U2: promote transition-slot preloaded textures to main cache
-    local ResourceCommands = require("kag.commands.resource")
-    if ResourceCommands.has_pending_transition() then
-        -- Wait with 5-second timeout
-        local waited = 0
-        while ResourceCommands.has_pending_transition() and waited < 5000 do
-            if ct.cancelled then break end
-            coroutine.yield()
-            waited = waited + 16
-        end
+    -- Acquire A before any preload yield can render the changed scene B.
+    -- Snapshots are numeric native-owned leases, not pooled empty RTTs.
+    local fromTex, fromFrame = Transition.take_pending(ctx)
+    local prepared = fromTex ~= nil
+    if not prepared then
+        Transition.cancel()
+        fromTex, fromFrame = Transition.capture_after_render(ctx, captureOwner)
+        if not fromTex then return end
+    end
+    local toTex, tx
+    local released = false
+    local function release()
+        if released then return end
+        released = true
+        if tx then Transition.clear_render_wait(ctx, tx) end
+        require("rtt").destroy(fromTex)
+        if toTex then require("rtt").destroy(toTex) end
+    end
+    local lease <close> = setmetatable({}, {__close = function()
+        if tx and tx.status ~= Transition.Status.COMPLETED then Transition.cancel(tx) end
+        release()
+    end})
+    local config = {method = resolve_method(params), duration = dur,
+        direction = resolve_direction(params) or "left"}
+    local rule = params.rule or params.rule_image
+    if config.method == "rule" then
+        config.rule_tex = Transition.preload_rule(rule)
+        assert(config.rule_tex, "rule transition requires a loaded rule image")
+    end
+    tx = Transition.start(fromTex, fromTex, config)
+    tx.release = release
+    ct:register(function() Transition.cancel(tx) end)
+    local function hold_and_yield()
+        if ct.cancelled or not Transition.is_active(tx) then return false end
+        Transition.tick(0, tx) -- hold A over the newly rendered scene (no B flash)
+        Transition.wait_for_render(ctx, tx)
+        return not ct.cancelled and Transition.is_active(tx)
+    end
+    local waited = 0
+    while ResourceCommands.has_pending_transition() and waited < 5000 do
+        if not hold_and_yield() then return end
+        waited = waited + 16
     end
     ResourceCommands.promote_transition_slot()
-
-    -- Wait for preloaded textures if configured
-    local waitPreload = params.wait_preload
-    if waitPreload == nil then waitPreload = true end
-    if waitPreload and ctx._preloadPending then
+    if params.wait_preload ~= false then
         while ctx._preloadPending do
-            if ct.cancelled then break end
-            coroutine.yield()
+            if not hold_and_yield() then return end
         end
     end
-
-    if ct.cancelled then
-        return
+    -- Exactly a real frame boundary separates the two native scene copies.
+    if not prepared and not hold_and_yield() then return end
+    local toFrame
+    toTex, toFrame = Transition.capture_screen()
+    assert(toFrame > fromFrame, "transition destination has not been rendered")
+    tx.to_tex = toTex
+    Transition.tick(0, tx)
+    while not ct.cancelled and Transition.is_active(tx) do
+        local dt = Transition.wait_for_render(ctx, tx) or 16
+        if ct.cancelled or not Transition.is_active(tx) then break end
+        Transition.tick(dt, tx)
     end
-
-    -- Capture current screen as "from" texture
-    local fromTex = Transition.capture_screen and Transition.capture_screen(ctx) or nil
-
-    -- Trigger render to apply pending layer changes, then capture destination
-    if backend.render_frame then backend.render_frame() end
-    local toTex = Transition.capture_screen and Transition.capture_screen(ctx) or fromTex
-
-    -- Start the transition on the GPU engine. Transition.start_rule/
-    -- start_wipe/start_crossfade do not exist in scripts/transition.lua --
-    -- the real API is Transition.start(fromTex, toTex, params) driven by
-    -- Transition.tick(dt) (previously every [trans] call threw
-    -- "attempt to call a nil value", silently swallowed by the scheduler).
-    local params = {
-        method    = method,
-        duration  = dur,
-        direction = dir or "left",
-    }
-    if method == "rule" and rule then
-        params.rule_tex = Transition.preload_rule(rule)
-    end
-    Transition.start(fromTex, toTex, params)
-
-    -- Block via coroutine.yield until transition completes or is cancelled
-    local elapsed = 0
-    while elapsed < dur and not ct.cancelled and Transition.is_active() do
-        local dt = coroutine.yield() or 16
-        elapsed = elapsed + dt
-        Transition.tick(dt)
-    end
-
-    -- Phase G8-U1: explicit GC step after transition
-    pcall(function() collectgarbage("step", 20) end)
-
-    if not ct.cancelled then
+    if not ct.cancelled and tx.status == Transition.Status.COMPLETED then
         operation:complete()
     end
 end
@@ -421,7 +431,7 @@ function TransCommands.move(ctx, params)
         elseif easing == "ease-out" then
             t = 1 - (1 - t) * (1 - t)
         elseif easing == "ease-in-out" then
-            t = t < 0.5 and (2 * t * t) or (1 - math.pow(-2 * t + 2, 2) / 2)
+            t = t < 0.5 and (2 * t * t) or (1 - (-2 * t + 2)^2 / 2)
         end
 
         local curX = startX + (targetX - startX) * t
@@ -509,7 +519,7 @@ function TransCommands.camera(ctx, params)
         elapsed = elapsed + dt
         local t = math.min(1, elapsed / dur)
         -- ease-in-out
-        local e = t < 0.5 and 2 * t * t or 1 - math.pow(-2 * t + 2, 2) / 2
+        local e = t < 0.5 and 2 * t * t or 1 - (-2 * t + 2)^2 / 2
         backend.set_screen_offset(toX * e, toY * e)
     end
     if not ct.cancelled then

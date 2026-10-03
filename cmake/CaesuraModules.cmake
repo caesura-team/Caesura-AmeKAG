@@ -225,6 +225,7 @@ caesura_add_module(Archive
 
 caesura_add_module(Audio
     src/audio/SoLoudAudioEngine.cpp
+    src/audio/VoiceMeter.cpp
     src/audio/AudioRestore.cpp
     src/audio/NullAudioBackend.cpp
 )
@@ -326,6 +327,8 @@ caesura_add_module(Script
     src/script/vm/LuaManager.cpp
     src/script/state/GameState.cpp
     src/script/bindings/KAGBinding.cpp
+    src/script/bindings/AssetVideoBinding.cpp
+    src/script/bindings/AssetDirectoryBinding.cpp
     src/script/bindings/RenderBinding.cpp
     src/script/bindings/VFXBinding.cpp
     src/script/bindings/DevCoreBinding.cpp
@@ -338,6 +341,7 @@ caesura_add_module(Script
     src/script/bindings/AudioRestoreBinding.cpp
     src/script/bindings/FontRestoreBinding.cpp
     src/script/bindings/TransientRestoreBinding.cpp
+    src/script/bindings/Live2DBinding.cpp
     src/script/bindings/AIBinding.cpp
     src/script/bindings/EngineBinding.cpp
 )
@@ -348,6 +352,8 @@ caesura_add_module(Steam
 
 caesura_add_module(Storage
     src/storage/SaveManager.cpp
+    src/storage/CloudConflictStore.cpp
+    src/storage/CloudCoordinatorState.cpp
     src/storage/ISaveProvider.cpp
     src/storage/CloudSaveProvider.cpp
     src/storage/HttpCloudSaveProvider.cpp
@@ -420,6 +426,7 @@ add_library(CaesuraEntry STATIC
     src/entry/Engine_LuaRegistry.cpp
     src/entry/StartupScripts.cpp
     src/entry/StartupValidation.cpp
+    src/entry/RuntimeStats.cpp
     src/entry/ErrorUI.cpp
 )
 add_library(Caesura::Entry ALIAS CaesuraEntry)

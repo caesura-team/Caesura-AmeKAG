@@ -163,6 +163,44 @@ do
     schema.specs('u14_contract_probe').value.default=7
 end
 
+-- Real version-2 fixtures emitted by b533's maintained ks_bake, not a forged
+-- compatibility table. Quoted bare arguments changed tokenizer semantics even
+-- though this video's per-command schema identity stayed byte-for-byte equal.
+do
+    local root = "tests/scripts/fixtures/quoted-bare-v2/"
+    local function read(path)
+        local f = assert(io.open(path, "rb")); local bytes = f:read("*a"); f:close(); return bytes
+    end
+    local old_bytes = read(root .. "quoted.ksc")
+    local old = assert(load(old_bytes, "=actual-legacy-ksc", "t", {}))()
+    check("quoted legacy fixture really contains old file bytes", old.version == 2
+        and old.compatibility.semantics == "caesura-kag-2" and old.params[1].file == '"opening.mpg"')
+    local valid, reason = compiler.validateSerialized(old)
+    check("quoted legacy payload rejects old compiler semantics", not valid and reason == "compiler-semantics-mismatch", reason)
+    check("quoted legacy persisted cache rejected", compiler.readCache(root .. "quoted.ksc") == nil)
+    local bundle = assert(load(read(root .. "story.lua"), "=actual-legacy-bundle", "t", {}))()
+    local accepted, bundle_reason = compiler.validateBundle(bundle, {"quoted.ks"})
+    check("quoted legacy bundle rejects explicitly", not accepted
+        and tostring(bundle_reason):find("compiler-semantics-mismatch", 1, true) ~= nil, bundle_reason)
+
+    local path = root .. "quoted.ks"
+    local cache = "cache/ksc/" .. path:gsub("[/\\]+", "_"):gsub("%.ks$", ".ksc")
+    local prior_file = io.open(cache, "rb")
+    local prior = prior_file and prior_file:read("*a")
+    if prior_file then prior_file:close() end
+    local out = assert(io.open(cache, "wb")); assert(out:write(old_bytes)); assert(out:close())
+    local ok, scene = pcall(require("flow").load_scene, path)
+    if prior then
+        local restore = assert(io.open(cache, "wb")); assert(restore:write(prior)); assert(restore:close())
+    else os.remove(cache) end
+    check("quoted stale cache with source recompiles through real flow", ok and scene
+        and scene.tokens[1][2].file == "opening.mpg", ok and scene and scene.tokens[1][2].file or scene)
+    local fresh = tokenizer.parse(read(path)); compiler.compile(fresh)
+    local packed = assert(compiler.serialize(fresh))
+    check("quoted tokenizer migration retains format 2", packed.version == 2
+        and packed.compatibility.semantics ~= "caesura-kag-2" and fresh[1][2].file == "opening.mpg")
+end
+
 -- Exit gate.
 if failed > 0 then
     print(string.format("BYTECODE CACHE TESTS: %d passed, %d FAILED", passed, failed))

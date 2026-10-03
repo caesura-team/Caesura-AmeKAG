@@ -1,0 +1,483 @@
+"""Synthetic traces test rejection rules; they are not native execution proof."""
+import copy
+import math
+from pathlib import Path
+import sys
+import unittest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+from engine_soak_trace import check_trace, check_epochs, check_cold_trace
+from test_engine_soak_contract import measured
+
+
+def fixture(cycles=40, cycle_seconds=6.1):
+    events = [{"event":"initialized", "cycle":0, "owner_frame":0,
+               "seconds":0.0, "detail":measured()}]
+    frame = 0
+    request = 0
+    for cycle in range(cycles):
+        names = [("transient_resources", {"texture":100+cycle, "texture_valid":True,
+                   "target":200+cycle, "logical_texture_bytes":4100}),
+                 ("cycle_begin", {"texture":100+cycle, "target":200+cycle})]
+        for page in ("a", "b", "restored"):
+            request += 1
+            names += [("capture_admitted", {"page":page,"request_id":request,"generation":7}),
+                      ("capture_consumed", {"page":page,"request_id":request,
+                        "file":f"cycle-{cycle+1}-{page}.png", "png_bytes":100,
+                        "frame_id":request,"pixel":[130,35,50] if page=="b" else [20,50,90]})]
+            if page == "a": names.append(("save", {"bytes":900}))
+            if page == "b": names.append(("load", {}))
+        names += [("activities_admitted", {"cycle":cycle,"stage":"observed", "async_id":cycle+1,
+                    "voice_handles":[3*cycle+1,3*cycle+2,3*cycle+3],"voice_source_count":3,
+                    "pre_admission":{"backend":{"supported":True,"playing":False,"completions_pending":0},
+                                     "host":{"supported":True,"tracking_supported":True,"pending":0,"active":0,"owner_refs":0}},
+                    "voice":{"supported":True,"playing":True,"completions_pending":0},"accepted":True}),
+                  ("activities_finished", {"completed":1,"natural":1,"cancelled_admissions":8}),
+                  ("rollback", {})]
+        for offset,(name,detail) in enumerate(names):
+            frame += 1
+            seconds=cycle*cycle_seconds+offset*.01
+            if name=="activities_finished":seconds=(cycle+1)*cycle_seconds-.08
+            if name=="rollback":seconds=(cycle+1)*cycle_seconds-.07
+            events.append(dict(event=name,cycle=cycle,owner_frame=frame,
+                               seconds=seconds,detail=detail))
+        for index in range(3):
+            frame += 1
+            sample=measured();sample["host"]["completedOwnerFrames"]=frame
+            sample["render"]["captureSubmissionFrame"]=request
+            events.append(dict(event="settling",cycle=cycle,owner_frame=frame,
+                               seconds=(cycle+1)*cycle_seconds-.02+index*.005,detail=sample))
+        events.append(dict(event="quiet",cycle=cycle+1,owner_frame=frame,
+                           seconds=(cycle+1)*cycle_seconds,detail=copy.deepcopy(sample)))
+        if cycle == 19:
+            events.append(dict(event="measurement_begin",cycle=20,owner_frame=frame,
+                               seconds=(cycle+1)*cycle_seconds,detail={}))
+    total=cycles*cycle_seconds
+    result=dict(status="PROBE_COMPLETED",pid=4321,process_created="134343123456789012",
+                warm_cycles=20,completed_cycles=cycles,measured_cycles=cycles-20,
+                process_seconds=total+.1,measured_seconds=(cycles-20)*cycle_seconds+.1,
+                completed_owner_frames=frame+1,shutdown_host={"initialized":False,"running":False},
+                device_backend={"id":4,"name":"WinMM","sample_rate":44100,"reported_buffer_size":8192},
+                context_restarts=0,cold_restart="NOT_RUN")
+    process={"pid":4321,"created":"134343123456789012"}
+    return result,events,process,total+1,"short"
+
+
+class SoakTraceTests(unittest.TestCase):
+    def setUp(self): self.args=list(fixture())
+
+    def reject(self):
+        errors=check_trace(*self.args)
+        self.assertTrue(errors)
+        self.assertTrue(all(isinstance(e,str) and e for e in errors))
+
+    def event(self,name,cycle=20):
+        return next(e for e in self.args[1] if e["event"]==name and e["cycle"]==cycle)
+
+    def test_complete_trace_passes_without_modifying_observations(self):
+        before=copy.deepcopy(self.args)
+        self.assertEqual(check_trace(*self.args),[])
+        self.assertEqual(self.args,before)
+
+    def test_voice_admission_accepts_only_the_two_observed_states(self):
+        for playing,pending in ((True,0),(False,1)):
+            with self.subTest(playing=playing,pending=pending):
+                self.args=list(fixture())
+                self.event("activities_admitted")["detail"]["voice"].update(playing=playing,completions_pending=pending)
+                before=copy.deepcopy(self.args)
+                self.assertEqual(check_trace(*self.args),[])
+                self.assertEqual(self.args,before)
+
+    def test_voice_admission_rejects_stopped_ambiguous_and_duplicate_completions(self):
+        for playing,pending in ((False,0),(True,1),(False,2),(True,2)):
+            with self.subTest(playing=playing,pending=pending):
+                self.args=list(fixture())
+                detail=self.event("activities_admitted")["detail"]
+                detail["voice"].update(playing=playing,completions_pending=pending)
+                detail["accepted"]=True  # A claimed result cannot override the computed pair.
+                self.reject()
+
+    def test_voice_admission_requires_all_observation_fields(self):
+        paths=("cycle","stage","voice_source_count","accepted","pre_admission","voice",
+               "pre_admission.backend","pre_admission.host","pre_admission.backend.supported",
+               "pre_admission.backend.playing","pre_admission.backend.completions_pending",
+               "pre_admission.host.supported","pre_admission.host.tracking_supported",
+               "pre_admission.host.pending","pre_admission.host.active","pre_admission.host.owner_refs",
+               "voice.supported","voice.playing","voice.completions_pending")
+        for path in paths:
+            with self.subTest(path=path):
+                self.args=list(fixture());target=self.event("activities_admitted")["detail"]
+                parts=path.split(".")
+                for key in parts[:-1]:target=target[key]
+                del target[parts[-1]]
+                self.reject()
+
+    def test_voice_admission_rejects_old_backend_and_host_completion_ownership(self):
+        for path in ("backend.completions_pending","host.pending","host.active","host.owner_refs"):
+            with self.subTest(path=path):
+                self.args=list(fixture());group,key=path.split(".")
+                self.event("activities_admitted")["detail"]["pre_admission"][group][key]=1
+                self.reject()
+
+    def test_voice_admission_rejects_unsupported_observation_and_stale_cycle(self):
+        for path,value in (("pre_admission.backend.supported",False),("pre_admission.host.supported",False),
+                           ("pre_admission.host.tracking_supported",False),("voice.supported",False),
+                           ("cycle",19),("stage","third_voice_returned"),("accepted",False),
+                           ("voice_source_count",2),("voice_source_count",4)):
+            with self.subTest(path=path,value=value):
+                self.args=list(fixture());target=self.event("activities_admitted")["detail"];parts=path.split(".")
+                for key in parts[:-1]:target=target[key]
+                target[parts[-1]]=value;self.reject()
+
+    def test_voice_admission_requires_exact_boolean_and_integer_types(self):
+        for path,value in (("async_id",True),("cycle",True),("voice_source_count",True),("accepted",1),
+                           ("voice.playing",1),("voice.supported",1),("voice.completions_pending",False),
+                           ("voice.completions_pending",1.0),("pre_admission.backend.playing",0),
+                           ("pre_admission.backend.supported",1),("pre_admission.backend.completions_pending",False),
+                           ("pre_admission.host.supported",1),("pre_admission.host.tracking_supported",1),
+                           ("pre_admission.host.pending",False),("pre_admission.host.active",False),
+                           ("pre_admission.host.owner_refs",False)):
+            with self.subTest(path=path,value=value):
+                self.args=list(fixture());target=self.event("activities_admitted")["detail"];parts=path.split(".")
+                for key in parts[:-1]:target=target[key]
+                target[parts[-1]]=value;self.reject()
+        self.args=list(fixture());self.event("activities_admitted")["detail"]["voice_handles"][0]=True;self.reject()
+
+    def test_diagnostic_is_not_a_short_or_long_duration(self):
+        for mode in ["short","long"]:
+            with self.subTest(mode=mode):
+                self.args=list(fixture(22,.6));self.args[4]=mode;self.reject()
+        self.args[4]="diagnostic"
+        self.assertEqual(check_trace(*self.args),[])
+
+    def test_ticket_and_renderer_generation_counters_are_independent(self):
+        for event in self.args[1]:
+            if event["event"]=="capture_admitted":event["detail"]["generation"]=19
+        self.assertEqual(check_trace(*self.args),[])
+
+    def test_idle_gap_between_cycles_cannot_supply_measured_time(self):
+        boundary=self.args[1].index(self.event("transient_resources",21))
+        for event in self.args[1][boundary:]:event["seconds"]+=100
+        self.args[0]["process_seconds"]+=100
+        self.args[0]["measured_seconds"]+=100
+        self.args[3]+=100
+        self.reject()
+
+    def test_measurement_clock_can_start_after_checkpoint_on_same_owner_frame(self):
+        # The native probe flushes quiet, sets its steady clock, then emits
+        # measurement_begin. Those three times cannot be bit-identical.
+        start=self.event("measurement_begin",20)
+        start["seconds"]+=.00001
+        # The next cycle starts after that newly observed timestamp too.
+        self.event("transient_resources",20)["seconds"]+=.00001
+        self.assertEqual(check_trace(*self.args),[])
+
+    def test_self_reported_counts_cannot_replace_completed_cycles(self):
+        for field in ["warm_cycles","completed_cycles","measured_cycles"]:
+            for value in [True,-1,math.nan,40.0,0]:
+                with self.subTest(field=field,value=value):
+                    self.args=list(fixture());self.args[0][field]=value;self.reject()
+
+    def test_wrong_process_identity_or_success_state_is_rejected(self):
+        for field,value in [("pid",4322),("pid",True),("process_created","old"),("status","FAIL"),
+                            ("shutdown_host",{"initialized":True,"running":False})]:
+            with self.subTest(field=field):
+                self.args=list(fixture());self.args[0][field]=value;self.reject()
+
+    def test_missing_duplicate_or_reordered_activity_is_rejected(self):
+        for name in ["save","load","rollback","activities_admitted","activities_finished","cycle_begin"]:
+            for change in ["missing","duplicate"]:
+                with self.subTest(name=name,change=change):
+                    self.args=list(fixture());target=self.event(name);index=self.args[1].index(target)
+                    if change=="missing":self.args[1].pop(index)
+                    else:self.args[1].insert(index,copy.deepcopy(target))
+                    self.reject()
+        self.args=list(fixture());a=self.event("save");b=self.event("load")
+        a["event"],b["event"]="load","save";self.reject()
+
+    def test_unadmitted_callbacks_wrong_counts_and_reused_handles_are_rejected(self):
+        for event,key,value in [("activities_admitted","async_id",0),
+                                ("activities_admitted","voice_handles",[4,4,5]),
+                                ("activities_finished","completed",0),
+                                ("activities_finished","natural",True),
+                                ("activities_finished","cancelled_admissions",0),
+                                ("transient_resources","texture_valid",False),
+                                ("cycle_begin","texture",99999),("save","bytes",0)]:
+            with self.subTest(event=event,key=key):
+                self.args=list(fixture());self.event(event)["detail"][key]=value;self.reject()
+
+    def test_screenshot_identity_pair_and_safe_output_name_are_required(self):
+        for key,value in [("request_id",999999),("page","restored"),("png_bytes",0),
+                          ("file","../elsewhere.png"),("frame_id",True)]:
+            with self.subTest(key=key):
+                self.args=list(fixture());self.event("capture_consumed")["detail"][key]=value;self.reject()
+        self.args=list(fixture());self.event("capture_admitted")["detail"]["generation"]=99;self.reject()
+
+    def test_finite_monotonic_clock_and_owner_frames_are_required(self):
+        for key,value in [("seconds",math.nan),("seconds",math.inf),("seconds",True),("seconds",-1),
+                          ("owner_frame",True),("owner_frame",-1),("owner_frame",0)]:
+            with self.subTest(key=key,value=value):
+                self.args=list(fixture());self.event("load")[key]=value;self.reject()
+
+    def test_reported_time_cannot_inflate_real_trace_or_owner_time(self):
+        for field,value in [("measured_seconds",99999),("process_seconds",99999),
+                            ("measured_seconds",True),("process_seconds",math.nan)]:
+            with self.subTest(field=field):
+                self.args=list(fixture());self.args[0][field]=value;self.reject()
+        self.args=list(fixture());self.args[3]=1.0;self.reject()
+        self.args=list(fixture());self.event("measurement_begin",20)["seconds"]-=60;self.reject()
+
+    def test_three_real_consecutive_quiet_observations_are_required(self):
+        self.args[1].remove(self.event("settling"));self.reject()
+        self.args=list(fixture());self.event("settling")["detail"]["jobs"]["workerPending"]=1;self.reject()
+        self.args=list(fixture());self.event("settling")["detail"]["host"]["completedOwnerFrames"]+=1;self.reject()
+
+    def test_frozen_warm_baseline_rejects_growth_and_context_substitution(self):
+        for group,key,value in [("memory","textureBytes",8192),("render","contextGeneration",8),
+                                ("memory","luaBytes",3000000)]:
+            with self.subTest(group=group,key=key):
+                self.args=list(fixture());self.event("quiet",21)["detail"][group][key]=value;self.reject()
+        self.args=list(fixture());self.event("quiet",21)["detail"]["render"]["resources"]["textures"]+=1;self.reject()
+
+    def test_missing_sections_unknown_events_and_truncated_tail_fail_closed(self):
+        for result,events in [({},[]),(self.args[0],[]),(None,None)]:
+            with self.subTest(result=result is None):
+                self.assertTrue(check_trace(result,events,self.args[2],self.args[3],"short"))
+        self.args=list(fixture());self.event("load")["event"]="claimed_load";self.reject()
+        self.args=list(fixture());self.args[1].pop();self.reject()
+
+    def test_begin_resource_ids_require_integers_even_when_numeric_value_matches(self):
+        for field in ["texture", "target"]:
+            with self.subTest(field=field):
+                self.args=list(fixture())
+                detail=self.event("cycle_begin")["detail"]
+                detail[field]=float(detail[field])
+                self.reject()
+
+    def test_consistent_settled_growth_is_rejected_against_frozen_warm_baseline(self):
+        for path,delta in [(('render','resources','textures'),1),
+                           (('memory','textureBytes'),1),
+                           (('memory','luaBytes'),1024**2+1),
+                           (('memory','privateBytes'),64*1024**2+1),
+                           (('async','cacheEntries'),1)]:
+            with self.subTest(path=path):
+                self.args=list(fixture())
+                for event in self.args[1]:
+                    if ((event['event']=='settling' and event['cycle']==20)
+                            or (event['event']=='quiet' and event['cycle']==21)):
+                        node=event['detail']
+                        for part in path[:-1]:node=node[part]
+                        node[path[-1]]+=delta
+                errors=check_trace(*self.args)
+                self.assertTrue(errors)
+                self.assertTrue(any('Measured quiet boundary' in error for error in errors),errors)
+
+    def test_long_mode_accepts_a_complete_continuous_single_context_trace(self):
+        self.args=list(fixture(620,6.1));self.args[4]='long'
+        self.assertEqual(check_trace(*self.args),[])
+
+
+def epochs_fixture(mode='short', count=2, cycle_seconds=.7, measured_per_epoch=100):
+    epochs=[];start=1.0;total=0
+    for index in range(count):
+        result,events,owner,observed,_=fixture(20+measured_per_epoch,cycle_seconds)
+        for event in events:
+            if 'render' in event['detail']:event['detail']['render']['contextGeneration']=index+1
+        destroyed=start+result['process_seconds']+.1
+        epochs.append(dict(index=index,started_seconds=start,destroyed_seconds=destroyed,result=result,events=events))
+        total+=result['measured_cycles'];start=destroyed+.1
+    begin=epochs[0]['started_seconds']+next(e['seconds'] for e in epochs[0]['events'] if e['event']=='measurement_begin')
+    end=epochs[-1]['started_seconds']+epochs[-1]['events'][-1]['seconds']
+    summary=dict(status='CONTEXTS_COMPLETED',pid=owner['pid'],process_created=owner['created'],
+                 process_seconds=start,measured_seconds=end-begin+.1,measured_cycles=total,context_restarts=count-1)
+    return [summary,epochs,owner,start+1,mode]
+
+
+class SoakEpochTests(unittest.TestCase):
+    def setUp(self):self.args=epochs_fixture()
+
+    def reject(self):
+        errors=check_epochs(*self.args)
+        self.assertTrue(errors)
+        self.assertTrue(all(isinstance(e,str) and e for e in errors))
+
+    def test_continuous_context_restarts_allow_frame_and_ticket_counter_reset(self):
+        before=copy.deepcopy(self.args)
+        self.assertEqual(check_epochs(*self.args),[])
+        self.assertEqual(before,self.args)
+
+    def test_long_sequence_has_one_identity_and_six_hundred_measured_cycles(self):
+        self.assertEqual(check_epochs(*epochs_fixture('long',6,6.1)),[])
+
+    def test_context_resources_may_have_their_own_stable_baseline(self):
+        for event in self.args[1][1]['events']:
+            if 'render' in event['detail']:event['detail']['render']['resources']['textures']+=1
+        self.assertEqual(check_epochs(*self.args),[])
+
+    def test_short_and_long_cannot_be_supplied_by_brief_epoch_diagnostics(self):
+        for mode in ('short','long'):
+            with self.subTest(mode=mode):self.args=epochs_fixture(mode,2,.7,2);self.reject()
+        self.args[-1]='diagnostic'
+        self.assertEqual(check_epochs(*self.args),[])
+
+    def test_changed_pid_creation_or_outer_success_state_is_rejected(self):
+        for outer in (False,True):
+            for field,value in [('pid',4322),('pid',True),('process_created','old'),('status','FAIL')]:
+                with self.subTest(outer=outer,field=field,value=value):
+                    self.args=epochs_fixture()
+                    target=self.args[0] if outer else self.args[1][1]['result']
+                    target[field]=value;self.reject()
+
+    def test_context_generation_must_change_even_when_resource_counts_match(self):
+        for event in self.args[1][1]['events']:
+            if 'render' in event['detail']:event['detail']['render']['contextGeneration']=1
+        self.reject()
+
+    def test_later_warmup_cannot_reset_private_or_lua_growth_budget(self):
+        for field,delta in [('privateBytes',64*1024**2+1),('luaBytes',1024**2+1)]:
+            with self.subTest(field=field):
+                self.args=epochs_fixture();second=self.args[1][1]
+                for event in second['events']:
+                    if 'memory' in event['detail']:event['detail']['memory'][field]+=delta
+                self.assertEqual(check_trace(second['result'],second['events'],self.args[2],self.args[3],'diagnostic'),[])
+                self.reject()
+
+    def test_missing_duplicate_out_of_order_or_single_epoch_is_rejected(self):
+        for change in ('missing','duplicate','reverse','single'):
+            with self.subTest(change=change):
+                self.args=epochs_fixture()
+                if change=='missing':self.args[1][1]['events'].pop(12)
+                elif change=='duplicate':self.args[1].append(copy.deepcopy(self.args[1][1]))
+                elif change=='reverse':self.args[1].reverse()
+                else:self.args[1].pop()
+                self.reject()
+
+    def test_overlapping_context_lifetimes_and_idle_restart_gaps_are_rejected(self):
+        for field,value in [('started_seconds',0),('destroyed_seconds',0),('index',0),('index',1.0)]:
+            with self.subTest(field=field):
+                self.args=epochs_fixture();self.args[1][1][field]=value;self.reject()
+        self.args=epochs_fixture()
+        self.args[1][1]['started_seconds']+=20;self.args[1][1]['destroyed_seconds']+=20
+        self.args[0]['process_seconds']+=20;self.args[0]['measured_seconds']+=20;self.args[3]+=20
+        self.reject()
+
+    def test_incomplete_shutdown_or_missing_context_warmup_is_rejected(self):
+        for key,value in [('shutdown_host',{'initialized':True,'running':False}),('warm_cycles',19)]:
+            with self.subTest(key=key):
+                self.args=epochs_fixture();self.args[1][1]['result'][key]=value;self.reject()
+
+    def test_restarts_and_counts_are_derived_from_all_completed_epochs(self):
+        for key,value in [('context_restarts',0),('context_restarts',True),('measured_cycles',201),('measured_cycles',True)]:
+            with self.subTest(key=key):self.args=epochs_fixture();self.args[0][key]=value;self.reject()
+        self.args=epochs_fixture('short',3,.7,80);self.reject()
+
+    def test_reported_time_cannot_replace_observed_continuous_duration(self):
+        for key,value in [('measured_seconds',3600),('process_seconds',10000),('process_seconds',math.nan),('measured_seconds',True)]:
+            with self.subTest(key=key):self.args=epochs_fixture();self.args[0][key]=value;self.reject()
+        self.args=epochs_fixture('short',2,.3);self.reject()
+        self.args=epochs_fixture('long',6,.7);self.reject()
+
+    def test_each_context_keeps_its_own_post_warm_resource_limit(self):
+        for event in self.args[1][1]['events']:
+            if event['cycle']>=21 and 'render' in event['detail']:
+                event['detail']['render']['resources']['textures']+=1
+        self.reject()
+
+
+def cold_fixture(role='cold-consumer'):
+    producer=role=='cold-producer';corrupt=role=='cold-corrupt'
+    a=dict(cycle=1,page=1,secret_code=1);b=dict(cycle=777,page=2,secret_code=2)
+    names=[('initialized',measured()),('cold_begin',copy.deepcopy(a if producer else b))]
+    def capture(page,request):
+        color=[20,50,90] if page in ('a','restored') else [130,35,50]
+        names.extend([('capture_admitted',dict(page=page,request_id=request,generation=7)),
+                      ('capture_consumed',dict(page=page,request_id=request,file=f'cycle-1-{page}.png',png_bytes=100,frame_id=request,pixel=color))])
+    capture('a' if producer else 'before',1)
+    if producer:names.append(('cold_saved',dict(file='checkpoint.caes',bytes=128)))
+    else:
+        names.append(('cold_rejected',dict(b,context_unchanged=True)) if corrupt else ('cold_loaded',dict(a,context_replaced=True)))
+        capture('after' if corrupt else 'restored',2)
+    names.append(('cold_finished',copy.deepcopy(b if corrupt else a)))
+    events=[dict(event=name,cycle=0,owner_frame=i,seconds=i*.03,detail=detail) for i,(name,detail) in enumerate(names)]
+    owner=dict(pid=4321,created='134343123456789012')
+    result=dict(status='COLD_COMPLETED',mode=role,pid=owner['pid'],process_created=owner['created'],
+                warm_cycles=0,completed_cycles=0,measured_cycles=0,measured_seconds=0.0,
+                process_seconds=len(events)*.03,completed_owner_frames=len(events),
+                shutdown_host=dict(initialized=False,running=False))
+    return [result,events,owner,1.0,role]
+
+
+class SoakColdTraceTests(unittest.TestCase):
+    def setUp(self):self.args=cold_fixture()
+
+    def event(self,name):return next(e for e in self.args[1] if e['event']==name)
+
+    def reject(self):
+        errors=check_cold_trace(*self.args)
+        self.assertTrue(errors)
+        self.assertTrue(all(isinstance(e,str) and e for e in errors))
+
+    def test_all_three_distinct_cold_paths_pass_without_mutating_inputs(self):
+        for role in ('cold-producer','cold-consumer','cold-corrupt'):
+            with self.subTest(role=role):
+                args=cold_fixture(role);before=copy.deepcopy(args)
+                self.assertEqual(check_cold_trace(*args),[]);self.assertEqual(args,before)
+
+    def test_an_ordinary_soak_or_wrong_owner_cannot_claim_cold_recovery(self):
+        for key,value in [('status','PROBE_COMPLETED'),('mode','diagnostic'),('pid',4322),('pid',True),('process_created','old')]:
+            with self.subTest(key=key):self.args=cold_fixture();self.args[0][key]=value;self.reject()
+
+    def test_missing_duplicate_or_reordered_load_is_rejected(self):
+        for change in ('missing','duplicate','reordered'):
+            with self.subTest(change=change):
+                self.args=cold_fixture();event=self.event('cold_loaded');index=self.args[1].index(event)
+                if change=='missing':self.args[1].pop(index)
+                elif change=='duplicate':self.args[1].insert(index,copy.deepcopy(event))
+                else:self.args[1][index],self.args[1][index+1]=self.args[1][index+1],self.args[1][index]
+                self.reject()
+
+    def test_consumer_cannot_resave_or_begin_with_the_producer_state(self):
+        self.args[1].insert(2,dict(event='cold_saved',cycle=0,owner_frame=1,seconds=.03,detail=dict(file='checkpoint.caes',bytes=128)))
+        self.reject();self.args=cold_fixture()
+        self.event('cold_begin')['detail']=dict(cycle=1,page=1,secret_code=1);self.reject()
+
+    def test_load_must_replace_context_and_restore_persisted_fields(self):
+        for key,value in [('cycle',777),('cycle',True),('page',2),('secret_code',2),('context_replaced',False),('context_replaced',1)]:
+            with self.subTest(key=key):self.args=cold_fixture();self.event('cold_loaded')['detail'][key]=value;self.reject()
+
+    def test_corrupt_load_must_reject_without_changing_old_state(self):
+        for key,value in [('cycle',1),('page',1),('secret_code',1),('context_unchanged',False)]:
+            with self.subTest(key=key):self.args=cold_fixture('cold-corrupt');self.event('cold_rejected')['detail'][key]=value;self.reject()
+        self.args=cold_fixture('cold-corrupt');self.event('cold_rejected')['event']='cold_loaded';self.reject()
+
+    def test_final_state_must_still_match_the_loaded_or_preserved_page(self):
+        for role in ('cold-producer','cold-consumer','cold-corrupt'):
+            with self.subTest(role=role):self.args=cold_fixture(role);self.event('cold_finished')['detail']['cycle']=9;self.reject()
+
+    def test_screenshot_admission_consumption_identity_and_paths_are_strict(self):
+        for name,key,value in [('capture_admitted','request_id',True),('capture_admitted','generation',0),('capture_consumed','request_id',2),('capture_consumed','file','../outside.png'),('capture_consumed','png_bytes',0),('capture_consumed','pixel',[20,50,90])]:
+            with self.subTest(key=key):self.args=cold_fixture();self.event(name)['detail'][key]=value;self.reject()
+
+    def test_producer_must_report_a_retained_encrypted_checkpoint(self):
+        for key,value in [('file','../save'),('bytes',32),('bytes',True),('bytes',128.0)]:
+            with self.subTest(key=key):self.args=cold_fixture('cold-producer');self.event('cold_saved')['detail'][key]=value;self.reject()
+
+    def test_incomplete_shutdown_unknown_backend_and_false_device_claim_fail(self):
+        for change in ('shutdown','renderer','audio'):
+            with self.subTest(change=change):
+                self.args=cold_fixture()
+                if change=='shutdown':self.args[0]['shutdown_host']['running']=True
+                elif change=='renderer':self.event('initialized')['detail']['render']['backendName']='Noop'
+                else:self.event('initialized')['detail']['audio']['outputMode']='Software'
+                self.reject()
+
+    def test_cold_durations_cannot_contribute_fabricated_soak_cycles(self):
+        for key,value in [('warm_cycles',20),('measured_cycles',1),('completed_cycles',1),('measured_seconds',1),('process_seconds',10),('process_seconds',math.nan)]:
+            with self.subTest(key=key):self.args=cold_fixture();self.args[0][key]=value;self.reject()
+
+    def test_clock_frame_and_cycle_observations_cannot_move_backwards(self):
+        for key,value in [('seconds',-1),('seconds',True),('owner_frame',True),('owner_frame',0),('cycle',1)]:
+            with self.subTest(key=key):self.args=cold_fixture();self.event('cold_loaded')[key]=value;self.reject()
+
+
+if __name__=="__main__":unittest.main(verbosity=2)

@@ -27,6 +27,7 @@ freely, subject to the following restrictions:
 #include <math.h> // sin
 #include <float.h> // _controlfp
 #include "soloud_internal.h"
+#include <memory>
 #include "soloud_thread.h"
 #include "soloud_fft.h"
 
@@ -606,8 +607,15 @@ namespace SoLoud
 		if (mScratchSize < 4096) mScratchSize = 4096;
 		mScratch.init(mScratchSize * MAX_CHANNELS);
 		mOutputScratch.init(mScratchSize * MAX_CHANNELS);
-		mResampleData = new float*[mMaxActiveVoices * 2];
-		mResampleDataOwner = new AudioSourceInstance*[mMaxActiveVoices];
+		// Caesura: init() may reuse this mixer after deinit(). Replace both
+		// pointer arrays without losing the previous allocations or leaving
+		// dangling members if allocating the second replacement throws.
+		std::unique_ptr<float*[]> data(new float*[mMaxActiveVoices * 2]);
+		std::unique_ptr<AudioSourceInstance*[]> owners(new AudioSourceInstance*[mMaxActiveVoices]);
+		delete[] mResampleData;
+		delete[] mResampleDataOwner;
+		mResampleData = data.release();
+		mResampleDataOwner = owners.release();
 		mResampleDataBuffer.init(mMaxActiveVoices * 2 * SAMPLE_GRANULARITY * MAX_CHANNELS);
 		unsigned int i;		
 		for (i = 0; i < mMaxActiveVoices * 2; i++)

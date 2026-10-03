@@ -1,5 +1,11 @@
 -- test_for.lua — numeric [for] loops (Neo-Genesis)
 package.path = "scripts/?.lua;scripts/kag/?.lua;" .. package.path
+
+-- Test handlers are explicit DSL extensions; a recording KAG table alone
+-- does not register commands. Keep the production public selector intact.
+require("kag.commands.text") -- actual ch/text contracts before recorder replacement
+local fixture_schema = require("kag.schema")
+fixture_schema.define("z", {v={type="string"},tag={type="string"}})
 local passed, failed = 0, 0
 local function check(name, cond)
     if cond then print("PASS " .. name) passed = passed + 1

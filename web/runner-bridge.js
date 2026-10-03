@@ -1,10 +1,13 @@
 // Web supplies trusted scenes and input/output; kag_runner owns every session.
-export async function installRunnerBridge(lua, audioClock) {
+export async function installRunnerBridge(lua, audioClock, presentScene) {
   lua.global.set('__READ_WEB_AUDIO_CLOCK', audioClock)
+  lua.global.set('__PRESENT_WEB_SCENE', presentScene)
   await lua.doString(`
     local runner = require('kag_runner')
     local read_audio_clock = __READ_WEB_AUDIO_CLOCK
     __READ_WEB_AUDIO_CLOCK = nil
+    local present_scene = __PRESENT_WEB_SCENE
+    __PRESENT_WEB_SCENE = nil
     local audio_wait_owner, audio_wait_clock
     local function park_audio(ctx)
       if audio_wait_owner ~= ctx._audio_wait then
@@ -61,6 +64,30 @@ export async function installRunnerBridge(lua, audioClock) {
       })
     end
     __PUBLISH_WEB_TEXT = function() publishText(runner.get_ctx()) end
+
+    local function complete_pending_render(ctx)
+      local wait = ctx._transition_render_wait
+      if not wait or (ctx._render_epoch or 0) >= wait.epoch then return true end
+      publishText(ctx)
+      -- Only the renderer's completed DOM/rAF pass can release this wait.
+      -- Pump iterations and Wasmoon coroutine resumes are not presentations.
+      -- A transition tick already awaits a genuine Web presentation. Only its
+      -- exact snapshot owner can consume that completion; pending source holds
+      -- and initial capture waits still require a new frame to render scene B.
+      local owner = wait.owner
+      local ok, frame = pcall(function()
+        return present_scene(__SCENE_DRAWS_TABLE, owner and owner.from_tex,
+          owner and owner.to_tex, wait.epoch):await()
+      end)
+      if runner.get_ctx() ~= ctx then return false, 'render-owner-changed' end
+      if not ok or type(frame) ~= 'number' or frame ~= math.floor(frame)
+          or frame <= (ctx._render_epoch or 0) then
+        runner.stop() -- close the waiting coroutine and its owned snapshot leases
+        return false, 'render-presentation-failed:'..tostring(frame)
+      end
+      ctx._render_epoch = frame -- validated actual presenter identity, not a synthetic increment
+      return true
+    end
 
     local function publish()
       local ctx = runner.get_ctx()
@@ -133,6 +160,8 @@ export async function installRunnerBridge(lua, audioClock) {
         end
         frames = frames+1
         if __PERF_TRACE == true then __FRAME_COUNT=frames end
+        local rendered, render_error = complete_pending_render(ctx)
+        if not rendered then return 'ERR:'..render_error end
         local ok, reason
         -- A manual advance releases a restored checkpoint even when the host
         -- retains skip mode. Automatic input still stops at the checkpoint.

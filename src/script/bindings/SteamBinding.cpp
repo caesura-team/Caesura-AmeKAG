@@ -9,6 +9,9 @@
 #include "../../debug/api/DebugLog.h"
 #include <cstdio>
 #include <climits>
+#include <cmath>
+#include <cstring>
+#include <limits>
 #include <vector>
 
 extern "C" {
@@ -18,6 +21,21 @@ extern "C" {
 
 namespace Caesura {
 
+namespace {
+// Steam names cross a NUL-terminated ABI. Validate the complete Lua string
+// before any backend call or C++ resource acquisition; a Lua argument error
+// must not jump over a live std::string/vector destructor.
+const char* checkSteamName(lua_State* L, int index) {
+    luaL_argcheck(L, lua_type(L, index) == LUA_TSTRING, index,
+                  "Steam name must be a string");
+    size_t length = 0;
+    const char* value = lua_tolstring(L, index, &length);
+    luaL_argcheck(L, length > 0 && std::memchr(value, '\0', length) == nullptr,
+                  index, "Steam name must be nonempty and contain no NUL");
+    return value;
+}
+}
+
 #define STEAM_BODY(name, nullFallback, code) \
     static int lua_steam_##name(lua_State* L) { \
         auto* steam = BackendRegistry::instance().getSteamBackend(); \
@@ -26,19 +44,19 @@ namespace Caesura {
     }
 
 STEAM_BODY(unlock_achievement, lua_pushboolean(L, 0);, {
-    const char* id = luaL_checkstring(L, 1);
+    const char* id = checkSteamName(L, 1);
     lua_pushboolean(L, steam->unlockAchievement(id) ? 1 : 0);
     return 1;
 })
 
 STEAM_BODY(is_achievement_unlocked, lua_pushboolean(L, 0);, {
-    const char* id = luaL_checkstring(L, 1);
+    const char* id = checkSteamName(L, 1);
     lua_pushboolean(L, steam->isAchievementUnlocked(id) ? 1 : 0);
     return 1;
 })
 
 STEAM_BODY(reset_achievement, lua_pushboolean(L, 0);, {
-    const char* id = luaL_checkstring(L, 1);
+    const char* id = checkSteamName(L, 1);
     lua_pushboolean(L, steam->resetAchievement(id) ? 1 : 0);
     return 1;
 })
@@ -49,27 +67,32 @@ STEAM_BODY(reset_all_achievements, lua_pushboolean(L, 0);, {
 })
 
 STEAM_BODY(set_stat_int, lua_pushboolean(L, 0);, {
-    const char* name = luaL_checkstring(L, 1);
-    lua_Integer val = luaL_checkinteger(L, 2);
-    lua_pushboolean(L, steam->setStatInt(name, (int32_t)val) ? 1 : 0);
+    const char* name = checkSteamName(L, 1);
+    const lua_Integer val = luaL_checkinteger(L, 2);
+    luaL_argcheck(L, val >= INT32_MIN && val <= INT32_MAX, 2,
+                  "Steam integer stat must fit int32");
+    lua_pushboolean(L, steam->setStatInt(name, static_cast<int32_t>(val)) ? 1 : 0);
     return 1;
 })
 
 STEAM_BODY(get_stat_int, lua_pushinteger(L, 0);, {
-    const char* name = luaL_checkstring(L, 1);
+    const char* name = checkSteamName(L, 1);
     lua_pushinteger(L, steam->getStatInt(name));
     return 1;
 })
 
 STEAM_BODY(set_stat_float, lua_pushboolean(L, 0);, {
-    const char* name = luaL_checkstring(L, 1);
-    float val = (float)luaL_checknumber(L, 2);
-    lua_pushboolean(L, steam->setStatFloat(name, val) ? 1 : 0);
+    const char* name = checkSteamName(L, 1);
+    const lua_Number val = luaL_checknumber(L, 2);
+    constexpr lua_Number limit = (std::numeric_limits<float>::max)();
+    luaL_argcheck(L, std::isfinite(val) && val >= -limit && val <= limit, 2,
+                  "Steam float stat must be finite and fit float");
+    lua_pushboolean(L, steam->setStatFloat(name, static_cast<float>(val)) ? 1 : 0);
     return 1;
 })
 
 STEAM_BODY(get_stat_float, lua_pushnumber(L, 0.0);, {
-    const char* name = luaL_checkstring(L, 1);
+    const char* name = checkSteamName(L, 1);
     lua_pushnumber(L, steam->getStatFloat(name));
     return 1;
 })
@@ -87,7 +110,7 @@ STEAM_BODY(is_overlay_active, lua_pushboolean(L, 0);, {
 // ---- Cloud saves (Steam Remote Storage) ----------------------------------
 
 STEAM_BODY(cloud_write, lua_pushboolean(L, 0);, {
-    const char* file = luaL_checkstring(L, 1);
+    const char* file = checkSteamName(L, 1);
     size_t len = 0;
     const char* data = luaL_checklstring(L, 2, &len);
     if (len > INT32_MAX) { lua_pushboolean(L, 0); return 1; }
@@ -96,7 +119,7 @@ STEAM_BODY(cloud_write, lua_pushboolean(L, 0);, {
 })
 
 STEAM_BODY(cloud_read, lua_pushstring(L, "");, {
-    const char* file = luaL_checkstring(L, 1);
+    const char* file = checkSteamName(L, 1);
     const int32_t size = steam->cloudFileSize(file);
     // P2-4 (round 37): align with CloudSaveProvider kMaxChunkedSize (64MB);
     // the old 16MB cap rejected legitimate cloud saves the provider allows.
@@ -106,25 +129,25 @@ STEAM_BODY(cloud_read, lua_pushstring(L, "");, {
     }
     std::vector<char> buf(static_cast<size_t>(size));
     const int32_t got = steam->cloudRead(file, buf.data(), size);
-    if (got <= 0) { lua_pushnil(L); return 1; }
+    if (got <= 0 || got > size) { lua_pushnil(L); return 1; }
     lua_pushlstring(L, buf.data(), static_cast<size_t>(got));
     return 1;
 })
 
 STEAM_BODY(cloud_file_size, lua_pushinteger(L, 0);, {
-    const char* file = luaL_checkstring(L, 1);
+    const char* file = checkSteamName(L, 1);
     lua_pushinteger(L, steam->cloudFileSize(file));
     return 1;
 })
 
 STEAM_BODY(cloud_file_exists, lua_pushboolean(L, 0);, {
-    const char* file = luaL_checkstring(L, 1);
+    const char* file = checkSteamName(L, 1);
     lua_pushboolean(L, steam->cloudFileExists(file) ? 1 : 0);
     return 1;
 })
 
 STEAM_BODY(cloud_delete, lua_pushboolean(L, 0);, {
-    const char* file = luaL_checkstring(L, 1);
+    const char* file = checkSteamName(L, 1);
     lua_pushboolean(L, steam->cloudDelete(file) ? 1 : 0);
     return 1;
 })

@@ -8,7 +8,7 @@ namespace Caesura {
 // IMeshRenderer pipeline to scripts/kag/sma.lua.
 //   sma.create_mesh(verts, indices) -> handle (or 0)
 //   sma.update_mesh(handle, poses)          -- poses: {{rot, scale, ox, oy}, ...}
-//   sma.draw_mesh(handle, view, texId, x, y, scale, opacity)
+//   sma.draw_mesh(handle, view, textureManagerId, x, y, scale, opacity)
 //   sma.destroy_mesh(handle)
 //   sma.count() -> number
 void registerSmaBinding(lua_State* L);

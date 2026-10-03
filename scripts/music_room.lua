@@ -32,20 +32,26 @@ local ownedTextures = {}
 -- ===========================================================================
 function MusicRoom.scan()
     if trackCache then return trackCache end
-    trackCache = {}
+    local candidate = {} -- publish only after complete enumeration and sorting
     local dirs = {"assets/bgm/", "assets/bgm", "data/bgm/", "data/bgm"}
-    local pattern = "%.ogg$|%.mp3$|%.wav$"
+    -- Lua patterns have no alternation operator. Filter extensions explicitly
+    -- after the directory scan so valid tracks are not silently omitted.
+    local pattern = "%.%w+$"
     for _, dir in ipairs(dirs) do
         local files = fileutil.scan_dir(dir, pattern)
         if #files > 0 then
             for _, fname in ipairs(files) do
+                local extension = fname:lower():match("%.([^.]+)$")
+                if extension == "ogg" or extension == "mp3" or extension == "wav" then
                 local id = fname:match("^(.-)%.[^.]+$") or fname
-                table.insert(trackCache, {id = id, path = dir .. "/" .. fname, name = id})
+                table.insert(candidate, {id = id, path = dir .. "/" .. fname, name = id})
+                end
             end
-            break
+            if #candidate > 0 then break end
         end
     end
-    table.sort(trackCache, function(a, b) return a.id < b.id end)
+    table.sort(candidate, function(a, b) return a.id < b.id end)
+    trackCache = candidate
     return trackCache
 end
 

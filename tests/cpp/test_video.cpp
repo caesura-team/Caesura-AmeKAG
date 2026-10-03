@@ -1,6 +1,9 @@
 #include "doctest.h"
 #include "render/VideoPlayer.h"
 #include "render/api/IVideoPlayer.h"
+#include <fstream>
+#include <cstdio>
+#include <iterator>
 
 #if defined(_WIN32)
 #include "HiddenGpuContext.h"
@@ -65,6 +68,9 @@ public:
     int workerCount() const override { return 0; }
     int pendingJobs() const override { return 0; }
     bool isRunning() const override { return true; }
+    JobSystemSnapshot getSnapshot() const override {
+        return {false, true, 0, 0, 0};
+    }
     uint64_t submitted = 0;
 };
 
@@ -203,4 +209,74 @@ TEST_CASE("VideoPlayer closeAll stops decoded videos and permits reopening befor
     bgfx::frame();
     device.shutdown();
 }
+
+TEST_CASE("VideoPlayer asset memory decodes real MPG and releases its owned input") {
+    constexpr wchar_t childEnv[]=L"CAESURA_VIDEO_ASSET_MEMORY_CHILD";
+    constexpr wchar_t testName[]=L"VideoPlayer asset memory decodes real MPG and releases its owned input";
+    if(!CaesuraTest::isGpuChildProcess(childEnv)) {
+        CHECK(CaesuraTest::runGpuChildProcess(childEnv,testName)==ERROR_SUCCESS);return;
+    }
+    CaesuraTest::HiddenSdlWindow window(64,64);REQUIRE(window);
+    BgfxRenderDevice device;REQUIRE(device.setPreferredBackend("dx11"));REQUIRE(device.init(window.nativeHandle(),64,64));
+    {
+        std::ifstream file(kVideoFixture,std::ios::binary);REQUIRE(file.good());
+        const std::vector<uint8_t> original((std::istreambuf_iterator<char>(file)),std::istreambuf_iterator<char>());
+        REQUIRE(original.size()>1024);
+        ImmediateVideoJobs jobs;VideoAudioCapture audio;VideoPlayer player;player.setJobSystem(jobs);
+        auto callerBytes=original;
+        const auto first=player.openMemory(std::move(callerBytes));REQUIRE(static_cast<bool>(first));
+        callerBytes.assign(4096,0xFF); // Decoder must own its original bytes, not this later caller buffer.
+        player.setLoop(first,true);player.setVolume(first,0.4f);
+        decodeVideoUntilAudio(player,first,audio);
+        CHECK(player.lastMemorySecondaryIoRefusals()==0);
+        player.close(first);CHECK_FALSE(player.isPlaying(first));player.updateAll(0);
+        CHECK(player.activeCount()==0);CHECK(audio.live.empty());
+        const auto second=player.openMemory(original);REQUIRE(static_cast<bool>(second));CHECK_FALSE(first==second);
+        decodeVideoUntilAudio(player,second,audio);
+        player.closeAll();player.updateAll(0);CHECK(player.activeCount()==0);CHECK(audio.live.empty());
+        player.shutdown();CHECK(player.activeCount()==0);
+    }
+    bgfx::frame();device.shutdown();
+}
+#endif
+
+TEST_CASE("VideoPlayer asset memory rejects missing oversized and corrupt input") {
+    VideoPlayer player;
+    CHECK_FALSE(static_cast<bool>(player.openMemory({})));
+    CHECK_FALSE(static_cast<bool>(player.openMemory(std::vector<uint8_t>(64u*1024u*1024u+1,0))));
+    CHECK_FALSE(static_cast<bool>(player.openMemory({'n','o','t','-','a','-','v','i','d','e','o'})));
+    CHECK(player.activeCount()==0);
+    player.shutdown();CHECK(player.activeCount()==0);
+}
+#ifdef CAESURA_VIDEO_FFMPEG
+TEST_CASE("VideoPlayer asset memory FFmpeg refuses external URL playlist input") {
+    // Current FFmpeg rejects HLS memory input at sniffing because it has no
+    // trusted filename/MIME. This is early refusal, not proof that secondary
+    // io_open was called. Other FFmpeg versions may reach the same deny layer.
+    const std::string playlist="#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:1\n"
+        "#EXT-X-MEDIA-SEQUENCE:0\n#EXTINF:1,\nfile:///__caesura_forbidden_secondary__/segment.ts\n#EXT-X-ENDLIST\n";
+    VideoPlayer player;
+    const auto result=player.openMemory(std::vector<uint8_t>(playlist.begin(),playlist.end()));
+    CHECK_FALSE(static_cast<bool>(result));
+    INFO("secondary refusals=" << player.lastMemorySecondaryIoRefusals()
+         << "; zero denotes pre-I/O rejection, not callback coverage");
+    CHECK(player.activeCount()==0);
+    player.shutdown();CHECK(player.activeCount()==0);
+}
+TEST_CASE("VideoPlayer asset memory FFmpeg rejects concat secondary protocol") {
+    // Self-identifying input reaches the real concat demuxer. Current FFmpeg
+    // rejects its external segment at the empty protocol whitelist BEFORE
+    // the custom io_open callback; that earlier defense is correct behavior.
+    // The root acceptance pairs this receipt with exact captured FFmpeg stderr.
+    // Callback execution is unverified here and is never inferred from refusal.
+    const std::string playlist="ffconcat version 1.0\nfile '__caesura_forbidden_secondary__.ts'\n";
+    VideoPlayer player;
+    const auto result=player.openMemory(std::vector<uint8_t>(playlist.begin(),playlist.end()));
+    CHECK_FALSE(static_cast<bool>(result));
+    CHECK(player.activeCount()==0);
+    std::printf("VIDEO_MEMORY_SECONDARY_DIAGNOSTIC:{\"kind\":\"concat\",\"opened\":%s,\"active\":%d,\"io_open_refusals\":%u}\n",
+        result ? "true" : "false",player.activeCount(),player.lastMemorySecondaryIoRefusals());
+    player.shutdown();CHECK(player.activeCount()==0);
+}
+
 #endif

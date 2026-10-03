@@ -14,7 +14,8 @@ namespace Caesura {
 static void submitFullscreenQuad(uint16_t viewId, bgfx::ProgramHandle program,
                                   float x, float y, float w, float h,
                                   bgfx::TextureHandle tex, bgfx::UniformHandle sampler,
-                                  bgfx::UniformHandle /*params*/, const float* /*paramData*/, uint16_t /*paramVec4s*/) {
+                                  bgfx::UniformHandle /*params*/, const float* /*paramData*/, uint16_t /*paramVec4s*/,
+                                  bool overwrite = false, float offsetX = 0, float offsetY = 0) {
     if (!bgfx::isValid(program)) return;
 
     struct FsVertex { float x, y, u, v; };
@@ -30,10 +31,10 @@ static void submitFullscreenQuad(uint16_t viewId, bgfx::ProgramHandle program,
     auto* v = (FsVertex*)tvb.data;
 
     const bgfx::Caps* caps = bgfx::getCaps();
-    v[0] = { -1.0f,  1.0f, 0.0f, 0.0f };
-    v[1] = {  1.0f,  1.0f, 1.0f, 0.0f };
-    v[2] = {  1.0f, -1.0f, 1.0f, 1.0f };
-    v[3] = { -1.0f, -1.0f, 0.0f, 1.0f };
+    v[0] = { -1.0f + offsetX,  1.0f + offsetY, 0.0f, 0.0f };
+    v[1] = {  1.0f + offsetX,  1.0f + offsetY, 1.0f, 0.0f };
+    v[2] = {  1.0f + offsetX, -1.0f + offsetY, 1.0f, 1.0f };
+    v[3] = { -1.0f + offsetX, -1.0f + offsetY, 0.0f, 1.0f };
 
     uint16_t indices[6] = { 0, 1, 2, 0, 2, 3 };
     bgfx::TransientIndexBuffer tib;
@@ -44,6 +45,7 @@ static void submitFullscreenQuad(uint16_t viewId, bgfx::ProgramHandle program,
     uint64_t state = BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A
                    | BGFX_STATE_BLEND_FUNC(BGFX_STATE_BLEND_SRC_ALPHA,
                                            BGFX_STATE_BLEND_INV_SRC_ALPHA);
+    if (overwrite) state = BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A;
 
     bgfx::setVertexBuffer(0, &tvb);
     bgfx::setIndexBuffer(&tib);
@@ -98,7 +100,11 @@ void BgfxDraw::submitTransition(uint16_t viewId, bgfx::TextureHandle fromTex,
     float params[4] = { progress, (float)method, 0, 0 };
     bgfx::setUniform(m_state->shaders->getTransParams(), params, 1);
 
-    submitFullscreenQuad(viewId, m_state->shaders->getTransitionProgram(), 0, 0, (float)m_state->device->getWidth(), (float)m_state->device->getHeight(), BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE, nullptr, 0);
+    // This is the final scene, including its alpha; blending it over the new
+    // scene would expose B during the mandatory A hold.
+    float offsetX = 0, offsetY = 0;
+    m_state->device->presentationOffsetNdc(offsetX, offsetY);
+    submitFullscreenQuad(viewId, m_state->shaders->getTransitionProgram(), 0, 0, (float)m_state->device->getWidth(), (float)m_state->device->getHeight(), BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE, nullptr, 0, true, offsetX, offsetY);
 }
 
 void BgfxDraw::submitVFX(uint16_t viewId, bgfx::TextureHandle srcTex,

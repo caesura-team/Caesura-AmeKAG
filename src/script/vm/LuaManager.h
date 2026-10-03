@@ -11,7 +11,7 @@ public:
     LuaManager& operator=(const LuaManager&) = delete;
 
     LuaManager() = default;
-
+    ~LuaManager() override;
 
     lua_State* state() { return m_L; }
 

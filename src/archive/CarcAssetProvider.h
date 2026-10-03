@@ -10,6 +10,7 @@ namespace Caesura::carc {
 
 class CarcAssetProvider : public ::Caesura::IAssetProvider {
 public:
+    ::Caesura::AssetDirectoryResult listDirectory(const std::string&, size_t, size_t) override;
     explicit CarcAssetProvider(std::unique_ptr<CARCReader> reader,
                                int priority = 10,
                                std::string sourceName = "CARC");

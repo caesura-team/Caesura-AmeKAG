@@ -4738,6 +4738,10 @@ namespace bgfx { namespace d3d11
 		{
 			DX_RELEASE(m_ptr, 0);
 		}
+		// Caesura: shared textures remain externally owned, but this slot is
+		// empty. A reused handle must not expose the old pointer while its
+		// new texture creation command is still queued.
+		m_ptr = NULL;
 	}
 
 	void TextureD3D11::overrideInternal(uintptr_t _ptr, uint16_t _layerIndex)

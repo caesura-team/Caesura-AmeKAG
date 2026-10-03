@@ -144,6 +144,85 @@ do
         and current and current.waiting_input and current.f.leaked == nil and old.f.after_page == nil)
 end
 
+do
+    -- The actual save/load commands, runner, scheduler and replay run here.
+    -- Only the native storage boundary is a value-copy store in this Lua VM.
+    -- A replay click can queue restore without immediately replacing ctx/co;
+    -- that pending transition must survive the remainder of the same frame.
+    local previous_kag = rawget(_G, "KAG")
+    local copy = require("kag.save_state").copy
+    local slots = {}
+    _G.KAG = {
+        save_game = function(slot, state) slots[slot] = copy(state); return true end,
+        load_game = function(slot) return copy(slots[slot]), {slot=slot} end,
+    }
+    local saved_scene = scene("saved_page", [[
+[set var="f.route" value="A"]
+[save slot=31]
+[p]
+[set var="f.reward" value=1]
+[p]
+[set var="f.beyond_saved_page" value=1]
+[end]
+]])
+    local load_scene = scene("load_from_page", [[
+[set var="f.route" value="B"]
+[set var="f.future_only" value=777]
+[p]
+[load slot=31]
+[set var="f.abandoned" value=1]
+[p]
+[end]
+]])
+    begin(saved_scene)
+    check("real save command captured route A", slots[31] and slots[31].f.route == "A")
+    for _, input in ipairs({"direct", "replay"}) do
+        local abandoned = begin(load_scene)
+        local old_co = abandoned.co
+        check(input .. " starts from route B at a page", abandoned.waiting_input
+            and abandoned.f.route == "B" and abandoned.f.future_only == 777)
+        if input == "direct" then
+            _G._KAG_onClick()
+        else
+            -- Both events are due in one frame. The second may not enter a
+            -- scheduler that is awaiting transactional replacement.
+            schedule(100, 100, 2)
+            runner.update(0)
+        end
+        frames(16)
+        local restored = runner.get_ctx()
+        check(input .. " load commits the saved owner", restored and restored ~= abandoned
+            and restored.f.route == "A" and restored.f.future_only == nil
+            and restored.tf.load_result == "ok")
+        check(input .. " load retires the old coroutine", coroutine.status(old_co) == "dead"
+            and abandoned.f.abandoned == nil)
+        check(input .. " old click does not advance the restored page", restored
+            and restored.waiting_input and restored.f.reward == nil
+            and restored.f.beyond_saved_page == nil)
+        if restored and restored ~= abandoned then
+            replay.set_mode("off")
+            runner.on_click()
+            frames(4)
+            check(input .. " new click continues saved route to the next page", restored.f.reward == 1
+                and restored.waiting_input and restored.f.beyond_saved_page == nil)
+        else
+            check(input .. " new click continues saved route to the next page", false)
+        end
+    end
+    slots[31] = nil
+    local rejected = begin(load_scene)
+    local rejected_co = rejected.co
+    schedule(100, 100)
+    runner.update(0)
+    frames(4)
+    check("rejected replay load retains the live owner", runner.get_ctx() == rejected
+        and rejected.co == rejected_co and coroutine.status(rejected_co) == "suspended")
+    check("rejected replay load continues the current route", rejected.f.route == "B"
+        and rejected.f.future_only == 777 and rejected.f.abandoned == 1
+        and rejected.waiting_input and rejected.tf.load_result == "error")
+    _G.KAG = previous_kag
+end
+
 cleanup()
 print(string.format("U21_REPLAY_CHOICE_RESULT: %d passed, %d failed", passed, failed))
 if failed > 0 then os.exit(1) end

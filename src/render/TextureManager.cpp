@@ -778,6 +778,12 @@ void TextureManager::destroyTexture(uint32_t id) {
         if (it->second == id) it = m_pathToId.erase(it);
         else ++it;
     }
+    // A destroyed color must not remain a successful dedup hit. Keep other
+    // live colors cached; a later request for this color allocates a fresh ID.
+    for (auto it = m_solidCache.begin(); it != m_solidCache.end();) {
+        if (it->second == id) it = m_solidCache.erase(it);
+        else ++it;
+    }
     const bool hadRestoreSource = m_restoreSources.erase(id) != 0;
     bool hadQuota = false;
     const auto quotaReservation = m_quotaReservations.find(id);

@@ -53,7 +53,8 @@ check("fadeout bad opacity no raise", okF)
 _G._CAESURA_BACKEND = be2
 
 -- Run the actual backend wrappers and the production factory forwarding path.
--- The strict Render fake has the same numeric-handle contract as C++.
+-- The safe asset C-boundary recorder uses the same session-token contract as C++.
+-- Actual asset resolution and strict permission checks live in the native suite.
 do
     local original_render, original_backend = _G.Render, _G._CAESURA_BACKEND
     local factory_file = assert(io.open("scripts/backend_factory.lua", "r"))
@@ -82,7 +83,9 @@ do
             end,
         }
         if mode=="factory" then
-            local env = setmetatable({KAG={},Render=binding,DevCore={},Engine={}}, {__index=_G})
+            local safe_binding = {video_asset_play=binding.video_play,
+                video_asset_stop=binding.video_stop,video_asset_is_playing=binding.video_is_playing}
+            local env = setmetatable({KAG=safe_binding,Render=binding,DevCore={},Engine={}}, {__index=_G})
             env._G=env
             local factory = assert(load(factory_source,"@scripts/backend_factory.lua","t",env))()
             _G._CAESURA_BACKEND=factory.create()
@@ -103,7 +106,7 @@ do
         local co,resumed = start()
         check(mode..": actual handle is owned while playback is suspended", resumed and coroutine.status(co)=="suspended"
             and ctx._videoPlayback and ctx._videoPlayback.handle==347)
-        check(mode..": open options reach Render unchanged", calls.play[1] and calls.play[1].file=="movie.mpg"
+        check(mode..": open options reach safe asset binding unchanged", calls.play[1] and calls.play[1].file=="movie.mpg"
             and calls.play[1].options.volume==0.5 and calls.play[1].options.loop==true)
         resumed=coroutine.resume(co,16)
         check(mode..": natural completion queries and closes the opened handle", resumed and coroutine.status(co)=="dead"

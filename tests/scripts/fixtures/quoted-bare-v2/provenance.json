@@ -1,0 +1,25 @@
+{
+  "source_commit": "b533a3c863a44f9b5c49ab19f4d98644b05b0a6e",
+  "producer": "scripts/ks_bake.lua official --out and --web modes",
+  "compiler_semantics": "caesura-kag-2",
+  "format": 2,
+  "scene_bytes": "[video \"opening.mpg\"]\n[end]\n",
+  "purpose": "Real legacy producer retains quotation marks in positional file; must be rejected after tokenizer semantics change. Never hand-edit these fixture payloads.",
+  "files": [
+    {
+      "file": "quoted.ks",
+      "bytes": 28,
+      "sha256": "d969c022a6931637220395f3c62ea3406903119273b5712687e7a6388cfdacc3"
+    },
+    {
+      "file": "quoted.ksc",
+      "bytes": 887,
+      "sha256": "e576828a23e70dea7190df17c8abfa244dc65649bd1793df9839c6884626b537"
+    },
+    {
+      "file": "story.lua",
+      "bytes": 1242,
+      "sha256": "dbdd7168602f414fcff72b7d2e75409a74038760fc141ba897e00e125fc17b0b"
+    }
+  ]
+}

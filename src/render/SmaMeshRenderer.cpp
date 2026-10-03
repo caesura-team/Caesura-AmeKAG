@@ -10,12 +10,13 @@
 #include <bx/readerwriter.h>
 #include <cstdio>
 #include <cstring>
+#include <stdexcept>
+#include <algorithm>
 
 namespace Caesura {
 
 namespace {
 
-constexpr uint32_t kMaxBones = 64;
 constexpr uint8_t kUniformFragmentBit = 0x10;
 
 // ---------------------------------------------------------------------------
@@ -107,23 +108,17 @@ SmaMeshRenderer::~SmaMeshRenderer() {
 void SmaMeshRenderer::releaseMeshGpuResources(MeshEntry& entry) {
     if (bgfx::isValid(entry.ib)) bgfx::destroy(entry.ib);
     if (bgfx::isValid(entry.gpuIn)) bgfx::destroy(entry.gpuIn);
-    if (bgfx::isValid(entry.gpuOut)) bgfx::destroy(entry.gpuOut);
     entry.ib = BGFX_INVALID_HANDLE;
     entry.gpuIn = BGFX_INVALID_HANDLE;
-    entry.gpuOut = BGFX_INVALID_HANDLE;
     entry.gpuReady = false;
     entry.gpuSkinReady = false;
-    entry.gpuSkinned = false;
-    entry.gpuDirty = false;
 }
 
 void SmaMeshRenderer::releaseGpuResources() {
     for (auto& entry : m_meshes) {
         releaseMeshGpuResources(entry);
     }
-    if (bgfx::isValid(m_boneBuffer)) bgfx::destroy(m_boneBuffer);
     if (bgfx::isValid(m_skinProgram)) bgfx::destroy(m_skinProgram);
-    m_boneBuffer = BGFX_INVALID_HANDLE;
     m_skinProgram = BGFX_INVALID_HANDLE;
     m_shaders.reset();
     m_initialized = false;
@@ -170,24 +165,13 @@ void SmaMeshRenderer::init() {
         if (bgfx::isValid(csh)) {
             m_skinProgram = bgfx::createProgram(csh, true);
         }
-        if (bgfx::isValid(m_skinProgram)) {
-            // Shared bone transform buffer: 64 bones x vec4.
-            bgfx::VertexLayout boneLayout;
-            boneLayout
-                .begin()
-                .add(bgfx::Attrib::TexCoord0, 4, bgfx::AttribType::Float)
-                .end();
-            // 64 bones + draw transform slot + view size slot.
-            m_boneBuffer = bgfx::createDynamicVertexBuffer(
-                kMaxBones + 2, boneLayout, BGFX_BUFFER_COMPUTE_READ);
-            if (!bgfx::isValid(m_boneBuffer)) {
-                bgfx::destroy(m_skinProgram);
-                m_skinProgram = BGFX_INVALID_HANDLE;
-            }
-        }
+        // Every dispatch owns one immutable snapshot of poses and draw data.
+        // Two metadata float4 rows precede all uint16-addressable pose rows.
+        m_boneLayout.begin().add(bgfx::Attrib::TexCoord0, 4,
+                                 bgfx::AttribType::Float).end();
 
         // The compute skin pass writes the FINAL NDC positions (draw
-        // transform + view size ride in bone buffer slots 64/65), so the
+        // transform + view size ride in snapshot rows 0/1), so the
         // draw reuses the engine's proven passthrough program — no extra
         // vertex shader or uniforms needed.
         if (!bgfx::isValid(m_skinProgram)) {
@@ -230,8 +214,7 @@ SmaMeshRenderer::MeshEntry* SmaMeshRenderer::find(MeshHandle handle) {
 bool SmaMeshRenderer::useGpuSkin(const MeshEntry& entry) const {
     if (m_skinMode == SkinMode::Cpu) return false;
     const bool capable = entry.gpuSkinReady
-        && bgfx::isValid(m_skinProgram)
-        && bgfx::isValid(m_boneBuffer);
+        && bgfx::isValid(m_skinProgram);
     if (m_skinMode == SkinMode::Gpu && !capable) {
         if (!m_skinWarningShown) {
             DEBUG_ERR(SubSys::Render, ErrCode::Ok,
@@ -253,7 +236,7 @@ void SmaMeshRenderer::uploadMeshGpuResources(MeshEntry& entry) {
 
     const uint64_t caps = bgfx::getCaps()->supported;
     if (entry.gpuReady && (caps & BGFX_CAPS_COMPUTE)
-        && bgfx::isValid(m_skinProgram) && bgfx::isValid(m_boneBuffer)) {
+        && bgfx::isValid(m_skinProgram)) {
         const uint32_t vcount = static_cast<uint32_t>(entry.mesh.vertices.size());
         std::vector<float> data;
         data.reserve(vcount * 8);
@@ -271,12 +254,8 @@ void SmaMeshRenderer::uploadMeshGpuResources(MeshEntry& entry) {
             bgfx::copy(data.data(),
                        static_cast<uint32_t>(data.size() * sizeof(float))),
             m_skinLayout, BGFX_BUFFER_COMPUTE_READ);
-        entry.gpuOut = bgfx::createDynamicVertexBuffer(
-            vcount, m_layout, BGFX_BUFFER_COMPUTE_WRITE);
-        entry.gpuSkinReady =
-            bgfx::isValid(entry.gpuIn) && bgfx::isValid(entry.gpuOut);
+        entry.gpuSkinReady = bgfx::isValid(entry.gpuIn);
     }
-    entry.gpuDirty = entry.gpuSkinReady && !entry.pendingPoses.empty();
 }
 
 // ---------------------------------------------------------------------------
@@ -301,7 +280,7 @@ MeshHandle SmaMeshRenderer::createMesh(const SMAMesh& mesh) {
         entry.skinned[i] = { v.x, v.y, v.u, v.v };
     }
     // S5: compute input/output buffers when the skin pipeline is usable.
-    // The INPUT is STATIC: D3D11 forbids DYNAMIC usage with an SRV bind.
+    // The mesh INPUT is immutable: its topology/weights are uploaded once.
     uploadMeshGpuResources(entry);
 
     m_meshes.push_back(std::move(entry));
@@ -327,55 +306,50 @@ void SmaMeshRenderer::updateMesh(MeshHandle handle,
         // Defer the GPU work to drawMesh (same-frame order: the bone
         // buffer upload + dispatch must run in the draw's view, before
         // its submit). Store the poses for packing at draw time.
-        entry->gpuDirty = true;
         return;
     }
     skinMesh(entry->mesh, poses, entry->skinned);
-    // A later switch back to GPU mode must not reuse output skinned with an
-    // older pose. The retained pose also lets device restoration rebuild the
-    // first GPU frame deterministically.
-    entry->gpuDirty = entry->gpuSkinReady;
+}
+
+SmaMeshRenderer::GpuDrawPacket::~GpuDrawPacket() {
+    // Both destruction commands execute after queued dispatches AND draws.
+    // No later draw can reuse these resources before their submitted frame.
+    if (bgfx::isValid(output)) bgfx::destroy(output);
+    if (bgfx::isValid(snapshot)) bgfx::destroy(snapshot);
 }
 
 void SmaMeshRenderer::skinOnGpu(MeshEntry& entry,
                                 const std::vector<BonePose>& poses,
                                 uint16_t targetView,
                                 float x, float y, float scale,
-                                float viewW, float viewH) {
-    // Pack world poses (identity rows for missing bones) + the draw
-    // transform and view size into the shared bone buffer (slots 64/65).
-    // The compute shader outputs FINAL NDC positions, so no per-draw
-    // vertex shader uniforms are needed.
-    std::vector<float> packed;
-    packBonePoses(poses, kMaxBones, packed);
-    const uint32_t kDrawSlot = 64;
-    const uint32_t kViewSlot = 65;
-    if (packed.size() < (kViewSlot + 1) * 4) {
-        packed.resize((kViewSlot + 1) * 4, 0.f);
-    }
-    packed[kDrawSlot * 4 + 0] = x;
-    packed[kDrawSlot * 4 + 1] = y;
-    packed[kDrawSlot * 4 + 2] = scale;
-    packed[kDrawSlot * 4 + 3] = 0.f;
-    packed[kViewSlot * 4 + 0] = viewW;
-    packed[kViewSlot * 4 + 1] = viewH;
-    packed[kViewSlot * 4 + 2] = 0.f;
-    packed[kViewSlot * 4 + 3] = 0.f;
-    // bgfx::copy: the update command is executed at bgfx::frame() — the
-    // referenced memory must outlive this call, so hand bgfx an owned
-    // copy instead of a ref to the local vector.
-    bgfx::update(m_boneBuffer, 0,
-        bgfx::copy(packed.data(),
-                   static_cast<uint32_t>(packed.size() * sizeof(float))));
-
+                                float viewW, float viewH, GpuDrawPacket& packet) {
+    // Preserve every pose addressable by the interface's uint16 bone indices.
+    // Missing rows remain missing, not identity padding or a 64-bone clamp.
+    const uint32_t poseCount = static_cast<uint32_t>(
+        std::min(poses.size(), size_t(UINT16_MAX) + 1));
+    std::vector<float> packed((size_t(poseCount) + 2) * 4, 0.f);
+    packed[0] = x; packed[1] = y; packed[2] = scale;
+    packed[4] = viewW; packed[5] = viewH;
     const uint32_t vcount = static_cast<uint32_t>(entry.mesh.vertices.size());
-    const uint32_t numGroups = (vcount + 63) / 64;
+    static_assert(sizeof(vcount) == sizeof(packed[0]));
+    std::memcpy(&packed[6], &vcount, sizeof(vcount));
+    std::memcpy(&packed[7], &poseCount, sizeof(poseCount));
+    for (uint32_t i = 0; i < poseCount; ++i) packBonePose(poses[i], &packed[(size_t(i) + 2) * 4]);
+    // Creation is queued before draws. bgfx::copy owns the upload bytes;
+    // no later actor can overwrite this dispatch's poses or transform.
+    packet.snapshot = bgfx::createVertexBuffer(
+        bgfx::copy(packed.data(), static_cast<uint32_t>(packed.size() * sizeof(float))),
+        m_boneLayout, BGFX_BUFFER_COMPUTE_READ);
+    if (!bgfx::isValid(packet.snapshot)) {
+        throw std::runtime_error("SMA GPU bone snapshot allocation failed");
+    }
+    packet.output = bgfx::createDynamicVertexBuffer(vcount, m_layout, BGFX_BUFFER_COMPUTE_WRITE);
+    if (!bgfx::isValid(packet.output)) throw std::runtime_error("SMA GPU draw output allocation failed");
+    const uint32_t numGroups = vcount / 64 + (vcount % 64 != 0);
     bgfx::setBuffer(0, entry.gpuIn, bgfx::Access::Read);
-    bgfx::setBuffer(1, m_boneBuffer, bgfx::Access::Read);
-    bgfx::setBuffer(2, entry.gpuOut, bgfx::Access::Write);
+    bgfx::setBuffer(1, packet.snapshot, bgfx::Access::Read);
+    bgfx::setBuffer(2, packet.output, bgfx::Access::Write);
     bgfx::dispatch(targetView, m_skinProgram, numGroups, 1, 1);
-    entry.gpuSkinned = true;
-    entry.gpuDirty = false;
 }
 
 void SmaMeshRenderer::drawMesh(uint16_t targetView, MeshHandle handle,
@@ -389,6 +363,12 @@ void SmaMeshRenderer::drawMesh(uint16_t targetView, MeshHandle handle,
     const bgfx::TextureHandle tex = { static_cast<uint16_t>(dstTexId) };
     if (!bgfx::isValid(tex)) return;
 
+    // Plain fs_texture ignores BlendParams. The existing straight-alpha
+    // modulated program applies per-actor opacity on both skinning paths.
+    const auto program = m_shaders->getModulatedTextureProgram();
+    if (!bgfx::isValid(program)) return;
+    const float color[4] = {1.f, 1.f, 1.f, opacity};
+
     const uint32_t idxCount = static_cast<uint32_t>(entry->mesh.indices.size());
 
     const uint64_t state = BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A
@@ -396,30 +376,32 @@ void SmaMeshRenderer::drawMesh(uint16_t targetView, MeshHandle handle,
                                 BGFX_STATE_BLEND_INV_SRC_ALPHA);
 
     if (useGpuSkin(*entry)) {
+        // Match the CPU admission contract before queuing compute work or
+        // copying indices. bgfx may return less storage than requested.
+        if (bgfx::getAvailTransientIndexBuffer(idxCount) < idxCount) return;
         // Skin + NDC transform on the GPU (dispatch in THIS view, before
         // the draw submit that consumes the output buffer).
         const bgfx::Stats* stats = bgfx::getStats();
         const float sw = stats ? static_cast<float>(stats->width) : 1280.f;
         const float sh = stats ? static_cast<float>(stats->height) : 720.f;
         if (sw <= 0.f || sh <= 0.f) return;
-        if (!entry->gpuSkinned || entry->gpuDirty) {
-            skinOnGpu(*entry, entry->gpuDirty ? entry->pendingPoses
-                                              : std::vector<BonePose>{},
-                      targetView, x, y, scale, sw, sh);
-        }
-
         const uint32_t vertCount =
             static_cast<uint32_t>(entry->mesh.vertices.size());
         bgfx::TransientIndexBuffer tib;
         bgfx::allocTransientIndexBuffer(&tib, idxCount);
+        if (!tib.data || tib.size < size_t(idxCount) * sizeof(uint16_t)) return;
         std::memcpy(tib.data, entry->mesh.indices.data(),
                     idxCount * sizeof(uint16_t));
-
-        bgfx::setVertexBuffer(0, entry->gpuOut, 0, vertCount);
+        // Final NDC also depends on draw transform and view size. Rebuild it
+        // for every draw, retaining each draw's distinct output through submit.
+        GpuDrawPacket packet;
+        skinOnGpu(*entry, entry->pendingPoses, targetView, x, y, scale, sw, sh, packet);
+        bgfx::setVertexBuffer(0, packet.output, 0, vertCount);
         bgfx::setIndexBuffer(&tib);
         bgfx::setState(state);
         bgfx::setTexture(0, m_shaders->getDefaultSampler(), tex);
-        bgfx::submit(targetView, m_shaders->getFallbackProgram());
+        bgfx::setUniform(m_shaders->getColorUniform(), color);
+        bgfx::submit(targetView, program);
         return;
     }
 
@@ -454,9 +436,8 @@ void SmaMeshRenderer::drawMesh(uint16_t targetView, MeshHandle handle,
     bgfx::setIndexBuffer(&tib);
     bgfx::setState(state);
     bgfx::setTexture(0, m_shaders->getDefaultSampler(), tex);
-    float bp[8] = { opacity, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f };
-    bgfx::setUniform(m_shaders->getBlendParams(), bp, 2);
-    bgfx::submit(targetView, m_shaders->getFallbackProgram());
+    bgfx::setUniform(m_shaders->getColorUniform(), color);
+    bgfx::submit(targetView, program);
 }
 
 } // namespace Caesura

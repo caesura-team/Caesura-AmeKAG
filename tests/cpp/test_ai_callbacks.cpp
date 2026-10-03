@@ -53,6 +53,9 @@ public:
     int workerCount() const override { return 0; }
     int pendingJobs() const override { return static_cast<int>(pending.size()); }
     bool isRunning() const override { return running; }
+    Caesura::JobSystemSnapshot getSnapshot() const override {
+        return {false, running, 0, 0, 0};
+    }
     void work(size_t index) {
         REQUIRE(index < pending.size());
         const auto callback = pending[index].work;

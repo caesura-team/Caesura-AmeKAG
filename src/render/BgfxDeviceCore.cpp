@@ -1,4 +1,5 @@
 #include "BgfxDeviceCore.h"
+#include <algorithm>
 #include "BgfxDebugCallback.h"
 #include "../debug/api/DebugLog.h"   // P1-6: api header instead of concrete DebugManager.h
 #include "../di/api/ThreadAssert.h"
@@ -167,12 +168,22 @@ bool BgfxDeviceCore::init(void* nativeWindowHandle, int width, int height) {
     // -- Embedded shader fallback (initEmbeddedShaders is called by
     // BgfxRenderDevice::init after this point) --
 
-    // -- Explicit view order (RTT -> MAIN -> DEBUG -> TRANSITION) --
-        // Enforce: VIEW_RTT (0) -> VIEW_MAIN (1) -> VIEW_DEBUG (2)
-    bgfx::ViewId viewOrder[] = { VIEW_RTT, VIEW_MAIN, VIEW_POSTFX, VIEW_DEBUG, VIEW_TRANSITION };
-    bgfx::setViewOrder(0, 5, viewOrder);
+    // Snapshot copies consume the preceding scene before MAIN overwrites it.
+    // Each postfx pass has its own framebuffer/view; final transition cannot
+    // be overwritten by subsequent scene draws or post-processing.
+    std::vector<bgfx::ViewId> viewOrder{VIEW_SNAPSHOT_A, VIEW_SNAPSHOT_B, VIEW_RTT, VIEW_MAIN};
+    for (uint16_t v = VIEW_POSTFX; v <= VIEW_POSTFX_LAST; ++v) viewOrder.push_back(v);
+    viewOrder.push_back(VIEW_PRESENT_CLEAR);
+    viewOrder.push_back(VIEW_PRESENT);
+    viewOrder.push_back(VIEW_TRANSITION);
+    viewOrder.push_back(VIEW_DEBUG);
+    // setViewOrder is a permutation, not just a list of active views. Include
+    // the unused gap so default identity entries cannot overwrite the inverse
+    // mapping for postfx IDs above this list's initial length.
+    for (uint16_t v = 7; v < VIEW_POSTFX; ++v) viewOrder.push_back(v);
+    bgfx::setViewOrder(0, static_cast<uint16_t>(viewOrder.size()), viewOrder.data());
 
-    printf("[BgfxRenderDevice] Initialized %dx%d with 3 views (order: RTT -> MAIN -> DEBUG)\n",
+    printf("[BgfxRenderDevice] Initialized %dx%d (snapshot -> RTT -> MAIN -> postfx -> present -> transition -> debug)\n",
            width, height);
 // Pre-create vertex layout and sampler uniform (one-time, not per-frame lazy)
 
@@ -211,6 +222,10 @@ void BgfxDeviceCore::resize(int width, int height) {
                "[BgfxRenderDevice] Resized to %dx%d", width, height);
 }
 
+bool BgfxDeviceCore::bindScreenshotContext(uint64_t contextGeneration) {
+    return m_bgfxInitialized && !m_shutdownComplete && m_callback.bindScreenshotContext(contextGeneration);
+}
+
 void BgfxDeviceCore::shutdown() {
     CAESURA_ASSERT_MAIN_THREAD();
     if (m_shutdownComplete) return;
@@ -246,6 +261,11 @@ void BgfxDeviceCore::shutdown() {
     // 4. Destroy GPU context
     bgfx::shutdown();
     m_bgfxInitialized = false;
+    // Native shutdown has drained callbacks and joined its render thread. Only
+    // this edge may retire unanswered publications; beginShutdown cannot. If
+    // retirement is refused, preserve the debt/active ledger so observers fail
+    // the context-state match rather than reporting a fabricated idle.
+    (void)m_callback.screenshotContextShutdownComplete();
 printf("[BgfxRenderDevice] Shutdown complete.\n");
 }
 
@@ -315,6 +335,7 @@ void BgfxDeviceCore::setupDefaultViews() {
 
     // -- View MAIN (primary compositing) --
     bgfx::setViewRect(VIEW_MAIN, 0, 0, bw, bh);
+    m_mainClearRgba = 0x303030FF;
     bgfx::setViewClear(VIEW_MAIN, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH,
                        0x303030FF, 1.0f, 0);
 
@@ -349,7 +370,34 @@ void BgfxDeviceCore::setViewRect(uint16_t viewId, uint16_t x, uint16_t y,
 void BgfxDeviceCore::setViewClear(uint16_t viewId, uint16_t flags,
                                      uint32_t rgba, float depth, uint8_t stencil) {
     if (!m_bgfxInitialized || m_callback.deviceLost()) return;
+    if (viewId == VIEW_MAIN && (flags & BGFX_CLEAR_COLOR)) m_mainClearRgba = rgba;
     bgfx::setViewClear(viewId, flags, rgba, depth, stencil);
+}
+
+void BgfxDeviceCore::configurePresentationView(uint16_t viewId) {
+    if (!m_bgfxInitialized || m_callback.deviceLost()) return;
+    bgfx::setViewFrameBuffer(viewId, BGFX_INVALID_HANDLE);
+    // bgfx intersects view rectangles with the surface before viewport setup.
+    // Offsetting this rectangle would shrink the viewport and rescale content.
+    // Translate the final quad instead, retaining the full viewport transform.
+    bgfx::setViewRect(viewId, 0, 0, static_cast<uint16_t>(presentWidth()), static_cast<uint16_t>(presentHeight()));
+    bgfx::setViewClear(viewId, BGFX_CLEAR_NONE);
+}
+
+void BgfxDeviceCore::presentationOffsetNdc(float& x, float& y) const {
+    x = 2.0f * float(std::clamp(m_screenOffsetX, 0, m_width - 1)) / float(presentWidth());
+    y = -2.0f * float(std::clamp(m_screenOffsetY, 0, m_height - 1)) / float(presentHeight());
+}
+
+void BgfxDeviceCore::clearPresentationSurface() {
+    if (!m_bgfxInitialized || m_callback.deviceLost()) return;
+    // A shifted view's clear only covers that rectangle. This separate full
+    // surface view clears newly exposed margins before either final overlay.
+    bgfx::setViewFrameBuffer(VIEW_PRESENT_CLEAR, BGFX_INVALID_HANDLE);
+    bgfx::setViewRect(VIEW_PRESENT_CLEAR, 0, 0,
+        static_cast<uint16_t>(presentWidth()), static_cast<uint16_t>(presentHeight()));
+    bgfx::setViewClear(VIEW_PRESENT_CLEAR, BGFX_CLEAR_COLOR, m_mainClearRgba);
+    bgfx::touch(VIEW_PRESENT_CLEAR);
 }
 
 void BgfxDeviceCore::touch(uint16_t viewId) {
@@ -363,7 +411,7 @@ void BgfxDeviceCore::setDebugName(uint16_t viewId, const std::string& name) {
 }
 
 ViewportHandle BgfxDeviceCore::createRenderTarget(int width, int height) {
-    if (!m_bgfxInitialized || m_callback.deviceLost() || width <= 0 || height <= 0) return {};
+    if (!m_bgfxInitialized || m_callback.deviceLost() || width <= 0 || height <= 0 || m_nextHandle == 0) return {};
     ViewportHandle handle;
     handle.id = m_nextHandle++;
 

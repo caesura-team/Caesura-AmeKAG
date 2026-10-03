@@ -9,7 +9,27 @@ end
 package.path = "scripts/?.lua;scripts/kag/?.lua;" .. package.path
 
 local Schema = require("kag.schema")
-local TextCommands = require("kag.commands.text")
+-- The production font module reads a native Restore table. Load the real
+-- module against a private host table; do not add globals after sandbox lock.
+local function module_source(name, env)
+    local path = "scripts/" .. name:gsub("%.", "/") .. ".lua"
+    local file = assert(io.open(path, "rb")); local text = file:read("*a"); file:close()
+    text = text:gsub("^\239\187\191", "")
+    return assert(load(text, "@" .. path, "t", env))()
+end
+local font_env = setmetatable({}, {__index=_G})
+font_env._G = {Restore={
+    capture_font=function() return {version=1,active=true,font=0,path="",size=16} end,
+    prepare_font=function(snapshot) return snapshot end,
+    apply_font=function() return true end, discard_font=function() end,
+}}
+local real_font_state = module_source("kag.font_state", font_env)
+local text_env = setmetatable({}, {__index=_G})
+text_env.require = function(name)
+    if name == "kag.font_state" then return real_font_state end
+    return require(name)
+end
+local TextCommands = module_source("kag.commands.text", text_env)
 local TextScene = require("kag.text_scene")
 local backend = require("backend")
 
@@ -27,10 +47,20 @@ local ime_rect = nil
 local original_start = backend.start_text_input
 local original_stop = backend.stop_text_input
 local original_set_rect = backend.set_text_input_rect
+local original_solid = backend.create_solid_texture
+local original_destroy = backend.destroy_texture
+local original_font = backend.text_set_font
+local original_native_viewport = backend.create_viewport
+local original_destroy_viewport = backend.destroy_viewport
 
 backend.start_text_input = function() ime_active = true return true end
 backend.stop_text_input = function() ime_active = false return true end
 backend.set_text_input_rect = function(x, y, w, h, c) ime_rect = { x = x, y = y, w = w, h = h, c = c } return true end
+backend.create_solid_texture = function() return 101 end
+backend.destroy_texture = function() return true end
+backend.text_set_font = function() return true end
+backend.create_viewport = function() return 501 end
+backend.destroy_viewport = function() return true end
 
 local ctx = {
     f = {}, sf = {}, tf = {}, mp = {},
@@ -240,6 +270,11 @@ check("strict sandbox IME stopped", ime_active == false)
 backend.start_text_input = original_start
 backend.stop_text_input = original_stop
 backend.set_text_input_rect = original_set_rect
+backend.create_solid_texture = original_solid
+backend.destroy_texture = original_destroy
+backend.text_set_font = original_font
+backend.create_viewport = original_native_viewport
+backend.destroy_viewport = original_destroy_viewport
 
 for _, r in ipairs(results) do
     if not r then

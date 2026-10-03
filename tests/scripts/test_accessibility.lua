@@ -1,3 +1,12 @@
+local saved_KAG = rawget(_G, "KAG")
+local fixture_KAG = {}
+if type(saved_KAG)=="table" then for k,v in pairs(saved_KAG) do fixture_KAG[k]=v end end
+fixture_KAG.list_assets=function(dir,max_entries,max_bytes)
+    assert(dir=="assets/lang" and max_entries==4096 and max_bytes==1024*1024)
+    return {"en.lua","ja.lua","zh.lua"},nil
+end
+rawset(_G,"KAG",fixture_KAG)
+local fixture_ok, fixture_error=pcall(function()
 -- test_accessibility.lua — closed captions (CC) + TTS interface probe.
 package.path = "scripts/?.lua;scripts/kag/?.lua;" .. package.path
 local results = {}
@@ -99,3 +108,7 @@ local failed = 0
 for _, ok in ipairs(results) do if not ok then failed = failed + 1 end end
 if failed > 0 then os.exit(1) end
 print("ACCESSIBILITY TESTS DONE")
+
+end)
+rawset(_G,"KAG",saved_KAG)
+assert(fixture_ok,fixture_error)

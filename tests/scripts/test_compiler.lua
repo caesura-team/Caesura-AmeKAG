@@ -312,17 +312,18 @@ local co11 = coroutine.create(function() scheduler.run(ctx11, toks11, 1) end)
 while coroutine.status(co11) ~= "dead" do coroutine.resume(co11) end
 check("11b: [set f.x = N] stores the number", ctx11.f.coins == 100)
 
--- 11c. a non-bare "=" value is NOT a separator: the bare positional
---      grammar (uval) keeps quotes as literals, so '[set f.s "="]'
---      stores the 3-char string '"="' — the "=" strip must not touch it.
+-- 11c. Quoted positional values are decoded by qval. A final literal
+--      "=" remains the value (there is no following assignment operand),
+--      and must survive both compiler normalization and real execution.
 local toks11c = tokenizer.parse('[set f.s "="]')
 compiler.compile(toks11c)
+check("11c: decoded equals survives compiler normalization", toks11c[1][2].value == "=")
 local ctx11c = { f = {}, sf = {}, tf = {}, mp = {}, lf = {},
     variables = {}, current_scene = "t.ks", token_index = 1,
     tokens = toks11c }
 local co11c = coroutine.create(function() scheduler.run(ctx11c, toks11c, 1) end)
 while coroutine.status(co11c) ~= "dead" do coroutine.resume(co11c) end
-check("11c: quoted '=' value survives (uval literal)", ctx11c.f.s == '"="')
+check("11c: quoted '=' value survives actual set", ctx11c.f.s == "=")
 
 -- 11d. no-equals form still works ([set f.x 42])
 local toks11d = tokenizer.parse("[set f.x 42]")

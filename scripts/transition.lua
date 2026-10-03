@@ -40,12 +40,138 @@ Transition.Status = {
 -- ═══════════════════════════════════════════════════════════════════════════
 
 local activeTransition = nil
+local activePending = nil
 
 -- ═══════════════════════════════════════════════════════════════════════════
 --  Internal: preloaded rule textures
 -- ═══════════════════════════════════════════════════════════════════════════
 
 local ruleCache = {}
+
+function Transition.capture_screen()
+    return rtt.capture_scene()
+end
+
+function Transition.clear_render_wait(ctx, owner)
+    local wait = ctx and ctx._transition_render_wait
+    if wait and wait.owner == owner then ctx._transition_render_wait = nil end
+end
+
+function Transition.defer_until_render(ctx, owner)
+    -- Direct scheduler callers own their explicit frame pump. Real runner
+    -- contexts provide an epoch which advances only at their render boundary.
+    if ctx._render_epoch == nil then return nil end
+    local wait = {owner=owner, epoch=ctx._render_epoch+1}
+    ctx._transition_render_wait = wait
+    return wait
+end
+
+function Transition.wait_for_render(ctx, owner)
+    local wait = Transition.defer_until_render(ctx, owner)
+    if not wait then return coroutine.yield() end
+    local value
+    repeat
+        value = coroutine.yield("__kag_render_pending")
+        -- DebugProtocol can directly resume the anchored coroutine. Such a
+        -- resume must still not turn an update/input event into a render.
+        if owner.closed or owner.status == Transition.Status.CANCELLED or ctx._session_active == false then
+            Transition.clear_render_wait(ctx, owner)
+            return nil
+        end
+    until ctx._render_epoch >= wait.epoch
+    Transition.clear_render_wait(ctx, owner)
+    return value
+end
+
+function Transition.capture_after_render(ctx, owner)
+    -- Keep an existing presented A. Only the explicit no-frame result may
+    -- request a first actual render; unsupported remains an error after one try.
+    local id, frame = backend.capture_scene()
+    local function cancelled()
+        return owner.closed or owner.status == Transition.Status.CANCELLED
+            or ctx._session_active == false
+    end
+    if id == 0 and frame == 0 and not cancelled() then
+        Transition.wait_for_render(ctx, owner)
+        if not cancelled() then id, frame = backend.capture_scene() end
+    end
+    if cancelled() then
+        if type(id) == "number" and id > 0 then rtt.destroy(id) end
+        return nil
+    end
+    assert(type(id)=="number" and id>0 and type(frame)=="number" and frame>0,
+        "transition preparation requires a real rendered scene")
+    return id, frame
+end
+
+-- Scheduler-owned bridge between an immediate visual mutation and the exact
+-- next [trans]. The normal token yield is retained: B renders offscreen while
+-- this lease holds the already presented A. No future command is executed.
+function Transition.cancel_pending(ctx, owner)
+    local p = ctx and ctx._pending_transition
+    if not p or (owner and p.owner ~= owner) then return end
+    ctx._pending_transition = nil
+    if p.closed then return end
+    p.closed = true
+    Transition.clear_render_wait(ctx, p)
+    if activePending == p then
+        activePending = nil
+        backend.cancel_transition()
+    end
+    if p.from then rtt.destroy(p.from) end
+    p.operation:__close("pending transition cancelled")
+end
+
+function Transition.prepare_pending(ctx, stream, index, owner)
+    Transition.cancel_pending(ctx)
+    Transition.cancel()
+    local p = {ctx=ctx, stream=stream, index=index, owner=owner, scene=ctx.current_scene,
+        operation=require("kag.operation").start(ctx)}
+    ctx._pending_transition = p
+    activePending = p
+    p.operation.token:register(function() Transition.cancel_pending(ctx, owner) end)
+    local published = false
+    local guard <close> = setmetatable({}, {__close=function()
+        if not published then Transition.cancel_pending(ctx, owner) end
+    end})
+    local id, frame = Transition.capture_after_render(ctx, p)
+    if not id then return false end
+    p.from, p.frame = id, frame
+    assert(backend.submit_transition(1, id, id, 0, Transition.Method.CROSSFADE, 0) ~= false,
+        "transition source hold unavailable")
+    Transition.defer_until_render(ctx, p)
+    published = true
+    return true
+end
+
+function Transition.take_pending(ctx)
+    local p = ctx and ctx._pending_transition
+    if not p then return nil end
+    local wait = ctx._transition_render_wait
+    if wait and wait.owner == p and ctx._render_epoch < wait.epoch then
+        -- Direct debug resumption can also bypass the runner while suspended
+        -- at the scheduler's ordinary post-bg yield, not just inside capture.
+        Transition.wait_for_render(ctx, p)
+    end
+    assert(not p.closed and not p.operation.token.cancelled, "pending transition cancelled")
+    ctx._pending_transition = nil
+    Transition.clear_render_wait(ctx, p)
+    if activePending == p then activePending = nil end
+    p.closed = true
+    p.operation:complete()
+    p.operation:__close()
+    return p.from, p.frame
+end
+
+function Transition.render_pending()
+    local p = activePending
+    if not p or not p.from or p.closed then return end
+    if p.operation.token.cancelled then Transition.cancel_pending(p.ctx, p.owner); return end
+    if backend.submit_transition(1, p.from, p.from, 0, Transition.Method.CROSSFADE, 0) == false then
+        Transition.cancel_pending(p.ctx, p.owner)
+        error("pending transition source no longer available")
+    end
+end
 
 -- ═══════════════════════════════════════════════════════════════════════════
 --  Transition.preload_rule(storage) → rule_tex_id
@@ -208,6 +334,9 @@ end
 
 function Transition.start(fromTex, toTex, params)
     params = params or {}
+    assert(type(fromTex) == "number" and fromTex > 0
+        and type(toTex) == "number" and toTex > 0, "transition requires numeric texture handles")
+    Transition.cancel()
 
     local tx = {
         from_tex    = fromTex,
@@ -250,21 +379,21 @@ end
 --    to the GPU and triggers the on_complete callback when done.
 -- ═══════════════════════════════════════════════════════════════════════════
 
-function Transition.tick(dt)
+function Transition.tick(dt, expected)
     local tx = activeTransition
-    if not tx or tx.status ~= Transition.Status.RUNNING then
+    if not tx or (expected and tx ~= expected) or tx.status ~= Transition.Status.RUNNING then
         return Transition.Status.IDLE
     end
 
-    tx.elapsed = tx.elapsed + (dt or 0)
-    local t = math.min(1.0, tx.elapsed / tx.duration)
+    tx.elapsed = tx.elapsed + math.max(0, tonumber(dt) or 0)
+    local t = tx.duration <= 0 and 1 or math.min(1.0, tx.elapsed / tx.duration)
 
     if tx.method == "rule" then
-        backend.submit_transition(tx.view_id, tx.from_tex, tx.to_tex,
-            tx.rule_tex, Transition.Method.RULE, t)
+        assert(backend.submit_transition(tx.view_id, tx.from_tex, tx.to_tex,
+            tx.rule_tex, Transition.Method.RULE, t) ~= false, "transition textures no longer available")
     else
-        backend.submit_transition(tx.view_id, tx.from_tex, tx.to_tex,
-            0, tx.method_id, t)
+        assert(backend.submit_transition(tx.view_id, tx.from_tex, tx.to_tex,
+            0, tx.method_id, t) ~= false, "transition textures no longer available")
     end
 
     if t >= 1.0 then
@@ -282,11 +411,15 @@ end
 --  Transition.cancel() — cancel the currently active transition
 -- ═══════════════════════════════════════════════════════════════════════════
 
-function Transition.cancel()
+function Transition.cancel(expected)
+    if expected and activeTransition ~= expected then return end
+    if activePending then Transition.cancel_pending(activePending.ctx, activePending.owner) end
     if activeTransition then
         activeTransition.status = Transition.Status.CANCELLED
+        if activeTransition.release then activeTransition.release() end
     end
     activeTransition = nil
+    backend.cancel_transition()
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -308,8 +441,9 @@ end
 --  Transition.is_active() → boolean
 -- ═══════════════════════════════════════════════════════════════════════════
 
-function Transition.is_active()
+function Transition.is_active(expected)
     return activeTransition ~= nil
+        and (not expected or activeTransition == expected)
         and activeTransition.status == Transition.Status.RUNNING
 end
 
@@ -319,7 +453,7 @@ end
 
 function Transition.clear(ctx)
     if ctx then ctx._transition = nil end
-    activeTransition = nil
+    Transition.cancel()
 end
 
 return Transition

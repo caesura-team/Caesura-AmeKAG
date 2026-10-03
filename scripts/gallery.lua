@@ -27,20 +27,25 @@ local ownedTextures = {}
 -- ===========================================================================
 function Gallery.scan(ctx)
     if cgCache then return cgCache end
-    cgCache = {}
+    local candidate = {} -- publish only after complete enumeration and sorting
     local dirs = {"assets/cg/", "assets/cg", "data/cg/", "data/cg"}
-    local pattern = "%.png$|%.dds$|%.jpg$|%.jpeg$"
+    -- Lua patterns do not implement alternation; classify actual leaf extensions.
+    local pattern = "%.%w+$"
     for _, dir in ipairs(dirs) do
         local files = fileutil.scan_dir(dir, pattern)
         if #files > 0 then
             for _, fname in ipairs(files) do
-                local id = fname:match("^(.-)%.[^.]+$") or fname
-                table.insert(cgCache, {id = id, path = dir .. "/" .. fname, name = id})
+                local extension = fname:lower():match("%.([^.]+)$")
+                if extension == "png" or extension == "dds" or extension == "jpg" or extension == "jpeg" then
+                    local id = fname:match("^(.-)%.[^.]+$") or fname
+                    table.insert(candidate, {id = id, path = dir .. "/" .. fname, name = id})
+                end
             end
-            break
+            if #candidate > 0 then break end
         end
     end
-    table.sort(cgCache, function(a, b) return a.id < b.id end)
+    table.sort(candidate, function(a, b) return a.id < b.id end)
+    cgCache = candidate
     return cgCache
 end
 

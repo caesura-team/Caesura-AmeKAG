@@ -31,8 +31,8 @@
 
 ; ---- 3. 转场 trans ----------------------------------------------------------
 ; [trans] 配合 [bg] 实现场景切换动画。method 支持 crossfade/dissolve 等。
-[trans time=500 method=dissolve]
 [bg storage="assets/bg/hana.png"]
+[trans time=500 method=dissolve]
 [ch name="Narrator" text="转场完成，我们来到了花田。"]
 [p]
 

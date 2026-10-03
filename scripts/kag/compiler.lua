@@ -33,7 +33,7 @@ local compiler = {}
 local encode_lua_literal
 local capture_compatibility
 local CACHE_FORMAT = 2
-local COMPILER_SEMANTICS = 'caesura-kag-2'
+local COMPILER_SEMANTICS = 'caesura-kag-3' -- quoted bare arguments use the named-value grammar
 
 local schemaModule = require("kag.schema")
 local exprLang = require("kag.expr")
@@ -660,7 +660,7 @@ function compiler.compile(tokens)
                 end
             else
                 -- regular command: bind the handler once
-                local handler = kag[cmd]
+                local handler = schemaModule.resolveHandler(cmd, kag)
                 if handler then handlers[i] = handler end
             end
         end

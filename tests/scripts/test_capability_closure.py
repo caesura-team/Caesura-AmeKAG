@@ -91,8 +91,8 @@ class TestFourLayerColumns(unittest.TestCase):
         h = self._header()
         self.assertEqual(
             h,
-            "| Command | Declared | Dispatched | Consumed | Structural | Runtime "
-            "| Platform | Packaged | Observable | 证据 |")
+            "| Command | Declared | Dispatched | Consumed | Structural | Test references "
+            "| Platform declaration | Package declaration | Observable declaration | 结构与声明来源 |")
         self.assertNotIn("| Tested |", h)
         self.assertNotIn("| Status |", h)
         self.assertNotIn("Platform Tested", h)
@@ -114,7 +114,7 @@ class TestFourLayerColumns(unittest.TestCase):
         rows = {c[0]: c for l in self.md.splitlines()
                 if l.startswith("| ") and (c := cells(l))[0] in ("alpha", "beta", "gamma")}
         self.assertEqual(rows["alpha"][5], "-")   # tested_count == 0
-        self.assertEqual(rows["beta"][5], "✓3")   # tested_count == 3
+        self.assertEqual(rows["beta"][5], "3")   # references, not passing executions
         self.assertEqual(rows["gamma"][5], "-")
 
     def test_04_platform_packaged_protocol_output(self):
@@ -223,8 +223,8 @@ class TestStatsLine(unittest.TestCase):
 
     def test_06_four_layer_line_and_reconciliation(self):
         self.assertIn(
-            "- **四层闭包（2026-09-04）**：Structural Closed=3 · Runtime 测试证据=2"
-            " · Platform=1 · Packaged=1",
+            "- **结构扫描与人工声明**：Structural Closed=3 · Test references=2"
+            " · Platform declarations=1 · Package declarations=1",
             self.md)
         # reconciliation: the line counts must equal the table column counts
         # (⚠ is a manual-override annotation; strip it before value compare)
@@ -237,8 +237,9 @@ class TestStatsLine(unittest.TestCase):
         self.assertEqual(sum(1 for c in rows if c[5] != "-"), 2)   # Runtime ✓
         self.assertEqual(sum(1 for c in rows if c[6] != "-"), 1)   # Platform
         self.assertEqual(sum(1 for c in rows if c[7] != "-"), 1)   # Packaged
-        self.assertIn("Platform/Packaged 两列随 Phase2 分发逐项真实验证填充（当前无证据=诚实 0）",
+        self.assertIn("测试引用只表示源码中发现引用；未读取运行日志，不代表执行、通过或覆盖率",
                       self.md)
+        self.assertNotIn("Runtime 测试证据", self.md)
 
     def test_07_legacy_stats_line_preserved_for_plan_regex(self):
         line = self._legacy_line()

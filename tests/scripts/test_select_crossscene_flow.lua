@@ -301,6 +301,100 @@ check("E: callee-select un-consumed before [return] does NOT stall (DONE)",
 check("E: caller tail ran to [end] (route=caller-done)",
       eOut.route == "caller-done", "route=" .. tostring(eOut.route))
 
+-- AE3 regression: [call] enters a real callee scene, whose [select] is
+-- followed by [end]. The pending choice must resolve inside that callee
+-- before [return], unlike Case E's deliberately unconsumed fall-through.
+-- Actual tokenizer/compiler/scheduler/runner and choice click hook are used;
+-- only the existing host rendering bindings above are substitutes.
+local CALL_DIR = "assets/script/test_select_crossscene_call"
+if IS_WINDOWS then
+    assert(os.execute('mkdir "' .. CALL_DIR:gsub('/', '\\') .. '" 2>nul'))
+else
+    assert(os.execute('mkdir -p "' .. CALL_DIR .. '"'))
+end
+local function call_fixture(name, text)
+    local file = assert(io.open(CALL_DIR .. '/' .. name, 'w'))
+    file:write(text)
+    file:close()
+end
+call_fixture('main.ks', [[
+[set var="lf.owner" value="caller"]
+[call storage="test_select_crossscene_call/choice.ks"]
+[set var="f.tail" value=1]
+[end]
+]])
+call_fixture('nested.ks', [[
+[set var="lf.owner" value="caller"]
+[call storage="test_select_crossscene_call/middle.ks"]
+[set var="f.tail" value=1]
+[end]
+]])
+call_fixture('middle.ks', [[
+[set var="lf.owner" value="middle"]
+[call storage="test_select_crossscene_call/choice.ks"]
+[eval exp="f.middle_return = lf.owner"]
+[return]
+]])
+call_fixture('choice.ks', [[
+[set var="lf.owner" value="callee"]
+[select]
+[sel target="*left" text="LEFT"]
+[sel target="*right" text="RIGHT"]
+[endselect]
+[end]
+*left
+[set var="f.branch" value="left"]
+[return]
+*right
+[set var="f.branch" value="right"]
+[return]
+]])
+local function called_choice(story, selected)
+    assert(kag_runner.start(CALL_DIR .. '/' .. story))
+    local owner = kag_runner.get_ctx()
+    local clicked, ended = 0, false
+    for frame = 1, 400 do
+        local _, reason = kag_runner.update(0.016)
+        if reason == 'ended' then ended = true; break end
+        local current = kag_runner.get_ctx()
+        assert(current == owner, 'test unexpectedly replaced the session')
+        if current._choiceMode then
+            local buttons = assert(current._choiceButtonsActive)
+            local button = assert(buttons[selected])
+            _G._GAME_MOUSE_X = 100
+            _G._GAME_MOUSE_Y = button.y + button.h / 2
+            assert(type(_G._KAG_onClick) == 'function')
+            _G._KAG_onClick()
+            clicked = clicked + 1
+        end
+    end
+    return {ended=ended, clicked=clicked, branch=owner.f.branch,
+            tail=owner.f.tail, middle=owner.f.middle_return,
+            owner=owner.lf.owner, call_depth=#(owner.call_stack or {})}
+end
+for _, story in ipairs({'main.ks', 'nested.ks'}) do
+    for selected, expected in ipairs({'left', 'right'}) do
+        local result = called_choice(story, selected)
+        local label = 'F ' .. story .. ' ' .. expected
+        check(label .. ': actual click selects callee-local branch',
+              result.clicked == 1 and result.branch == expected,
+              'clicks=' .. result.clicked .. ', branch=' .. tostring(result.branch))
+        check(label .. ': caller resumes and ends', result.ended and result.tail == 1)
+        check(label .. ': caller local frame restored', result.owner == 'caller' and result.call_depth == 0)
+        if story == 'nested.ks' then
+            check(label .. ': intermediate local frame restored', result.middle == 'middle')
+        end
+    end
+end
+for _, name in ipairs({'main.ks', 'nested.ks', 'middle.ks', 'choice.ks'}) do
+    assert(os.remove(CALL_DIR .. '/' .. name))
+end
+if IS_WINDOWS then
+    assert(os.execute('rmdir "' .. CALL_DIR:gsub('/', '\\') .. '"'))
+else
+    assert(os.execute('rmdir "' .. CALL_DIR .. '"'))
+end
+
 if IS_WINDOWS then
     pcall(os.execute, 'rmdir /s /q "' .. DIR:gsub('/', '\\') .. '" 2>nul')
 else

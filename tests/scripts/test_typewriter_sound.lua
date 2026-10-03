@@ -7,8 +7,8 @@
 -- total so the elapsed-driven follow-through cannot fire a burst either.
 -- Call form has NO volume parameter (v1 honesty: per-SE volume has no
 -- consumption surface yet — t200 2.3). Harness mirrors test_textspeed.lua
--- Part 2 (fresh kag_runner module per launch; recorder wraps the GLOBAL
--- backend.audio_play, the exact seam the wiring uses).
+-- Part 2 (fresh kag_runner module per launch; recorder wraps the required
+-- backend module audio_play, the exact seam the wiring uses).
 package.path = "scripts/?.lua;scripts/?/init.lua;scripts/kag/?.lua;scripts/kag/commands/?.lua;" .. package.path
 local passed, failed = 0, 0
 local function check(name, cond)
@@ -43,21 +43,13 @@ local function pump_until_reveal(kr, ctx, maxN)
     return ctx.reveal ~= nil
 end
 
--- SE recorder at the exact seam the wiring uses: the GLOBAL
--- backend.audio_play(bus, file) (kag_runner.lua). Wrap the real global;
--- standalone (no suite mock) installs a no-op table first so a direct
--- lua.exe run of this file also works.
+-- Observe the production backend module consumed by kag_runner. Restore its
+-- original function after every block; no nonexistent global backend is added.
 local function with_recorder(fn)
-    local realGlobal = _G.backend
+    local backend = require("backend")
     local calls = {}
-    if not _G.backend then
-        local noop = function() return true end
-        _G.backend = setmetatable({}, { __index = function(_, k)
-            if k == "get_resolution" then return function() return 1280, 720 end end
-            return noop end })
-    end
-    local realPlay = _G.backend.audio_play
-    _G.backend.audio_play = function(bus, file, ...)
+    local realPlay = backend.audio_play
+    backend.audio_play = function(bus, file, ...)
         calls[#calls + 1] = { bus, file, ... }
         if realPlay then return realPlay(bus, file, ...) end
         return true
@@ -65,7 +57,7 @@ local function with_recorder(fn)
     local ok, err = xpcall(function() return fn(calls) end, function(e)
         return debug and debug.traceback and debug.traceback(e, 2) or tostring(e)
     end)
-    _G.backend = realGlobal
+    backend.audio_play = realPlay
     return ok, err, calls
 end
 

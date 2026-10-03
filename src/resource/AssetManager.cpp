@@ -1,5 +1,7 @@
 #include "AssetManager.h"
 #include "DirAssetProvider.h"
+#include "AssetDirectoryValidation.h"
+#include <set>
 #include <cstdio>
 #include <memory>
 
@@ -57,6 +59,31 @@ std::vector<uint8_t> AssetManager::readAsset(const std::string& path, size_t max
         }
     }
     return {};
+}
+
+AssetDirectoryResult AssetManager::listDirectory(const std::string& directory,size_t maxEntries,size_t maxNameBytes) {
+    std::string relative;
+    if(!AssetDirectoryDetail::limits(maxEntries,maxNameBytes))return {AssetDirectoryStatus::LimitExceeded,{}};
+    if(!AssetDirectoryDetail::normalize(directory,relative))return {AssetDirectoryStatus::InvalidPath,{}};
+    if(!m_initialized)return {AssetDirectoryStatus::Unsupported,{}};
+    try {
+        std::set<std::string> names;size_t bytes=0;
+        // Same priority order as readAsset. Deduplication changes no provider
+        // registration or read authority. Any incomplete provider invalidates
+        // completeness of the union; never disguise that as an empty folder.
+        for(const auto& provider:m_chain.providers()) {
+            if(!provider)return {AssetDirectoryStatus::IoError,{}};
+            auto result=provider->listDirectory(relative,maxEntries,maxNameBytes);
+            if(result.status!=AssetDirectoryStatus::Complete)return {result.status,{}};
+            for(const auto& name:result.files) {
+                if(!AssetDirectoryDetail::leaf(name))return {AssetDirectoryStatus::InvalidPath,{}};
+                if(names.count(name))continue;
+                if(names.size()>=maxEntries||name.size()>maxNameBytes-bytes)return {AssetDirectoryStatus::LimitExceeded,{}};
+                names.insert(name);bytes+=name.size();
+            }
+        }
+        return {AssetDirectoryStatus::Complete,{names.begin(),names.end()}};
+    }catch(...){return {AssetDirectoryStatus::IoError,{}};}
 }
 
 } // namespace Caesura

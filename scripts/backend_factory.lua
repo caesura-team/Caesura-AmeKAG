@@ -7,6 +7,11 @@
 
 local BackendFactory = {}
 
+-- Lua Blend.GPUMode is the historical ten-mode enum. The native unified
+-- fs_blend uses ShaderCache::BlendMode (28 modes); these IDs are not aliases.
+local native_blend_mode = {[0]=0, [1]=16, [2]=17, [3]=1, [4]=2,
+    [5]=3, [6]=4, [7]=5, [8]=10, [9]=9}
+
 function BackendFactory.create(opts)
     opts = opts or {}
 
@@ -40,8 +45,15 @@ function BackendFactory.create(opts)
         if cmd == "ping" then return true
         elseif cmd == "name" then return actual_render_name
         elseif cmd == "submit_batch" then return Render.submit_batch(...)
-        elseif cmd == "submit_blend" then return Render.submit_blend(...)
-        elseif cmd == "submit_transition" then return Render.submit_transition(...)
+        elseif cmd == "submit_blend" then
+            local _view, base, blend, mode, progress, alpha = ...
+            local native_mode = assert(native_blend_mode[mode], "unknown Lua GPU blend mode")
+            return Render.submit_blend(base, blend, native_mode, 1.0, progress, alpha)
+        elseif cmd == "submit_transition" then
+            local _view, from, to, rule, method, progress = ...
+            return Render.submit_transition(from, to, rule, method, progress)
+        elseif cmd == "capture_scene" then return Render.capture_scene()
+        elseif cmd == "cancel_transition" then return Render.cancel_transition()
         elseif cmd == "submit_vfx" then return Render.submit_vfx(...)
         elseif cmd == "set_color_filter" then return Render.set_color_filter(...)
         elseif cmd == "set_postfx" then return Render.set_postfx(...)
@@ -61,8 +73,16 @@ function BackendFactory.create(opts)
         elseif cmd == "create_solid_texture" then
             return Render.create_solid_texture(...)
         elseif cmd == "get_resolution" then return Render.get_resolution()
-        elseif cmd == "submit_stretch_blt" then return Render.stretch_blt(...)
-        elseif cmd == "submit_affine_blt" then return Render.affine_blt(...)
+        elseif cmd == "submit_stretch_blt" then
+            local dst, dst_rect, src, src_rect, filter = ...
+            return Render.stretch_blt(dst,
+                dst_rect.x, dst_rect.y, dst_rect.w, dst_rect.h,
+                src, src_rect.x, src_rect.y, src_rect.w, src_rect.h, filter)
+        elseif cmd == "submit_affine_blt" then
+            local dst, dst_rect, src, src_rect, matrix = ...
+            return Render.affine_blt(dst,
+                dst_rect.x, dst_rect.y, dst_rect.w, dst_rect.h,
+                src, src_rect.x, src_rect.y, src_rect.w, src_rect.h, matrix)
         elseif cmd == "set_view_name" then return Render.set_view_name(...)
         elseif cmd == "set_screen_offset" then return Render.set_screen_offset(...)
         elseif cmd == "render_text" then return KAG.render_text(...)
@@ -72,9 +92,10 @@ function BackendFactory.create(opts)
         elseif cmd == "line_height" then return KAG.line_height(...)
         elseif cmd == "text_set_font" then return Render.text_set_font(...)
         elseif cmd == "text_reset_state" then return Render.text_reset_state(...)
-        elseif cmd == "video_play" then return Render.video_play(...)
-        elseif cmd == "video_stop" then return Render.video_stop(...)
-        elseif cmd == "video_is_playing" then return Render.video_is_playing(...)
+        elseif cmd == "video_play" then return KAG.video_asset_play(...)
+        elseif cmd == "video_stop" then return KAG.video_asset_stop(...)
+        elseif cmd == "video_draw" then return KAG.video_asset_draw(...)
+        elseif cmd == "video_is_playing" then return KAG.video_asset_is_playing(...)
         else error("[BackendFactory] Unknown render: " .. tostring(cmd)) end
     end
 
@@ -92,7 +113,7 @@ function BackendFactory.create(opts)
         elseif cmd == "is_voice_playing" then return KAG.is_voice_playing()
         elseif cmd == "is_bgm_playing" then return KAG.is_bgm_playing()
         elseif cmd == "is_playing" then return KAG.is_se_playing()
-        elseif cmd == "stop_se" then return KAG.stop_se()
+        elseif cmd == "stop_se" then return KAG.stop_se(...)
         elseif cmd == "set_bus_volume" then return KAG.set_bus_volume(...)
         elseif cmd == "get_bus_volume" then return KAG.get_bus_volume(...)
         elseif cmd == "flush_wave_cache" then return KAG.flush_wave_cache()

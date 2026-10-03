@@ -24,6 +24,120 @@ export class AdapterCore {
      *  Mirrors the desktop s_lutTex/u_paletteParams binding: handle is the
      *  registered LUT texture id (nil = no LUT), intensity 0..1, size 16/64. */
     this.palette = { handle: null, intensity: 0, size: 0 }
+    this.sceneSnapshots = new Map()
+    this.transitionOverlay = null
+    this._scenePresenter = null
+    this._transitionRevision = 0
+    this._transitionPresentation = null
+  }
+
+  // Owned copies of actually presented DOM frames. A newer model is never
+  // substituted for the renderer's last presentation at capture time.
+  attachScenePresenter(presenter) {
+    if (this._scenePresenter && this._scenePresenter !== presenter) this.clearSceneSnapshots()
+    this._scenePresenter = presenter
+  }
+
+  _presentationContent(list = this.renderList()) {
+    return JSON.stringify([list,this.draws,this.textBuffer,this.palette,this.font??null])
+  }
+
+  async presentScene(completedTransition = null) {
+    const presenter = this._scenePresenter
+    if (!presenter) throw new Error('Scene presentation is unavailable')
+    const before = presenter.frame
+    if (!Number.isSafeInteger(before) || before < 0) throw new Error('Scene presentation frame is invalid')
+    const receipt = this._transitionPresentation
+    this._transitionPresentation = null // one completed frame can satisfy one wait
+    if (completedTransition && receipt && receipt.presenter === presenter
+      && receipt.revision === this._transitionRevision && receipt.overlay === this.transitionOverlay
+      && receipt.frame === before && receipt.frame >= completedTransition.epoch
+      && receipt.overlay.from === completedTransition.from && receipt.overlay.to === completedTransition.to
+      && receipt.content === this._presentationContent()
+      && receipt.textures.every(([id,texture,path,prepared])=>this.textures.get(id)===texture
+        && texture.path===path && texture.prepared===prepared)
+      && typeof presenter.resolveTextureUrl === 'function'
+      && receipt.urls.every(([id,url])=>presenter.resolveTextureUrl(id)===url)) {
+      this._log('scene.presented', {frame:receipt.frame})
+      return receipt.frame
+    }
+    const frame = await presenter.nextFrame()
+    if (this._scenePresenter !== presenter || !Number.isSafeInteger(frame)
+      || frame <= before || presenter.frame < frame) {
+      throw new Error('Scene presentation owner or frame changed')
+    }
+    this._log('scene.presented', {frame})
+    return frame
+  }
+
+  async captureScene(allowInitialPresentation = false) {
+    const presenter = this._scenePresenter
+    if (!presenter) return '0:0'
+    if (!presenter.frame && allowInitialPresentation) await presenter.nextFrame()
+    // A replacement may attach while the old renderer's genuine rAF is pending.
+    // Its completed frame still belongs to the retired presenter, not this core.
+    if (this._scenePresenter !== presenter || !presenter.frame) return '0:0'
+    if (this.sceneSnapshots.size >= 16) throw new Error('Transition snapshot budget exceeded')
+    const snapshot = presenter.capture()
+    if (this._scenePresenter !== presenter) { snapshot?.dispose(); return '0:0' }
+    if (!snapshot || !Number.isSafeInteger(snapshot.frame) || snapshot.frame <= 0) return '0:0'
+    const id = ++this._seq
+    if (!Number.isSafeInteger(id)) { snapshot.dispose(); throw new Error('Snapshot identity exhausted') }
+    this.sceneSnapshots.set(id, snapshot)
+    this._log('transition.capture', {id, frame:snapshot.frame})
+    return `${id}:${snapshot.frame}`
+  }
+
+  destroySceneSnapshot(id) {
+    const snapshot = this.sceneSnapshots.get(id)
+    if (!snapshot) return false
+    if (this.transitionOverlay?.from === id || this.transitionOverlay?.to === id) this.cancelTransition()
+    this.sceneSnapshots.delete(id)
+    snapshot.dispose()
+    this._log('transition.release', {id})
+    return true
+  }
+
+  async submitTransition(view, from, to, rule, method, progress) {
+    const presenter = this._scenePresenter
+    if (!presenter || !Number.isSafeInteger(view) || view < 0
+      || !this.sceneSnapshots.has(from) || !this.sceneSnapshots.has(to)
+      || !Number.isInteger(method) || method < 0 || method > 5
+      || !Number.isFinite(progress) || progress < 0 || progress > 1
+      || (method === 1 && !this.textures.get(rule)?.prepared)) return false
+    const revision = this._transitionRevision
+    const overlay = {view,from,to,rule,method,progress}
+    this._transitionPresentation = null
+    this.transitionOverlay = overlay
+    this._log('transition.submit', {from,to,method,progress})
+    // A real render/rAF separates Lua ticks. Ordinary synchronous pump yields
+    // alone cannot present a frame and must not manufacture a frame counter.
+    const before = presenter.frame
+    const frame = await presenter.nextFrame()
+    if (this._scenePresenter !== presenter || revision !== this._transitionRevision
+      || this.transitionOverlay !== overlay || !Number.isSafeInteger(frame)
+      || frame <= before || presenter.frame !== frame) return false
+    // This is the actual completed DOM/rAF frame, not a synthetic epoch. The
+    // runner may acknowledge it after tick() returns, provided no scene changed.
+    if (typeof presenter.content === 'string' && Array.isArray(presenter.textures)
+      && Array.isArray(presenter.urls) && typeof presenter.resolveTextureUrl === 'function') {
+      this._transitionPresentation = {presenter,revision,overlay,frame,
+        content:presenter.content,textures:presenter.textures,urls:presenter.urls}
+    }
+    return true
+  }
+
+  cancelTransition() {
+    ++this._transitionRevision
+    this._transitionPresentation = null
+    this.transitionOverlay = null
+    this._scenePresenter?.clearOverlay()
+    return true
+  }
+
+  clearSceneSnapshots() {
+    this.cancelTransition()
+    for (const id of [...this.sceneSnapshots.keys()]) this.destroySceneSnapshot(id)
   }
 
   // -- layers -----------------------------------------------------------

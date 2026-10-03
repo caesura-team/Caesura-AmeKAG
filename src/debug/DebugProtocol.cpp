@@ -320,7 +320,11 @@ bool DebugProtocol::init(lua_State* L) {
         std::filesystem::current_path(sourceRootError);
     std::string sourceRoot;
     if (!sourceRootError) {
-        sourceRoot = normalizeSource(workingDirectory.generic_string());
+        // Lua/editor source identifiers are UTF-8. The native working directory
+        // can contain characters outside the Windows ANSI code page.
+        const auto utf8 = workingDirectory.generic_u8string();
+        sourceRoot = normalizeSource(std::string(
+            reinterpret_cast<const char*>(utf8.data()), utf8.size()));
     }
 
     auto mailbox = std::make_shared<CommandMailbox>();

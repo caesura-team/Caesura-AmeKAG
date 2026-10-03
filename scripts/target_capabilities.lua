@@ -14,9 +14,10 @@ local COMPILED={ffmpeg=true,live2d=true,steam=true}
 local PLATFORMS={windows=true,linux=true,macos=true,ios=true,android=true}
 local PROFILE_KEYS={schema=true,target=true,scope=true,platform=true,catalog_sha256=true,
     compiled=true,available=true,binary_sha256=true,binary=true,bundle_files=true,source_files=true}
-local GUARDED_COMMANDS={postprocess=true,vfx=true,particles=true,particle_weather=true,palette=true,
+local GUARDED_COMMANDS={postprocess=true,vfx=true,blur=true,particles=true,particle_weather=true,palette=true,
     video=true,xfadebgm=true,fadebgm=true,fadevol=true,stopbgm=true,playstop=true,playbgmstop=true,
     play=true,bgm=true,playbgm=true,playse=true,playvoice=true,se=true,voice=true,
+    live2d_load=true,live2d_show=true,live2d_hide=true,live2d_unload=true,
     live2d_motion=true,live2d_expression=true,live2d_lip_sync=true,steam_achievement=true}
 function M.command_has_capabilities(command) return GUARDED_COMMANDS[command]==true end
 local REQUIRED_FACTS={native={},web={}}
@@ -293,6 +294,7 @@ function M.command_features(command,params,staticMode)
     end
     if command=="eval" or command=="iscript" or command=="emb" then note("dynamic_lua")
     elseif command=="postprocess_off" or command=="stopvideo" then -- teardown is always permitted
+    elseif command=="blur" then add("render.blur")
     elseif command=="postprocess" then postfx(raw_get(params,"effect") or "bloom")
     elseif command=="vfx" then
         local fx=raw_get(params,"postfx")
@@ -348,7 +350,15 @@ function M.command_features(command,params,staticMode)
         -- The alias forwards file/storage/volume, not fadein.
     elseif command=="playbgm" then add("audio.play");fade(raw_get(params,"fadein"))
     elseif command=="playse" or command=="playvoice" or command=="se" or command=="voice" then add("audio.play")
-    elseif command=="live2d_motion" or command=="live2d_expression" or command=="live2d_lip_sync" then add("kag."..command)
+    elseif command=="live2d_load" or command=="live2d_show"
+        or command=="live2d_hide" or command=="live2d_unload" then add("live2d.cubism")
+    elseif command=="live2d_lip_sync" then
+        add("kag.live2d_lip_sync")
+        -- Manual/off must remain usable with an unavailable audio backend.
+        -- Runtime dispatch has already applied the real source enum/default.
+        local source=raw_get(params,"source") or "manual"
+        if not selector(source) and source=="voice" then add("audio.play") end
+    elseif command=="live2d_motion" or command=="live2d_expression" then add("kag."..command)
     elseif command=="steam_achievement" then add("steam.achievements") end
     return features,reasons
 end

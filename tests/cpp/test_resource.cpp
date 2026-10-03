@@ -336,6 +336,7 @@ namespace {
 // exercise the chain's "empty read falls through" contract.
 class MemProvider : public IAssetProvider {
 public:
+    Caesura::AssetDirectoryResult listDirectory(const std::string&, size_t, size_t) override { return {}; }
     MemProvider(int prio, std::string source)
         : m_prio(prio), m_source(std::move(source)) {}
 
@@ -592,6 +593,7 @@ namespace {
 // when a higher-priority one serves) with exact call accounting.
 class SpyProvider : public IAssetProvider {
 public:
+    Caesura::AssetDirectoryResult listDirectory(const std::string&, size_t, size_t) override { return {}; }
     SpyProvider(int prio, std::string source, bool present, std::vector<uint8_t> payload = {})
         : m_prio(prio), m_source(std::move(source)), m_present(present), m_payload(std::move(payload)) {}
 
@@ -623,6 +625,7 @@ private:
 // when a member provider faults.
 class ThrowingProvider : public IAssetProvider {
 public:
+    Caesura::AssetDirectoryResult listDirectory(const std::string&, size_t, size_t) override { return {}; }
     explicit ThrowingProvider(int prio, std::string source, bool throwOnExists = false)
         : m_prio(prio), m_source(std::move(source)), m_throwOnExists(throwOnExists) {}
 
@@ -1006,6 +1009,7 @@ namespace {
 // concurrent enqueue fires.
 class BlockingCountProvider : public IAssetProvider {
 public:
+    Caesura::AssetDirectoryResult listDirectory(const std::string&, size_t, size_t) override { return {}; }
     BlockingCountProvider(std::string path, std::vector<uint8_t> payload)
         : m_pathToBlock(std::move(path)), m_payload(std::move(payload)) {}
 

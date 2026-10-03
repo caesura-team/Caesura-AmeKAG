@@ -30,6 +30,59 @@ local migrated = {}  -- set of migrated command names
 --   desc     : one-line human summary (editor tooltips / docs)
 local registry_meta = {}
 
+-- DSL eligibility is independent of the public Lua helper table. Declarative
+-- commands plus the retained explicit flow/legacy spellings are accepted;
+-- macros are resolved by compiler/scheduler before this handler lookup.
+local legacy_commands = {
+    ["break"]=true,
+    ["call"]=true,
+    ["case"]=true,
+    ["clear"]=true,
+    ["clearscreen"]=true,
+    ["continue"]=true,
+    ["ct"]=true,
+    ["default"]=true,
+    ["else"]=true,
+    ["elseif"]=true,
+    ["elsif"]=true,
+    ["end"]=true,
+    ["endfor"]=true,
+    ["endform"]=true,
+    ["endif"]=true,
+    ["endmacro"]=true,
+    ["endswitch"]=true,
+    ["endtag"]=true,
+    ["endwhile"]=true,
+    ["erasemacro"]=true,
+    ["for"]=true,
+    ["g"]=true,
+    ["goto"]=true,
+    ["if"]=true,
+    ["iscript"]=true,
+    ["jump"]=true,
+    ["label"]=true,
+    ["link"]=true,
+    ["macro"]=true,
+    ["return"]=true,
+    ["se"]=true,
+    ["sel"]=true,
+    ["showtext"]=true,
+    ["stop"]=true,
+    ["switch"]=true,
+    ["until"]=true,
+    ["while"]=true
+}
+function Schema.isPublicCommand(command)
+    return type(command)=="string" and (registry[command]~=nil or legacy_commands[command]==true)
+end
+function Schema.resolveHandler(command, handlers, compiled)
+    if not Schema.isPublicCommand(command) then return nil end
+    local candidate=compiled or (type(handlers)=="table" and handlers[command])
+    if type(candidate)=="function" then return candidate end
+    return nil
+end
+
+
 -- ${expr} interpolation chunk cache: the expression text is a pure
 -- function of the scene source (compiled once), so load() per evaluation
 -- is waste -- the chunk is cached by expression string (bounded like the
@@ -443,6 +496,7 @@ local function coerceParams(cmd, params, ctx, static_fields)
     end
     local out = {}
 
+    local known_aliases = {}
     -- Any-of requirement: at least one of these params must be present.
     if specs._require_any then
         local found = false
@@ -458,6 +512,16 @@ local function coerceParams(cmd, params, ctx, static_fields)
     -- Coerce declared params.
     for name, spec in pairs(specs) do
         local raw = params[name]
+        -- A canonical field wins whenever it was explicitly supplied,
+        -- including 0, false and empty text. Only absent fields consult their
+        -- ordered aliases, before defaults and the shared type/interpolation
+        -- path. The alias metadata is part of the serialized schema identity.
+        if spec.aliases then
+            for _, alias in ipairs(spec.aliases) do
+                known_aliases[alias] = true
+                if raw == nil and params[alias] ~= nil then raw = params[alias] end
+            end
+        end
         -- `positional_index = N`: the param may also arrive as the Nth
         -- bare positional arg (KAG3 style, e.g. [set f.hp 30]).
         local pos = spec.positional_index
@@ -498,7 +562,7 @@ local function coerceParams(cmd, params, ctx, static_fields)
         if specs[name] == nil then
             -- numeric keys (bare positional args) pass through silently;
             -- named unknowns still warn
-            if type(name) ~= "number" then
+            if type(name) ~= "number" and not known_aliases[name] then
                 print(string.format("[schema] %s: unknown param '%s' ignored",
                     cmd, tostring(name)))
             end
@@ -628,7 +692,7 @@ Schema.define("input", {
     name        = { type = "string", required = true },
     prompt      = { type = "string", default = "", interpolate = true },
     default     = { type = "string", default = "", interpolate = true },
-    maxlen      = { type = "number", default = 32, min = 1, max = 512 },
+    maxlen      = { type = "number", min = 1, max = 512 },
     max_length  = { type = "number", default = 32, min = 1, max = 512 },
     x           = { type = "number", default = 0 },
     y           = { type = "number", default = 0 },
@@ -648,7 +712,7 @@ Schema.define("edit", {
     name        = { type = "string", required = true },
     prompt      = { type = "string", default = "", interpolate = true },
     default     = { type = "string", default = "", interpolate = true },
-    maxlen      = { type = "number", default = 32, min = 1, max = 512 },
+    maxlen      = { type = "number", min = 1, max = 512 },
     max_length  = { type = "number", default = 32, min = 1, max = 512 },
     x           = { type = "number", default = 0 },
     y           = { type = "number", default = 0 },

@@ -89,13 +89,13 @@ schema.define("playse", {
 })
 schema.define("stopbgm", {
     _meta = { category = "audio", blocking = false, desc = "KAG3-compatible stopbgm command" },
-    fadeout = { type = "number", default = 0, min = 0, max = 30000 },
-    time = { type = "number", default = 0, min = 0, max = 30000 },  -- KAG3 alias
+    fadeout = { type = "number", min = 0, max = 30000 },
+    time = { type = "number", min = 0, max = 30000 },  -- KAG3 alias
 })
 schema.define("stopse", {
     _meta = { category = "audio", blocking = false, desc = "KAG3-compatible stopse command" },
-    fadeout = { type = "number", default = 0, min = 0, max = 30000 },
-    time = { type = "number", default = 0, min = 0, max = 30000 },
+    fadeout = { type = "number", min = 0, max = 30000 },
+    time = { type = "number", min = 0, max = 30000 },
 })
 schema.define("fadebgm", {
     _meta = { category = "audio", blocking = true, desc = "KAG3-compatible fadebgm command" },
@@ -220,6 +220,7 @@ function AudioCommands.playse(ctx, params)
 
     backend.audio_play("se", file, {
         volume = volume,
+        fadein = (params.fadein or 0) / 1000.0,
     })
 end
 
@@ -229,7 +230,8 @@ end
 -- =============================================================================
 
 function AudioCommands.stopse(ctx, params)
-    backend.audio_stop("se")
+    local fadeout = params.fadeout or params.time or 0
+    backend.audio_stop("se", { fadeout = fadeout / 1000.0 })
 end
 
 -- =============================================================================
@@ -256,7 +258,7 @@ function AudioCommands.playvoice(ctx, params)
     _G._CAESURA_AUDIO_EVENT = nil
 
     -- Play the voice line
-    backend.audio_play("voice", file, {})
+    backend.audio_play("voice", file, { volume = params.volume })
 
     local audio_wait <close> = audio_wait_scope(ctx, "voice")
 

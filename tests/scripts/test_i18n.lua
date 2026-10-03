@@ -1010,6 +1010,32 @@ i18n.current, i18n.strings = s8.current, s8.strings
 i18n.lines, i18n.fallback = s8.lines, s8.fallback
 i18n.default_language = s8.default_language
 
+-- Native missing-file classification must not accept Web/unknown error codes.
+do
+    local code = "caesura_missing_locale_regression_49ae"
+    local file, _, errno = io.open("assets/lang/" .. code .. ".lua", "r")
+    if file then file:close() end
+    check("native locale probe is an actual missing file with ENOENT 2", file == nil and errno == 2)
+    local current, strings, fallback = i18n.current, i18n.strings, i18n.fallback
+    local prepared = i18n.prepare(code, code)
+    check("native missing locale prepares builtin without committing", type(prepared.strings) == "table"
+        and i18n.current == current and i18n.strings == strings and i18n.fallback == fallback)
+    local original_open = io.open
+    for _, denied_errno in ipairs({13, 44}) do
+        -- Explicit I/O-boundary negative control; this is not an OS errno observation.
+        io.open = function() return nil, "controlled dictionary read failure", denied_errno end
+        local ok = pcall(i18n.prepare, code, code)
+        io.open = original_open
+        check("native non-ENOENT must reject error " .. denied_errno, not ok)
+        check("rejected native locale preparation preserves active state " .. denied_errno,
+            i18n.current == current and i18n.strings == strings and i18n.fallback == fallback)
+    end
+    io.open = function() return nil, "unclassified dictionary read failure" end
+    local ok = pcall(i18n.prepare, code, code)
+    io.open = original_open
+    check("unknown dictionary read failure is not missing", not ok)
+end
+
 -- ---------------------------------------------------------------------------
 -- cleanup: restore i18n state and the backend global
 -- ---------------------------------------------------------------------------

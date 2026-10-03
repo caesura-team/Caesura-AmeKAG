@@ -1,6 +1,6 @@
 # Lua 5.4.7 — static library
 cmake_minimum_required(VERSION 3.25)
-project(lua_lib C)
+project(lua_lib C CXX)
 
 set(LUA_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 
@@ -57,7 +57,14 @@ endif()
 # prebuilt binary existed, so Windows CI SILENTLY SKIPPED the Lua suites
 # and the docs-freshness guard failed there. Building lua.c gives every
 # platform a real interpreter (build/lua/<config>/lua[.exe]).
-add_executable(lua_cli ${LUA_DIR}/lua.c)
+# CLI-only preload: engine lua_lib/linit.c are unchanged. Reuse the bounded
+# directory implementation directly, without linking the Engine/Resource graph.
+add_executable(lua_cli
+    ${LUA_DIR}/../../tools/lua_cli_main.c
+    ${LUA_DIR}/../../tools/lua_cli_fs.cpp
+    ${LUA_DIR}/../../src/resource/DirAssetProvider.cpp)
+target_include_directories(lua_cli PRIVATE ${LUA_DIR}/../../src)
+target_compile_features(lua_cli PRIVATE cxx_std_20)
 target_link_libraries(lua_cli PRIVATE lua)
 if(MSVC)
     target_compile_options(lua_cli PRIVATE /W0)

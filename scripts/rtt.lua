@@ -19,13 +19,33 @@ end
 
 local RTT = {}
 
+-- An owned copy of an actually submitted scene, never an empty new viewport.
+-- frame identifies the completed scene; callers must not capture A and B from
+-- the same frame. Destroy these leases directly rather than pooling them.
+function RTT.capture_scene()
+    local id, frame = backend.capture_scene()
+    if type(id) ~= "number" or id <= 0 or type(frame) ~= "number" or frame <= 0 then
+        error("[RTT] no rendered scene available for transition capture")
+    end
+    return id, frame
+end
+
 -- ═══════════════════════════════════════════════════════════════════════
 -- RTT.create(width, height) → handleId
 -- ═══════════════════════════════════════════════════════════════════════
 
 function RTT.create(width, height)
     local dw, dh = default_res()
-    return backend.create_viewport(width or dw, height or dh)
+    local function pixels(value)
+        local n = tonumber(value)
+        assert(n and n == n and n > 0 and n <= 65535,
+            "RTT dimensions must be finite positive pixel sizes within uint16 range")
+        return math.ceil(n)
+    end
+    -- Layout stays fractional; allocation covers every requested logical
+    -- pixel. Never truncate/wrap the native uint16 texture dimensions.
+    return backend.create_viewport(pixels(width == nil and dw or width),
+        pixels(height == nil and dh or height))
 end
 
 -- ─── Pooled lifecycle (perf: layer add/remove/resize no longer allocates

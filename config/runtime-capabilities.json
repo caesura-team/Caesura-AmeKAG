@@ -63,7 +63,7 @@
       "web": {"status": "unsupported", "reason": "command_not_wired"}
     },
     "kag.live2d_lip_sync": {
-      "native": {"status": "unsupported", "reason": "command_not_wired"},
+      "native": {"status": "supported", "compiled": "live2d", "available": "cubism"},
       "web": {"status": "unsupported", "reason": "command_not_wired"}
     },
     "steam.achievements": {

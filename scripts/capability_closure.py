@@ -1351,6 +1351,7 @@ def render_markdown(records, private, declared_total, oos, generated_at, fp, sus
     L.append("# Capability Closure Matrix (auto-generated)")
     L.append("")
     L.append("> 由 python scripts/capability_closure.py 生成；勿手动编辑。")
+    L.append('> **证据边界：CLOSED / Tested 仅为静态源码扫描与历史人工覆写；本生成器不运行引擎、不读取本轮执行终态，不代表本轮 runtime PASS，也不代表测试覆盖率。**')
     L.append("> 生成时间（输入源最新 mtime）：" + generated_at)
     L.append("> 生成命令：python scripts/capability_closure.py")
     L.append("> 源指纹（输入内容 sha256 前 16 hex）：" + fp)
@@ -1380,11 +1381,11 @@ def render_markdown(records, private, declared_total, oos, generated_at, fp, sus
                   if platform_reported((r.get("override") or {}).get("platform_tested")))
     n_pkg4 = sum(1 for r in records
                  if packaged_reported((r.get("override") or {}).get("packaged")))
-    L.append("- **四层闭包（2026-09-04）**：Structural Closed=" + str(n_closed)
-             + " · Runtime 测试证据=" + str(n_test)
-             + " · Platform=" + str(n_plat4) + " · Packaged=" + str(n_pkg4))
-    L.append("  - 列注记：Platform/Packaged 两列随 Phase2 分发逐项真实验证填充（当前无证据=诚实 0）；"
-             "Runtime=语义测试证据存在（非全部效果面验证）。")
+    L.append("- **结构扫描与人工声明**：Structural Closed=" + str(n_closed)
+             + " · Test references=" + str(n_test)
+             + " · Platform declarations=" + str(n_plat4) + " · Package declarations=" + str(n_pkg4))
+    L.append("  - 列注记：测试引用只表示源码中发现引用；未读取运行日志，不代表执行、通过或覆盖率。"
+             "Platform/Package/Observable 为人工声明，原始平台、包和设备证据未由本扫描器重验。")
     all_phantom = []
     seen_ph = set()
     for r in records:
@@ -1445,7 +1446,7 @@ def render_markdown(records, private, declared_total, oos, generated_at, fp, sus
         L.append("")
     L.append("## Commands")
     L.append("")
-    L.append("| Command | Declared | Dispatched | Consumed | Structural | Runtime | Platform | Packaged | Observable | 证据 |")
+    L.append("| Command | Declared | Dispatched | Consumed | Structural | Test references | Platform declaration | Package declaration | Observable declaration | 结构与声明来源 |")
     L.append("|---|---|---|---|---|---|---|---|---|---|")
     for r in sorted(records, key=lambda x: x["name"]):
         ov = r.get("override") or {}
@@ -1459,7 +1460,7 @@ def render_markdown(records, private, declared_total, oos, generated_at, fp, sus
                  + ("Y" if r["dispatched"] else "n") + " | "
                  + ("Y" if r["consumed_v5"] else "n") + " | "
                  + r["status"] + (mark if (r.get("override") or {}).get("status") else "") + " | "
-                 + ("✓" + str(r["tested_count"]) if r["tested_count"] else "-") + " | "
+                 + (str(r["tested_count"]) if r["tested_count"] else "-") + " | "
                  + pt + mark + " | " + pk + mark + " | "
                  + obs + mark + " | "
                  + (r["evidence"] or "-") + " |")
@@ -1615,7 +1616,8 @@ def render_markdown(records, private, declared_total, oos, generated_at, fp, sus
              + ",".join(sorted(PLATFORM_ENUMS)) + " 逗号分隔去重排序子集，packaged 为 <=" + str(MAX_PACKAGED_LEN)
              + " 字符描述），非协议值由扫描器自动迁移为 '-'（诚实未验证）；平台运行矩阵/打包验证由 Phase2 分发逐项补证。")
     L.append("5. 判级只依赖命令名静态匹配；同名异构（如 vfx 的 flash 与 transition 的 flash）以注册表实际键为准。导出表引用的子表（如 TransCommands.Bezier = Bezier）经 pairs() 一并注册为调度键——EXTRA(subtable-key)，非用户命令面。")
-    L.append("6. 合约计数以 command-contracts.md 的 ### 条目数为准（表头标注 134 须一致）。")
+    L.append("6. 合约计数以 command-contracts.md 的 ### 条目数为准（表头标注 "
+             + str(declared_total) + " 须一致）。")
     L.append("7. overrides JSON 的 commands 键必须落在已知命令名集合内；未知键被响亮拒绝（exit 非 0），绝不静默忽略。")
     L.append("8. **v4 已修复（历史注记保留）**：v3 判据只扫 handler 直接体——同文件工具函数/委托链内的效果面调用（t110-t119 五批人工核真 18+ 例：layout/layout_slot/tween/vibrate/nameplate 的工具函数链、模块表委托 toast.show/VFX.flash/HistoryUI.show 等）不被捕获；v4 一跳穿透（同文件 local + require()d 模块函数）已覆盖该盲区。仍存在的判定噪声：跨两跳以上的链（工具函数再调工具函数）、绑定接口（binding().draw_mesh 类——sma_play 等经人工证据层覆盖）、rawset(ctx.tf, ...) 形态（判据边缘）。")
     L.append("10. **raw 口径（t185/t192 定稿）**：任何『raw/机器原判级』汇总一律以**记录级 status_machine** 为准（=overrides 人工裁决与 v7 类别应用之前的机器判级，永不丢弃）；status_counts_v4_raw/status_counts_v5_raw 为版本快照口径，仅作对账，不作最终判定依据。")
@@ -1649,6 +1651,8 @@ def main():
     OUT_JSON.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "generated_at": generated_at,
+        "evidence_scope": "STATIC_SCAN_AND_MANUAL_DECLARATIONS",
+        "runtime_evidence_verification": "NOT_RUN",
         "source_fingerprint": fp,
         "scanner": "scripts/capability_closure.py",
         "sources": {

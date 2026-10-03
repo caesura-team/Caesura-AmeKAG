@@ -1,14 +1,16 @@
 // CloudSaveProvider — ISaveProvider backed by ISteamRemoteStorage
-// Splits saves > 256KB into chunks (Steam Remote Storage per-file limit)
+// Splits saves > 256 KiB into generations, while reading the legacy layout.
 #pragma once
 #include "api/ISaveProvider.h"
 #include "api/ICloudSaveTransport.h"
+#include "api/ICloudSaveSnapshotTransport.h"
 #include <cstdint>  // fixed-width types (GCC strict)
 
 namespace Caesura {
 class ISteamBackend;
 
-class CloudSaveProvider : public ISaveProvider, public ICloudSaveTransport {
+class CloudSaveProvider : public ISaveProvider, public ICloudSaveTransport,
+                          public ICloudSaveSnapshotTransport {
 public:
     explicit CloudSaveProvider(ISteamBackend* steam);
     ~CloudSaveProvider() override = default;
@@ -16,6 +18,9 @@ public:
     // Paths are normalized to a FLAT cloud key (directory component stripped),
     // so "<saveDir>/save_5.json" and "save_5.json" address the SAME cloud
     // object whichever entry point is used.
+    // Chunk writes stage and verify new bytes before one metadata publication
+    // call. This relies on synchronous SDK rejection leaving the head intact;
+    // it does not establish crash atomicity or concurrent-writer arbitration.
     std::string readFile(const std::string& path) override;
     bool writeFile(const std::string& path, const std::string& content) override;
     bool deleteFile(const std::string& path) override;
@@ -30,15 +35,14 @@ public:
     std::string readCloudFile(const std::string& slotPath) override;
     bool writeCloudFile(const std::string& slotPath, const std::string& bytes) override;
 
+    CloudSnapshot readSnapshot(CloudSide side, const std::string& slotPath) override;
+    CloudConditionalWriteSupport conditionalWriteSupport(CloudSide side) const override;
+
 private:
     // Flat cloud key for a slot path (directory component stripped).
     static std::string cloudKey(const std::string& slotPath);
 
     ISteamBackend* m_steam;
-    static constexpr int32_t kChunkSize = 256 * 1024; // 256KB Steam limit
-    // Hard cap on a single chunked save; protects against corrupt .meta
-    // triggering multi-GB reserves / billion-iteration loops.
-    static constexpr int32_t kMaxChunkedSize = 64 * 1024 * 1024; // 64MB
 };
 
 } // namespace Caesura

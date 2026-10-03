@@ -10,6 +10,15 @@ JobSystem::~JobSystem() {
     shutdown();
 }
 
+JobSystemSnapshot JobSystem::getSnapshot() const {
+    CAESURA_ASSERT_MAIN_THREAD();
+    // Publication holds this mutex before pending is decremented. Read both
+    // under the same lock so a completed worker cannot appear in neither phase.
+    std::lock_guard<std::mutex> lock(m_mainMutex);
+    return {true, m_running.load(), static_cast<uint64_t>(m_pendingJobs.load()),
+            static_cast<uint64_t>(m_mainJobs.size()), m_dispatchingCompletions};
+}
+
 int JobSystem::computeWorkerCount() {
     unsigned hw = std::thread::hardware_concurrency();
     if (hw == 0) hw = 4;
@@ -93,8 +102,21 @@ void JobSystem::shutdown() {
     // inside an earlier poll, its remaining callbacks are cancelled instead.
     pollMainThreadJobs();
     {
-        std::lock_guard<std::mutex> lock(m_mainMutex);
-        m_mainJobs.clear();
+        struct CancellationGuard {
+            uint64_t& dispatching;
+            const uint64_t previous;
+            ~CancellationGuard() { dispatching = previous; }
+        } guard{m_dispatchingCompletions, m_dispatchingCompletions};
+        // Declared after the guard: capture destructors may inspect the owner,
+        // so retain their cancellation debt until every capture is released.
+        std::deque<MainThreadFn> cancelled;
+        {
+            std::lock_guard<std::mutex> lock(m_mainMutex);
+            cancelled.swap(m_mainJobs);
+            m_dispatchingCompletions += static_cast<uint64_t>(cancelled.size());
+        }
+        // Destroy outside m_mainMutex. Admission stays closed throughout;
+        // nested shutdown/init cannot revive or deliver cancelled callbacks.
     }
     m_shuttingDown = false;
 
@@ -130,8 +152,14 @@ void JobSystem::pollMainThreadJobs() {
     if (m_polling) return;
     struct PollGuard {
         bool& polling;
-        ~PollGuard() { polling = false; }
-    } guard{m_polling};
+        uint64_t& dispatching;
+        ~PollGuard() {
+            // Constructed before batch: cancelled callbacks are destroyed
+            // before their outstanding observation is cleared.
+            dispatching = 0;
+            polling = false;
+        }
+    } guard{m_polling, m_dispatchingCompletions};
     m_polling = true;
     const uint64_t epoch = m_dispatchEpoch;
 
@@ -139,11 +167,15 @@ void JobSystem::pollMainThreadJobs() {
     {
         std::lock_guard<std::mutex> lock(m_mainMutex);
         batch.swap(m_mainJobs);
+        m_dispatchingCompletions = static_cast<uint64_t>(batch.size());
     }
 
     for (auto& fn : batch) {
         if (epoch != m_dispatchEpoch) break;
-        if (!fn) continue;
+        if (!fn) {
+            --m_dispatchingCompletions;
+            continue;
+        }
         try {
             fn();
         } catch (const std::exception& e) {
@@ -155,6 +187,7 @@ void JobSystem::pollMainThreadJobs() {
                     "[JobSystem] Main-thread callback threw unknown exception -- "
                     "isolated and swallowed\n");
         }
+        --m_dispatchingCompletions;
     }
 }
 

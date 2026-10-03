@@ -91,6 +91,7 @@
  "tokenizer": true,
  "transform": true,
  "transition": true,
+ "validation.inspect_web_bundle": true,
  "vfx": true,
  "viewport": true
 }

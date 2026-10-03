@@ -19,6 +19,12 @@ local handler_names = {
 local function fixture()
     local env = setmetatable({}, { __index = _G })
     env._G = env
+    env.Restore = {
+        capture_font = function() return {version=1,active=true,font=0,path="",size=16} end,
+        prepare_font = function(snapshot) return snapshot end,
+        apply_font = function() return true end,
+        discard_font = function() end,
+    }
     local state = { starts = 0, stops = 0, active = false, forwarded = 0 }
     local originals = {}
     for _, name in ipairs(handler_names) do
@@ -26,8 +32,12 @@ local function fixture()
         env[name] = originals[name]
     end
     local modules = {
-        layers = {},
         backend = {
+            create_solid_texture = function() return 101 end,
+            create_viewport = function() return 501 end,
+            destroy_viewport = function() return true end,
+            destroy_texture = function() return true end,
+            text_set_font = function() return true end,
             line_height = function() return 24 end,
             get_resolution = function() return 1280, 720 end,
             set_text_input_rect = function(x, y, w, h)

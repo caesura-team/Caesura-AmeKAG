@@ -73,10 +73,30 @@ schema.define("live2d_expression", {
 })
 schema.define("live2d_lip_sync", {
     _meta = { category = "character", blocking = false,
-        desc = "Set Live2D lip sync mouth open parameter (0.0 = closed, 1.0 = fully open)" },
+        desc = "Control a loaded Live2D mouth manually, from VOICE PCM, or turn automatic control off" },
     model   = { type = "string", required = true, positional_index = 1 },
-    value   = { type = "number", default = 0.0, min = 0.0, max = 1.0 },
+    source  = { type = "enum", values = {"manual", "voice", "off"}, default = "manual" },
+    -- Omission must remain distinguishable from explicit value=0 for voice/off.
+    value   = { type = "number", positional_index = 2, min = 0.0, max = 1.0 },
 })
+schema.define("live2d_load", {
+    _meta = { category = "character", blocking = false, desc = "Load a Live2D model owned by the current scene context" },
+    model = { type = "string", required = true, positional_index = 1 },
+    storage = { type = "file", required = true, positional_index = 2 },
+})
+schema.define("live2d_show", {
+    _meta = { category = "character", blocking = false, desc = "Show a loaded Live2D model" },
+    model = { type = "string", required = true, positional_index = 1 },
+    x = { type = "number", default = 0 },
+    y = { type = "number", default = 0 },
+    scale = { type = "number", default = 1, min = 0.001 },
+})
+for _,command in ipairs({"live2d_hide", "live2d_unload"}) do
+    schema.define(command, {
+        _meta = { category = "character", blocking = false, desc = "Hide or unload a context-owned Live2D model" },
+        model = { type = "string", required = true, positional_index = 1 },
+    })
+end
 
 local CharacterCommands = {}
 
@@ -196,14 +216,85 @@ function CharacterCommands.live2d_expression(ctx, params)
     ctx.live2d[model].expression_weight = params.weight or 1.0
 end
 
--- [live2d_lip_sync model=name value=0.8]
-function CharacterCommands.live2d_lip_sync(ctx, params)
-    local model = params.model or params[1]
-    local val = params.value or params[2] or 0.0
-    if not model then return end
+-- Native handles are private transient ownership, never persistent scene values.
+local function model_name(params)
+    local name = params.model or params[1]
+    if type(name) ~= "string" or name == "" then error("Live2D model name is required", 0) end
+    return name
+end
+
+local function model_handle(ctx, params)
+    local name = model_name(params)
+    local handle = ctx._live2dHandles and ctx._live2dHandles[name]
+    if not handle then error("Live2D model is not loaded in this context: " .. name, 0) end
+    return handle, name
+end
+
+local function applied(ok, reason)
+    if ok ~= true then error("Live2D operation failed: " .. tostring(reason or "unsupported model or backend"), 0) end
+end
+
+function CharacterCommands.live2d_load(ctx, params)
+    local name = model_name(params)
+    if ctx._live2dHandles and ctx._live2dHandles[name] then
+        error("Live2D model name is already loaded: " .. name, 0)
+    end
+    local handle, reason = backend.live2d_load(params.storage or params[2], name)
+    if type(handle) ~= "number" or handle <= 0 or handle % 1 ~= 0 then
+        error("Live2D load failed: " .. tostring(reason or "invalid handle"), 0)
+    end
+    ctx._live2dHandles = ctx._live2dHandles or {}
+    ctx._live2dHandles[name] = handle
     ctx.live2d = ctx.live2d or {}
-    ctx.live2d[model] = ctx.live2d[model] or {}
-    ctx.live2d[model].lip_sync = val
+    ctx.live2d[name] = {storage = params.storage or params[2]}
+end
+
+function CharacterCommands.live2d_show(ctx, params)
+    local handle = model_handle(ctx, params)
+    applied(backend.live2d_show(handle, params.x or 0, params.y or 0, params.scale or 1))
+end
+
+function CharacterCommands.live2d_hide(ctx, params)
+    local handle = model_handle(ctx, params)
+    applied(backend.live2d_hide(handle))
+end
+
+function CharacterCommands.live2d_unload(ctx, params)
+    local handle, name = model_handle(ctx, params)
+    applied(backend.live2d_unload(handle))
+    ctx._live2dHandles[name] = nil
+    if ctx.live2d then ctx.live2d[name] = nil end
+end
+
+function CharacterCommands.live2d_lip_sync(ctx, params)
+    local source = params.source or "manual"
+    local value = params.value or params[2]
+    local value_provided = params.value ~= nil or params[2] ~= nil
+    -- The shared schema treats an empty string as omitted. The scheduler's
+    -- original normalized token still records explicit value="", which must
+    -- also be rejected for voice/off instead of silently changing its meaning.
+    if ctx._executing_command == "live2d_lip_sync" and ctx.tokens then
+        local token = ctx.tokens[ctx._executing_index]
+        local raw = token and token[2]
+        if raw then value_provided = value_provided or raw.value ~= nil or raw[2] ~= nil end
+    end
+    if source ~= "manual" and source ~= "voice" and source ~= "off" then
+        error("Invalid Live2D lip sync source", 0)
+    end
+    if source ~= "manual" and value_provided then
+        error("Live2D voice/off source cannot include a value", 0)
+    end
+    local handle, name = model_handle(ctx, params)
+    if source == "manual" then
+        -- The native operation disables automatic control before writing mouth.
+        applied(backend.live2d_set_mouth(handle, value or 0))
+    else
+        applied(backend.live2d_set_voice_lipsync(handle, source == "voice"))
+    end
+    ctx.live2d = ctx.live2d or {}
+    ctx.live2d[name] = ctx.live2d[name] or {}
+    ctx.live2d[name].lip_sync_source = source
+    ctx.live2d[name].lip_sync = source == "manual" and (value or 0) or nil
 end
 
 return CharacterCommands

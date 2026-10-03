@@ -1,0 +1,3445 @@
+{
+  "schema": 1,
+  "status": "ALL_182_NAMES_HAVE_AUTHORED_SCENE_OR_EXPLICIT_CONDITIONAL_CONTRACT_NOT_ALL_AUTORUN_READY",
+  "public_command_count": 182,
+  "schema_declared_count": 145,
+  "document_snapshot_count": 138,
+  "authored_focus_count": 182,
+  "cases": [
+    {
+      "id": "arithmetic",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": [
+        "set",
+        "inc",
+        "add",
+        "sub",
+        "mul",
+        "div",
+        "mod",
+        "dec",
+        "random",
+        "assert"
+      ],
+      "scene_path": "assets/script/contracts/arithmetic.ks",
+      "source": "[set var=\"f.a\" value=10]\n[inc var=\"f.a\" by=2]\n[add name=\"f.a\" value=3]\n[sub name=\"f.a\" value=1]\n[mul name=\"f.a\" value=2]\n[div name=\"f.a\" value=2]\n[mod name=\"f.a\" value=5]\n[dec name=\"f.a\" amount=1]\n[random var=\"f.r\" min=7 max=7]\n[assert exp=\"f.a == 3 and f.r == 7\"]\n[set var=\"tf.contract_case\" value=\"arithmetic\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {
+        "a": 3,
+        "r": 7
+      },
+      "required_assets": [],
+      "require_runtime_trace": [
+        "set",
+        "inc",
+        "add",
+        "sub",
+        "mul",
+        "div",
+        "mod",
+        "dec",
+        "random",
+        "assert"
+      ],
+      "execution_evidence": null,
+      "assertion_scope": "Real command entry, native binding marshalling, explicit state assertions and normal termination. GPU pixels/physical audio require separate measured evidence."
+    },
+    {
+      "id": "conditional",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": [
+        "if",
+        "elseif",
+        "elsif",
+        "else",
+        "endif"
+      ],
+      "scene_path": "assets/script/contracts/conditional.ks",
+      "source": "[set var=\"f.branch\" value=0]\n[if exp=\"false\"]\n[set var=\"f.branch\" value=99]\n[elseif exp=\"false\"]\n[set var=\"f.branch\" value=98]\n[else]\n[set var=\"f.branch\" value=1]\n[endif]\n[if exp=\"false\"]\n[set var=\"f.branch\" value=97]\n[elsif exp=\"f.branch == 1\"]\n[set var=\"f.branch\" value=2]\n[endif]\n[assert exp=\"f.branch == 2\"]\n[set var=\"tf.contract_case\" value=\"conditional\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {
+        "branch": 2
+      },
+      "required_assets": [],
+      "require_runtime_trace": [
+        "if",
+        "elseif",
+        "else"
+      ],
+      "execution_evidence": null,
+      "assertion_scope": "Real command entry, native binding marshalling, explicit state assertions and normal termination. GPU pixels/physical audio require separate measured evidence."
+    },
+    {
+      "id": "counting-loops",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": [
+        "for",
+        "endfor",
+        "while",
+        "endwhile",
+        "until"
+      ],
+      "scene_path": "assets/script/contracts/counting-loops.ks",
+      "source": "[set var=\"f.n\" value=0]\n[for var=\"i\" start=\"1\" end=\"3\"]\n[inc var=\"f.n\"]\n[endfor]\n[while exp=\"f.n > 0\"]\n[dec name=\"f.n\"]\n[endwhile]\n[until exp=\"f.n == 0\"]\n[assert exp=\"f.n == 0\"]\n[set var=\"tf.contract_case\" value=\"counting-loops\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {
+        "n": 0
+      },
+      "required_assets": [],
+      "require_runtime_trace": [
+        "for",
+        "endfor",
+        "while",
+        "until"
+      ],
+      "execution_evidence": null,
+      "assertion_scope": "Real command entry, native binding marshalling, explicit state assertions and normal termination. GPU pixels/physical audio require separate measured evidence."
+    },
+    {
+      "id": "jump-call",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": [
+        "label",
+        "jump",
+        "goto",
+        "call",
+        "return"
+      ],
+      "scene_path": "assets/script/contracts/jump-call.ks",
+      "source": "[jump target=\"*body\"]\n*sub\n[inc var=\"f.calls\"]\n[return]\n*body\n[set var=\"f.calls\" value=0]\n[call target=\"*sub\"]\n[goto target=\"*after\"]\n[set var=\"f.calls\" value=99]\n*after\n[assert exp=\"f.calls == 1\"]\n[set var=\"tf.contract_case\" value=\"jump-call\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {
+        "calls": 1
+      },
+      "required_assets": [],
+      "require_runtime_trace": [
+        "jump",
+        "goto",
+        "call",
+        "return"
+      ],
+      "execution_evidence": null,
+      "assertion_scope": "Real command entry, native binding marshalling, explicit state assertions and normal termination. GPU pixels/physical audio require separate measured evidence.",
+      "require_labels": [
+        "sub",
+        "body",
+        "after"
+      ],
+      "label_proof": "Compiler labelMap valid indices, f.calls==1, real jump/call/return/goto trace and terminal sentinel. Label is structural, not required to invoke debugger hook."
+    },
+    {
+      "id": "time-waits",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": [
+        "wait",
+        "delay",
+        "s"
+      ],
+      "scene_path": "assets/script/contracts/time-waits.ks",
+      "source": "[wait time=32]\n[delay ms=32]\n[s ms=32]\n[set var=\"tf.contract_case\" value=\"time-waits\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {},
+      "required_assets": [],
+      "require_runtime_trace": [
+        "wait",
+        "delay",
+        "s"
+      ],
+      "execution_evidence": null,
+      "assertion_scope": "Real command entry, native binding marshalling, explicit state assertions and normal termination. GPU pixels/physical audio require separate measured evidence."
+    },
+    {
+      "id": "text-and-breaks",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": [
+        "font",
+        "pt",
+        "ch",
+        "text",
+        "l",
+        "r",
+        "br",
+        "hr",
+        "er",
+        "p",
+        "ruby"
+      ],
+      "scene_path": "assets/script/contracts/text-and-breaks.ks",
+      "source": "[font face=\"default\" size=22 color=\"#123456\"]\n[pt speed=8]\n[ch name=\"Contract\" text=\"Native command text\"]\n[l]\n[r]\n[br]\n[hr]\n[p]\n[text text=\"Native narration\"]\n[ruby text=\"漢字\" ruby=\"かんじ\" x=30 y=60]\n[er]\n[set var=\"tf.contract_case\" value=\"text-and-breaks\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {},
+      "required_assets": [],
+      "require_runtime_trace": [
+        "font",
+        "pt",
+        "ch",
+        "text",
+        "l",
+        "r",
+        "br",
+        "hr",
+        "er",
+        "p",
+        "ruby"
+      ],
+      "execution_evidence": null,
+      "assertion_scope": "Real command entry, native binding marshalling, explicit state assertions and normal termination. GPU pixels/physical audio require separate measured evidence."
+    },
+    {
+      "id": "text-speed-aliases",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": [
+        "textspeed",
+        "cps",
+        "auto",
+        "skip",
+        "voice_off"
+      ],
+      "scene_path": "assets/script/contracts/text-speed-aliases.ks",
+      "source": "[textspeed cps=80]\n[cps 60]\n[auto mode=\"off\"]\n[skip mode=\"off\"]\n[voice_off]\n[set var=\"tf.contract_case\" value=\"text-speed-aliases\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {},
+      "required_assets": [],
+      "require_runtime_trace": [
+        "textspeed",
+        "cps",
+        "auto",
+        "skip",
+        "voice_off"
+      ],
+      "execution_evidence": null,
+      "assertion_scope": "Real command entry, native binding marshalling, explicit state assertions and normal termination. GPU pixels/physical audio require separate measured evidence."
+    },
+    {
+      "id": "input",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": [
+        "input"
+      ],
+      "scene_path": "assets/script/contracts/input.ks",
+      "source": "[font face=\"default\" size=18]\n[input name=\"f.value\" max_length=3 font_size=36 color=\"#123456\" bg_color=\"#234567\" x=1.5 y=20.5 width=180.5 height=80.5]\n[assert exp=\"f.value == 'ABC'\"]\n[set var=\"tf.contract_case\" value=\"input\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": "ABCDE",
+      "expect_f": {
+        "value": "ABC"
+      },
+      "required_assets": [],
+      "require_runtime_trace": [
+        "input"
+      ],
+      "execution_evidence": null,
+      "assertion_scope": "Real command entry, native binding marshalling, explicit state assertions and normal termination. GPU pixels/physical audio require separate measured evidence."
+    },
+    {
+      "id": "edit",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": [
+        "edit"
+      ],
+      "scene_path": "assets/script/contracts/edit.ks",
+      "source": "[font face=\"default\" size=18]\n[edit name=\"f.value\" maxlen=3]\n[assert exp=\"f.value == 'ABC'\"]\n[set var=\"tf.contract_case\" value=\"edit\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": "ABCDE",
+      "expect_f": {
+        "value": "ABC"
+      },
+      "required_assets": [],
+      "require_runtime_trace": [
+        "edit"
+      ],
+      "execution_evidence": null,
+      "assertion_scope": "Real command entry, native binding marshalling, explicit state assertions and normal termination. GPU pixels/physical audio require separate measured evidence."
+    },
+    {
+      "id": "layer-placement",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": [
+        "bg",
+        "fg",
+        "image",
+        "position",
+        "layopt",
+        "moveto",
+        "cl",
+        "ld"
+      ],
+      "scene_path": "assets/script/contracts/layer-placement.ks",
+      "source": "[bg storage=\"assets/bg/classroom.png\"]\n[fg storage=\"assets/fg/girl_uniform.png\"]\n[image layer=\"portrait\" storage=\"assets/fg/girl_uniform.png\" x=20 y=30 w=120 h=160]\n[position layer=\"portrait\" x=40 y=50 scale=1]\n[layopt layer=\"portrait\" opacity=0.5 visible=true]\n[moveto layer=\"portrait\" x=60 y=70]\n[wait time=48]\n[ld layer=\"portrait\"]\n[cl layer=\"fg\"]\n[set var=\"tf.contract_case\" value=\"layer-placement\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {},
+      "required_assets": [
+        "assets/bg/classroom.png",
+        "assets/fg/girl_uniform.png"
+      ],
+      "require_runtime_trace": [
+        "bg",
+        "fg",
+        "image",
+        "position",
+        "layopt",
+        "moveto",
+        "cl",
+        "ld"
+      ],
+      "execution_evidence": null,
+      "assertion_scope": "Real command entry, native binding marshalling, explicit state assertions and normal termination. GPU pixels/physical audio require separate measured evidence."
+    },
+    {
+      "id": "transition-and-fade",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": [
+        "trans",
+        "fade",
+        "layfade",
+        "fadeout"
+      ],
+      "scene_path": "assets/script/contracts/transition-and-fade.ks",
+      "source": "[bg storage=\"assets/bg/classroom.png\"]\n[trans method=\"dissolve\" time=32]\n[fade layer=\"bg\" from=255 to=200 time=32]\n[layfade layer=\"bg\" opacity=255 time=32]\n[fadeout layer=\"bg\" opacity=0.5 time=32]\n[set var=\"tf.contract_case\" value=\"transition-and-fade\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {},
+      "required_assets": [
+        "assets/bg/classroom.png"
+      ],
+      "require_runtime_trace": [
+        "trans",
+        "fade",
+        "layfade",
+        "fadeout"
+      ],
+      "execution_evidence": null,
+      "assertion_scope": "Real command entry, native binding marshalling, explicit state assertions and normal termination. GPU pixels/physical audio require separate measured evidence."
+    },
+    {
+      "id": "image-aliases",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": [
+        "g",
+        "clear",
+        "ct",
+        "clearscreen"
+      ],
+      "scene_path": "assets/script/contracts/image-aliases.ks",
+      "source": "[g storage=\"assets/bg/classroom.png\"]\n[clear layer=\"bg\"]\n[bg storage=\"assets/bg/classroom.png\"]\n[ct layer=\"bg\"]\n[bg storage=\"assets/bg/classroom.png\"]\n[clearscreen layer=\"bg\"]\n[set var=\"tf.contract_case\" value=\"image-aliases\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {},
+      "required_assets": [
+        "assets/bg/classroom.png"
+      ],
+      "require_runtime_trace": [
+        "g",
+        "clear",
+        "ct",
+        "clearscreen"
+      ],
+      "execution_evidence": null,
+      "assertion_scope": "Real command entry, native binding marshalling, explicit state assertions and normal termination. GPU pixels/physical audio require separate measured evidence."
+    },
+    {
+      "id": "showtext-alias",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": [
+        "showtext"
+      ],
+      "scene_path": "assets/script/contracts/showtext-alias.ks",
+      "source": "[font size=22]\n[showtext text=\"Legacy display alias\"]\n[set var=\"tf.contract_case\" value=\"showtext-alias\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {},
+      "required_assets": [],
+      "require_runtime_trace": [
+        "showtext"
+      ],
+      "execution_evidence": null,
+      "assertion_scope": "Real command entry, native binding marshalling, explicit state assertions and normal termination. GPU pixels/physical audio require separate measured evidence."
+    },
+    {
+      "id": "audio-basic",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": [
+        "playbgm",
+        "stopbgm",
+        "playse",
+        "stopse",
+        "playvoice",
+        "stopvoice"
+      ],
+      "scene_path": "assets/script/contracts/audio-basic.ks",
+      "source": "[playbgm storage=\"assets/bgm/daily.wav\" volume=0.3 fadein=32 loop=false]\n[wait time=64]\n[stopbgm time=32]\n[playse storage=\"assets/se/click.wav\" volume=0.4 fadein=16]\n[wait time=64]\n[stopse fadeout=16]\n[playvoice storage=\"assets/voice/line01.wav\" volume=0.5]\n[stopvoice]\n[set var=\"tf.contract_case\" value=\"audio-basic\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {},
+      "required_assets": [
+        "assets/bgm/daily.wav",
+        "assets/se/click.wav",
+        "assets/voice/line01.wav"
+      ],
+      "require_runtime_trace": [
+        "playbgm",
+        "stopbgm",
+        "playse",
+        "stopse",
+        "playvoice",
+        "stopvoice"
+      ],
+      "execution_evidence": null,
+      "assertion_scope": "Real command entry, native binding marshalling, explicit state assertions and normal termination. GPU pixels/physical audio require separate measured evidence."
+    },
+    {
+      "id": "audio-aliases",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": [
+        "play",
+        "bgm",
+        "se",
+        "voice",
+        "playstop"
+      ],
+      "scene_path": "assets/script/contracts/audio-aliases.ks",
+      "source": "[play bus=\"bgm\" file=\"assets/bgm/daily.wav\" volume=0.3]\n[wait time=32]\n[playstop fadeout=16]\n[bgm file=\"assets/bgm/daily.wav\"]\n[stopbgm]\n[se file=\"assets/se/click.wav\" volume=0.3]\n[voice file=\"assets/voice/line01.wav\"]\n[set var=\"tf.contract_case\" value=\"audio-aliases\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {},
+      "required_assets": [
+        "assets/bgm/daily.wav",
+        "assets/se/click.wav",
+        "assets/voice/line01.wav"
+      ],
+      "require_runtime_trace": [
+        "play",
+        "bgm",
+        "se",
+        "voice",
+        "playstop"
+      ],
+      "execution_evidence": null,
+      "assertion_scope": "Real command entry, native binding marshalling, explicit state assertions and normal termination. GPU pixels/physical audio require separate measured evidence."
+    },
+    {
+      "id": "audio-controls",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": [
+        "setbgmvolume",
+        "setsevolume",
+        "setvoicevolume",
+        "fadebgm",
+        "fadevol"
+      ],
+      "scene_path": "assets/script/contracts/audio-controls.ks",
+      "source": "[setbgmvolume volume=0.3]\n[setsevolume volume=0.4]\n[setvoicevolume volume=0.5]\n[playbgm storage=\"assets/bgm/daily.wav\" loop=false]\n[fadebgm volume=0.2 time=32]\n[fadevol bus=\"bgm\" volume=0.4 time=32]\n[wait time=48]\n[stopbgm fadeout=0]\n[set var=\"tf.contract_case\" value=\"audio-controls\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {},
+      "required_assets": [
+        "assets/bgm/daily.wav"
+      ],
+      "require_runtime_trace": [
+        "setbgmvolume",
+        "setsevolume",
+        "setvoicevolume",
+        "fadebgm",
+        "fadevol"
+      ],
+      "execution_evidence": null,
+      "assertion_scope": "Real command entry, native binding marshalling, explicit state assertions and normal termination. GPU pixels/physical audio require separate measured evidence."
+    },
+    {
+      "id": "preload",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": [
+        "preload"
+      ],
+      "scene_path": "assets/script/contracts/preload.ks",
+      "source": "[preload type=\"texture\" storage=\"assets/bg/classroom.png\" wait=\"true\"]\n[bg storage=\"assets/bg/classroom.png\"]\n[set var=\"tf.contract_case\" value=\"preload\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {},
+      "required_assets": [
+        "assets/bg/classroom.png"
+      ],
+      "require_runtime_trace": [
+        "preload"
+      ],
+      "execution_evidence": null,
+      "assertion_scope": "Real command entry, native binding marshalling, explicit state assertions and normal termination. GPU pixels/physical audio require separate measured evidence."
+    },
+    {
+      "id": "quickmenu-flags",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": [
+        "quickmenu_auto",
+        "quickmenu_skip",
+        "quickmenu_log",
+        "quickmenu_config"
+      ],
+      "scene_path": "assets/script/contracts/quickmenu-flags.ks",
+      "source": "[quickmenu_auto mode=\"off\"]\n[quickmenu_skip mode=\"off\"]\n[quickmenu_log]\n[quickmenu_config]\n[set var=\"tf.contract_case\" value=\"quickmenu-flags\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {},
+      "required_assets": [],
+      "require_runtime_trace": [
+        "quickmenu_auto",
+        "quickmenu_skip",
+        "quickmenu_log",
+        "quickmenu_config"
+      ],
+      "execution_evidence": null,
+      "assertion_scope": "Real command entry, native binding marshalling, explicit state assertions and normal termination. GPU pixels/physical audio require separate measured evidence."
+    },
+    {
+      "id": "unlock-ending",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": [
+        "unlock",
+        "ending"
+      ],
+      "scene_path": "assets/script/contracts/unlock-ending.ks",
+      "source": "[unlock type=\"cg\" id=\"contract_cg\"]\n[unlock type=\"music\" id=\"contract_music\"]\n[ending id=\"contract_end\" name=\"Contract ending\"]\n[set var=\"tf.contract_case\" value=\"unlock-ending\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {},
+      "required_assets": [],
+      "require_runtime_trace": [
+        "unlock",
+        "ending"
+      ],
+      "execution_evidence": null,
+      "assertion_scope": "Real command entry, native binding marshalling, explicit state assertions and normal termination. GPU pixels/physical audio require separate measured evidence."
+    },
+    {
+      "id": "break-continue",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": [
+        "break",
+        "continue"
+      ],
+      "scene_path": "assets/script/contracts/break-continue.ks",
+      "source": "[set f.n 0]\n[for var=\"i\" start=\"1\" end=\"4\"]\n[if exp=\"f.i == 2\"]\n[continue]\n[endif]\n[inc var=\"f.n\"]\n[if exp=\"f.i == 3\"]\n[break]\n[endif]\n[endfor]\n[assert exp=\"f.n == 2\"]\n[set var=\"tf.contract_case\" value=\"break-continue\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {
+        "n": 2
+      },
+      "required_assets": [],
+      "require_runtime_trace": [
+        "break",
+        "continue"
+      ],
+      "execution_evidence": null,
+      "assertion_scope": "Real native command route plus explicit scene postconditions; not pixel/audio-device evidence"
+    },
+    {
+      "id": "switch-branches",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": [
+        "switch",
+        "case",
+        "default",
+        "endswitch"
+      ],
+      "scene_path": "assets/script/contracts/switch-branches.ks",
+      "source": "[set f.tier 2]\n[switch exp=\"f.tier\"]\n[case 1]\n[set f.value 99]\n[case 2]\n[set f.value 2]\n[default]\n[set f.value 98]\n[endswitch]\n[switch exp=\"99\"]\n[case 1]\n[set f.value 97]\n[default]\n[set f.fallback 7]\n[endswitch]\n[assert exp=\"f.value == 2 and f.fallback == 7\"]\n[set var=\"tf.contract_case\" value=\"switch-branches\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {
+        "value": 2,
+        "fallback": 7
+      },
+      "required_assets": [],
+      "require_runtime_trace": [
+        "switch"
+      ],
+      "execution_evidence": null,
+      "assertion_scope": "Real native command route plus explicit scene postconditions; not pixel/audio-device evidence",
+      "require_switch_routes": [
+        {
+          "value": "2",
+          "default": false
+        },
+        {
+          "value": "99",
+          "default": true
+        }
+      ],
+      "observation_correction": "case/default are compiled structure nodes; validate actual compiled body destinations were entered, plus distinct f.value2/fallback7 branch effects."
+    },
+    {
+      "id": "embedded-code",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": [
+        "eval",
+        "emb",
+        "iscript"
+      ],
+      "scene_path": "assets/script/contracts/embedded-code.ks",
+      "source": "[eval exp=\"f.value = 3\"]\n[emb exp=\"ctx.f.value = ctx.f.value + 1; return ctx.f.value\"]\n[iscript]\nf.value = f.value + 1\n[endscript]\n[assert exp=\"f.value == 5\"]\n[set var=\"tf.contract_case\" value=\"embedded-code\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {
+        "value": 5
+      },
+      "required_assets": [],
+      "require_runtime_trace": [
+        "eval",
+        "emb",
+        "iscript"
+      ],
+      "execution_evidence": null,
+      "assertion_scope": "Real native command route plus explicit scene postconditions; not pixel/audio-device evidence"
+    },
+    {
+      "id": "macro-expansion",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": [
+        "macro",
+        "endmacro",
+        "erasemacro"
+      ],
+      "scene_path": "assets/script/contracts/macro-expansion.ks",
+      "source": "[set f.value 0]\n[macro name=\"bump\"]\n[inc var=\"f.value\"]\n[endmacro]\n[bump]\n[erasemacro name=\"bump\"]\n[assert exp=\"f.value == 1\"]\n[set var=\"tf.contract_case\" value=\"macro-expansion\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {
+        "value": 1
+      },
+      "required_assets": [],
+      "require_runtime_trace": [
+        "inc",
+        "erasemacro"
+      ],
+      "execution_evidence": null,
+      "assertion_scope": "Real native command route plus explicit scene postconditions; not pixel/audio-device evidence",
+      "focus_phase": "Compiler macro forms plus real expanded body; original source/compiled stream must be retained"
+    },
+    {
+      "id": "terminal-end",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": [
+        "end"
+      ],
+      "scene_path": "assets/script/contracts/terminal-end.ks",
+      "source": "[set var=\"tf.contract_case\" value=\"terminal-end\"]\n[end]\n[assert exp=\"false\" msg=\"unreachable after end\"]\n[set var=\"tf.contract_case\" value=\"terminal-end\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {},
+      "required_assets": [],
+      "require_runtime_trace": [
+        "end"
+      ],
+      "execution_evidence": null,
+      "assertion_scope": "Real native command route plus explicit scene postconditions; not pixel/audio-device evidence"
+    },
+    {
+      "id": "terminal-stop",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": [
+        "stop"
+      ],
+      "scene_path": "assets/script/contracts/terminal-stop.ks",
+      "source": "[set var=\"tf.contract_case\" value=\"terminal-stop\"]\n[stop]\n[assert exp=\"false\" msg=\"unreachable after stop\"]\n[set var=\"tf.contract_case\" value=\"terminal-stop\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {},
+      "required_assets": [],
+      "require_runtime_trace": [
+        "stop"
+      ],
+      "execution_evidence": null,
+      "assertion_scope": "Real native command route plus explicit scene postconditions; not pixel/audio-device evidence"
+    },
+    {
+      "id": "terminal-close",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": [
+        "close"
+      ],
+      "scene_path": "assets/script/contracts/terminal-close.ks",
+      "source": "[set var=\"tf.contract_case\" value=\"terminal-close\"]\n[close]\n[assert exp=\"false\" msg=\"unreachable after close\"]\n[set var=\"tf.contract_case\" value=\"terminal-close\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {},
+      "required_assets": [],
+      "require_runtime_trace": [
+        "close"
+      ],
+      "execution_evidence": null,
+      "assertion_scope": "Real native command route plus explicit scene postconditions; not pixel/audio-device evidence"
+    },
+    {
+      "id": "legacy-block-ends",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": [
+        "endtag",
+        "endform"
+      ],
+      "scene_path": "assets/script/contracts/legacy-block-ends.ks",
+      "source": "[endtag]\n[endform]\n[set var=\"tf.contract_case\" value=\"legacy-block-ends\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {},
+      "required_assets": [],
+      "require_runtime_trace": [
+        "endtag",
+        "endform"
+      ],
+      "execution_evidence": null,
+      "assertion_scope": "Real native command route plus explicit scene postconditions; not pixel/audio-device evidence"
+    },
+    {
+      "id": "text-box-style",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": [
+        "textbox",
+        "nameplate"
+      ],
+      "scene_path": "assets/script/contracts/text-box-style.ks",
+      "source": "[textbox x=0 y=500 w=1280 h=180 color=\"20,30,40\" opacity=220 visible=true]\n[nameplate x=30 y=450 w=240 h=48 color=\"40,50,60\" opacity=200]\n[ch name=\"Contract\" text=\"Styled native dialogue\"]\n[p]\n[set var=\"tf.contract_case\" value=\"text-box-style\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {},
+      "required_assets": [],
+      "require_runtime_trace": [
+        "textbox",
+        "nameplate"
+      ],
+      "execution_evidence": null,
+      "assertion_scope": "Real native command route plus explicit scene postconditions; not pixel/audio-device evidence"
+    },
+    {
+      "id": "nvl-reset",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": [
+        "nvl",
+        "reset"
+      ],
+      "scene_path": "assets/script/contracts/nvl-reset.ks",
+      "source": "[font size=22]\n[nvl mode=\"on\"]\n[ch name=\"Narrator\" text=\"NVL first line\"]\n[p]\n[nvl mode=\"off\"]\n[reset]\n[set var=\"tf.contract_case\" value=\"nvl-reset\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {},
+      "required_assets": [],
+      "require_runtime_trace": [
+        "nvl",
+        "reset"
+      ],
+      "execution_evidence": null,
+      "assertion_scope": "Real native command route plus explicit scene postconditions; not pixel/audio-device evidence"
+    },
+    {
+      "id": "character-convenience",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": [
+        "csp",
+        "csl",
+        "csd"
+      ],
+      "scene_path": "assets/script/contracts/character-convenience.ks",
+      "source": "[csp name=\"Hero\" layer=\"portrait\" storage=\"assets/fg/girl_uniform.png\" x=20 y=30]\n[csl name=\"Hero\" layer=\"portrait\" x=80 y=90]\n[csd name=\"Hero\" layer=\"portrait\"]\n[set var=\"tf.contract_case\" value=\"character-convenience\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {},
+      "required_assets": [
+        "assets/fg/girl_uniform.png"
+      ],
+      "require_runtime_trace": [
+        "csp",
+        "csl",
+        "csd"
+      ],
+      "execution_evidence": null,
+      "assertion_scope": "Real native command route plus explicit scene postconditions; not pixel/audio-device evidence"
+    },
+    {
+      "id": "sprite-motion",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": [
+        "sprite_move",
+        "sprite_fade",
+        "sprite_scale",
+        "sprite_swap"
+      ],
+      "scene_path": "assets/script/contracts/sprite-motion.ks",
+      "source": "[ch name=\"Hero\" text=\"Sprite owner\" sprite=\"assets/fg/girl_uniform.png\"]\n[p]\n[sprite_move speaker=\"Hero\" x=120 y=80 time=32]\n[sprite_fade speaker=\"Hero\" to=128 time=32]\n[sprite_scale speaker=\"Hero\" scale=0.75 time=32]\n[sprite_swap speaker=\"Hero\" sprite=\"assets/fg/girl_uniform.png\"]\n[set var=\"tf.contract_case\" value=\"sprite-motion\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {},
+      "required_assets": [
+        "assets/fg/girl_uniform.png"
+      ],
+      "require_runtime_trace": [
+        "sprite_move",
+        "sprite_fade",
+        "sprite_scale",
+        "sprite_swap"
+      ],
+      "execution_evidence": null,
+      "assertion_scope": "Real native command route plus explicit scene postconditions; not pixel/audio-device evidence"
+    },
+    {
+      "id": "layer-motion",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": [
+        "move",
+        "tween"
+      ],
+      "scene_path": "assets/script/contracts/layer-motion.ks",
+      "source": "[image layer=\"moving\" storage=\"assets/fg/girl_uniform.png\" x=10 y=20 w=120 h=160]\n[move layer=\"moving\" x=80 y=60 time=32]\n[tween target=\"moving\" attr=\"x\" from=\"80\" to=\"120\" dur=100 ease=\"linear\" wait=true]\n[set var=\"tf.contract_case\" value=\"layer-motion\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {},
+      "required_assets": [
+        "assets/fg/girl_uniform.png"
+      ],
+      "require_runtime_trace": [
+        "move",
+        "tween"
+      ],
+      "execution_evidence": null,
+      "assertion_scope": "Real native command route plus explicit scene postconditions; not pixel/audio-device evidence"
+    },
+    {
+      "id": "layout-coordinates",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": [
+        "layout",
+        "layout_slot",
+        "layout_place"
+      ],
+      "scene_path": "assets/script/contracts/layout-coordinates.ks",
+      "source": "[layout name=\"row\" kind=\"hbox\" x=20 y=30 w=400 h=200 gap=8 padding=4]\n[layout_slot parent=\"row\" layer=\"first\" index=1 size=\"90x30\"]\n[layout_slot parent=\"row\" layer=\"second\" index=2 size=\"90x30\"]\n[layout_place parent=\"row\" layer=\"first\" x=10 y=15 w=90 h=30]\n[set var=\"tf.contract_case\" value=\"layout-coordinates\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {},
+      "required_assets": [],
+      "require_runtime_trace": [
+        "layout",
+        "layout_slot",
+        "layout_place"
+      ],
+      "execution_evidence": null,
+      "assertion_scope": "Real native command route plus explicit scene postconditions; not pixel/audio-device evidence"
+    },
+    {
+      "id": "screen-effects",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": [
+        "flash",
+        "shake",
+        "quake",
+        "camera",
+        "vib",
+        "vibrate"
+      ],
+      "scene_path": "assets/script/contracts/screen-effects.ks",
+      "source": "[bg storage=\"assets/bg/classroom.png\"]\n[flash r=10 g=20 b=30 time=32]\n[shake amplitude=4 frequency=20 time=32]\n[quake intensity=4 time=32]\n[camera x=10 y=20 time=32 restore=true]\n[vib intensity=2 time=32]\n[vibrate intensity=2 time=32]\n[set var=\"tf.contract_case\" value=\"screen-effects\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {},
+      "required_assets": [
+        "assets/bg/classroom.png"
+      ],
+      "require_runtime_trace": [
+        "flash",
+        "shake",
+        "quake",
+        "camera",
+        "vib",
+        "vibrate"
+      ],
+      "execution_evidence": null,
+      "assertion_scope": "Real native command route plus explicit scene postconditions; not pixel/audio-device evidence"
+    },
+    {
+      "id": "timed-credits",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": [
+        "scroll"
+      ],
+      "scene_path": "assets/script/contracts/timed-credits.ks",
+      "source": "[scroll text=\"Contract credits\" speed=1000 size=22 color=\"white\"]\n[set var=\"tf.contract_case\" value=\"timed-credits\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {},
+      "required_assets": [],
+      "require_runtime_trace": [
+        "scroll"
+      ],
+      "execution_evidence": null,
+      "assertion_scope": "Real native command route plus explicit scene postconditions; not pixel/audio-device evidence"
+    },
+    {
+      "id": "notice-locale",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": [
+        "notify",
+        "i18n"
+      ],
+      "scene_path": "assets/script/contracts/notice-locale.ks",
+      "source": "[notify msg=\"Native contract notice\" kind=\"info\" time=100]\n[i18n language=\"en\"]\n[text text=\"Locale control\"]\n[set var=\"tf.contract_case\" value=\"notice-locale\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {},
+      "required_assets": [
+        "assets/lang/en.lua"
+      ],
+      "require_runtime_trace": [
+        "notify",
+        "i18n"
+      ],
+      "execution_evidence": null,
+      "assertion_scope": "Real native command route plus explicit scene postconditions; not pixel/audio-device evidence"
+    },
+    {
+      "id": "quickmenu-title",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": [
+        "quickmenu_title"
+      ],
+      "scene_path": "assets/script/contracts/quickmenu-title.ks",
+      "source": "[quickmenu_title scene=\"target\"]\n[assert exp=\"false\" msg=\"title jump did not occur\"]\n*target\n[set f.arrived 1]\n[set var=\"tf.contract_case\" value=\"quickmenu-title\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {
+        "arrived": 1
+      },
+      "required_assets": [],
+      "require_runtime_trace": [
+        "quickmenu_title"
+      ],
+      "execution_evidence": null,
+      "assertion_scope": "Real native command route plus explicit scene postconditions; not pixel/audio-device evidence"
+    },
+    {
+      "id": "typewriter-cues",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": [
+        "typewriter",
+        "typewriter_sound"
+      ],
+      "scene_path": "assets/script/contracts/typewriter-cues.ks",
+      "source": "[pt speed=16]\n[typewriter file=\"assets/se/click.wav\" interval=2 volume=0.3]\n[ch name=\"Cue\" text=\"ABCDEF\"]\n[p]\n[typewriter_sound sound=\"assets/se/click.wav\" interval=1 volume=0.4]\n[ch name=\"Cue\" text=\"XYZ\"]\n[p]\n[typewriter action=\"off\"]\n[set var=\"tf.contract_case\" value=\"typewriter-cues\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {},
+      "required_assets": [
+        "assets/se/click.wav"
+      ],
+      "require_runtime_trace": [
+        "typewriter",
+        "typewriter_sound"
+      ],
+      "execution_evidence": null,
+      "assertion_scope": "Real native command route plus explicit scene postconditions; not pixel/audio-device evidence",
+      "extra_native_observation": "Actual runner.update must finish each reveal before click. Parent audio recorder checks cue file/bus/count and requested clip volumes, not physical audibility."
+    },
+    {
+      "id": "audio-stop-replace",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": [
+        "playbgmstop",
+        "waitbgm",
+        "waitsound",
+        "voice_wait",
+        "waitclick",
+        "waitforclick"
+      ],
+      "scene_path": "assets/script/contracts/audio-stop-replace.ks",
+      "source": "[playbgm storage=\"assets/se/click.wav\" loop=false fadein=0]\n[waitbgm]\n[playbgmstop file=\"assets/bgm/daily.wav\" fadeout=16 fadein=16]\n[stopbgm fadeout=16]\n[playse storage=\"assets/se/click.wav\"]\n[waitsound]\n[voice_wait]\n[waitclick]\n[waitforclick]\n[set var=\"tf.contract_case\" value=\"audio-stop-replace\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {},
+      "required_assets": [
+        "assets/se/click.wav",
+        "assets/bgm/daily.wav"
+      ],
+      "require_runtime_trace": [
+        "playbgmstop",
+        "waitbgm",
+        "waitsound",
+        "voice_wait",
+        "waitclick",
+        "waitforclick"
+      ],
+      "execution_evidence": null,
+      "assertion_scope": "Real native command route plus explicit scene postconditions; not pixel/audio-device evidence"
+    },
+    {
+      "id": "cancel-operation",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": [
+        "cancel"
+      ],
+      "scene_path": "assets/script/contracts/cancel-operation.ks",
+      "source": "[cancel all=true]\n[set var=\"tf.contract_case\" value=\"cancel-operation\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {},
+      "required_assets": [],
+      "require_runtime_trace": [
+        "cancel"
+      ],
+      "execution_evidence": null,
+      "assertion_scope": "Real native command route plus explicit scene postconditions; not pixel/audio-device evidence",
+      "extra_native_observation": "This case establishes idle cancellation dispatch only; owned pending-operation cancellation is a separate required negative observation, not inferred here."
+    },
+    {
+      "id": "button-choice",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": [
+        "button",
+        "endbutton"
+      ],
+      "scene_path": "assets/script/contracts/button-choice.ks",
+      "source": "[button text=\"Wrong default\" target=\"*wrong\" x=\"f.choice\"]\n[button text=\"Choose correct\" target=\"*correct\" x=\"f.choice\"]\n[endbutton]\n[assert exp=\"false\" msg=\"choice target was not used\"]\n*wrong\n[assert exp=\"false\" msg=\"wrong default choice was selected\"]\n*correct\n[assert exp=\"f.choice == '*correct'\"]\n[set var=\"tf.contract_case\" value=\"button-choice\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {
+        "choice": "*correct"
+      },
+      "required_assets": [],
+      "require_runtime_trace": [
+        "button",
+        "endbutton"
+      ],
+      "execution_evidence": null,
+      "choice_index": 2,
+      "expected_choice_count": 2,
+      "expected_choice_target": "*correct"
+    },
+    {
+      "id": "select-alias-choice",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": [
+        "select",
+        "sel",
+        "endselect"
+      ],
+      "scene_path": "assets/script/contracts/select-alias-choice.ks",
+      "source": "[select]\n[sel text=\"Wrong default\" target=\"*wrong\" x=\"f.choice\"]\n[sel text=\"Alias choice\" target=\"*correct\" x=\"f.choice\"]\n[endselect]\n[assert exp=\"false\" msg=\"alias choice target was not used\"]\n*wrong\n[assert exp=\"false\" msg=\"wrong default choice was selected\"]\n*correct\n[assert exp=\"f.choice == '*correct'\"]\n[set var=\"tf.contract_case\" value=\"select-alias-choice\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {
+        "choice": "*correct"
+      },
+      "required_assets": [],
+      "require_runtime_trace": [
+        "select",
+        "sel",
+        "endselect"
+      ],
+      "execution_evidence": null,
+      "choice_index": 2,
+      "expected_choice_count": 2,
+      "expected_choice_target": "*correct"
+    },
+    {
+      "id": "local-link",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": [
+        "link"
+      ],
+      "scene_path": "assets/script/contracts/local-link.ks",
+      "source": "[set f.before_link 1]\n[link contracts/local-link-target.ks]\n[assert exp=\"false\" msg=\"cross-scene link fell through\"]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {
+        "before_link": 1,
+        "after_link": 2
+      },
+      "required_assets": [],
+      "require_runtime_trace": [
+        "link"
+      ],
+      "execution_evidence": null,
+      "auxiliary_scenes": [
+        {
+          "path": "assets/script/contracts/local-link-target.ks",
+          "source": "[set f.after_link 2]\n[assert exp=\"f.before_link == 1 and f.after_link == 2\"]\n[set var=\"tf.contract_case\" value=\"local-link\"]\n[end]\n"
+        }
+      ],
+      "required_note": "Case id retained for evidence continuity; actual link command is cross-scene, not *label. Exact auxiliary source is declared and copied by materializer; old invalid-local-link FAIL remains.",
+      "expected_final_scene": "assets/script/contracts/local-link-target.ks"
+    },
+    {
+      "id": "save-load-transaction",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": [
+        "save",
+        "load",
+        "listsaves"
+      ],
+      "scene_path": "assets/script/contracts/save-load-transaction.ks",
+      "source": "[set f.value 7]\n[save slot=98]\n[assert exp=\"tf.save_result == 'ok' or tf.load_result == 'ok'\"]\n[if exp=\"tf.load_result != 'ok'\"]\n[set f.value 99]\n[load slot=98]\n[endif]\n[assert exp=\"f.value == 7 and tf.load_result == 'ok'\"]\n[listsaves]\n[set var=\"tf.contract_case\" value=\"save-load-transaction\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {
+        "value": 7
+      },
+      "required_assets": [],
+      "require_runtime_trace": [
+        "save",
+        "load",
+        "listsaves"
+      ],
+      "execution_evidence": null,
+      "private_userdata_required": true,
+      "required_max_trace": {
+        "save": 1,
+        "load": 1
+      }
+    },
+    {
+      "id": "quick-save-load",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": [
+        "quickmenu_qsave",
+        "quickmenu_qload"
+      ],
+      "scene_path": "assets/script/contracts/quick-save-load.ks",
+      "source": "[set f.value 8]\n[quickmenu_qsave slot=97]\n[assert exp=\"tf.save_result == 'ok' or tf.load_result == 'ok'\"]\n[if exp=\"tf.load_result != 'ok'\"]\n[set f.value 99]\n[quickmenu_qload slot=97]\n[endif]\n[assert exp=\"f.value == 8 and tf.load_result == 'ok'\"]\n[set var=\"tf.contract_case\" value=\"quick-save-load\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {
+        "value": 8
+      },
+      "required_assets": [],
+      "require_runtime_trace": [
+        "quickmenu_qsave",
+        "quickmenu_qload"
+      ],
+      "execution_evidence": null,
+      "private_userdata_required": true,
+      "required_max_trace": {
+        "quickmenu_qsave": 1,
+        "quickmenu_qload": 1
+      }
+    },
+    {
+      "id": "bookmark-restore",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": [
+        "saveplace",
+        "loadplace"
+      ],
+      "scene_path": "assets/script/contracts/bookmark-restore.ks",
+      "source": "[set f.loaded 0]\n*bookmark\n[saveplace]\n[if exp=\"f.loaded == 0\"]\n[set f.loaded 1]\n[loadplace]\n[endif]\n[assert exp=\"f.loaded == 1\"]\n[set var=\"tf.contract_case\" value=\"bookmark-restore\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {
+        "loaded": 1
+      },
+      "required_assets": [],
+      "require_runtime_trace": [
+        "saveplace",
+        "loadplace"
+      ],
+      "execution_evidence": null,
+      "required_note": "Bookmark restores tf/style/position, not f; f.loaded is the real loop guard, not an injected mock."
+    },
+    {
+      "id": "save-menu-cancel",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": [
+        "saveload"
+      ],
+      "scene_path": "assets/script/contracts/save-menu-cancel.ks",
+      "source": "[saveload mode=\"save\"]\n[set var=\"tf.contract_case\" value=\"save-menu-cancel\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {},
+      "required_assets": [],
+      "require_runtime_trace": [
+        "saveload"
+      ],
+      "execution_evidence": null,
+      "escape_focus": "saveload",
+      "require_focus": "saveload",
+      "private_userdata_required": true,
+      "observe_overlay_command": "saveload",
+      "require_hidden_layers": [
+        "_saveload_bg"
+      ],
+      "establish_explicit_focus": {
+        "lua": "kag",
+        "native": "KAG"
+      },
+      "baseline_scope": "Explicit kag/KAG fixture before real overlay. Original nil is normalized by production to kag on close; earlier exact-nil comparison failure preserved, not reclassified as raw-nil restoration pass."
+    },
+    {
+      "id": "chapter-menu-cancel",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": [
+        "chapter"
+      ],
+      "scene_path": "assets/script/contracts/chapter-menu-cancel.ks",
+      "source": "[jump target=\"*entry\"]\n*chapter_contract\n[text text=\"Contract chapter\"]\n*entry\n[chapter]\n[set var=\"tf.contract_case\" value=\"chapter-menu-cancel\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {},
+      "required_assets": [],
+      "require_runtime_trace": [
+        "chapter"
+      ],
+      "execution_evidence": null,
+      "escape_focus": "chapter",
+      "require_focus": "chapter",
+      "observe_overlay_command": "chapter",
+      "require_hidden_layers": [
+        "_chapter_bg"
+      ],
+      "establish_explicit_focus": {
+        "lua": "kag",
+        "native": "KAG"
+      },
+      "baseline_scope": "Explicit kag/KAG fixture before real overlay. Original nil is normalized by production to kag on close; earlier exact-nil comparison failure preserved, not reclassified as raw-nil restoration pass."
+    },
+    {
+      "id": "history-menu-cancel",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": [
+        "history"
+      ],
+      "scene_path": "assets/script/contracts/history-menu-cancel.ks",
+      "source": "[ch name=\"History\" text=\"Recorded line\"]\n[p]\n[history]\n[set var=\"tf.contract_case\" value=\"history-menu-cancel\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {},
+      "required_assets": [],
+      "require_runtime_trace": [
+        "history"
+      ],
+      "execution_evidence": null,
+      "escape_focus": "history",
+      "require_focus": "history",
+      "observe_overlay_command": "history",
+      "require_hidden_layers": [
+        "_history_bg",
+        "_history_title",
+        "_history_sep",
+        "_history_footer",
+        "_history_hl1",
+        "_history_hl2",
+        "_history_hl3",
+        "_history_hl4",
+        "_history_hl5",
+        "_history_hl6",
+        "_history_hl7",
+        "_history_hl8",
+        "_history_hl9",
+        "_history_hl10",
+        "_history_hl11",
+        "_history_hl12"
+      ],
+      "establish_explicit_focus": {
+        "lua": "kag",
+        "native": "KAG"
+      },
+      "baseline_scope": "Explicit kag/KAG fixture before real overlay. Original nil is normalized by production to kag on close; earlier exact-nil comparison failure preserved, not reclassified as raw-nil restoration pass."
+    },
+    {
+      "id": "music-room-cancel",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": [
+        "music"
+      ],
+      "scene_path": "assets/script/contracts/music-room-cancel.ks",
+      "source": "[unlock type=\"music\" id=\"daily\"]\n[music]\n[set var=\"tf.contract_case\" value=\"music-room-cancel\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {},
+      "required_assets": [
+        "assets/bgm/daily.wav"
+      ],
+      "require_runtime_trace": [
+        "music"
+      ],
+      "execution_evidence": null,
+      "escape_focus": "music_room",
+      "require_focus": "music_room",
+      "observe_overlay_command": "music",
+      "require_hidden_layers": [
+        "_music_overlay"
+      ],
+      "establish_explicit_focus": {
+        "lua": "kag",
+        "native": "KAG"
+      },
+      "baseline_scope": "Explicit kag/KAG fixture before real overlay. Original nil is normalized by production to kag on close; earlier exact-nil comparison failure preserved, not reclassified as raw-nil restoration pass."
+    },
+    {
+      "id": "gallery-cancel",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": [
+        "gallery"
+      ],
+      "scene_path": "assets/script/contracts/gallery-cancel.ks",
+      "source": "[unlock type=\"cg\" id=\"contract\"]\n[gallery id=\"contract\"]\n[set var=\"tf.contract_case\" value=\"gallery-cancel\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {},
+      "required_assets": [
+        "assets/cg/contract.png"
+      ],
+      "require_runtime_trace": [
+        "gallery"
+      ],
+      "execution_evidence": null,
+      "escape_focus": "gallery",
+      "require_focus": "gallery",
+      "observe_overlay_command": "gallery",
+      "require_hidden_layers": [
+        "_gallery_overlay",
+        "_gallery"
+      ],
+      "establish_explicit_focus": {
+        "lua": "kag",
+        "native": "KAG"
+      },
+      "baseline_scope": "Explicit kag/KAG fixture before real overlay. Original nil is normalized by production to kag on close; earlier exact-nil comparison failure preserved, not reclassified as raw-nil restoration pass."
+    },
+    {
+      "id": "replay-record",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": [
+        "replay"
+      ],
+      "scene_path": "assets/script/contracts/replay-record.ks",
+      "source": "[replay mode=\"record\"]\n[ch text=\"Recorded click\"]\n[p]\n[replay mode=\"off\"]\n[set var=\"tf.contract_case\" value=\"replay-record\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {},
+      "required_assets": [],
+      "require_runtime_trace": [
+        "replay"
+      ],
+      "execution_evidence": null,
+      "extra_native_observation": "Parent requires replay.event_count >0 at end and mode off; event stream and no clock fabrication. This is record/off; durable replay file/readback remains separate.",
+      "expect_replay_recorded": true
+    },
+    {
+      "id": "particles-effects",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": [
+        "particles",
+        "particle_weather",
+        "vfx"
+      ],
+      "scene_path": "assets/script/contracts/particles-effects.ks",
+      "source": "[particles action=\"create\" x=200 y=200 rate=10 lifeMin=0.2 lifeMax=0.5 speedMin=10 speedMax=20 sizeMin=2 sizeMax=4]\n[wait time=48]\n[particles action=\"clear\"]\n[particle_weather type=\"rain\" count=3 action=\"start\"]\n[wait time=48]\n[particle_weather type=\"rain\" action=\"stop\"]\n[vfx effect=\"flash\" r=10 g=20 b=30 time=32]\n[set var=\"tf.contract_case\" value=\"particles-effects\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {},
+      "required_assets": [],
+      "require_runtime_trace": [
+        "particles",
+        "particle_weather",
+        "vfx"
+      ],
+      "execution_evidence": null,
+      "required_native_features": [
+        "render.particles"
+      ],
+      "extra_native_observation": "Require nonzero/valid emitter result and registered owner before clear; valid emitter ID zero is supported. Callback-only or Null draws do not count as particle pixel proof."
+    },
+    {
+      "id": "postprocess-chain",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": [
+        "postprocess",
+        "postprocess_off"
+      ],
+      "scene_path": "assets/script/contracts/postprocess-chain.ks",
+      "source": "[bg storage=\"assets/bg/classroom.png\"]\n[postprocess effect=\"vignette\" strength=0.5 radius=0.5 rgb=\"255,128,64\"]\n[wait time=48]\n[postprocess_off effect=\"vignette\"]\n[set var=\"tf.contract_case\" value=\"postprocess-chain\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {},
+      "required_assets": [
+        "assets/bg/classroom.png"
+      ],
+      "require_runtime_trace": [
+        "postprocess",
+        "postprocess_off"
+      ],
+      "execution_evidence": null,
+      "required_native_features": [
+        "render.postfx.vignette"
+      ],
+      "extra_native_observation": "Host capability and actual postfx result must be applied; rejected/approximate diagnostic fails positive case; parent binds pixels separately."
+    },
+    {
+      "id": "palette-asset",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": [
+        "palette"
+      ],
+      "scene_path": "assets/script/contracts/palette-asset.ks",
+      "source": "[bg storage=\"assets/bg/classroom.png\"]\n[palette effect=\"apply\" id=\"night\" path=\"assets/lut/night.png\" intensity=0.5]\n[wait time=48]\n[palette effect=\"clear\"]\n[palette effect=\"unload\" id=\"night\"]\n[set var=\"tf.contract_case\" value=\"palette-asset\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {},
+      "required_assets": [
+        "assets/bg/classroom.png",
+        "assets/lut/night.png"
+      ],
+      "require_runtime_trace": [
+        "palette"
+      ],
+      "execution_evidence": null,
+      "required_native_features": [
+        "render.postfx.lut3d"
+      ]
+    },
+    {
+      "id": "rollback-page",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": [
+        "rollback"
+      ],
+      "scene_path": "assets/script/contracts/rollback-page.ks",
+      "source": "[set var=\"tf.contract_case\" value=\"rollback-page\"]\n[set f.value 1]\n[ch text=\"ROLLBACK_FIRST\"]\n[p]\n[set f.value 2]\n[ch text=\"ROLLBACK_SECOND\"]\n[p]\n[emb exp=\"ctx.f.value=99; ctx.text_state.draws={{kind='text',text='PERTURBED',x=32,y=580,r=255,g=255,b=255,a=255,scale=1,typewriter=false}}; ctx.backlog={{text='PERTURBED'}}\"]\n[rollback]\n[assert exp=\"false\" msg=\"rollback did not return to retained page\"]\n[set var=\"tf.contract_case\" value=\"rollback-page\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {},
+      "required_assets": [],
+      "require_runtime_trace": [
+        "rollback"
+      ],
+      "execution_evidence": null,
+      "expected_checkpoint": {
+        "seen_command": "rollback",
+        "waiting_flag": "_rollback_waiting",
+        "f": {
+          "value": 2
+        },
+        "text": "ROLLBACK_SECOND",
+        "draw_text": "ROLLBACK_SECOND"
+      },
+      "terminal_kind": "restored checkpoint, not natural scene completion",
+      "required_note": "Driver must inspect the actual restored page and original snapshot state before requesting quit. Never advance until an arbitrary green state.",
+      "pre_checkpoint": {
+        "f": {
+          "value": 99
+        },
+        "text": "PERTURBED",
+        "draw_text": "PERTURBED"
+      }
+    },
+    {
+      "id": "sma-actor",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": [
+        "sma_play",
+        "sma_anim",
+        "sma_ik",
+        "sma_variant",
+        "sma_stop"
+      ],
+      "scene_path": "assets/script/contracts/sma-actor.ks",
+      "source": "[sma_play name=\"hero\" asset=\"contract_hero\" anim=\"idle\" loop=true x=0.5 y=0.5 scale=1]\n[wait time=32]\n[sma_anim name=\"hero\" anim=\"wave\" blend_time=0.1 loop=false]\n[sma_ik name=\"hero\" bone0=5 bone1=6 tx=0.95 ty=0.25 l2=0.3]\n[sma_variant name=\"hero\" part=\"eyes\" variant=\"happy\"]\n[wait time=64]\n[sma_stop name=\"hero\"]\n[set var=\"tf.contract_case\" value=\"sma-actor\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {},
+      "required_assets": [
+        "demo/assets/sma/hero.json"
+      ],
+      "require_runtime_trace": [
+        "sma_play",
+        "sma_anim",
+        "sma_ik",
+        "sma_variant",
+        "sma_stop"
+      ],
+      "execution_evidence": null,
+      "prepare_sma": {
+        "asset": "demo/assets/sma/hero.json",
+        "registered_name": "contract_hero",
+        "validate": true,
+        "rgba": [
+          210,
+          90,
+          40,
+          255
+        ],
+        "expected_parts": 5,
+        "texture_binding": "Bind each part of a newly parsed private asset to the owned logical texture; original tracked hero JSON stays unchanged."
+      },
+      "required_note": "Requires same-binary real TextureManager logical-ID SMA binding fix; record owned texture, actual native mesh baseline/allocation/replacement/teardown and Lua wave/IK/variant. Render invocation alone is not GPU pose/pixel evidence."
+    },
+    {
+      "id": "ai-fallback",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": [
+        "ai_dialog"
+      ],
+      "scene_path": "assets/script/contracts/ai-fallback.ks",
+      "source": "[ai_dialog name=\"Contract\" prompt=\"No network is authorized in this scenario\" fallback=\"LOCAL_FALLBACK\" max_wait_ms=100]\n[set var=\"tf.contract_case\" value=\"ai-fallback\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {},
+      "required_assets": [],
+      "require_runtime_trace": [
+        "ai_dialog"
+      ],
+      "execution_evidence": null,
+      "required_configuration": {
+        "config.ai.endpoint": ""
+      },
+      "expected_dialogue": "LOCAL_FALLBACK",
+      "external_boundary": "This case tests automatic no-service fallback only. Online API calls require separate explicit service authorization and evidence.",
+      "require_ai_unavailable": true,
+      "configuration_evidence": "AIBinding.cpp available(): !readConfig.endpoint.empty(); scripts/config.lua documents empty endpoint disables. ai_enabled was not consumed."
+    },
+    {
+      "id": "blur-refusal",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": [
+        "blur"
+      ],
+      "scene_path": "assets/script/contracts/blur-refusal.ks",
+      "source": "[blur amount=4 time=32]\n[set var=\"tf.contract_case\" value=\"blur-refusal\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {},
+      "required_assets": [],
+      "require_runtime_trace": [
+        "blur"
+      ],
+      "execution_evidence": null,
+      "expected_refusal": {
+        "feature": "render.blur",
+        "reason": "command_not_wired"
+      },
+      "external_boundary": "Current first-party unsupported capability, not a missing physical device; only honest rejection can pass this negative contract.",
+      "negative_scope": "Normal project capability optional declaration; exact actual unsupported reason required before scene, actual guard diagnostic mandatory; no error UI and no handler application claimed."
+    },
+    {
+      "id": "audio-crossfade-refusal",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": [
+        "xfadebgm"
+      ],
+      "scene_path": "assets/script/contracts/audio-crossfade-refusal.ks",
+      "source": "[xfadebgm file=\"assets/bgm/daily.wav\" time=64]\n[set var=\"tf.contract_case\" value=\"audio-crossfade-refusal\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {},
+      "required_assets": [
+        "assets/bgm/daily.wav"
+      ],
+      "require_runtime_trace": [
+        "xfadebgm"
+      ],
+      "execution_evidence": null,
+      "expected_refusal": {
+        "feature": "audio.crossfade",
+        "reason": "backend_route_not_wired"
+      },
+      "external_boundary": "Re-evaluate actual current catalog after audio work. If now supported, this becomes a positive two-stream crossfade case; never force old rejection policy.",
+      "negative_scope": "Normal project capability optional declaration; exact actual unsupported reason required before scene, actual guard diagnostic mandatory; no error UI and no handler application claimed."
+    },
+    {
+      "id": "live2d-lifecycle",
+      "status": "CONDITIONAL_SDK_ASSET_BINDING",
+      "focus_commands": [
+        "live2d_load",
+        "live2d_show",
+        "live2d_hide",
+        "live2d_lip_sync",
+        "live2d_unload"
+      ],
+      "scene_path": "assets/script/contracts/live2d-lifecycle.ks",
+      "source": "[live2d_load model=\"model\" storage=\"assets/contract-model/model.model3.json\"]\n[live2d_show model=\"model\" x=640 y=360 scale=1]\n[live2d_lip_sync model=\"model\" source=\"manual\" value=0.5]\n[wait time=32]\n[live2d_lip_sync model=\"model\" source=\"off\"]\n[live2d_hide model=\"model\"]\n[live2d_unload model=\"model\"]\n[set var=\"tf.contract_case\" value=\"live2d-lifecycle\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {},
+      "required_assets": [],
+      "require_runtime_trace": [
+        "live2d_load",
+        "live2d_show",
+        "live2d_hide",
+        "live2d_lip_sync",
+        "live2d_unload"
+      ],
+      "execution_evidence": null,
+      "required_native_features": [
+        "live2d.cubism",
+        "kag.live2d_lip_sync"
+      ],
+      "conditional_inputs": {
+        "licensed_model_and_dependencies": "PENDING_EXACT_ROOT_PROVIDED_BYTE_LOCKS",
+        "sdk_build_and_runtime_availability": "PENDING_ACTUAL_CAPABILITY_PROFILE"
+      },
+      "unsupported_alternative": "Run a separate load refusal case before any model I/O if actual build reports sdk_disabled; do not claim lifecycle commands executed then."
+    },
+    {
+      "id": "live2d-motion-refusal",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": [
+        "live2d_motion"
+      ],
+      "scene_path": "assets/script/contracts/live2d-motion-refusal.ks",
+      "source": "[live2d_motion model=\"model\" motion=\"idle\" fadein=16 fadeout=16]\n[set var=\"tf.contract_case\" value=\"live2d-motion-refusal\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {},
+      "required_assets": [],
+      "require_runtime_trace": [
+        "live2d_motion"
+      ],
+      "execution_evidence": null,
+      "expected_refusal": {
+        "feature": "kag.live2d_motion",
+        "reason": "command_not_wired"
+      },
+      "external_boundary": "Explicit current first-party unsupported script bridge; SDK model availability does not make this handler applied.",
+      "negative_scope": "Normal project capability optional declaration; exact actual unsupported reason required before scene, actual guard diagnostic mandatory; no error UI and no handler application claimed."
+    },
+    {
+      "id": "live2d-expression-refusal",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": [
+        "live2d_expression"
+      ],
+      "scene_path": "assets/script/contracts/live2d-expression-refusal.ks",
+      "source": "[live2d_expression model=\"model\" expression=\"smile\" weight=0.5]\n[set var=\"tf.contract_case\" value=\"live2d-expression-refusal\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {},
+      "required_assets": [],
+      "require_runtime_trace": [
+        "live2d_expression"
+      ],
+      "execution_evidence": null,
+      "expected_refusal": {
+        "feature": "kag.live2d_expression",
+        "reason": "command_not_wired"
+      },
+      "external_boundary": "Explicit current first-party unsupported script bridge; SDK model availability does not make this handler applied.",
+      "negative_scope": "Normal project capability optional declaration; exact actual unsupported reason required before scene, actual guard diagnostic mandatory; no error UI and no handler application claimed."
+    },
+    {
+      "id": "steam-capability",
+      "status": "CONDITIONAL_ACCOUNT_CAPABILITY",
+      "focus_commands": [
+        "steam_achievement"
+      ],
+      "scene_path": "assets/script/contracts/steam-capability.ks",
+      "source": "[steam_achievement id=\"CONTRACT_TEST_ONLY\" silent=false]\n[set var=\"tf.contract_case\" value=\"steam-capability\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {},
+      "required_assets": [],
+      "require_runtime_trace": [
+        "steam_achievement"
+      ],
+      "execution_evidence": null,
+      "conditional_inputs": {
+        "test_app_id_and_declared_achievement": "PENDING_EXPLICIT_TEST_ACCOUNT_AND_ID",
+        "online_mutation": "NOT_AUTHORIZED_BY_THIS_PREPARATION"
+      },
+      "unsupported_alternative": "For a known SDK-disabled/no-client build, verify actual capability rejection without calling a remote achievement service. Never invent achievement success."
+    },
+    {
+      "id": "video-playback",
+      "status": "CONDITIONAL_MEDIA_ASSET_BINDING",
+      "focus_commands": [
+        "video",
+        "stopvideo"
+      ],
+      "scene_path": "assets/script/contracts/video-playback.ks",
+      "source": "[video file=\"assets/contracts/short.mpg\" volume=0.5 loop=false x=20 y=30 w=160 h=120]\n[stopvideo]\n[set var=\"tf.contract_case\" value=\"video-playback\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {},
+      "required_assets": [],
+      "require_runtime_trace": [
+        "video",
+        "stopvideo"
+      ],
+      "execution_evidence": null,
+      "required_native_features": [
+        "video.play"
+      ],
+      "conditional_inputs": {
+        "short_mpeg_fixture": "PENDING_ROOT_LOCKED_REAL_DECODABLE_BYTES_AND_DURATION"
+      },
+      "required_note": "Use real native decoder/frame draw; post-video stop covers idempotent stop, but separately interrupt an active video to prove early cleanup. SDK-disabled/video-unavailable build may prove refusal only."
+    }
+  ],
+  "commands": [
+    {
+      "command": "add",
+      "schema_declared": true,
+      "execution_class": "pure_lua_control_state",
+      "case_id": "arithmetic",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "ai_dialog",
+      "schema_declared": true,
+      "execution_class": "optional_host_or_device",
+      "case_id": "ai-fallback",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "assert",
+      "schema_declared": true,
+      "execution_class": "pure_lua_control_state",
+      "case_id": "arithmetic",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "auto",
+      "schema_declared": true,
+      "execution_class": "pure_lua_control_state",
+      "case_id": "text-speed-aliases",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "bg",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "layer-placement",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "bgm",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "audio-aliases",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "blur",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "blur-refusal",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "br",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "text-and-breaks",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "break",
+      "schema_declared": false,
+      "execution_class": "pure_lua_control_state",
+      "case_id": "break-continue",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "button",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "button-choice",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "call",
+      "schema_declared": false,
+      "execution_class": "pure_lua_control_state",
+      "case_id": "jump-call",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "camera",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "screen-effects",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "cancel",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "cancel-operation",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "case",
+      "schema_declared": false,
+      "execution_class": "pure_lua_control_state",
+      "case_id": "switch-branches",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "ch",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "text-and-breaks",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "chapter",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "chapter-menu-cancel",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "cl",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "layer-placement",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "clear",
+      "schema_declared": false,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "image-aliases",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "clearscreen",
+      "schema_declared": false,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "image-aliases",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "close",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "terminal-close",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "continue",
+      "schema_declared": false,
+      "execution_class": "pure_lua_control_state",
+      "case_id": "break-continue",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "cps",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "text-speed-aliases",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "csd",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "character-convenience",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "csl",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "character-convenience",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "csp",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "character-convenience",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "ct",
+      "schema_declared": false,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "image-aliases",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "dec",
+      "schema_declared": true,
+      "execution_class": "pure_lua_control_state",
+      "case_id": "arithmetic",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "default",
+      "schema_declared": false,
+      "execution_class": "pure_lua_control_state",
+      "case_id": "switch-branches",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "delay",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "time-waits",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "div",
+      "schema_declared": true,
+      "execution_class": "pure_lua_control_state",
+      "case_id": "arithmetic",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "edit",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "edit",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "else",
+      "schema_declared": false,
+      "execution_class": "pure_lua_control_state",
+      "case_id": "conditional",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "elseif",
+      "schema_declared": false,
+      "execution_class": "pure_lua_control_state",
+      "case_id": "conditional",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "elsif",
+      "schema_declared": false,
+      "execution_class": "pure_lua_control_state",
+      "case_id": "conditional",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "emb",
+      "schema_declared": true,
+      "execution_class": "pure_lua_control_state",
+      "case_id": "embedded-code",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "end",
+      "schema_declared": false,
+      "execution_class": "pure_lua_control_state",
+      "case_id": "terminal-end",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "endbutton",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "button-choice",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "endfor",
+      "schema_declared": false,
+      "execution_class": "pure_lua_control_state",
+      "case_id": "counting-loops",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "endform",
+      "schema_declared": false,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "legacy-block-ends",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "endif",
+      "schema_declared": false,
+      "execution_class": "pure_lua_control_state",
+      "case_id": "conditional",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "ending",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "unlock-ending",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "endmacro",
+      "schema_declared": false,
+      "execution_class": "pure_lua_control_state",
+      "case_id": "macro-expansion",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "endselect",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "select-alias-choice",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "endswitch",
+      "schema_declared": false,
+      "execution_class": "pure_lua_control_state",
+      "case_id": "switch-branches",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "endtag",
+      "schema_declared": false,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "legacy-block-ends",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "endwhile",
+      "schema_declared": false,
+      "execution_class": "pure_lua_control_state",
+      "case_id": "counting-loops",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "er",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "text-and-breaks",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "erasemacro",
+      "schema_declared": false,
+      "execution_class": "pure_lua_control_state",
+      "case_id": "macro-expansion",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "eval",
+      "schema_declared": true,
+      "execution_class": "pure_lua_control_state",
+      "case_id": "embedded-code",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "fade",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "transition-and-fade",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "fadebgm",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "audio-controls",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "fadeout",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "transition-and-fade",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "fadevol",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "audio-controls",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "fg",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "layer-placement",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "flash",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "screen-effects",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "font",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "text-and-breaks",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "for",
+      "schema_declared": false,
+      "execution_class": "pure_lua_control_state",
+      "case_id": "counting-loops",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "g",
+      "schema_declared": false,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "image-aliases",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "gallery",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "gallery-cancel",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "goto",
+      "schema_declared": false,
+      "execution_class": "pure_lua_control_state",
+      "case_id": "jump-call",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "history",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "history-menu-cancel",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "hr",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "text-and-breaks",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "i18n",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "notice-locale",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "if",
+      "schema_declared": false,
+      "execution_class": "pure_lua_control_state",
+      "case_id": "conditional",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "image",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "layer-placement",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "inc",
+      "schema_declared": true,
+      "execution_class": "pure_lua_control_state",
+      "case_id": "arithmetic",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "input",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "input",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "iscript",
+      "schema_declared": false,
+      "execution_class": "pure_lua_control_state",
+      "case_id": "embedded-code",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "jump",
+      "schema_declared": false,
+      "execution_class": "pure_lua_control_state",
+      "case_id": "jump-call",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "l",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "text-and-breaks",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "label",
+      "schema_declared": false,
+      "execution_class": "pure_lua_control_state",
+      "case_id": "jump-call",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "layfade",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "transition-and-fade",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "layopt",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "layer-placement",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "layout",
+      "schema_declared": true,
+      "execution_class": "pure_lua_control_state",
+      "case_id": "layout-coordinates",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "layout_place",
+      "schema_declared": true,
+      "execution_class": "pure_lua_control_state",
+      "case_id": "layout-coordinates",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "layout_slot",
+      "schema_declared": true,
+      "execution_class": "pure_lua_control_state",
+      "case_id": "layout-coordinates",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "ld",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "layer-placement",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "link",
+      "schema_declared": false,
+      "execution_class": "pure_lua_control_state",
+      "case_id": "local-link",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "listsaves",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "save-load-transaction",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "live2d_expression",
+      "schema_declared": true,
+      "execution_class": "optional_host_or_device",
+      "case_id": "live2d-expression-refusal",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "live2d_hide",
+      "schema_declared": true,
+      "execution_class": "optional_host_or_device",
+      "case_id": "live2d-lifecycle",
+      "status": "SCENE_AUTHORED_CONDITIONAL_SDK_ASSET_BINDING",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "live2d_lip_sync",
+      "schema_declared": true,
+      "execution_class": "optional_host_or_device",
+      "case_id": "live2d-lifecycle",
+      "status": "SCENE_AUTHORED_CONDITIONAL_SDK_ASSET_BINDING",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "live2d_load",
+      "schema_declared": true,
+      "execution_class": "optional_host_or_device",
+      "case_id": "live2d-lifecycle",
+      "status": "SCENE_AUTHORED_CONDITIONAL_SDK_ASSET_BINDING",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "live2d_motion",
+      "schema_declared": true,
+      "execution_class": "optional_host_or_device",
+      "case_id": "live2d-motion-refusal",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "live2d_show",
+      "schema_declared": true,
+      "execution_class": "optional_host_or_device",
+      "case_id": "live2d-lifecycle",
+      "status": "SCENE_AUTHORED_CONDITIONAL_SDK_ASSET_BINDING",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "live2d_unload",
+      "schema_declared": true,
+      "execution_class": "optional_host_or_device",
+      "case_id": "live2d-lifecycle",
+      "status": "SCENE_AUTHORED_CONDITIONAL_SDK_ASSET_BINDING",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "load",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "save-load-transaction",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "loadplace",
+      "schema_declared": true,
+      "execution_class": "pure_lua_control_state",
+      "case_id": "bookmark-restore",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "macro",
+      "schema_declared": false,
+      "execution_class": "pure_lua_control_state",
+      "case_id": "macro-expansion",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "mod",
+      "schema_declared": true,
+      "execution_class": "pure_lua_control_state",
+      "case_id": "arithmetic",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "move",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "layer-motion",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "moveto",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "layer-placement",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "mul",
+      "schema_declared": true,
+      "execution_class": "pure_lua_control_state",
+      "case_id": "arithmetic",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "music",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "music-room-cancel",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "nameplate",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "text-box-style",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "notify",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "notice-locale",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "nvl",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "nvl-reset",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "p",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "text-and-breaks",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "palette",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "palette-asset",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "particle_weather",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "particles-effects",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "particles",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "particles-effects",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "play",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "audio-aliases",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "playbgm",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "audio-basic",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "playbgmstop",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "audio-stop-replace",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "playse",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "audio-basic",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "playstop",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "audio-aliases",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "playvoice",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "audio-basic",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "position",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "layer-placement",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "postprocess",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "postprocess-chain",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "postprocess_off",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "postprocess-chain",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "preload",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "preload",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "pt",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "text-and-breaks",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "quake",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "screen-effects",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "quickmenu_auto",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "quickmenu-flags",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "quickmenu_config",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "quickmenu-flags",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "quickmenu_log",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "quickmenu-flags",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "quickmenu_qload",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "quick-save-load",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "quickmenu_qsave",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "quick-save-load",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "quickmenu_skip",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "quickmenu-flags",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "quickmenu_title",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "quickmenu-title",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "r",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "text-and-breaks",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "random",
+      "schema_declared": true,
+      "execution_class": "pure_lua_control_state",
+      "case_id": "arithmetic",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "replay",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "replay-record",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "reset",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "nvl-reset",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "return",
+      "schema_declared": false,
+      "execution_class": "pure_lua_control_state",
+      "case_id": "jump-call",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "rollback",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "rollback-page",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "ruby",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "text-and-breaks",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "s",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "time-waits",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "save",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "save-load-transaction",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "saveload",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "save-menu-cancel",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "saveplace",
+      "schema_declared": true,
+      "execution_class": "pure_lua_control_state",
+      "case_id": "bookmark-restore",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "scroll",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "timed-credits",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "se",
+      "schema_declared": false,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "audio-aliases",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "sel",
+      "schema_declared": false,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "select-alias-choice",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "select",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "select-alias-choice",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "set",
+      "schema_declared": true,
+      "execution_class": "pure_lua_control_state",
+      "case_id": "arithmetic",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "setbgmvolume",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "audio-controls",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "setsevolume",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "audio-controls",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "setvoicevolume",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "audio-controls",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "shake",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "screen-effects",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "showtext",
+      "schema_declared": false,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "showtext-alias",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "skip",
+      "schema_declared": true,
+      "execution_class": "pure_lua_control_state",
+      "case_id": "text-speed-aliases",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "sma_anim",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "sma-actor",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "sma_ik",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "sma-actor",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "sma_play",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "sma-actor",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "sma_stop",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "sma-actor",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "sma_variant",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "sma-actor",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "sprite_fade",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "sprite-motion",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "sprite_move",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "sprite-motion",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "sprite_scale",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "sprite-motion",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "sprite_swap",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "sprite-motion",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "steam_achievement",
+      "schema_declared": true,
+      "execution_class": "optional_host_or_device",
+      "case_id": "steam-capability",
+      "status": "SCENE_AUTHORED_CONDITIONAL_ACCOUNT_CAPABILITY",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "stop",
+      "schema_declared": false,
+      "execution_class": "pure_lua_control_state",
+      "case_id": "terminal-stop",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "stopbgm",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "audio-basic",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "stopse",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "audio-basic",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "stopvideo",
+      "schema_declared": true,
+      "execution_class": "optional_host_or_device",
+      "case_id": "video-playback",
+      "status": "SCENE_AUTHORED_CONDITIONAL_MEDIA_ASSET_BINDING",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "stopvoice",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "audio-basic",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "sub",
+      "schema_declared": true,
+      "execution_class": "pure_lua_control_state",
+      "case_id": "arithmetic",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "switch",
+      "schema_declared": false,
+      "execution_class": "pure_lua_control_state",
+      "case_id": "switch-branches",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "text",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "text-and-breaks",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "textbox",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "text-box-style",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "textspeed",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "text-speed-aliases",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "trans",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "transition-and-fade",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "tween",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "layer-motion",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "typewriter",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "typewriter-cues",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "typewriter_sound",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "typewriter-cues",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "unlock",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "unlock-ending",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "until",
+      "schema_declared": false,
+      "execution_class": "pure_lua_control_state",
+      "case_id": "counting-loops",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "vfx",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "particles-effects",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "vib",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "screen-effects",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "vibrate",
+      "schema_declared": true,
+      "execution_class": "optional_host_or_device",
+      "case_id": "screen-effects",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "video",
+      "schema_declared": true,
+      "execution_class": "optional_host_or_device",
+      "case_id": "video-playback",
+      "status": "SCENE_AUTHORED_CONDITIONAL_MEDIA_ASSET_BINDING",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "voice",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "audio-aliases",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "voice_off",
+      "schema_declared": true,
+      "execution_class": "pure_lua_control_state",
+      "case_id": "text-speed-aliases",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "voice_wait",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "audio-stop-replace",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "wait",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "time-waits",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "waitbgm",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "audio-stop-replace",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "waitclick",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "audio-stop-replace",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "waitforclick",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "audio-stop-replace",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "waitsound",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "audio-stop-replace",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "while",
+      "schema_declared": false,
+      "execution_class": "pure_lua_control_state",
+      "case_id": "counting-loops",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    },
+    {
+      "command": "xfadebgm",
+      "schema_declared": true,
+      "execution_class": "native_or_web_host_boundary",
+      "case_id": "audio-crossfade-refusal",
+      "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
+      "actual_evidence": [],
+      "execution_evidence": []
+    }
+  ],
+  "assets": [
+    {
+      "path": "assets/bg/classroom.png",
+      "bytes": 1660316,
+      "sha256": "09d2a4c8a96a77444f57c7064d5e6e85f2533e56aa4f024af6353de392d7cd1b",
+      "origin": "current source asset; root must byte-copy to private runtime and bind final input lock"
+    },
+    {
+      "path": "assets/bgm/daily.wav",
+      "bytes": 12377330,
+      "sha256": "296ec0d6223c024f6c9e34d069b7de05e779c79c6e5236c417e09bf790fba28a",
+      "origin": "current source asset; root must byte-copy to private runtime and bind final input lock"
+    },
+    {
+      "path": "assets/fg/girl_uniform.png",
+      "bytes": 437586,
+      "sha256": "fd548acf689dcdfa1e16ccd506511cc0cade3ceee10e4c51042b2d8e49728ba7",
+      "origin": "current source asset; root must byte-copy to private runtime and bind final input lock"
+    },
+    {
+      "path": "assets/se/click.wav",
+      "bytes": 135246,
+      "sha256": "2fe332823620d69e1aef306190362437a0b97efbd34ccab51836977c9adb1295",
+      "origin": "current source asset; root must byte-copy to private runtime and bind final input lock"
+    },
+    {
+      "path": "assets/voice/line01.wav",
+      "bytes": 194462,
+      "sha256": "7f2d5630db6fb47251ff3f7dbc381e426b68a93f6fdeb10ed8c8fbd1b4be56da",
+      "origin": "current source asset; root must byte-copy to private runtime and bind final input lock"
+    },
+    {
+      "path": "assets/lang/en.lua",
+      "bytes": 2280,
+      "sha256": "667de679fe9021075061b4c4c89e54cbc7f51142624fd4e8bd4ccd85d6f22b25",
+      "origin": "current source asset"
+    },
+    {
+      "path": "assets/cg/contract.png",
+      "origin_path": "assets/bg/classroom.png",
+      "bytes": 1660316,
+      "sha256": "09d2a4c8a96a77444f57c7064d5e6e85f2533e56aa4f024af6353de392d7cd1b",
+      "origin": "Root copies these exact source PNG bytes under a declared CG role in the private runtime only"
+    },
+    {
+      "path": "assets/lut/night.png",
+      "bytes": 4391,
+      "sha256": "afc90dca1b45d90626195638bfcbbd482256b9ebb2181f09d1c795438718f728",
+      "origin": "current source asset"
+    },
+    {
+      "path": "demo/assets/sma/hero.json",
+      "bytes": 11848,
+      "sha256": "164be3831b611c98c794fda60afcbc3b5e6efd85c50a1d716db2d92638f2d934",
+      "origin": "current source asset"
+    }
+  ],
+  "remaining_conditions": "Every command now has a concrete source scene. Listed checkpoint/prelude/capability/config/media/SDK/account conditions are not executed evidence; software driver obligations remain open and are not disguised as device unavailability.",
+  "driver": "tests/scripts/command_contract_host_driver.lua",
+  "native_execution_started": false,
+  "materialization": "Root writes each exact source to its scene_path only inside a fresh private runtime; generated scene bytes and this manifest must be locked before native launch."
+}

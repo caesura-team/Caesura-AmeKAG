@@ -162,14 +162,14 @@
       "note": "同 live2d_motion（M4 特性矩阵 Live2D 行）。"
     },
     "live2d_lip_sync": {
-      "observable": "?",
-      "platform_tested": "-",
+      "observable": "VERIFIED",
+      "platform_tested": "win",
       "packaged": "-",
-      "status": "EXPERIMENTAL",
-      "reason": "t119 判级：写 ctx.live2d[model].lip_sync 状态；LIVE2D=OFF 无消费+Tested=0——feature-gated",
-      "evidence": "scripts/kag/commands/character.lua:200-207",
-      "source": "t119 task output",
-      "note": "同 live2d_motion（M4 特性矩阵 Live2D 行）。"
+      "status": "CLOSED",
+      "reason": "2026-09-28：原生 KAG 从模型上下文句柄调用 Live2D 绑定；SDK-ON Windows Haru 的 VOICE PCM、Core 参数与 D3D11 像素均有同源码指纹的实际执行证据。仅在 Cubism 与所需音频能力可用时支持；Web 仍不支持。",
+      "evidence": "scripts/kag/commands/character.lua:269-298 → src/script/bindings/Live2DBinding.cpp → src/live2d/Live2D/Live2DBackend.cpp；docs/plans/2026-09-28-001-u26-voice-lipsync-validation.md 引用 L1/M5 本地 receipt SHA-256 96c7db490383afd792b87606d5d654182e6ce834418c93c2ddf41fb811ef32f3",
+      "source": "2026-09-28 U26 Windows SDK-ON 诊断",
+      "note": "状态只闭合已选 Windows 原生口型路径；未打包、未测扬声器声压或非 Windows SDK，不能推广为全平台发布通过。"
     },
     "live2d_motion": {
       "observable": "?",

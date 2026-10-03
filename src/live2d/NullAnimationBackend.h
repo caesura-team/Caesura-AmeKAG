@@ -30,6 +30,7 @@ public:
     bool playMotion(int handle, const std::string& name) override;
     void setExpression(int handle, const std::string& name) override;
     void setParameter(int handle, const std::string& param, float value) override;
+    bool setVoiceLipSync(int modelHandle, bool enabled) override;
 
     const char* name() const override { return "NullAnimation+PNG"; }
 

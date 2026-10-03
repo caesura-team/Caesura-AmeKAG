@@ -45,6 +45,7 @@ public:
 
     int  pendingCount() const override { return m_pendingCount.load(); }
     bool isRunning()   const override { return m_running; }
+    AsyncLoaderSnapshot getSnapshot() const override;
 
 private:
     // A load currently in flight for one (path,type) key. Every enqueue that
@@ -74,7 +75,7 @@ private:
     std::atomic<int>  m_nextId{1};
     std::atomic<uint64_t> m_generation{1};
 
-    std::mutex m_completeMutex;
+    mutable std::mutex m_completeMutex;
     std::vector<CompletedLoad> m_completed;
 
     // Per-(path,type) in-flight dedup table. Guarded by m_inflightMutex; the
@@ -82,7 +83,7 @@ private:
     // clears the map (a later enqueue starts a fresh load); a running job still
     // holds its own shared_ptr<InFlightEntry> until completion, but stale
     // callbacks may not publish results or change current pending accounting.
-    std::mutex m_inflightMutex;
+    mutable std::mutex m_inflightMutex;
     std::unordered_map<std::string, std::shared_ptr<InFlightEntry>> m_inflight;
 
     // Decoded-resource cache (modern resource pipeline): successful loads
@@ -90,7 +91,7 @@ private:
     // not re-read + re-decode the same files. cancelAll() clears it (its
     // contract is "invalidate everything"). Guarded by m_cacheMutex; the
     // engine touches it only from the main thread.
-    std::mutex m_cacheMutex;
+    mutable std::mutex m_cacheMutex;
     std::unordered_map<std::string, CompletedLoad> m_rgbaCache;
     std::vector<std::string> m_cacheOrder;  // FIFO eviction order
     size_t m_cacheBytes = 0;

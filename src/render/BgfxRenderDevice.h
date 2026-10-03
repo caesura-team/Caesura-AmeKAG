@@ -43,6 +43,8 @@ public:
                       uint32_t rgba, float depth, uint8_t stencil) override;
     void touch(uint16_t viewId) override;
     ViewportHandle createRenderTarget(int width, int height) override;
+    SceneSnapshot captureSceneSnapshot() override;
+    void cancelTransition() override;
     void destroyRenderTarget(ViewportHandle handle) override;
     void blitTexture(uint16_t targetView, uint32_t textureId,
                       float x, float y, float w, float h, uint8_t opacity) override;
@@ -76,6 +78,7 @@ public:
     bool recoverDevice(void* nativeWindowHandle, int width, int height) override;
     void flagDeviceLost() override;
     bool consumeDeviceLost() override;
+    RenderSnapshot getSnapshot() const override;
     RenderRuntimeInfo getRuntimeInfo() const override;
     void renderText(uint16_t viewId, const std::string& text,
                     float x, float y,
@@ -150,6 +153,9 @@ private:
     bool m_shaderRenderingDisabled = false;
     ShaderTestFault m_shaderTestFault = ShaderTestFault::None;
     uint64_t m_frameId = 0;
+    // Last successfully created Core context, retained after shutdown/failure.
+    // Zero means never created or process-wide identity exhaustion.
+    uint64_t m_contextGeneration = 0;
     std::shared_ptr<ScreenshotQueue> m_screenshots = std::make_shared<ScreenshotQueue>();
     bool canRender() const {
         return m_bgfxInitialized && !m_stopping && !m_recovering && !m_recoveryFailed
@@ -180,13 +186,34 @@ private:
     bgfx::FrameBufferHandle m_sceneRtt             = BGFX_INVALID_HANDLE; // scene target (backbuffer size)
     int m_sceneRttW = 0, m_sceneRttH = 0;          // cached scene target size
     bool m_chainRetargeted = false;                // VIEW_MAIN -> m_sceneRtt this frame
+    bgfx::FrameBufferHandle m_finalSceneRtt = BGFX_INVALID_HANDLE;
+    uint64_t m_sceneFrameId = 0;
+    bool m_sceneReady = false;
+    bool m_sceneSubmitted = false;
+    struct SnapshotLease {
+        ViewportHandle handle;
+        bool releasePending = false;
+    };
+    // Two live leases; cancelled leases retire at advanceFrame. At most two
+    // new copy submissions per frame bound live + retiring storage to four.
+    std::vector<SnapshotLease> m_sceneSnapshots;
+    unsigned m_snapshotCopiesThisFrame = 0;
+    struct TransitionDraw {
+        RenderTextureHandle from, to, rule;
+        int method = 0;
+        float progress = 0;
+        bool pending = false;
+    } m_transitionDraw;
+    void clearSceneSnapshots();
+    bool prepareSceneTargets();
 
     // Chain helpers (GPU alive only; callers guard on m_bgfxInitialized).
-    void runPostFxChain();                          // sceneRtt -> stages -> backbuffer
+    bool runPostFxChain();                          // sceneRtt -> stages -> final scene RTT
     void destroyPostFxResources();                  // release pool + sceneRtt (GPU alive)
     PostFxRt getScratchRt(int slot, int w, int h);  // size-matched scratch RTT, grows pool
-    void submitFullscreenQuad(uint16_t viewId, bgfx::ProgramHandle prog,
-                              bgfx::TextureHandle tex, bgfx::UniformHandle sampler);
+    bool submitFullscreenQuad(uint16_t viewId, bgfx::ProgramHandle prog,
+                              bgfx::TextureHandle tex, bgfx::UniformHandle sampler, bool renderTargetOrigin = true,
+                              float offsetX = 0, float offsetY = 0);
 
     std::unique_ptr<BgfxShaderManager> m_shaders;
     std::unique_ptr<BgfxDeviceCore>   m_deviceCore;

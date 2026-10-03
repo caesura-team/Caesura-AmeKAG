@@ -131,6 +131,20 @@ python scripts/verify_release_candidate.py --check --profile scripts/validation_
 
 `--expected-run` 必须来自证据包外的可信执行边界，托管 CI 还需核对真实 workflow/run/attempt/artifact 身份。需要固定源码时，`--commit` 接受完整小写提交 SHA。脏工作树只能作为诊断证据，并需显式使用 `--diagnostic`；不能升级成干净源码的发布证明。缺失可选证据使用 `--skip-if-missing` 时退出 77，含义是跳过，不是通过。旧的合成 PASS 清单和手工 RC-GO 声明不具备执行证明效力。
 
+## 平台与能力证据
+
+平台文档的普通生成/`--check`只验证矩阵结构、历史引用与输出同步，显示 `NOT_REVERIFIED`；同步锚点不是执行源码身份。能力闭环生成器只做结构扫描、测试源码引用和人工声明汇总，不能从 `tested_count` 推出运行通过或覆盖率。
+
+需要重验候选时，使用独立输出和外部锁定的选择文件：
+
+```powershell
+python scripts/generate_platform_status.py --evidence-selection '<selection.json>' --evidence-selection-sha256 '<sha256>' --candidate-source '<full-source-sha>' --evidence-root '<artifact-root>' --evidence-profile '<trusted-validation-profiles.json>' --evidence-report '<new-report.json>' --output '<new-platform-evidence.md>'
+```
+
+选择文件固定非空必需声明集合、源码、平台、配置、run身份及profile/receipt/manifest/包摘要；相对路径只能位于指定证据根中。`execution`声明复用U1严格验证器重读原始报告；`package_receipt`声明只重验最终包字节与原收据，其原始运行日志仍标记 `RAW_STAGE_LOGS_NOT_INCLUDED_NOT_REPLAYED`。它们均不重新运行引擎、不认证GitHub服务端、不证明物理设备、不授予发布权限。原始包运行日志或其他设备类型尚不受支持时不能作为已验证声明加入选择。任何缺失、错误身份或摘要失败退出非零；`--evidence-report`保留失败且拒绝覆盖旧记录。此命令示例本身不是执行证据。
+
+选择格式与分层边界见[平台证据指南](../guides/platform-evidence.md)。
+
 ## 架构导航与持续记录
 
 组合根为 `src/main.cpp` 和 `src/entry/`：创建具体后端，组装 `EngineConfig`，由 `Engine::init()` 注册到 `BackendRegistry`；其他模块经接口访问后端。图形句柄使用引擎接口定义，不向外泄漏第三方实现类型。详细模块关系见[架构拓扑](../design/engine-architecture-topology.md)与[后端依赖指南](../design/backend-registry-dependency-guide.md)。

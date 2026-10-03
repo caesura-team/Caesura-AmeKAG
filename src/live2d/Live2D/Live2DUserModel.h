@@ -5,10 +5,11 @@
 
 namespace Caesura {
 
-// Bridge: expose protected _motionManager / _expressionManager
+// Non-owning access to the components owned by CubismUserModel.
 struct Live2DUserModel : public Live2D::Cubism::Framework::CubismUserModel {
     auto* motionManager()     { return _motionManager; }
     auto* expressionManager() { return _expressionManager; }
+    auto* pose()              { return _pose; }
 };
 
 } // namespace Caesura

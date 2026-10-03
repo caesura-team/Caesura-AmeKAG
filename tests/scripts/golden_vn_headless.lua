@@ -156,6 +156,7 @@ _G.backend = callable({
 })
 
 local kag_runner = require("kag_runner")
+local headless = dofile("tests/scripts/headless_render_fixture.lua").install()
 
 local CROSS  = os.getenv("GOLDEN_CROSS") == "1"
 local RB     = os.getenv("GOLDEN_RB") == "1"
@@ -262,6 +263,7 @@ local voicePlay  = false   -- GOLDEN_VOICE: playvoice dispatch inspected
 while frames < FMAX do
     frames = frames + 1
     local ok, reason = kag_runner.update(0.016)
+    headless.check(kag_runner, ok, reason)
     local ctx = _G._CAESURA_CTX
 
     -- v2 rollback: the run pauses at the [wait] (f.rbReady==1); drive the two
@@ -491,6 +493,7 @@ while frames < FMAX do
         end
     end
 
+    headless.check(kag_runner) -- Mode probes above may resume the coroutine too.
     if reason == "ended" then
         if RB and rbDone then print("RB_REPLAY_END") end
         if HIST and ctx and ctx.f and ctx.f.historyClosed == 1 then print("HISTORY_OK") end
@@ -515,7 +518,9 @@ while frames < FMAX do
     if ctx and (ctx.waiting_input or ctx._choiceMode) then
         clicks = clicks + 1
         drive_click()
+        headless.check(kag_runner)
     end
+    headless.pump(kag_runner)
 end
 if not result then result = "FRAME_LIMIT" end
 

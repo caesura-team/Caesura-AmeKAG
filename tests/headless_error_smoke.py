@@ -46,6 +46,9 @@ def command_code(fail):
 local runner=require('kag_runner')
 assert(runner.stop())
 local kag=require('kag')
+local schema=require('kag.schema')
+schema.define('u18fail',{})
+schema.define('u18after',{})
 local flow=require('flow')
 local tokenize=require('tokenizer')
 kag.u18fail=function(ctx,params) BODY end

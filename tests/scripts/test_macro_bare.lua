@@ -1,5 +1,11 @@
 -- test_macro_bare.lua — macro bare-name + numeric placeholders (audit)
 package.path = "scripts/?.lua;scripts/kag/?.lua;" .. package.path
+
+-- Test handlers are explicit DSL extensions; a recording KAG table alone
+-- does not register commands. Keep the production public selector intact.
+require("kag.commands.text") -- actual ch/text contracts before recorder replacement
+local fixture_schema = require("kag.schema")
+fixture_schema.define("z", {v={type="string"},tag={type="string"}})
 local passed, failed = 0, 0
 local function check(name, cond)
     if cond then print("PASS " .. name) passed = passed + 1
@@ -53,7 +59,7 @@ local co3 = coroutine.create(function() scheduler.run(ctx3, toks3, 1) end)
 while coroutine.status(co3) ~= "dead" do coroutine.resume(co3) end
 package.loaded["kag"] = kag_orig
 -- after erase, [z] must NOT expand the macro body -- only the bare
--- [z] token itself dispatches (mock __index answers every key, so it
+-- [z] token itself dispatches (explicit test schema admits its recorder, so it
 -- shows up as one {cmd="z"} entry; the macro body's ch never runs)
 check("erasemacro bare works", #dispatched3 == 1
       and dispatched3[1][1] == "z")

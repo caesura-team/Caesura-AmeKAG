@@ -152,7 +152,7 @@ src/entry/:        接收 EngineConfig → 补齐默认后端 → init → 注�
 ### api/ — API 参考文档
 | 文件 | 内容 |
 |------|------|
-| `api/command-contracts.md` | 134 个 KAG Neo-Genesis 命令的声明式契约参考（自动生成，权威） |
+| `api/command-contracts.md` | KAG Neo-Genesis 命令的声明式契约参考（自动生成，权威；数量以生成文件为准） |
 | `api/lua-modules.md` | Lua 模块 API 参考 |
 | `api/cpp-interfaces.md` | 全部 C++ 接口定义（34 个） |
 | `api/editor-api-reference.md` | 编辑器 RPC 端点参考 |

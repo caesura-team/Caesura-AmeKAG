@@ -39,18 +39,25 @@ TEST_CASE("Audio: bus volume set/get includes SE bus") {
     CHECK(eng.getBusVolume("se") == doctest::Approx(0.9f));
 }
 
-TEST_CASE("Audio: voice pool overlap does not crash (device)") {
-    SoLoudAudioEngine eng;
-    if (!eng.init()) {
-        MESSAGE("Audio device unavailable, skipping");
-        return;
-    }
-    // Two overlapping voice lines: the second displaces a pool slot; the
-    // first is retired (fade), never freed while playing.
+TEST_CASE("Audio: voice pool overlap survives explicit mixing (manual mix)") {
+    SoLoudAudioEngine eng{SoLoudAudioEngine::OutputMode::ManualMix};
+    REQUIRE(eng.init());
+    REQUIRE(eng.soloud().getBackendId() == SoLoud::Soloud::NULLDRIVER);
+    REQUIRE(eng.soloud().getBackendSamplerate() == 48000);
+    float pcm[512 * 2]{};
+    // Own the real mixer's clock: the 100 ms fixture cannot expire in a
+    // device callback before looping is set. Two lines use separate pool slots.
     const unsigned int h1 = eng.playVoice("tests/audio/silence.wav");
+    REQUIRE(h1 != 0);
+    eng.soloud().setLooping(h1, true);
+    eng.soloud().mix(pcm, 512);
     const unsigned int h2 = eng.playVoice("tests/audio/silence.wav");
-    CHECK(h1 != 0);
-    CHECK(h2 != 0);
+    REQUIRE(h2 != 0);
+    eng.soloud().setLooping(h2, true);
+    eng.soloud().mix(pcm, 512);
+    CHECK(h1 != h2);
+    CHECK(eng.soloud().isValidVoiceHandle(h1));
+    CHECK(eng.soloud().isValidVoiceHandle(h2));
     CHECK(eng.isVoicePlaying() == true);
     eng.stopVoice();
     CHECK(eng.isVoicePlaying() == false);

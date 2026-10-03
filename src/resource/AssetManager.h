@@ -13,6 +13,7 @@ namespace Caesura {
 // Thread-safe for concurrent reads from a single worker thread.
 class AssetManager : public IAssetReader {
 public:
+    AssetDirectoryResult listDirectory(const std::string&, size_t, size_t) override;
     AssetManager() = default;
     ~AssetManager();
 

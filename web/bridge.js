@@ -36,7 +36,7 @@ function makeDefaultStorage() {
 
 
 const BINDING_MODULES = new Set([
-  'backend', 'layers', 'audio', 'rtt', 'blend', 'transition', 'transform',
+  'backend', 'layers', 'audio', 'transform',
   'vfx', 'flow', 'replay', 'pool', 'config', 'system',
   'settings', 'gallery', 'music_room', 'title_menu', 'saveload_menu',
   'chapter_select', 'dev_hud', 'history_ui', 'toast', 'ks_i18n',
@@ -267,6 +267,33 @@ export async function createPlayer({ scriptsBase, fetchImpl = fetch, wasmFile, a
     capture_thumbnail: () => null,
   }
   const jsBackend = {
+    capture_scene: initial => core.captureScene(initial === true),
+    destroy_viewport: id => core.destroySceneSnapshot(id),
+    cancel_transition: () => core.cancelTransition(),
+    submit_transition: async (view,from,to,rule,method,progress) => {
+      if(method===1){
+        const texture=core.textures.get(rule)
+        if(!texture) return false
+        if(!texture.prepared){
+          const revision=core._transitionRevision
+          let ticket
+          try {
+            ticket=await imageRestore.prepare_image(texture.path)
+            if(core.textures.get(rule)!==texture || revision!==core._transitionRevision){imageRestore.discard_image(ticket);return false}
+            const temporary=imageRestore.materialize_image(ticket)
+            const decoded=core.textures.get(temporary)
+            // Transfer decoded ownership to the rule's original numeric ID.
+            // Destroying that original texture releases its pixels once.
+            core.textures.delete(temporary)
+            Object.assign(texture,decoded)
+          } catch {if(ticket)imageRestore.discard_image(ticket);return false}
+        }
+      }
+      return core.submitTransition(view,from,to,rule,method,progress)
+    },
+    // Emscripten's errno domain: ENOENT=44, EACCES=2. Do not use native
+    // libc numbers or localized messages for transactional locale reads.
+    is_file_missing_error: (errno) => errno === 44,
     // Logical resolution for the Lua layout stack (scripts/viewport.lua):
     // the web player's #stage is the render target, so viewport-following
     // layout defaults (bg/fg layer sizes, message box, dialogue positions)
@@ -363,8 +390,7 @@ export async function createPlayer({ scriptsBase, fetchImpl = fetch, wasmFile, a
     ai_available: () => false, ai_query_async: () => {}, ai_cancel: () => {},
   }
   const jsStubs = {
-    audio: { lua: () => {} }, rtt: { create: () => 0, destroy: () => {}, bind: () => {} },
-    blend: { lua: () => {} }, transition: { lua: () => {}, start: () => {}, is_active: () => false },
+    audio: { lua: () => {} },
     transform: { lua: () => {} }, vfx: { lua: () => {}, flash: () => {}, shake: () => {}, quake: () => {} },
     flow: { scene_cache: () => {}, load_scene: () => {} },
     replay: { get_mode: () => 'off', save: () => {}, event_count: () => 0, load: () => {}, set_mode: () => {} },
@@ -393,6 +419,9 @@ export async function createPlayer({ scriptsBase, fetchImpl = fetch, wasmFile, a
   lua.global.set('layers', jsLayers)
   lua.global.set('KAG', jsKAG)
   lua.global.set('__IS_WEB_PROMISE', (value) => value instanceof Promise)
+  lua.global.set('__PUBLISH_TRANSITION_DRAWS', draws => {
+    core.setDraws(draws ? JSON.parse(JSON.stringify(draws)) : [])
+  })
   await lua.doString(`
     local is_promise = __IS_WEB_PROMISE
     function __copy_web_scenes(scenes)
@@ -439,6 +468,28 @@ export async function createPlayer({ scriptsBase, fetchImpl = fetch, wasmFile, a
       local _jsRes = t.get_resolution
       local play_audio=t.audio_play
       t.audio_play=function(...) return play_audio(...):await() end
+      local capture_scene,submit_transition=t.capture_scene,t.submit_transition
+      local publish_draws=__PUBLISH_TRANSITION_DRAWS
+      __PUBLISH_TRANSITION_DRAWS=nil
+      local function present_text()
+        local runner=package.loaded['kag_runner']
+        if not runner or not runner.get_ctx() then return end
+        local publish=rawget(_G,'__PUBLISH_WEB_TEXT')
+        if type(publish)=='function' then publish();publish_draws(__SCENE_DRAWS_TABLE) end
+      end
+      t.capture_scene=function()
+        local runner=package.loaded['kag_runner']
+        local ctx=runner and runner.get_ctx()
+        present_text()
+        local result=capture_scene(ctx and ctx._pending_transition~=nil or false):await()
+        if type(result)~='string' then return 0,0 end
+        local id,frame=result:match('^(%d+):(%d+)$')
+        return tonumber(id) or 0,tonumber(frame) or 0
+      end
+      t.submit_transition=function(...)
+        present_text()
+        return submit_transition(...):await()
+      end
       if _jsRes ~= nil then
         t.get_resolution = function()
           local ok, r = pcall(_jsRes)
@@ -480,7 +531,7 @@ export async function createPlayer({ scriptsBase, fetchImpl = fetch, wasmFile, a
       prepared_flow.load_scene = prepared_flow.prepare_scene
       _G.flow = prepared_flow
     end
-    for _, name in ipairs({'backend','layers','audio','rtt','blend','transition','transform','vfx','flow','replay','pool','config','system','settings','gallery','music_room','title_menu','saveload_menu','chapter_select','dev_hud','history_ui','toast','ks_i18n','fileutil','sandbox','mods'}) do
+    for _, name in ipairs({'backend','layers','audio','transform','vfx','flow','replay','pool','config','system','settings','gallery','music_room','title_menu','saveload_menu','chapter_select','dev_hud','history_ui','toast','ks_i18n','fileutil','sandbox','mods'}) do
       package.loaded[name] = _G[name]
     end
 
@@ -546,7 +597,12 @@ export async function createPlayer({ scriptsBase, fetchImpl = fetch, wasmFile, a
     __TRANSIENT_RESTORE = nil
     local kag = require('kag')
   `)
-  await installRunnerBridge(lua, () => audio.currentTime)
+  await installRunnerBridge(lua, () => audio.currentTime, async (draws,from,to,epoch) => {
+    core.setDraws(draws ? JSON.parse(JSON.stringify(draws)) : [])
+    const completedTransition=Number.isSafeInteger(from)&&from>0&&Number.isSafeInteger(to)&&to>0
+      &&Number.isSafeInteger(epoch)&&epoch>0 ? {from,to,epoch} : null
+    return core.presentScene(completedTransition)
+  })
 
 
 
@@ -699,7 +755,7 @@ export async function createPlayer({ scriptsBase, fetchImpl = fetch, wasmFile, a
       disposed=true
       const errors=[]
       try {await lua.doString("local ok,err=require('kag_runner').stop(); if not ok then error(err) end")} catch(error) {errors.push(error)}
-      for (const cleanup of [()=>imageRestore.dispose(),()=>fontRestore?.dispose(),()=>audioRestore.dispose(),()=>audio.destroy(),
+      for (const cleanup of [()=>core.clearSceneSnapshots(),()=>imageRestore.dispose(),()=>fontRestore?.dispose(),()=>audioRestore.dispose(),()=>audio.destroy(),
         ...[...core.textures.keys()].map(id=>()=>core.destroyTexture(id)),()=>lua.global.close()]) {
         try {cleanup()} catch(error) {errors.push(error)}
       }

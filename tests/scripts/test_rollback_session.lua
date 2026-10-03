@@ -3,6 +3,11 @@
 -- Run in isolation from the main suite's sandbox and cached mocks.
 package.path = 'scripts/?.lua;scripts/?/init.lua;' .. package.path
 
+-- Test handlers are explicit DSL extensions; a recording KAG table alone
+-- does not register commands. Keep the production public selector intact.
+local fixture_schema = require("kag.schema")
+fixture_schema.define("u12_old_scope", {})
+
 local function callable(fields)
     return setmetatable(fields or {}, { __index = function(self, key)
         if type(key) ~= 'string' then return nil end

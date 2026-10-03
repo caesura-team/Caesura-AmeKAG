@@ -41,6 +41,9 @@ public:
     void setJobSystem(IJobSystem& js) { m_jobSystem = &js; }
 
     VideoHandle open(const char* path) override;
+    VideoHandle openMemory(std::vector<uint8_t> bytes) override;
+    // Diagnostic counters for actual custom-I/O rejection regression; no URLs.
+    unsigned lastMemorySecondaryIoRefusals() const { return m_memoryIoRefusals; }
     void close(VideoHandle handle) override;
     void closeAll() override;
     void setLoop(VideoHandle handle, bool loop) override;
@@ -83,7 +86,10 @@ public:
     static double clampSeekTime(double time, double duration);
 
 private:
+    struct MemoryInput;
     struct VideoState {
+        std::shared_ptr<MemoryInput> memory;
+        std::shared_ptr<void> customIo;
         void*  plm = nullptr;
         bool   useFFmpeg = false;
         bgfx::TextureHandle texture = BGFX_INVALID_HANDLE;
@@ -134,6 +140,8 @@ private:
 #endif
     };
 
+    VideoHandle openImpl(const char* label, std::shared_ptr<MemoryInput> memory);
+    void releaseState(VideoState& state);
     std::shared_ptr<VideoState> find(VideoHandle handle);
     void destroyTexture(VideoState& vs);
     // Drain queued decoded PCM into the audio backend (main thread).
@@ -146,6 +154,7 @@ private:
     std::unordered_map<uint32_t, std::shared_ptr<VideoState>> m_videos;
     std::vector<uint32_t> m_pendingClose;  // ids closed, erase deferred (RD-1)
     uint32_t m_nextId = 1;
+    unsigned m_memoryIoRefusals = 0;
     IJobSystem* m_jobSystem = nullptr;
     std::mutex m_audioMutex;  // guards audioQueue across worker/main threads
 };

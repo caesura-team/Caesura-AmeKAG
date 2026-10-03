@@ -167,7 +167,8 @@ do
   end
   check("music binding play_bgm called once", okB and playCalls == 1)
   check("music binding correct track + fadein",
-        got and got[2] == "a.ogg" and math.abs(got[3] - 0.5) < 1e-9)
+        got and got[2] == "a.ogg" and type(got[3]) == "table"
+        and math.abs(got[3].fadein - 0.5) < 1e-9)
   -- stop mirror (music_room.lua:93): audio.stop_bgm(0.3) -> stop_bgm(0.3)
   audioCalls = {}
   require("audio").stop_bgm(0.3)

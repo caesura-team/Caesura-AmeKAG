@@ -1,8 +1,92 @@
 # 当前待办与进度
 
-## 2026-09-13 接续核对后的当前状态
+## 2026-10-01 b533 最终字节与范围接续
 
-**当前推进：U21交付收尾与U22最终包隔离。U12–U20已交付，PR #23已合并c7471141，合并后CI十项全部成功。U21两模板真实作者冷恢复、完整CLI107/107、严格原生门禁及完整Web608/608通过，PR #24待最终文档CI与合并。Expo下一次执行受配额限制，用户要求先继续其余开发。底层优先，Studio暂停。** 完整状态及适用范围见[执行记录](2026-09-05-002-runtime-foundation-execution.md)、[U20记录](2026-09-13-011-web-audio-execution.md)与[U21记录](2026-09-13-012-cli-author-journey-execution.md)。
+完整目标仍为U1–U29，详见[b533记录](2026-10-01-004-b533-final-package-validation.md)。003及以下旧段落保留原时点，不能把旧未勾选项机械解释为新增当前门禁。
+
+- [x] b533 CI36826420478/attempt1全部12job成功，10必需producer／11role同源闭合；仅dry-run输入接受。
+- [x] Web／Windows最终字节按API、manifest和hosted receipt摘要绑定；原下载超时与collector预期失败保留。
+- [x] Native33当前操作＋2历史create获PASS_NATIVE35_SCOPE_ONLY及root接受，24PNG/state/nextchoice/ending与负控按选定范围核验；actualframes等未测字段和旧来源保留。
+- [x] Web当前basic package/static与短根六步均已逐步接受，最终Web独审及root范围接受完成；4个cold场景共12次独立Chrome自然退出，不把UI槽／AB结果外推完整AE3 nextchoice/像素。
+- [ ] EAS三lane因Free CI/CD额度在worker前被拒，取源／编译／测试NOT_RUN；保留实际原因，不以GitHub替代或重复提交同一条件。
+- [x] U28当前声明与原件索引同步；SAN strictFAIL、CPU INCONCLUSIVE、设备／账号／物理输出条件与历史SDK/P6 scope保持。
+- [ ] U29完整目标仍未完成：用户指定EAS三lane因外部额度未执行；当前Native/Web范围通过不能替代该要求。
+- [x] U23按计划允许的dry-run范围核对；正向hosted tag仍NOT_RUN，是范围披露，不追加为新必需门禁或远端tag操作授权。
+
+## 2026-10-01 候选失败与 UI 读档修复接续
+
+完整目标仍为 U1–U29，详见[本次执行记录](2026-10-01-003-candidate-validation-repair-followup.md)。以下新增事实接续前文时点；旧段落与原验收范围保留，不将后续修复改写成旧候选通过。
+
+- [x] SMA实际保存新字节GREEN和UI真实Chrome hot-load限定GREEN；完整Web644通过。SMA整体sanitizer FAIL及旧Web cold失败均保留。
+- [x] f2cf GitHub CI与EAS终态、三OS uuid失败、模拟器collector失败分别取回；iOS device只接受未签名编译，模拟器1536实际通过不改原lane FAIL。
+- [x] uuid最小补丁与collector真实导入/解析修复已本地提交并审查；collector本地20项工具测试通过，不代表Apple新lane通过。
+- [x] owner可信通知修复及完整87项本地验证已限定接受，整合代码锚已绑定；旧Mac瞬时时序未还原，完整新候选门禁继续。
+- [ ] 根据最终源/配置/工具差异完成必要CI/EAS与精确最终包绑定；复用匹配作者来源，不改标旧包。
+- [ ] 完成原双模板、双origin、三进程cold合同，保持原断言、时限和owned退出要求。
+- [ ] U28声明与U29完整逐项核对；原29单元、设备/账号/物理输出条件和既有失败/不确定结论全部保留。
+
+## 2026-10-01 c41 验收与修复接续
+
+完整目标仍为 U1–U29。冻结产品 c41 与后续验证修复整合版本分别记录，详见[c41 执行记录](2026-10-01-002-c41-candidate-and-validation-repairs.md)。
+
+- [x] c41 托管 CI12项、必需 producer/aggregate 输入身份核对；只接受 dry-run 输入，不授予发布许可。
+- [x] 当前 Foundation Release11项及 strict、一小时真实后端 long；CPU结果保留 INCONCLUSIVE。
+- [x] 当前原生35步作者/冷热恢复、加密正负控与旧包回退；选定 U16 18场景/82图及 c68 SDK/P6 范围分别接受。
+- [ ] Web author12实际通过；basic cold首阶段因探针表达式语法错误失败、kag3 cold未运行。修正探针后完成原cold2合同，保留首次失败。
+- [x] 完成当前 Linux sanitizer 的具体第三方诊断、第一方与替代验证限定处置及 TSan 基本可行性记录；strict 仍 FAIL，不改写失败或事后缩减 required 集合。
+- [ ] SMA 保存真实 RED 已复现，最小路径修复与持久字节回归已实现；GREEN及整合构建待验。
+- [ ] EAS 原三 lane 失败保留；iOS 编译修复及整合代码需实际 Apple 复验，Mac 单次诊断成功不解释原失败。
+- [ ] U28 公开声明和完整 U1–U29 最终核对；设备、账号、物理输出及最终整合候选继续按实际证据限定范围。
+
+## 2026-10-01 c68 历史接续
+
+当前代码为 `c68ffbc02cccda227a85b104013124b55d415326`，详情见[c68 执行记录](2026-10-01-001-candidate-runtime-fixture-validation.md)。locale/首条 save/CRT/验证夹具修复、当前 SDK11＋strict、CrossFS30、Windows27、Web642与AE4各有实际原件或明确源码复用桥；它们不是全平台或完整交付通过。原 bef1 SDK FAIL、当前 CI 平台文档 freshness FAIL、早期长跑失败与 CPU INCONCLUSIVE 均保留。
+
+- [ ] 文档同步后按正常新候选流程完成 CI／必需 Verify／aggregate，并取回同 source/run/attempt 的最终包；旧失败不改记。
+- [ ] 当前 Foundation Release strict 和本地 SoakProbe 身份闭合后，再完成固定合同的当前一小时 long。
+- [ ] 当前 SDK strict 已作为前置接受；继续 P6 的当前输入、导出与实际场景验收，不能以该 strict 代替 P6。
+- [ ] 保持完整 native author/恢复与 Web author12＋cold2、AE5 等独立范围；未来包字段在实际产出前保持 PENDING。
+- [ ] 用户指定 EAS Apple 三 lane 与设备／账号／物理输出按各自条件继续，不以其他平台替代。
+
+完整目标仍为 U1–U29，底层优先、Studio 暂停。以下日期段落保留各自历史证据，不覆盖本节。
+
+
+2026-09-30 最新接续：[被调用场景选择跳转修复与 3a3 验收记录](2026-09-30-001-called-scene-choice-validation.md)。3a3 一小时长跑、AE5 有界真实音频、四组密钥对照和坏包后旧包回退已分别复核；最终包 AE3 在读档前因 callee 本地选择被旧场景切换标记丢弃而失败。当前最小 Lua 修复取得真实红绿、完整 Lua 和单文件原生替换诊断，仍待新候选完整门禁／最终包，不表示 U1–U29 完成。
+
+## 2026-09-28 当前接续
+
+2026-09-28 最新接续：[U27 语音接纳观测修复与 8d3 候选终态](2026-09-28-003-u27-voice-admission-validation.md)。8d3 的完整 Windows Release 和 12 项托管 CI 通过；本地长跑因短语音接纳后的播放状态断言而失败。7b565767 探针修复已取得真实 C++ 红绿（GREEN 4 用例/108 断言）及 trace49项通过；c6cf2e10 修正 Android slices 上传路径。新候选完整门禁、实际上传与一小时长跑待验，原失败和完整 U1–U29 目标保留。
+
+前次接续记录的代码为 `908e661c91d4e2eae5bdce22a45c601760d97284`，包含已提交的 U26 原生语音口型及 U27 GC 观测顺序修复。[U27 续记](2026-09-28-002-u27-memory-observation-validation.md)记录该提交完整 Foundation Windows Debug 严格通过（C++1549、Lua147/57、CTest71通过及1个既定可选AI跳过）及原一小时长跑 FAIL。托管 CI36415081654 已因确定的文档过期取消；随后仅文档同步锚点和自动事实，下一候选的托管/Release/包/长跑继续验收。e51 四条加密冷恢复配对已独审，可供新候选选择为旧包；新回退、AE3、CPU原INCONCLUSIVE、设备/账号及U28/U29剩余范围继续开放。以下未提交指纹及日期段落保留各自历史证据范围，不覆盖本段。
+
+完整目标仍为 U1–U29，底层优先、Studio 暂停。[U26 当前诊断记录](2026-09-28-001-u26-voice-lipsync-validation.md)绑定未提交运行时代码指纹 `ca1fd6ead64e27b09cd1c2629fb53748c9bbdc3d9318d53536cc300efc372e05`：Windows SDK-ON Haru/KAG 七场景和 WinMM Device 场景通过；同指纹完整 Debug 诊断、Web 638/638 通过。文档/生成器随后更新，需最终补丁审查与候选 SHA 重新绑定；U26 的 Steam 账号、非 Windows SDK、扬声器声压仍未验，U27 长跑与 U29 最终包/发布门禁仍继续。本机 GitHub master 规则只读读回符合已批准的唯一必需检查和原保护选项，未在本轮重写。
+
+## 2026-09-27 当前状态
+
+完整目标仍是 U1–U29；底层优先，Studio 暂停。下方日期快照保留当时的原始计数与失败，当前状态以本节和对应执行记录为准。不同工作树的通过证据不能合并成一个未经验证的候选。
+
+**恢复后当前代码提交：`a4fdaab98181aad3acaf0ab470d9208ef29c1dfd`。** 当前代码 `a4fdaab98181aad3acaf0ab470d9208ef29c1dfd`（`codex/u29-click-load-owner`）修复回放点击执行 `[load]` 后待提交恢复被同帧脚本结束清理丢弃的问题。真实 Lua 回归先失败后通过，主套件147、隔离套件56通过，独立审查无剩余可行动问题；单文件 Lua 替换的真实原生正确/错误密钥对照通过，但不是重建候选或最终包验收。新候选完整 Debug、跨平台 CI 和完整加密矩阵仍待执行。 原a6加密正确密钥RED、Linux LSan/guard失败、旧中断以及误删原件缺口保持。详见[U29 最新续记](2026-09-24-017-foundation-integration-execution.md#2026-09-27-回放加载事务修复与已恢复终态)。
+
+最新门禁续记：`7e3070fa` 的托管 CI `36295388396/attempt1` 为6成功、3失败、3跳过；本机Debug缺少完整终态，不能接受。当前分支 `codex/u29-click-load-ci-fix` 修正生成矩阵和下载测试时序前提，完整下载套件16项通过；新候选完整gate、最终包与加密矩阵仍待验。P6探针实际编译/链接0，四个原生场景仍未运行，未升级U26状态。见[具体失败与修正](2026-09-24-017-foundation-integration-execution.md#2026-09-27-候选门禁失败与下载时序前提修正)。
+
+| 范围 | 已取得的证据 | 继续完成的事项 |
+|---|---|---|
+| U1、U3–U10 | [主执行记录](2026-09-05-002-runtime-foundation-execution.md)列出本机适用验收及实际 POSIX 定向结果 | 平台扩展和整个候选验证继续按 U2/U29 承接；不将本机结果写成所有平台通过 |
+| U2 | a6 本机Windows Release和托管Windows Debug完整11项通过，C++1524；同SHA CI36025985926 attempt1为12/12成功，Windows/Web最终容器分别严格核验 | 新点击恢复候选完整门禁待验；本机Linux full03仍REJECTED，C++1508通过但CTest仅完成26项；五份原LSan各240B与du监控失败分别保留，不能用托管绿色抵消 |
+| U11–U21 | 恢复、语言、缓存、GPU、输入、RPC、能力、Web 音频和作者路径已交付；U21 PR #24 合并为 `65e5b425` | 各记录保留设备、物理音频与历史性能失败边界；不重新打开已完成的实现工作 |
+| U22 | [最终包记录](2026-09-13-013-final-package-isolation-execution.md)已有三桌面/Web 托管门禁与实际 Mac 最终容器、安装、映像闭包证明 | 最终整合及 PR 审查仍未完成；ad-hoc 签名不等于 Developer ID/公证，软件混音不等于物理输出 |
+| U23 | [发布输入记录](2026-09-19-014-release-input-provenance-execution.md)：`f87f7aa7` 本机完整 Debug、12 个托管作业、9 required jobs/11 artifacts/45 outputs 聚合及 AE7 摘要负控通过；本地版本参数演练完整下载并复核480675784字节 | 用户批准后master已绑定唯一聚合检查及GitHub Actions App15368，误删后新只读回执确认无关保护不变（原mutation/读回收据当前缺失）；真实旧tag负控已通过，正向匹配tag入口与整合验收仍须完成；无发布或部署 |
+| U24–U25 | [Android记录](2026-09-20-015-android-package-validation-execution.md)保留历史aacc完整v2构建/包证据；e0独立源码预检6540文件/2链接通过，新请求与owned入口已准备并独审，尚未执行 | e0 Android编译/包尚未执行；当天adb列表为空；Apple、模拟器、真实设备和正式签名分别验收，旧产物不替代当前候选 |
+| U26 | a5真实Haru六场所有权及手动嘴参证据保持；缺失model3、MOC、Pose三场新模型失败对照实际0，独审通过，MOC117/117、Pose184/184阶段分配释放 | 自然结束/重复替换和P6生命周期待实际执行；自动PCM/voice口型接线缺实现，Lua/KAG、Steam账号及其他配置分别验收；手动参数与阶段SDL计数不升级为完整同步或泄漏覆盖 |
+| U27 | a6当前长跑实际wrapper/native0、3625.4801689秒测量、4700周期、47上下文/46重建、16920PNG；根187383项复核通过 | 正式CPU180测量/36预热样本的三个指标仍INCONCLUSIVE；物理发声NOT_MEASURED。新点击恢复候选不能直接继承旧候选整个验收 |
+| U28 | [证据边界修复](2026-09-24-018-platform-evidence-execution.md)：历史声明/当前重验分层，维护回归42/36/10通过，真实c25执行收据与f87最终包字节正负控通过 | 整合候选通过后继续更新公开声明；原始包运行日志、设备/账号与发布范围不由字节或文档验证推导 |
+| U29 | a6四条f87→a6普通冷读、真实一字节坏包拒绝和四条全新f87冷回退通过；7次加密CLI通过、旧basic-A实际CAES生产者成功；正确密钥原生加载RED已用真实Lua回归及单文件原生delta修复诊断定位 | 当前a4f代码新完整gate/托管候选/最终加密正确密钥与回退矩阵待验；原错误密钥对照仍待同一正式候选正控配对，AE3视听/后续选择等价和AE1–AE8剩余范围保留；不自动合并或发布 |
+
+U26/U27 的运行结果来自各自保留的隔离工作树。源码现已组合到U29树，但这些结果不构成U29或master验证。U27 新完整 Debug 原 run SHA256 为 `6ffa1a6c3808659a1d2883fc3619477460870ee8e46182e7e2f26d00f7f75393`，完整Release为 `0cf9be8c600dad436153bbede51355db19f3a9fe1c1120557c29313976279a47`，短跑为 `9a62d2c86e4cdd27d14959956c444e1b66e0fb9115a9d18cca654f5866e7a6d2`；源码均为 `c25d81ebfb324b85b54252ce937039c6dc790f28`。证据分别位于该工作树的 `artifacts/validation/u27-continuous-full-01`、`u27-continuous-release-02` 与 `u27-soak-workload/candidate-short-01`。首次Release辅助调用漏传configuration，被preflight拒绝，原失败保留，未算作执行过的全量测试。
+
+## 2026-09-13 历史接续快照
+
+**当前推进：U22最终包隔离。U12–U21已交付，PR #24已合并65e5b425，合并后CI34734686509十项全部成功。U21两模板真实作者冷恢复、完整CLI107/107、严格原生门禁及完整Web608/608通过。Expo下一次执行受配额限制，用户要求先继续其余开发。底层优先，Studio暂停。** 完整状态及适用范围见[执行记录](2026-09-05-002-runtime-foundation-execution.md)、[U21记录](2026-09-13-012-cli-author-journey-execution.md)与[U22记录](2026-09-13-013-final-package-isolation-execution.md)。
 
 - [x] 核对并保留旧任务工作区与未提交改动；复核旧任务最近记录和指定验证目录。
 - [x] 在线复核 U11 提交 `35245667` 的 CI：10 个 job 全部成功。
@@ -36,9 +120,9 @@
 - [x] U18错误与RPC退出/超时：最终本机严格门禁和七项执行CI通过，PR #21已合并9b269ab7；本机旧Web性能失败与最终Linux Web511/511分别记录。
 - [x] U19目标能力交付：2dfe451e严格原生门禁、Web531/531、实际包正反启动与七项执行CI通过；最终文档CI通过后PR #22已合并98aa63c0。
 - [x] U20 Web音频交付：完整Web598/598、真实PCM46、实际包等待9、严格原生与候选CI通过；PR #23已合并c7471141，master CI34724868950十项全部成功。
-- [ ] U21 作者路径：basic/kag3各两分支、原生4组冷恢复与Web根/子路径/离线四组通过；CLI107/107、严格原生1404 C++/Lua147及56/CTest32通过+1可选跳过、Web608/608通过。CI34732265133桌面与iOS等6项成功，Android产物上传DNS失败保留；待最终文档CI与PR #24合并。
-- [ ] U22 最终包隔离：独立工作区推进精确包身份、静态内容和进程/端口归属检查，各最终平台包尚未验收。
-- [ ] U2 尚未补齐的跨平台/sanitizer/基线及 U21–U29 后续任务，按唯一计划和执行记录推进；Apple已接入Expo EAS，缺配额时不声称新源码已验证。
+- [x] U21 作者路径：basic/kag3各两分支、原生4组冷恢复与Web根/子路径/离线四组通过；CLI107/107、严格原生1404 C++/Lua147及56/CTest32通过+1可选跳过、Web608/608通过。早期Android产物上传DNS失败保留；最终候选CI34733640509七项执行成功，PR #24已合并65e5b425，合并后CI34734686509十项全部成功。
+- [ ] U22 最终包隔离：Windows ZIP诊断性真实五阶段已通过；Web实际失败正在修复，DMG/AppImage容器及AppRun接线继续。实际CTest发现44项，尚未完成本候选完整门禁与跨平台最终包验收。
+- [ ] U2 尚未补齐的跨平台/sanitizer/基线及 U22–U29 后续任务，按唯一计划和执行记录推进；Apple已接入Expo EAS，缺配额时不声称新源码已验证。
 
 ## 2026-09-05 历史快照（原未提交内容保留，不代表当前排期）
 
@@ -48,7 +132,7 @@
 
 勾选仅表示该任务当前明确范围的验收完成；本机验证不代表所有平台、真机或发布已完成。尚有验证缺口的任务保持未勾选。
 
-## 待办清单
+### 当时的待办清单
 
 - [x] U1 真实执行结果驱动验证证据 — 本机适用验收通过；53 项证据测试、57 项变异测试和真实采集复核通过。
 - [ ] U2 可复现构建和分层测试基线 — **进行中**；Windows Debug 完整流程通过，Release/完整跨平台/sanitizer/性能基线待补。
@@ -80,7 +164,7 @@
 - [ ] U28 能力与平台声明由证据更新 — 待执行；首批存档文档已局部同步。
 - [ ] U29 底层候选包验收演练 — 待执行；不自动发布，也不恢复 Studio。
 
-## 最近已经取得的结果
+### 当时已经取得的结果
 
 - Debug 完整 C++：1158/1158，0 failed，0 skipped，386514 assertions。
 - Lua 主套件：145/145；孤儿套件：30/30。
@@ -90,7 +174,7 @@
 - 云校验受控变异：绕过校验时两组回归失败；源码已按原摘要恢复。
 - 已保存提交：f64aad4e（新计划）、f9907fb5（运行时修复）、54c537a6（真实验证工具）。
 
-## 详细依据
+### 历史快照的详细依据
 
 - [完整计划](2026-09-05-001-refactor-runtime-foundation-plan.md)
 - [执行记录与原始证据路径](2026-09-05-002-runtime-foundation-execution.md)

@@ -1,6 +1,12 @@
 -- U11: run actual runner/handlers; storage alone is an isolated value-copy fake.
 package.path = "scripts/?.lua;scripts/?/init.lua;" .. package.path
 
+-- Test handlers are explicit DSL extensions; a recording KAG table alone
+-- does not register commands. Keep the production public selector intact.
+local fixture_schema = require("kag.schema")
+fixture_schema.define("u11_reentrant_replace", {})
+fixture_schema.define("u11_pending_restore", {})
+
 local function callable(fields)
     return setmetatable(fields or {}, { __index = function(self, key)
         if type(key) ~= "string" then return nil end
@@ -74,6 +80,72 @@ end
 local function try_load()
     local ok, err = pcall(save.load, runner.get_ctx(), { slot = 31 })
     return ok, err
+end
+
+-- Inline cross-scene entry has no completed token yet: display=0/resume=1.
+-- Both external capture there and a first-command [save] must emit valid slots.
+do
+    local flow = require("flow")
+    local original_load, original_prepare, original_policy = flow.load_scene, flow.prepare_scene, flow.is_restore_scene
+    local caller = "tests/projects/u11_restore/cursor-caller.ks"
+    local callee = "assets/script/cursor-callee.ks"
+    local sources = {
+        [caller] = '[set var="f.reward" value=0]\n[call cursor-callee.ks]\n[set var="f.returned" value=1]\n[end]',
+        [callee] = '[save slot=30]\n[inc var="f.reward" by=1]\n[return]',
+    }
+    local function scene(path, fallback, ...)
+        if not sources[path] then return fallback(path, ...) end
+        local tokens = require("tokenizer").parse(sources[path])
+        require("kag.compiler").compile(tokens)
+        return {tokens=tokens, labels=tokens._compiled.labels, path=path, base_path=path}
+    end
+    flow.load_scene = function(path, ...) return scene(path, original_load, ...) end
+    flow.prepare_scene = function(path, ...) return scene(path, original_prepare, ...) end
+    flow.is_restore_scene = function(path)
+        return sources[path] ~= nil or (original_policy and original_policy(path)) or save._safeScenePath(path)
+    end
+    local function finish()
+        for _ = 1, 40 do
+            local ctx = runner.get_ctx()
+            if not ctx._session_active then return ctx end
+            runner.update(0)
+        end
+        error("cursor regression failed to finish")
+    end
+    runner.stop()
+    assert(runner.start(caller))
+    runner.update(0) -- Execute the real call and stop at its scheduler yield.
+    local boundary = runner.get_ctx()
+    check("first callee boundary is the real zero-display suspended cursor", boundary.current_scene == callee
+        and boundary.token_index == 0 and boundary._resume_index == 1 and boundary._executing_index == nil)
+    assert(save.save(boundary, {slot=29}))
+    print("CURSOR_EXTERNAL_SLOT:" .. slots[29].token_index .. ":" .. slots[29].display_token_index)
+    check("external first-position capture preserves resume1 and emits display1",
+        slots[29].token_index == 1 and slots[29].display_token_index == 1)
+    local prepared_ok, prepared = pcall(require("kag.save_state").prepare, slots[29], flow.is_restore_scene, flow.prepare_scene)
+    check("external first-position capture passes the unchanged reader", prepared_ok)
+    if prepared_ok then require("kag.presentation").discard(prepared._presentation) end
+    finish()
+    print("CURSOR_INLINE_SLOT:" .. slots[30].token_index .. ":" .. slots[30].display_token_index
+        .. ":" .. slots[30].call_stack[1].index)
+    check("first inline save emits resume2 display1 and caller3", slots[30].token_index == 2
+        and slots[30].display_token_index == 1 and slots[30].call_stack[1].index == 3)
+    local valid = copy(slots[30])
+    local bad = copy(valid); bad.display_token_index = 0
+    local accepted = pcall(require("kag.save_state").prepare, bad, flow.is_restore_scene, flow.prepare_scene)
+    check("unchanged reader still rejects display position0", not accepted)
+    local loaded = save.load(runner.get_ctx(), {slot=30})
+    check("first inline saved slot loads through real restore", loaded == true)
+    if loaded then
+        local restored = finish()
+        check("first inline restore resumes reward once and returns caller", restored.f.reward == 1
+            and restored.f.returned == 1 and #(restored.call_stack or {}) == 0)
+    else
+        check("first inline restore resumes reward once and returns caller", false)
+    end
+    runner.stop()
+    flow.load_scene, flow.prepare_scene, flow.is_restore_scene = original_load, original_prepare, original_policy
+    slots[29], slots[30] = nil, nil
 end
 
 do

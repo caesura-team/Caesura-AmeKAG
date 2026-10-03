@@ -10,7 +10,7 @@
 //      the keyword array Monaco is handed is that same array (consistency guard).
 //   3. IDEMPOTENT registration under a Monaco mock.
 //   4. HIGHLIGHTER-vs-SCHEMA consistency — the KNOWN_COMMANDS keyword set covers
-//      every one of the 118 declarative command contracts in
+//      every declarative command contract in the generated
 //      docs/api/command-contracts.md (auto-generated from kag/schema.lua).
 //
 // Note: actual completion items are produced engine-side by scripts/kag/lsp.lua
@@ -18,6 +18,7 @@
 // the KAG_COMMANDS keyword set. So command-completion coverage here is the
 // exhaustive-tag test that proves every known command highlights as a valid tag.
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { readFileSync } from 'node:fs'
 import * as monaco from 'monaco-editor'
 import { KNOWN_COMMANDS } from '../lib/commandLint'
 import { KAG_COMMANDS, registerKagLanguage } from '../ide/kagLanguage'
@@ -294,39 +295,27 @@ describe('registerKagLanguage (Monaco wiring & idempotency)', () => {
 
 // ============================================================================
 // 4. HIGHLIGHTER-vs-SCHEMA consistency — every command in the generated
-//    docs/api/command-contracts.md (auto-generated from kag/schema.lua, 118
-//    commands) must live in KNOWN_COMMANDS so its [cmd] tag highlights
+//    docs/api/command-contracts.md must live in KNOWN_COMMANDS so its [cmd] tag highlights
 //    instead of falling to tag.invalid.
 // ============================================================================
-const SCHEMA_118 = [
-  'add','ai_dialog','assert','auto','bg','bgm','blur','br','button','camera','cancel','ch',
-  'chapter','cl','close','cps','csd','csl','csp','dec','delay','div','emb','endbutton','ending',
-  'endselect','er','eval','fade','fadebgm','fadeout','fadevol','fg','flash','font','gallery',
-  'history','hr','i18n','image','inc','l','layfade','layopt','ld','listsaves','load','loadplace',
-  'mod','move','moveto','mul','music','nameplate','notify','nvl','p','palette','particles','play',
-  'playbgm','playbgmstop','playse','playstop','playvoice','position','preload','pt','quake','r',
-  'random','replay','reset','rollback','ruby','s','save','saveload','saveplace','scroll','select',
-  'set','setbgmvolume','setsevolume','setvoicevolume','shake','skip','sma_anim','sma_ik','sma_play',
-  'sma_stop','sma_variant','sprite_fade','sprite_move','sprite_scale','sprite_swap','stopbgm',
-  'stopse','stopvideo','stopvoice','sub','text','textbox','textspeed','trans','unlock','vib',
-  'vibrate','video','voice','voice_off','voice_wait','wait','waitbgm','waitclick','waitforclick',
-  'waitsound','xfadebgm',
-];
+const contractDocument = readFileSync(new URL('../../../docs/api/command-contracts.md', import.meta.url), 'utf8')
+const schemaCommands = [...contractDocument.matchAll(/^### `\[([a-z0-9_]+)\]`/gm)].map((match) => match[1])
 
-describe('KNOWN_COMMANDS vs schema contracts (118)', () => {
+describe('KNOWN_COMMANDS vs generated schema contracts', () => {
   it('covers at least the schema contract count', () => {
-    expect(KAG_COMMANDS.length).toBeGreaterThanOrEqual(SCHEMA_118.length);
+    expect(schemaCommands.length).toBeGreaterThan(0);
+    expect(KAG_COMMANDS.length).toBeGreaterThanOrEqual(schemaCommands.length);
   });
 
-  it('covers every one of the 118 declarative command contracts', () => {
+  it('covers every declarative command contract', () => {
     const set = new Set(KAG_COMMANDS);
-    for (const cmd of SCHEMA_118) {
+    for (const cmd of schemaCommands) {
       expect(set.has(cmd), 'KNOWN_COMMANDS is missing schema contract: ' + cmd).toBe(true);
     }
   });
 
   it('tokens every schema contract command as a valid tag (not tag.invalid)', () => {
-    for (const cmd of SCHEMA_118) {
+    for (const cmd of schemaCommands) {
       const toks = tokenize('[' + cmd + ']\n');
       expect(toks[0]?.token, '[' + cmd + '] should be tag, got ' + toks[0]?.token).toBe('tag');
     }

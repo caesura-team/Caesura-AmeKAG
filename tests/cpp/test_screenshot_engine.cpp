@@ -270,3 +270,77 @@ TEST_CASE("U15 engine export writes matched completed PNGs and reports readback 
         }
     }
 }
+
+
+TEST_CASE("Host U27 snapshot: unlimited owner frames progress independently of export frame limits") {
+    Frames frames;
+    Test::LifecycleProbe renderer, animation;
+    auto config = configFor(frames, renderer, animation);
+    REQUIRE(config.frameLimit == 0);
+    Engine engine(std::move(config));
+    REQUIRE(engine.init());
+    installFrameScript(engine, frames);
+    std::vector<EngineHostSnapshot> snapshots;
+    unsigned pumps = 0;
+    engine.run([&] {
+        ++pumps;
+        const auto first = engine.getHostSnapshot();
+        const auto repeated = engine.getHostSnapshot();
+        CHECK(first.supported);
+        CHECK(first.completedOwnerFrames == repeated.completedOwnerFrames);
+        CHECK(first.initialized);
+        CHECK(first.running);
+        CHECK(first.delivery == AsyncHostDelivery::DirectDrain);
+        CHECK(first.asyncOwnershipComplete);
+        snapshots.push_back(first);
+        if (pumps == 4) engine.shutdown(); // Stop before a fourth loop frame; no timing assumption.
+    });
+    REQUIRE(snapshots.size() == 4);
+    CHECK(pumps == 4);
+    for (size_t i = 0; i < snapshots.size(); ++i)
+        CHECK(snapshots[i].completedOwnerFrames == static_cast<uint64_t>(i));
+    CHECK(frames.presented == 3); // Real Engine loop, counting render/platform boundary only.
+    CHECK(renderer.advanceCalls == 5); // Three frames plus two pre-existing shutdown drains.
+    const auto stopped = engine.getHostSnapshot();
+    CHECK(stopped.supported);
+    CHECK_FALSE(stopped.initialized);
+    CHECK_FALSE(stopped.running);
+    CHECK(stopped.completedOwnerFrames == 3);
+    engine.shutdown();
+    CHECK(engine.getHostSnapshot().completedOwnerFrames == 3);
+}
+
+TEST_CASE("Host U27 snapshot: standalone presentation and failed recovery are not owner frames") {
+    bool recoveryFailure = false;
+    SUBCASE("standalone render and capture do not advance owner loop") {}
+    SUBCASE("device recovery stops before completing a loop frame") { recoveryFailure = true; }
+    Frames frames;
+    Test::LifecycleProbe renderer, animation;
+    Engine engine(configFor(frames, renderer, animation));
+    REQUIRE(engine.init());
+    installFrameScript(engine, frames);
+    CHECK(engine.getHostSnapshot().supported);
+    CHECK(engine.getHostSnapshot().completedOwnerFrames == 0);
+    if (recoveryFailure) {
+        frames.lost = true;
+        unsigned pumps = 0;
+        engine.run([&] { if (++pumps > 2) engine.quit(); });
+        CHECK(engine.hasRenderFailure());
+        CHECK(frames.recovered == 1);
+        CHECK(frames.presented == 0);
+        CHECK(frames.events.empty());
+    } else {
+        engine.renderOneFrame();
+        CHECK(frames.presented == 1);
+        CHECK(engine.getHostSnapshot().completedOwnerFrames == 0);
+        REQUIRE_FALSE(engine.captureFrameForRpc(1, 1).empty());
+        CHECK(frames.presented == 2);
+        CHECK(frames.captures.retainedCount() == 0);
+    }
+    CHECK(engine.getHostSnapshot().completedOwnerFrames == 0);
+    engine.shutdown();
+    CHECK(engine.getHostSnapshot().supported);
+    CHECK_FALSE(engine.getHostSnapshot().initialized);
+    CHECK_FALSE(engine.getHostSnapshot().running);
+    CHECK(engine.getHostSnapshot().completedOwnerFrames == 0);
+}

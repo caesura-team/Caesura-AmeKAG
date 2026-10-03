@@ -25,7 +25,10 @@ _G.sma = {
         return _G.sma.created
     end,
     destroy_mesh = function() _G.sma.destroyed = _G.sma.destroyed + 1 end,
-    update_mesh = function() _G.sma.updates = _G.sma.updates + 1 end,
+    update_mesh = function(handle, poses)
+        _G.sma.updates = _G.sma.updates + 1
+        _G.sma.last_poses = poses
+    end,
     draw_mesh = function() _G.sma.draws = _G.sma.draws + 1 end,
     count = function() return _G.sma.created end,
     initialized = function() return true end,
@@ -109,12 +112,23 @@ local actor = sma.spawn(ctx, "hero1", asset, "idle", {
     x = 100, y = 50, scale = 2, texId = 42,
 })
 check("spawn: binding create called", _G.sma.created == 1 and actor.handle == 1)
+-- Observe the actual producer records here. Decoding these records, named
+-- field precedence, and rejection of invalid values are exercised through
+-- the real C binding in tests/cpp/test_sma_native_contract.cpp.
+check("binding records: vertex x occupies slot 1",
+      _G.sma.last_verts[2][1] == 1 and _G.sma.last_verts[2][2] == 0)
+check("binding records: default bone0 and weight occupy slots 5 and 6",
+      _G.sma.last_verts[2][5] == 0 and _G.sma.last_verts[2][6] == 1)
 check("spawn: actor state", ctx.sma_actors.hero1 ~= nil
       and ctx.sma_actors.hero1.texId == 42
       and ctx.sma_actors.hero1.scale == 2)
 
 sma.update(ctx, 0.5)
 check("update: binding update called with world poses", _G.sma.updates == 1)
+check("binding records: animated rotation occupies pose slot 1",
+      _G.sma.last_poses and #_G.sma.last_poses == 2
+      and near(_G.sma.last_poses[2][1], 0.7854)
+      and near(_G.sma.last_poses[2][2], 1))
 sma.render(ctx)
 check("render: binding draw called", _G.sma.draws == 1)
 
@@ -412,19 +426,21 @@ check("contracts: sma_variant has part/variant",
 
 
 -- ---------------------------------------------------------------------------
--- Review S1-1 guard (round 116): the C++ SmaBinding used to read mesh/pose
--- fields with luaL_optnumber on the table index, which always yielded the
--- defaults (breaks SMA skinning semantically). Fixed to per-field lua_getfield;
--- this source guard pins that fix so a refactor cannot silently revert it.
--- ---------------------------------------------------------------------------
+-- Static source-shape check only. Runtime index decoding/bounds are proved
+-- by the separate real C-binding tests, not by this text assertion.
 do
-    local f = assert(io.open("src/script/bindings/SmaBinding.cpp", "r"))
-    local src = f:read("*a")
-    f:close()
-    check("S1-1: readMesh reads x field", src:find('lua_getfield(L, -1, "x")', 1, true) ~= nil)
-    check("S1-1: readMesh reads bone0 field", src:find('lua_getfield(L, -1, "bone0")', 1, true) ~= nil)
-    check("S1-1: pose reads rot field", src:find('lua_getfield(L, -1, "rot")', 1, true) ~= nil)
-    check("S1-1: indices bounds-checked", src:find("raw >= vn", 1, true) ~= nil)
+    local f=assert(io.open("src/script/bindings/SmaBinding.cpp","r"))
+    local src=f:read("*a");f:close()
+    local function block(name)
+        local text=src:match("static [^\n]- "..name.."%([^\n]-%)%s*{(.-)\n}")
+        assert(text,"missing C++ function source: "..name)
+        return text:gsub("%s+", "")
+    end
+    local mesh=block("readMesh")
+    local function contains(text,needle)return text:find(needle,1,true)~=nil end
+    check("S1-1 static: index type/range rejects invalid mesh",contains(mesh,'lua_type(L,-1)==LUA_TNUMBER&&integral')
+        and contains(mesh,'raw>=0&&static_cast<size_t>(raw)<vn&&raw<=UINT16_MAX')
+        and contains(mesh,'if(!valid){') and contains(mesh,'out.indices.clear();returnfalse;'))
 end
 
 if failed > 0 then

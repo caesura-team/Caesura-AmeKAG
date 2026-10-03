@@ -50,6 +50,7 @@ import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { luaLiteralValue } from '../web/lua-value.js'
 import { copyDirectorySync } from './copy_tree.mjs'
+import { writeOfflineManifest } from './offline_manifest.mjs'
 import { join, resolve, dirname, basename, relative, isAbsolute } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
@@ -713,6 +714,7 @@ function packageLocations(value) {
   Object.values(value).forEach(packageLocations)
 }
 packageLocations(CAPABILITY_REPORT)
+writeOfflineManifest(OUT_PATH, { requiredAssets: ASSET_DEPENDENCIES.static })
 CAPABILITY_REPORT.profile = createPackagedWebCapabilityProfile(OUT_PATH, BUILT_PROFILE, { indexHtml: configuredHtml })
 CAPABILITY_REPORT.checked_inputs = Object.fromEntries(BAKED_SCENE_PATHS.map((file, index) =>
   [sceneKeys[index], CHECKED_SCENES[KAGS_DISPLAY.indexOf(file)]]))

@@ -11,18 +11,19 @@ package.path = here .. "?.lua;" .. package.path
 local schema = require("kag.schema")
 
 -- load every command module so all contracts register
-pcall(require, "kag.commands.text")
-pcall(require, "kag.commands.system")
-pcall(require, "kag.commands.audio")
-pcall(require, "kag.commands.transition")
-pcall(require, "kag.commands.layer")
-pcall(require, "kag.commands.vfx")
-pcall(require, "kag.commands.video")
-pcall(require, "kag.commands.save")
-pcall(require, "kag.commands.resource")
-pcall(require, "kag.commands.character")
-pcall(require, "kag.commands.math")
-pcall(require, "kag")
+require("kag.commands.text")
+require("kag.commands.system")
+require("kag.commands.audio")
+require("kag.commands.transition")
+require("kag.commands.layer")
+require("kag.commands.vfx")
+require("kag.commands.video")
+require("kag.commands.save")
+require("kag.commands.resource")
+require("kag.commands.character")
+require("kag.commands.math")
+require("kag")
+require("kag.quickmenu")
 
 local contracts = schema.dumpContracts()
 local cmds = {}
@@ -36,6 +37,8 @@ out[#out + 1] = "# KAG Neo-Genesis Command Contracts (auto-generated)"
 out[#out + 1] = ""
 out[#out + 1] = "> Generated from the declarative schema registry (`kag/schema.lua`) — do not edit."
 out[#out + 1] = "> Regenerate: `lua scripts/schema_doc.lua > docs/api/command-contracts.md`"
+out[#out + 1] = ""
+out[#out + 1] = "> Explicit canonical parameters take precedence over aliases; aliases resolve before defaults and use the same type/range validation."
 out[#out + 1] = ""
 out[#out + 1] = "## Commands (" .. #cmds .. ")"
 out[#out + 1] = ""
@@ -52,11 +55,11 @@ for _, cmd in ipairs(cmds) do
             m.desc or "")
         out[#out + 1] = ""
     end
-    out[#out + 1] = "| Param | Type | Default | Range / Choices | Required |"
-    out[#out + 1] = "|---|---|---|---|---|"
+    out[#out + 1] = "| Param | Type | Default | Range / Choices | Required | Aliases |"
+    out[#out + 1] = "|---|---|---|---|---|---|"
     if specs._require_any then
         out[#out + 1] = string.format(
-            "| **requires one of** | — | — | %s | yes |",
+            "| **requires one of** | — | — | %s | yes | — |",
             table.concat(specs._require_any, ", "))
     end
     local params = {}
@@ -76,12 +79,15 @@ for _, cmd in ipairs(cmds) do
             for c in pairs(spec.choices) do cs[#cs + 1] = c end
             table.sort(cs)
             range = table.concat(cs, ",")
+        elseif spec.values then
+            range = table.concat(spec.values, ", ")
         end
-        out[#out + 1] = string.format("| `%s` | %s | %s | %s | %s |",
+        out[#out + 1] = string.format("| `%s` | %s | %s | %s | %s | %s |",
             name, spec.type or "string",
             spec.default ~= nil and tostring(spec.default) or "-",
             range ~= "" and range or "-",
-            spec.required and "yes" or "-")
+            spec.required and "yes" or "-",
+            type(spec.aliases)=="table" and #spec.aliases>0 and table.concat(spec.aliases, ", ") or "-")
     end
     out[#out + 1] = ""
 end

@@ -78,7 +78,8 @@ function VideoCommands.video(ctx, params)
     local ct = operation.token
     -- Allocate ownership before open. A later playback may reuse the same
     -- numeric decoder handle, so late cancellation owns this record only.
-    local playback = {handle=false, closed=false}
+    local playback = {handle=false, closed=false,
+        x=params.x or 0, y=params.y or 0, w=params.w or 0, h=params.h or 0}
     local function stop_video()
         return close_playback(ctx, playback)
     end
@@ -122,6 +123,14 @@ end
 
 function VideoCommands.stopvideo(ctx, params)
     return close_playback(ctx, ctx._videoPlayback)
+end
+
+-- Engine advances the decoder before its render callback. Rendering here keeps
+-- the current frame visible without decoding twice or drawing during update.
+function VideoCommands.render(ctx)
+    local playback=ctx and ctx._videoPlayback
+    if not playback or playback.closed then return false end
+    return backend.video_draw(playback.handle,playback.x,playback.y,playback.w,playback.h)
 end
 
 return VideoCommands

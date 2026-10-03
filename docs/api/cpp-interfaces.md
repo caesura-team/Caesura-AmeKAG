@@ -1,7 +1,7 @@
 # Caesura (AmeKAG) — C++ API Interface Reference
 
-> **38 个 API 接口头文件；28 个具名运行时服务槽位通过 `BackendRegistry` 访问**
-> 最后更新: 2026-09-06；逐文件统计见 [API Statistics](api-stats.md)。同一个接口头可以包含多个纯虚类，头文件数不等于类数。
+> **41 个 API 接口头文件；28 个具名运行时服务槽位通过 `BackendRegistry` 访问**
+> 最后更新: 2026-09-24；逐文件统计见 [API Statistics](api-stats.md)。同一个接口头可以包含多个纯虚类，头文件数不等于类数。
 >
 > **更新记录**: 2026-08-23 — STEP14 (Track P5 Audio Focus Service): interface census 33 -> 34 (+`IAudioFocusService`)，Registry 服务槽位 24 -> 25
 > 2026-08-23 — STEP13 (Track P4 组合根默认存档 provider): 无新增接口头（census 保持 33；`Engine::init` 缺省安装 `LocalFileSaveProvider`，修复未装 provider 时存档静默失效）
@@ -54,12 +54,13 @@ auto* lua      = BackendRegistry::instance().getLuaManager()->state();
 
 | 接口 / 头文件 | 方法与契约 |
 |---|---|
-| `resource/api/IAssetReader.h` | `readAsset(path, maxBytes) -> vector<uint8_t>`：按资源优先级读取，最高优先级来源失败不能回退到其它内容；空结果表示不可用、失败或超限。上限约束返回字节，各 provider 的读取峰值另有约束。 |
+| `resource/api/IAssetReader.h` | `readAsset(path, maxBytes)`遵循最高优先级来源与字节上限；`listDirectory(directory, maxEntries, maxNameBytes)`返回完整有界目录结果，不把失败伪装为空列表。 |
+| `resource/api/IAssetProvider.h` | `AssetDirectoryStatus`、`AssetDirectoryResult`定义目录枚举状态和叶名；Complete、Unsupported、InvalidPath、LimitExceeded、IoError分别可辨。只读非递归，运行时最大4096条／1MiB名称，不开放shell。 |
 | `resource/api/IImageDecoder.h` | `decode(bytes, size, maxDecodedBytes) -> DecodedImage`：只做 CPU 解码；结果包含 `rgba`、`width`、`height`、`ok`，不暴露第三方图像类型。 |
 | `audio/api/IAudioRestore.h` | `captureAudioState()`、`prepareAudioState(state, bytes, size)`、`applyAudioState(unique_ptr<IPreparedAudioState>)`、`stopSessionAudio()`。准备对象仅通过 `description()` 暴露描述。 |
 | `render/api/IRenderDevice.h` | `captureFontState()`、`defaultFontState()`、`prepareFontState(state, bytes, size)`、`applyFontState(unique_ptr<IPreparedFontState>)`、`clearFontState()`。准备对象仅通过 `description()` 暴露描述。 |
 | `render/api/ITextureManager.h` | `describeTexture(id, TextureSourceInfo&)` 描述资源路径或 RGBA 纯色来源；未知、临时纹理返回 false 且不改变输出。恢复通过 `loadTextureFromRGBA` 创建独占纹理。 |
-| `render/api/IVideoPlayer.h` | `closeAll()` 逻辑停止全部视频，沿用播放器更新中的延迟释放；保留后端初始化状态。 |
+| `render/api/IVideoPlayer.h` | `openMemory(vector<uint8_t>)`只解码已拥有的有界资产字节，不回退文件名／URL；`close`／`closeAll`逻辑停止，物理释放沿`updateAll`边界进行。`activeCount() const`是实际对象观察，不能用Lua会话数量替代。 |
 | `render/api/IParticleSystem.h` | `activeEmitterCount() const` 查询活动发射器；`shutdown()` 清空发射器和粒子池，恢复层按原初始化状态决定重新初始化。 |
 | `live2d/api/IAnimationBackend.h` | `loadedModelCount() const -> size_t`、`clearModels()`；清空模型但保留后端与设备关联，不复用旧模型句柄。 |
 
@@ -196,13 +197,15 @@ public:
 |------|------|--------|------|
 | `init` | — | `bool` | 初始化音频引擎 |
 | `isPlaybackAvailable` | — | `bool` | owner 线程查询实际实施会话；Null 始终为 false，ManualMix 可用不等于物理输出 |
+| `getSnapshot` | — | `AudioBackendSnapshot` | owner 线程读取后端、会话句柄与缓存计数；Device 各项读取不构成全局原子快照 |
+| `getVoiceLevel` | — | `VoiceLevelSnapshot` | owner 线程只读 VOICE 混音 PCM 电平、播放/采样状态与代次；不推进混音或消费结束事件 |
 | `shutdown` | — | — | 关闭并释放所有资源 |
 | `update` | `deltaTime` | — | 每帧更新音频系统 |
 | `suspend` | — | — | 暂停全部播放（混音器暂停，保留已加载资源） |
 | `resume` | — | — | 从暂停位置继续播放 |
 | `playBGM` | `file`, `fadeTime=1.0f` | `uint` | 播放背景音乐（支持淡入） |
 | `stopBGM` | `fadeTime=1.0f` | — | 停止 BGM（支持淡出） |
-| `playVoice` | `file` | `uint` | 播放语音（绝对中断前一条） |
+| `playVoice` | `file` | `uint` | 播放语音；当前后端允许四槽重叠，轮转的旧语音短暂淡出；失败返回 0 |
 | `stopVoice` | — | — | 停止语音 |
 | `playSE` | `file` | `uint` | 播放 2D 音效 |
 | `playRawPCM` | `samples`, `numFrames`, `sampleRate`, `channels` | `uint` | 播放交错的 float PCM（视频音频等），返回句柄 |
@@ -475,6 +478,7 @@ struct PointerEvent {
 | `loadModel(path, name)` | 加载模型，返回 handle（0=失败） |
 | `unloadModel(handle)` | 卸载模型 |
 | `isLoaded(handle)` | 模型是否已加载 |
+| `loadedModelCount()` / `clearModels()` | 查询并清空已加载模型；清空不复用旧句柄 |
 | `showModel(handle, x, y, scale)` | 显示模型在指定位置 |
 | `hideModel(handle)` | 隐藏模型 |
 | `setOpacity(handle, opacity)` | 设置透明度 (0.0–1.0) |
@@ -482,12 +486,14 @@ struct PointerEvent {
 | `playMotion(handle, name)` | 播放指定动作 |
 | `setExpression(handle, name)` | 设置表情 |
 | `setParameter(handle, param, value)` | 设置模型参数 |
+| `setVoiceLipSync(handle, enabled)` | 为含 `ParamMouthOpenY` 的真实 Cubism 模型开启/关闭 VOICE 驱动；默认关闭，不支持时返回 false |
 | `name` | 返回后端名称 |
 
 **降级行为**：无 Cubism SDK 时，NullAnimationBackend 支持 PNG/JPG/BMP 静态图片作为立绘，通过 TextureManager 加载。
 
-当前没有注册 `live2d` 全局 Lua 表；后续脚本绑定必须位于 Script 模块，并在调用时经
-`BackendRegistry::getAnimationBackend()` 解析接口。
+Script 模块注册全局 Lua `Live2D` 表：`load`、`show`、`hide`、`unload`、`set_mouth`、
+`set_voice_lipsync`。绑定在 owner 线程经 `BackendRegistry::getAnimationBackend()` 解析接口，
+仅对实际初始化的 Cubism 后端开放；静态 PNG 回退不冒充动态模型能力。
 
 ---
 
@@ -1056,6 +1062,31 @@ SaveManager 加密整个 JSON 信封，包括 scene、timestamp、schema_version
 | `writeCloudFile(slotPath, bytes)` | 上传调用方给定的同一份字节，不重新读取本地文件 |
 
 SaveManager 持有读取结果，验证其 CAES/明文策略、key 和可加载结构后才调用对应 write。校验失败不会调用目标写入；校验中的内存迁移不改变传输字节。必须区分本地和云端：Steam provider 的普通 `readFile/writeFile` 指向云存储，但 push/pull 分别是本地→云端和云端→本地。仅声明 `supportsCloudSync()` 而未实现此 transport 的 provider，不能通过 SaveManager 发起安全同步。
+
+### 16.4 ICloudSaveSnapshotTransport
+
+[ICloudSaveSnapshotTransport.h](../../src/storage/api/ICloudSaveSnapshotTransport.h) 是独立的可选观察接口。`readSnapshot(side, slotPath)` 返回拥有原始缓冲的 `CloudSnapshot`，区分 Present、Missing、Unavailable、Failed、Invalid、Unsupported。Present 才有完整字节；空 Present 不等于缺失。诊断计数不授权使用部分内容，错误和非零计数不能与 Missing 混用。当前 HTTP/本地读提供该次读取的缺失信息；Steam 旧接口无法确定缺失时明确返回 Unavailable/IndeterminateMissing。两个端点按先本地、后云端分别读取，不是原子双端快照。
+
+`conditionalWriteSupport(side)` 是能力描述，接口本身没有条件写方法；摘要、时间戳、ETag 或能力位均不授权回退到旧的无条件 push/pull。
+
+### 16.5 ICloudSaveCoordinator
+
+[ICloudSaveCoordinator.h](../../src/storage/api/ICloudSaveCoordinator.h) 由 SaveManager 作为可选能力实现。调用者通过 `dynamic_cast<ICloudSaveCoordinator*>(BackendRegistry::instance().getSaveManager())` 查询，不新增服务槽位或具体后端单例。
+
+| 方法 | 行为 |
+|------|------|
+| `bindCloudCoordinator(binding)` | 显式绑定宿主控制的普通绝对目录、32位小写hex scopeId、非零policyEpoch。scope由宿主确认账户/端点命名空间，接口不发现或认证账户。 |
+| `prepareCloudSync(slot, operationToken)` | 每端一次typed观察，按当前密钥/策略/schema/迁移验证同一份原始字节。双端完整原件经不可变store保全；单边缺失只保存实际存在的一边。有效相等观察可在receipt发布后单独选择祖先。 |
+| `reopenCloudPreparation(expected)` | 按token与外部receipt SHA只读重开，并按当前策略重新验证保留内容；返回本实例stamp。不会重发记录或祖先选择。 |
+| `listCloudPreparations(slot)` | 有界列出完整引用及未完成/损坏计数，不选最新祖先，不清理未完成项。 |
+| `exportCloudHistory(selection, exportToken)` | 明确选择Local/Cloud/Base原件，重新验证后导出到排他取得的固定历史副本路径；不联网、不重新加密、不覆盖live slot。 |
+| `checkCloudPublication(selection, destination)` | 复核选择、当前策略和双方最新观察。变化为Stale，未知为InspectionIncomplete；未变化仍为UnsupportedConditionalWrite，绝不发起旧无条件传输。 |
+
+记录保全、receipt发布和祖先游标替换是不同提交点，不是多文件原子事务。游标发布前失败保持旧游标；发布后不确定结果保留候选引用，重开只描述RecoveredSelected/RecoveredNotSelected/Superseded，不回滚新游标。操作/导出token目录各最多128个；控制树逻辑字节预算256MiB，未完成项和未知内容也计数，不自动淘汰。固定JSON元数据限16KiB并拒绝重复/未知字段；原始存档仍受10MiB限额。
+
+所有方法为单owner-thread合同。运行期选择绑定真实随机sessionId与单调generation；provider、key、策略、init或迁移合同变化撤销旧绑定，同实例须换scope/epoch后显式绑定。校验回调中的重入配置修改会被拒绝，旧provider/key仍存活，外层返回ContextChanged。新实例恢复同一持久命名空间仍须显式绑定与原件复验。Compatible明文只能称ValidCurrentPolicy，不能称认证存档。
+
+当前验证包含真实CAES、磁盘、HTTP、原子writer失败与Windows/Linux执行；两端还分别完成51个独立协调器进程，验证游标发布前后终止、发布后摘要异常、当前密钥拒绝、只读重放和原字节历史导出。该跨进程探针的云端使用文件测试适配器，HTTP证据来自另外的真实回环测试。具体提交、原始结果与边界见[U26执行记录](../plans/2026-09-20-016-optional-sdk-cloud-boundaries-execution.md)。完整U26、真实SDK账号、远端CAS与断电持久性不由此API文档宣称完成。
 
 ---
 

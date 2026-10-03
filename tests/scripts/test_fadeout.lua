@@ -23,7 +23,7 @@ local ctx = { f = {}, tf = {}, sf = {}, mp = {}, variables = {} }
 local ok = pcall(KAG.fadeout, ctx, { layer = "bg", time = 700 })
 Layer.layfade = real_layfade
 check("fadeout delegates", ok and calls[1]
-      and calls[1].layer == "bg" and calls[1].opacity == 0 and calls[1].time == 700)
+      and calls[1].layer == "bg" and calls[1].to == 0 and calls[1].time == 700)
 
 -- explicit opacity converts 0..1 -> 0..255 (review should-fix: the
 -- schema is 0..1 but layfade/fade_to operate in 0..255 -- passing 0.3
@@ -32,7 +32,7 @@ calls = {}
 Layer.layfade = function(ctx, p) calls[#calls + 1] = p end
 pcall(KAG.fadeout, ctx, { layer = "fg", opacity = 0.3 })
 Layer.layfade = real_layfade
-check("fadeout explicit opacity scaled", calls[1] and calls[1].opacity == 76)
+check("fadeout explicit opacity scaled", calls[1] and calls[1].to == 76)
 -- default layer aligned with layfade (bg)
 calls = {}
 Layer.layfade = function(ctx, p) calls[#calls + 1] = p end

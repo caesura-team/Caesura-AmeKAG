@@ -7,11 +7,147 @@
 #include "../src/render/NullRenderDevice.h"
 #include "../src/audio/NullAudioBackend.h"
 #include "../src/platform/NullPlatformBackend.h"
+#include "../src/render/NullGpuMonitor.h"
+#include "../src/script/vm/LuaManager.h"
+#include "../src/input/InputRouter.h"
 #include "../src/minigame/NullMiniGameBackend.h"
+#include "../src/live2d/NullAnimationBackend.h"
+#include "../src/steam/NullSteamBackend.h"
+#include <array>
+#include <limits>
 #include <memory>
 #include <utility>
+#include <vector>
+
+extern "C" {
+#include <lua.h>
+#include <lauxlib.h>
+}
 
 using namespace Caesura;
+
+namespace {
+struct ScopedEditorEvents {
+    ScopedEditorEvents() { REQUIRE(SDL_InitSubSystem(SDL_INIT_EVENTS)); }
+    ~ScopedEditorEvents() {
+        SDL_FlushEvents(SDL_EVENT_FIRST, SDL_EVENT_LAST);
+        SDL_QuitSubSystem(SDL_INIT_EVENTS);
+    }
+};
+
+EngineConfig editorEventConfig(bool editor) {
+    EngineConfig cfg;
+    cfg.headless = true;
+    cfg.editorMode = editor;
+    cfg.render = new NullRenderDevice();
+    cfg.audio = new NullAudioBackend();
+    cfg.platform = new NullPlatformBackend();
+    cfg.gpuMonitor = new NullGpuMonitor();
+    return cfg;
+}
+}
+
+TEST_CASE("U22 Editor: queued SDL quit stops the owned loop") {
+    ScopedEditorEvents events;
+    Engine engine(editorEventConfig(true));
+    REQUIRE(engine.init());
+    SDL_FlushEvents(SDL_EVENT_FIRST, SDL_EVENT_LAST);
+    int ownerTicks = 0;
+    engine.run([&] {
+        if (++ownerTicks == 1) {
+            SDL_Event event{};
+            event.type = SDL_EVENT_QUIT;
+            REQUIRE(SDL_PushEvent(&event));
+        } else {
+            engine.quit(); // Deterministic failure bound, not the expected stop.
+        }
+    });
+    CHECK(ownerTicks == 1);
+    CHECK_FALSE(SDL_HasEvent(SDL_EVENT_QUIT));
+    engine.shutdown();
+}
+
+TEST_CASE("U22 Editor: pumping quit does not route game input") {
+    ScopedEditorEvents events;
+    Engine engine(editorEventConfig(true));
+    REQUIRE(engine.init());
+    int routed = 0;
+    engine.input().registerKAGCallback([&](const SDL_Event&) { ++routed; });
+    SDL_FlushEvents(SDL_EVENT_FIRST, SDL_EVENT_LAST);
+    int ownerTicks = 0;
+    engine.run([&] {
+        if (++ownerTicks != 1) { engine.quit(); return; }
+        SDL_Event event{};
+        event.type = SDL_EVENT_KEY_DOWN;
+        event.key.key = SDLK_W;
+        event.key.down = true;
+        REQUIRE(SDL_PushEvent(&event));
+        event = {};
+        event.type = SDL_EVENT_QUIT;
+        REQUIRE(SDL_PushEvent(&event));
+    });
+    CHECK(ownerTicks == 1);
+    CHECK(routed == 0);
+    lua_getglobal(engine.lua().state(), "_GAME_KEY_W");
+    CHECK_FALSE(lua_toboolean(engine.lua().state(), -1));
+    lua_pop(engine.lua().state(), 1);
+    engine.shutdown();
+}
+
+TEST_CASE("U22 Editor: pure headless loop leaves the SDL queue alone") {
+    ScopedEditorEvents events;
+    Engine engine(editorEventConfig(false));
+    REQUIRE(engine.init());
+    SDL_FlushEvents(SDL_EVENT_FIRST, SDL_EVENT_LAST);
+    int ownerTicks = 0;
+    engine.run([&] {
+        if (++ownerTicks == 1) {
+            SDL_Event event{};
+            event.type = SDL_EVENT_QUIT;
+            REQUIRE(SDL_PushEvent(&event));
+        } else engine.quit();
+    });
+    CHECK(ownerTicks == 2);
+    CHECK(SDL_HasEvent(SDL_EVENT_QUIT));
+    engine.shutdown();
+}
+
+TEST_CASE("U22 Editor: ordinary SDL events are discarded between owner cycles") {
+    ScopedEditorEvents events;
+    Engine engine(editorEventConfig(true));
+    REQUIRE(engine.init());
+    int routed = 0;
+    engine.input().registerKAGCallback([&](const SDL_Event&) { ++routed; });
+    SDL_FlushEvents(SDL_EVENT_FIRST, SDL_EVENT_LAST);
+    int ownerTicks = 0;
+    engine.run([&] {
+        ++ownerTicks;
+        if (ownerTicks == 2 || ownerTicks == 3) {
+            CHECK_FALSE(SDL_HasEvent(SDL_EVENT_KEY_DOWN));
+            CHECK(routed == 0);
+        }
+        if (ownerTicks <= 2) {
+            for (int i = 0; i < 128; ++i) {
+                SDL_Event event{};
+                event.type = SDL_EVENT_KEY_DOWN;
+                event.key.key = SDLK_W;
+                event.key.down = true;
+                REQUIRE(SDL_PushEvent(&event));
+            }
+        } else if (ownerTicks == 3) {
+            SDL_Event event{};
+            event.type = SDL_EVENT_QUIT;
+            REQUIRE(SDL_PushEvent(&event));
+        } else engine.quit(); // Bound failure if a later quit cannot stop it.
+    });
+    CHECK(ownerTicks == 3);
+    CHECK(routed == 0);
+    lua_getglobal(engine.lua().state(), "_GAME_KEY_W");
+    CHECK_FALSE(lua_toboolean(engine.lua().state(), -1));
+    lua_pop(engine.lua().state(), 1);
+    CHECK_FALSE(SDL_HasEvent(SDL_EVENT_QUIT));
+    engine.shutdown();
+}
 
 // Engine lifecycle integration tests
 
@@ -88,6 +224,8 @@ TEST_CASE("Engine: service access before init throws") {
 // nulls, so no GPU or display is needed.
 namespace {
 struct FailingAudioBackend : IAudioBackend {
+    VoiceLevelSnapshot getVoiceLevel() override { return {}; }
+    AudioBackendSnapshot getSnapshot() override { return {}; }
     bool init() override { return false; }
     void shutdown() override {}
     bool isPlaybackAvailable() const override { return false; }
@@ -95,14 +233,19 @@ struct FailingAudioBackend : IAudioBackend {
     void suspend() override {}
     void resume() override {}
     unsigned int playBGM(const std::string&, float) override { return 0; }
+    unsigned int playBGM(const std::string&, const AudioPlaybackOptions&) override { return 0; }
     void stopBGM(float) override {}
     unsigned int playVoice(const std::string&) override { return 0; }
+    unsigned int playVoice(const std::string&, const AudioPlaybackOptions&) override { return 0; }
     void stopVoice() override {}
     unsigned int playSE(const std::string&) override { return 0; }
+    unsigned int playSE(const std::string&, const AudioPlaybackOptions&) override { return 0; }
     unsigned int playRawPCM(const float*, unsigned int, unsigned int,
                             unsigned int) override { return 0; }
     unsigned int playSE3D(const std::string&, float, float, float) override { return 0; }
+    unsigned int playSE3D(const std::string&, float, float, float, const AudioPlaybackOptions&) override { return 0; }
     void stopSE() override {}
+    void stopSE(float) override {}
     void setSEVolume(unsigned int, float) override {}
     float getSEVolume(unsigned int) override { return 0.0f; }
     void stopSEHandle(unsigned int) override {}
@@ -182,6 +325,7 @@ TEST_CASE("EngineConfig: defaults yield a working minimal config") {
     CHECK_FALSE(cfg.headless);
     CHECK_FALSE(cfg.editorMode);
     CHECK(cfg.frameLimit == 0);
+    CHECK(cfg.fixedStepMs == 0);
     CHECK(cfg.render == nullptr);
     CHECK(cfg.audio == nullptr);
     CHECK(cfg.platform == nullptr);
@@ -427,4 +571,263 @@ TEST_CASE("Engine: negative dimensions accepted with no clamp (headless)") {
     CHECK(engine.platform().getWindowWidth()  == -1);
     CHECK(engine.platform().getWindowHeight() == -2);
     engine.shutdown();
+}
+
+
+TEST_CASE("Host U27 snapshot: state remains readable outside the initialized lifetime") {
+    bool editor = false;
+    SUBCASE("headless direct drain") {}
+    SUBCASE("editor direct drain with injected Null backends") { editor = true; }
+    ScopedEditorEvents events;
+    Engine engine(editorEventConfig(editor));
+    const IEngineHostSnapshot& api = engine;
+    const auto before = api.getHostSnapshot();
+    CHECK(before.supported);
+    CHECK_FALSE(before.initialized);
+    CHECK_FALSE(before.running);
+    CHECK_FALSE(before.luaPaused);
+    CHECK(before.completedOwnerFrames == 0);
+    CHECK(before.deferredAsyncPayloads == 0);
+    CHECK(before.drainingAsyncPayloads == 0);
+    CHECK(before.dispatchingAsyncPayloads == 0);
+    REQUIRE(engine.init());
+    const auto ready = api.getHostSnapshot();
+    CHECK(ready.supported);
+    CHECK(ready.initialized);
+    CHECK_FALSE(ready.running); // init does not start the main loop.
+    CHECK_FALSE(ready.luaPaused);
+    CHECK(ready.delivery == AsyncHostDelivery::DirectDrain);
+    CHECK(ready.asyncOwnershipComplete);
+    CHECK(ready.completedOwnerFrames == 0);
+    CHECK(ready.deferredAsyncPayloads == 0);
+    CHECK(ready.drainingAsyncPayloads == 0);
+    CHECK(ready.dispatchingAsyncPayloads == 0);
+    engine.shutdown();
+    engine.shutdown();
+    const auto stopped = api.getHostSnapshot();
+    CHECK(stopped.supported);
+    CHECK_FALSE(stopped.initialized);
+    CHECK_FALSE(stopped.running);
+    CHECK(stopped.completedOwnerFrames == 0);
+    CHECK(stopped.deferredAsyncPayloads == 0);
+    CHECK(stopped.drainingAsyncPayloads == 0);
+    CHECK(stopped.dispatchingAsyncPayloads == 0);
+}
+
+namespace {
+struct OwnerLoopClockTrace {
+    std::vector<float> audioDt;
+    std::vector<double> gpuDt;
+    std::vector<float> animationDt;
+    unsigned int presentations = 0;
+    unsigned int audioShutdowns = 0;
+    unsigned int platformShutdowns = 0;
+    unsigned int audioDestructions = 0;
+    unsigned int platformDestructions = 0;
+};
+
+// Only the host clock/window boundary is substituted. In particular, run(),
+// updateLuaFrame(), render(), frame-limit handling and shutdown are production.
+class OwnerLoopClockPlatform final : public IPlatformBackend {
+public:
+    explicit OwnerLoopClockPlatform(OwnerLoopClockTrace& trace) : m_trace(trace) {}
+    ~OwnerLoopClockPlatform() override { ++m_trace.platformDestructions; }
+
+    uint64_t ticks = 1000;
+    bool init(const char* title, int width, int height) override {
+        return m_null.init(title, width, height);
+    }
+    void shutdown() override { ++m_trace.platformShutdowns; m_null.shutdown(); }
+    bool pollEvent() override { return m_null.pollEvent(); }
+    MouseState getMouseState() const override { return m_null.getMouseState(); }
+    uint64_t getTicksMs() const override { return ticks; }
+    void* getNativeWindowHandle() const override { return nullptr; }
+    void postFrame() override { ++m_trace.presentations; }
+    int getWindowWidth() const override { return m_null.getWindowWidth(); }
+    int getWindowHeight() const override { return m_null.getWindowHeight(); }
+    void setFullscreen(bool value) override { m_null.setFullscreen(value); }
+    void resizeWindow(int width, int height) override { m_null.resizeWindow(width, height); }
+    const char* getBackendName() const override { return "OwnerLoopClockPlatform"; }
+    bool startTextInput() override { return m_null.startTextInput(); }
+    bool stopTextInput() override { return m_null.stopTextInput(); }
+    bool setTextInputRect(int x, int y, int width, int height, int cursor) override {
+        return m_null.setTextInputRect(x, y, width, height, cursor);
+    }
+    bool isTextInputActive() const override { return m_null.isTextInputActive(); }
+
+private:
+    OwnerLoopClockTrace& m_trace;
+    NullPlatformBackend m_null;
+};
+
+class OwnerLoopClockAudio final : public NullAudioBackend {
+public:
+    explicit OwnerLoopClockAudio(OwnerLoopClockTrace& trace) : m_trace(trace) {}
+    ~OwnerLoopClockAudio() override { ++m_trace.audioDestructions; }
+    void update(float dt) override { m_trace.audioDt.push_back(dt); }
+    void shutdown() override { ++m_trace.audioShutdowns; NullAudioBackend::shutdown(); }
+private:
+    OwnerLoopClockTrace& m_trace;
+};
+
+class OwnerLoopClockGpuMonitor final : public NullGpuMonitor {
+public:
+    explicit OwnerLoopClockGpuMonitor(OwnerLoopClockTrace& trace) : m_trace(trace) {}
+    GpuQuality update(double dt) override {
+        m_trace.gpuDt.push_back(dt);
+        return GpuQuality::HIGH;
+    }
+private:
+    OwnerLoopClockTrace& m_trace;
+};
+
+class OwnerLoopClockAnimation final : public NullAnimationBackend {
+public:
+    explicit OwnerLoopClockAnimation(OwnerLoopClockTrace& trace) : m_trace(trace) {}
+    void render(float dt) override { m_trace.animationDt.push_back(dt); }
+private:
+    OwnerLoopClockTrace& m_trace;
+};
+
+EngineConfig ownerLoopClockConfig(OwnerLoopClockTrace& trace) {
+    EngineConfig cfg;
+    // Ordinary mode uses IPlatformBackend ticks and exercises render(dt).
+    // Explicit Null boundaries need neither a window/GPU nor an audio device;
+    // headless/editor modes would introduce their production 16 ms sleep.
+    cfg.render = new NullRenderDevice();
+    cfg.platform = new OwnerLoopClockPlatform(trace);
+    cfg.audio = new OwnerLoopClockAudio(trace);
+    cfg.gpuMonitor = new OwnerLoopClockGpuMonitor(trace);
+    cfg.animation = new OwnerLoopClockAnimation(trace);
+    cfg.miniGame = new NullMiniGameBackend();
+    cfg.steam = new NullSteamBackend();
+    cfg.frameLimit = 4;
+    return cfg;
+}
+
+void checkOwnerLoopRegistryCleared() {
+    auto& registry = BackendRegistry::instance();
+    CHECK(registry.getPlatformBackend() == nullptr);
+    CHECK(registry.getRenderDevice() == nullptr);
+    CHECK(registry.getAudioBackend() == nullptr);
+    CHECK(registry.getAudioRestore() == nullptr);
+    CHECK(registry.getAnimationBackend() == nullptr);
+    CHECK(registry.getLuaManager() == nullptr);
+    CHECK(registry.getJobSystem() == nullptr);
+}
+
+void checkOwnerLoopClock(uint32_t fixedStepMs, const std::array<float, 4>& expectedDt) {
+    ScopedEditorEvents events;
+    OwnerLoopClockTrace trace;
+    {
+        EngineConfig cfg = ownerLoopClockConfig(trace);
+        auto* clock = static_cast<OwnerLoopClockPlatform*>(cfg.platform);
+        cfg.fixedStepMs = fixedStepMs;
+        EngineConfig moved(std::move(cfg));
+        CHECK(moved.fixedStepMs == fixedStepMs);
+        Engine engine(std::move(moved));
+        REQUIRE(engine.init());
+        CHECK(engine.config().fixedStepMs == fixedStepMs);
+        lua_State* L = engine.lua().state();
+        REQUIRE(L != nullptr);
+        REQUIRE(luaL_dostring(L,
+            "owner_loop_dts = {}; function engine_update(dt) "
+            "owner_loop_dts[#owner_loop_dts + 1] = dt end") == LUA_OK);
+        SDL_FlushEvents(SDL_EVENT_FIRST, SDL_EVENT_LAST);
+
+        // Stationary, short, over-clamp and ordinary host intervals. A fixed
+        // step must ignore these; realtime must retain their distinct values.
+        const std::array<uint64_t, 4> ticks{1000, 1007, 1507, 1523};
+        size_t ownerPumps = 0;
+        bool forcedStop = false;
+        engine.run([&] {
+            if (ownerPumps == ticks.size()) {
+                forcedStop = true;
+                engine.shutdown(); // Bound a broken frame-limit regression.
+                return;
+            }
+            clock->ticks = ticks[ownerPumps++];
+        });
+
+        CHECK_FALSE(forcedStop);
+        CHECK(ownerPumps == ticks.size());
+        const auto stopped = engine.getHostSnapshot();
+        CHECK(stopped.initialized); // Frame-limit exit leaves normal teardown to the owner.
+        CHECK_FALSE(stopped.running);
+        CHECK(stopped.completedOwnerFrames == ticks.size());
+        CHECK(trace.presentations == ticks.size());
+        REQUIRE(trace.audioDt.size() == expectedDt.size());
+        REQUIRE(trace.gpuDt.size() == expectedDt.size());
+        REQUIRE(trace.animationDt.size() == expectedDt.size());
+        // Query the actual Lua function's observations after production pcall.
+        REQUIRE_FALSE(forcedStop); // A defensive shutdown has already closed Lua.
+        lua_getglobal(L, "owner_loop_dts");
+        REQUIRE(lua_istable(L, -1));
+        CHECK(lua_rawlen(L, -1) == expectedDt.size());
+        for (size_t i = 0; i < expectedDt.size(); ++i) {
+            CAPTURE(i);
+            lua_rawgeti(L, -1, static_cast<lua_Integer>(i + 1));
+            CHECK(lua_isnumber(L, -1));
+            CHECK(lua_tonumber(L, -1) == doctest::Approx(expectedDt[i]));
+            lua_pop(L, 1);
+            CHECK(trace.audioDt[i] == doctest::Approx(expectedDt[i]));
+            CHECK(trace.gpuDt[i] == doctest::Approx(expectedDt[i]));
+            CHECK(trace.animationDt[i] == doctest::Approx(expectedDt[i]));
+        }
+        lua_pop(L, 1);
+        engine.shutdown();
+        CHECK_NOTHROW(engine.shutdown());
+        CHECK_FALSE(engine.getHostSnapshot().initialized);
+        CHECK(engine.getHostSnapshot().completedOwnerFrames == ticks.size());
+        CHECK(trace.audioShutdowns == 1);
+        CHECK(trace.platformShutdowns == 1);
+        checkOwnerLoopRegistryCleared();
+    }
+    CHECK(trace.audioDestructions == 1);
+    CHECK(trace.platformDestructions == 1);
+}
+} // namespace
+
+TEST_CASE("Engine: fixed simulation step shares owner-loop dt and exits normally") {
+    uint32_t stepMs = 16;
+    float dt = 0.016f;
+    SUBCASE("one millisecond lower boundary") { stepMs = 1; dt = 0.001f; }
+    SUBCASE("sixteen millisecond playback step") {}
+    SUBCASE("250 millisecond upper boundary") { stepMs = 250; dt = 0.250f; }
+    checkOwnerLoopClock(stepMs, {dt, dt, dt, dt});
+}
+
+TEST_CASE("Engine: default realtime owner loop retains host ticks and the 250 ms clamp") {
+    checkOwnerLoopClock(0, {0.0f, 0.007f, 0.250f, 0.016f});
+}
+
+TEST_CASE("Engine: invalid fixed simulation step rejects init and releases owned backends") {
+    uint32_t stepMs = 251;
+    SUBCASE("first invalid value") {}
+    SUBCASE("maximum uint32 value") { stepMs = std::numeric_limits<uint32_t>::max(); }
+    ScopedEditorEvents events;
+    OwnerLoopClockTrace trace;
+    {
+        EngineConfig cfg = ownerLoopClockConfig(trace);
+        cfg.fixedStepMs = stepMs;
+        Engine engine(std::move(cfg));
+        CHECK_FALSE(engine.init());
+        CHECK_FALSE(engine.init());
+        CHECK_FALSE(engine.getHostSnapshot().initialized);
+        unsigned int ownerPumps = 0;
+        engine.run([&] { ++ownerPumps; engine.shutdown(); });
+        CHECK(ownerPumps == 0);
+        CHECK_FALSE(engine.getHostSnapshot().running);
+        CHECK(engine.getHostSnapshot().completedOwnerFrames == 0);
+        CHECK(trace.audioDt.empty());
+        CHECK(trace.gpuDt.empty());
+        CHECK(trace.animationDt.empty());
+        CHECK(trace.presentations == 0);
+        CHECK_NOTHROW(engine.shutdown());
+        CHECK_NOTHROW(engine.shutdown());
+        checkOwnerLoopRegistryCleared();
+    }
+    CHECK(trace.audioDestructions == 1);
+    CHECK(trace.platformDestructions == 1);
+    checkOwnerLoopRegistryCleared();
 }

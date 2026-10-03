@@ -16,7 +16,7 @@ require("kag.schema").define("preload", {
               desc = "Preload assets (texture/audio/scene) ahead of use; async unless wait=true" },
     type = { type = "enum", default = "texture",
              values = { texture = true, audio = true, scene = true } },
-    path = { type = "string", default = "", desc = "comma-separated asset paths" },
+    path = { type = "string", desc = "comma-separated asset paths" },
     storage = { type = "string", default = "", desc = "alias for path" },
     wait = { type = "enum", default = "true",
              values = { ["true"] = true, ["false"] = true } },
@@ -83,7 +83,7 @@ local function load_texture(path, ctx, async)
     ResourceCommands._pendingTextures[path] = true
 
     if async and backend.load_texture_async then
-        backend.load_texture_async(path, function(success, loadedPath, texId)
+        local request = backend.load_texture_async(path, function(success, loadedPath, texId)
             if success and texId and texId > 0 then
                 ResourceCommands._textureCache[loadedPath] = texId
             else
@@ -91,6 +91,12 @@ local function load_texture(path, ctx, async)
             end
             ResourceCommands._pendingTextures[loadedPath] = nil
         end)
+        -- Native request IDs start at 1; 0 means no loader, negative means
+        -- admission failed. An absent host returns nil and cannot callback.
+        if type(request) ~= "number" or request <= 0 or request % 1 ~= 0 then
+            ResourceCommands._pendingTextures[path] = nil
+            print("[Resource] WARN: async texture request rejected: " .. path)
+        end
         return get_placeholder(is_dev_mode(ctx))
     end
 
@@ -126,6 +132,7 @@ local function load_audio(path, ctx)
         return true
     end
 
+    ResourceCommands._pendingAudio[path] = nil
     print("[Resource] WARN: audio load failed: " .. path)
     return false
 end

@@ -236,6 +236,7 @@ def execute_case(binary, out, name):
             checks['real_kag_breakpoint_installed'] = breakpoint.get('status') == 'ok'
             setup = process.evaluate(
                 "local kr=require('kag_runner'); kr.stop(); local k=require('kag'); "
+                "require('kag.schema').define('u18after',{}); "
                 "k.u18after=function(c) c.f.u18_after=(c.f.u18_after or 0)+1 end; "
                 "local flow=require('flow'); local tokenize=require('tokenizer'); local old=flow.load_scene; "
                 "flow.load_scene=function() return {tokens=tokenize.parse('[p]\\n[u18after]'),labels={}} end; "

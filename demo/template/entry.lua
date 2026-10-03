@@ -110,5 +110,19 @@ local _G_template = {
 }
 _G.template_game = _G_template
 
+-- Drive the same runner instance started above through the engine callbacks.
+function engine_update(dt)
+    kag_runner.update(dt or 0.016)
+end
+
+function engine_render()
+    require("layers").render()
+    kag_runner.render()
+end
+
+function _KAG_onClick()
+    kag_runner.on_click()
+end
+
 print("[Template] Ready. Press Esc for menu, Ctrl to skip.")
 

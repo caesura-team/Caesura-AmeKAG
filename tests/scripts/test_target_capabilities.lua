@@ -148,9 +148,23 @@ end
 p=profile("native","runtime");p.compiled.ffmpeg=true;p.available.video=false
 check("runtime unavailable cannot inherit build support",caps.query("video.ffmpeg",p).reason=="backend_unavailable")
 p=profile("native");p.compiled.ffmpeg=true;p.compiled.live2d=true;p.compiled.steam=true
-for _,feature in ipairs({"audio.crossfade","render.blur","kag.live2d_motion","kag.live2d_expression","kag.live2d_lip_sync"}) do
+for _,feature in ipairs({"audio.crossfade","render.blur","kag.live2d_motion","kag.live2d_expression"}) do
     check("fixed unsupported cannot be upgraded "..feature,caps.query(feature,p).status=="unsupported")
 end
+-- U26 native bridge catalog eligibility: runtime facts remain necessary.
+local lip_build=profile("native");lip_build.compiled.live2d=true
+check("native implemented lip bridge is build-eligible",caps.query("kag.live2d_lip_sync",lip_build).status=="supported")
+local lip_runtime=profile("native","runtime");lip_runtime.compiled.live2d=true
+lip_runtime.available.cubism=true;lip_runtime.available.audio=false
+check("manual/off bridge eligibility does not depend on audio",caps.query("kag.live2d_lip_sync",lip_runtime).status=="supported")
+lip_runtime.available.cubism=false
+check("lip bridge rejects unavailable actual Cubism",caps.query("kag.live2d_lip_sync",lip_runtime).reason=="backend_unavailable")
+lip_runtime.available.cubism=true;lip_runtime.compiled.live2d=false
+check("lip bridge rejects SDK-off even with an availability fact",caps.query("kag.live2d_lip_sync",lip_runtime).reason=="sdk_disabled")
+for _,feature in ipairs({"live2d.cubism","kag.live2d_motion","kag.live2d_expression","kag.live2d_lip_sync"}) do
+    check("Web Live2D remains unsupported "..feature,caps.query(feature,profile("web","runtime")).status=="unsupported")
+end
+
 check("web bloom is unsupported",caps.query("render.postfx.bloom",web).status=="unsupported")
 q=caps.query("render.postfx.lut3d",web)
 check("web LUT reports approximation",q.status=="approximate" and q.reason=="css_fixed_grade")
@@ -215,6 +229,8 @@ end
 mapping("vfx",{}, {"render.particles"})
 mapping("vfx",{postfx=""}, {"render.particles"})
 mapping("vfx",{type="blur"}, {"render.blur"})
+mapping("blur",{amount=4,time=32}, {"render.blur"})
+check("standalone blur direct Lua wrapper is guarded",caps.command_has_capabilities("blur"))
 mapping("vfx",{type="stop",postfx="bloom"}, {"render.postfx.bloom"})
 mapping("vfx",{type="stop"}, {})
 mapping("vfx",{postfx="none"}, {})
@@ -265,6 +281,20 @@ mapping("voice",{file="a.ogg"}, {"audio.play"})
 mapping("stopvoice",{}, {})
 mapping("waitsound",{}, {})
 for _,command in ipairs({"live2d_motion","live2d_expression","live2d_lip_sync"}) do mapping(command,{}, {"kag."..command}) end
+-- The KAG public-wrapper list and scheduler feature derivation both guard ownership operations.
+for _,command in ipairs({"live2d_load","live2d_show","live2d_hide","live2d_unload"}) do
+    check("Live2D ownership command has a public capability wrapper "..command,caps.command_has_capabilities(command))
+    mapping(command,{model="haru",storage="Haru.model3.json"},{"live2d.cubism"})
+end
+mapping("live2d_lip_sync",{}, {"kag.live2d_lip_sync"})
+mapping("live2d_lip_sync",{source="manual",value=.5}, {"kag.live2d_lip_sync"})
+mapping("live2d_lip_sync",{source="off"}, {"kag.live2d_lip_sync"})
+mapping("live2d_lip_sync",{source="voice"}, {"kag.live2d_lip_sync","audio.play"})
+mapping("live2d_lip_sync",{source="voice"}, {"kag.live2d_lip_sync","audio.play"},nil,false)
+mapping("live2d_lip_sync",{source="$tf.mode"}, {"kag.live2d_lip_sync"},"dynamic_selector")
+mapping("live2d_lip_sync",{source="${f.mode}"}, {"kag.live2d_lip_sync"},"dynamic_selector")
+mapping("live2d_lip_sync",{source="%mode%"}, {"kag.live2d_lip_sync"},"dynamic_selector")
+
 mapping("steam_achievement",{id="ACH",silent=true}, {"steam.achievements"})
 for _,command in ipairs({"eval","iscript","emb"}) do mapping(command,{exp="PRIVATE_SCRIPT_BODY"}, {},"dynamic_lua") end
 

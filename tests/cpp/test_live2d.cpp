@@ -4,6 +4,7 @@
 #include "di/BackendRegistry.h"
 #include "live2d/NullAnimationBackend.h"
 #include "live2d/PathConfinement.h"
+#include "live2d/Live2D/VoiceLipSyncState.h"
 #include "live2d/api/IAnimationBackend.h"
 #include "render/api/IRenderDevice.h"
 #include "render/api/ITextureManager.h"
@@ -13,6 +14,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -91,6 +93,9 @@ public:
 
 class RecordingRenderDevice final : public IRenderDevice {
 public:
+    SceneSnapshot captureSceneSnapshot() override { return {}; }
+    void cancelTransition() override {}
+
     struct Blit {
         uint16_t view = 0;
         uint32_t texture = 0;
@@ -190,6 +195,7 @@ public:
     RenderProgramHandle getFallbackProgram() const override { return {}; }
     RenderProgramHandle getModulatedTextureProgram() const override { return {}; }
     const char* getBackendName() const override { return "RecordingRender"; }
+    RenderSnapshot getSnapshot() const override { return {}; }
     RenderRuntimeInfo getRuntimeInfo() const override {
         return {getBackendName(), backbufferWidth, backbufferHeight, 0, true};
     }
@@ -703,6 +709,175 @@ TEST_CASE("NullAnimationBackend reload of the same animation yields independent 
 // ---------------------------------------------------------------------------
 // Boundary degrade: animation controls & params on the Null PNG fallback
 // ---------------------------------------------------------------------------
+
+TEST_CASE("Live2D U26 voice lip sync: PNG fallback declines without changing its model") {
+    NullAnimationFixture fixture;
+    IAnimationBackend& animation = fixture.animation;
+    REQUIRE(animation.init());
+    const int handle = animation.loadModel("hero.png", "hero");
+    REQUIRE(handle > 0);
+    animation.showModel(handle, 5.0f, 6.0f, 1.0f);
+    CHECK_FALSE(animation.setVoiceLipSync(handle, true));
+    CHECK_FALSE(animation.setVoiceLipSync(handle, false));
+    CHECK_FALSE(animation.setVoiceLipSync(999, true));
+    CHECK(animation.isLoaded(handle));
+    CHECK(animation.loadedModelCount() == 1);
+    animation.render(0.016f);
+    REQUIRE(fixture.renderer.blits.size() == 1);
+    CHECK(fixture.renderer.blits.front().x == 5.0f);
+    CHECK(fixture.renderer.blits.front().y == 6.0f);
+    animation.shutdown();
+}
+
+// Exercise the production model-owned state without a Cubism/GPU substitute.
+// These checks do not establish SDK parameter binding or rendered mouth motion;
+// those require the separate Haru M2-M5 acceptance lane.
+TEST_CASE("Live2D U26 voice lip sync state: opt-in requires a real usable range") {
+    Detail::VoiceLipSyncState state;
+    float mouth = 0.7f;
+    CHECK_FALSE(state.enabled());
+    CHECK(state.parameterIndex() == -1);
+    state.apply(true, 0.25f, 1, 0.03f, mouth);
+    CHECK(mouth == 0.7f);
+
+    CHECK_FALSE(state.enable(-1, 0.0f, 1.0f, mouth));
+    CHECK_FALSE(state.enable(2, 0.1f, 1.0f, mouth));
+    CHECK_FALSE(state.enable(2, 0.0f, 0.9f, mouth));
+    CHECK_FALSE(state.enable(2, std::numeric_limits<float>::quiet_NaN(), 1.0f, mouth));
+    CHECK_FALSE(state.enable(2, 0.0f, std::numeric_limits<float>::infinity(), mouth));
+    CHECK_FALSE(state.enabled());
+    CHECK(mouth == 0.7f);
+
+    REQUIRE(state.enable(2, -1.0f, 2.0f, mouth));
+    CHECK(mouth == 0.0f);
+    CHECK(state.parameterIndex() == 2);
+    state.apply(true, 0.25f, 1, 0.03f, mouth);
+    CHECK(mouth == doctest::Approx(0.632120559f));
+    const float beforeRepeat = mouth;
+    CHECK(state.enable(2, -1.0f, 2.0f, mouth));
+    CHECK(mouth == beforeRepeat);
+    state.apply(true, 0.25f, 1, 0.0f, mouth);
+    CHECK(mouth == beforeRepeat);
+    CHECK_FALSE(state.enable(3, 0.0f, 1.0f, mouth));
+    CHECK_FALSE(state.enable(2, 0.1f, 1.0f, mouth));
+    CHECK(mouth == beforeRepeat);
+    CHECK(state.parameterIndex() == 2);
+}
+
+TEST_CASE("Live2D U26 voice lip sync state: frozen attack release and final overwrite") {
+    Detail::VoiceLipSyncState state;
+    float mouth = 0.0f;
+    REQUIRE(state.enable(0, 0.0f, 1.0f, mouth));
+    state.apply(true, 0.13f, 1, 0.03f, mouth);
+    CHECK(mouth == doctest::Approx(0.316060279f)); // target 0.5, one attack constant
+    state.apply(true, 0.0f, 1, 0.08f, mouth);
+    CHECK(mouth == doctest::Approx(0.116272079f)); // one release constant
+
+    state.apply(true, 0.25f, 2, 0.25f, mouth);
+    CHECK(mouth == doctest::Approx(0.999759631f));
+    for (int frame = 0; frame < 5; ++frame) {
+        state.apply(true, 0.0f, 2, 0.08f, mouth);
+    }
+    CHECK(mouth > 0.0f); // Same-generation silence releases instead of snapping.
+    CHECK(mouth < 0.01f); // Frozen 400 ms silent plateau.
+
+    for (int frame = 0; frame < 120; ++frame) {
+        mouth = 0.4f; // Prior motion/expression output must not accumulate.
+        state.apply(true, 0.25f, 2, 1.0f / 60.0f, mouth);
+        CHECK(mouth >= 0.0f);
+        CHECK(mouth <= 1.0f);
+    }
+    CHECK(mouth == doctest::Approx(1.0f));
+    mouth = 0.8f;
+    state.apply(false, 0.25f, 2, 0.0f, mouth);
+    CHECK(mouth == 0.0f); // Missing current valid PCM closes even at dt=0.
+}
+
+TEST_CASE("Live2D U26 voice lip sync state: missed lifecycle generations clear before dt") {
+    for (const float dt : {0.0f, 1.0f / 60.0f}) {
+        Detail::VoiceLipSyncState state;
+        float mouth = 0.0f;
+        REQUIRE(state.enable(0, 0.0f, 1.0f, mouth));
+        // The renderer sees only the final snapshot after a complete
+        // suspend/resume or mute/unmute cycle and a new silent PCM block.
+        for (const uint64_t generation : {10ull, 20ull, 30ull}) {
+            state.apply(true, 0.25f, generation, 0.25f, mouth);
+            REQUIRE(mouth > 0.99f);
+            state.apply(true, 0.0f, generation + 2, dt, mouth);
+            CHECK(mouth == 0.0f);
+        }
+        state.apply(true, 0.25f, 40, 0.25f, mouth);
+        REQUIRE(mouth > 0.99f);
+        state.apply(true, 0.25f, 41, 0.0f, mouth);
+        CHECK(mouth == 0.0f); // A new loud generation also starts at zero.
+        state.apply(true, 0.25f, 41, 0.03f, mouth);
+        CHECK(mouth == doctest::Approx(0.632120559f));
+        const float held = mouth;
+        state.apply(true, 0.25f, 41, 0.0f, mouth);
+        CHECK(mouth == held);
+    }
+}
+
+TEST_CASE("Live2D U26 voice lip sync state: unavailable and invalid samples fail closed") {
+    for (const float invalidRms : {-0.1f, 1.1f,
+             std::numeric_limits<float>::quiet_NaN(),
+             std::numeric_limits<float>::infinity()}) {
+        Detail::VoiceLipSyncState state;
+        float mouth = 0.0f;
+        REQUIRE(state.enable(0, 0.0f, 1.0f, mouth));
+        state.apply(true, 0.25f, 1, 0.25f, mouth);
+        REQUIRE(mouth > 0.99f);
+        state.apply(true, invalidRms, 1, 0.0f, mouth);
+        CHECK(mouth == 0.0f);
+        state.apply(true, 0.25f, 1, 0.25f, mouth);
+        state.apply(true, 0.25f, 0, 0.0f, mouth);
+        CHECK(mouth == 0.0f);
+    }
+}
+
+TEST_CASE("Live2D U26 voice lip sync state: frame delta is finite and bounded") {
+    Detail::VoiceLipSyncState state;
+    float mouth = 0.0f;
+    REQUIRE(state.enable(0, 0.0f, 1.0f, mouth));
+    state.apply(true, 0.25f, 1, 10.0f, mouth);
+    CHECK(mouth == doctest::Approx(0.999759631f)); // Clamped to 250 ms.
+    const float held = mouth;
+    for (const float invalidDt : {-1.0f, std::numeric_limits<float>::quiet_NaN(),
+                                  std::numeric_limits<float>::infinity()}) {
+        state.apply(true, 0.0f, 1, invalidDt, mouth);
+        CHECK(mouth == held);
+    }
+    state.apply(true, 0.0f, 2, std::numeric_limits<float>::quiet_NaN(), mouth);
+    CHECK(mouth == 0.0f); // Generation invalidation still precedes invalid dt.
+}
+
+TEST_CASE("Live2D U26 voice lip sync state: hidden and disabled models release control") {
+    Detail::VoiceLipSyncState active;
+    Detail::VoiceLipSyncState other;
+    float mouthA = 0.0f;
+    float mouthB = 0.6f;
+    REQUIRE(active.enable(0, 0.0f, 1.0f, mouthA));
+    active.apply(true, 0.25f, 1, 0.25f, mouthA);
+    other.apply(true, 0.25f, 1, 0.25f, mouthB);
+    CHECK(mouthB == 0.6f);
+    active.hide(mouthA);
+    CHECK(mouthA == 0.0f);
+    CHECK(active.enabled());
+    active.apply(true, 0.25f, 1, 0.03f, mouthA);
+    CHECK(mouthA == doctest::Approx(0.632120559f));
+    active.disable(mouthA);
+    CHECK_FALSE(active.enabled());
+    CHECK(active.parameterIndex() == -1);
+    CHECK(mouthA == 0.0f);
+    mouthA = 0.7f; // Manual/motion control after opt-out must survive rendering.
+    active.apply(true, 0.25f, 1, 0.25f, mouthA);
+    active.disable(mouthA);
+    active.hide(mouthA);
+    CHECK(mouthA == 0.7f);
+    REQUIRE(active.enable(0, 0.0f, 1.0f, mouthA));
+    active.apply(true, 0.25f, 1, 0.0f, mouthA);
+    CHECK(mouthA == 0.0f);
+}
 
 TEST_CASE("NullAnimationBackend degrades gracefully for motion/expression/params") {
     NullAnimationFixture fixture;

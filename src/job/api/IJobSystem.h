@@ -15,6 +15,15 @@ enum class JobPriority : uint8_t {
 using JobFn        = std::function<void()>;
 using MainThreadFn = std::function<void()>;
 
+struct JobSystemSnapshot {
+    // Unsupported backends must not present placeholder zeroes as measured idle.
+    bool supported = false;
+    bool running = false;
+    uint64_t workerPending = 0;
+    uint64_t queuedCompletions = 0;
+    uint64_t dispatchingCompletions = 0;
+};
+
 class IJobSystem {
 public:
     virtual ~IJobSystem() = default;
@@ -37,6 +46,15 @@ public:
     virtual int  workerCount() const = 0;
     virtual int  pendingJobs() const = 0;
     virtual bool isRunning() const = 0;
+    // Owner/main thread only, including from a completion callback. Counts are
+    // valid only when supported. workerPending retains pendingJobs() semantics:
+    // accepted work through completion publication, not callback execution.
+    // queuedCompletions await a future poll; dispatchingCompletions includes
+    // the current callback and the unfinished remainder of the active batch.
+    // Nested polling/shutdown must not hide that still-active callback stack.
+    // Publication can briefly overlap workerPending and queuedCompletions;
+    // these are lifecycle observations, not disjoint quantities to sum.
+    virtual JobSystemSnapshot getSnapshot() const = 0;
 };
 
 } // namespace Caesura

@@ -24,6 +24,7 @@ namespace {
 class TransientVideo final : public IVideoPlayer {
 public:
     VideoHandle open(const char*) override { ++active; return {1}; }
+    VideoHandle openMemory(std::vector<uint8_t>) override { ++active; return {1}; }
     void close(VideoHandle) override { active = 0; }
     void closeAll() override {
         ++closes;
@@ -55,6 +56,7 @@ public:
 
 class TransientAnimation final : public IAnimationBackend {
 public:
+    bool setVoiceLipSync(int, bool) override { return false; }
     bool init() override { ++initializations; return true; }
     void shutdown() override { ++shutdowns; }
     // This fixture simulates model ownership, not Cubism motion support.
@@ -83,6 +85,9 @@ public:
 
 class TransientRender final : public IRenderDevice {
 public:
+    SceneSnapshot captureSceneSnapshot() override { return {}; }
+    void cancelTransition() override {}
+
     bool init(void*, int, int) override { return true; }
     void setPresentSize(uint32_t, uint32_t) override {}
     bool isInitialized() const override { return true; }
@@ -156,6 +161,7 @@ public:
     RenderProgramHandle getFallbackProgram() const override { return {}; }
     RenderProgramHandle getModulatedTextureProgram() const override { return {}; }
     const char* getBackendName() const override { return "TransientRender"; }
+    RenderSnapshot getSnapshot() const override { return {}; }
     RenderRuntimeInfo getRuntimeInfo() const override { return {}; }
     bool setPreferredBackend(const char*) override { return false; }
     bool active = true;

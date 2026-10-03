@@ -1555,3 +1555,569 @@ TEST_CASE("rpc::service::PackagingService::widenUtf8 decodes real UTF-8 to wchar
     // Empty input yields an empty wide string.
     CHECK(rpc::service::PackagingService::widenUtf8("").empty());
 }
+
+
+// U27 copied runtime snapshots: the dispatcher is the only substituted backend
+// boundary. The actual production parsers, serializers and transports run below.
+#include <cerrno>
+#include <sstream>
+#if defined(_WIN32)
+#include <fcntl.h>
+#include <io.h>
+#endif
+
+namespace {
+using U27Json = nlohmann::json;
+
+RpcStatsResult u27WideStats() {
+    RpcStatsResult s;
+    s.textureBudgetMB = 1536; s.textureTier = 2;
+    s.textureTierName = "tier \"quoted\"\nline";
+    s.meshCount = 37; s.jobWorkers = 3; s.jobPending = 5; s.luaKb = 123;
+    s.jobs = {true, false, 4294967301ULL, 9007199254740993ULL, 18446744073709551615ULL};
+    s.asyncLoader = {true, true, 4294967302ULL, 9007199254740995ULL,
+        18446744073709551614ULL, 4294967303ULL, 9007199254740997ULL};
+    s.host.supported = true; s.host.initialized = true; s.host.running = true;
+    s.host.luaPaused = true; s.host.delivery = RpcAsyncDelivery::DirectDrain;
+    s.host.asyncOwnershipComplete = true;
+    s.host.completedOwnerFrames = 18446744073709551613ULL;
+    s.host.deferredAsyncPayloads = 4294967304ULL;
+    s.host.drainingAsyncPayloads = 9007199254740999ULL;
+    s.host.dispatchingAsyncPayloads = 18446744073709551612ULL;
+    s.host.audioCompletionTrackingSupported = true;
+    s.host.audioCompletionsPending = 4294967305ULL;
+    s.host.audioCompletionsActive = 9007199254741001ULL;
+    s.host.audioCompletionOwnerRefs = 1;
+    s.audio = {true, false, RpcAudioOutput::ManualMix, 4294967306ULL,
+        9007199254741003ULL, 18446744073709551611ULL, 4294967307ULL,
+        9007199254741005ULL, 18446744073709551610ULL, 4294967308ULL,
+        9007199254741007ULL, 18446744073709551609ULL};
+    s.render.supported = true;
+    s.render.contextInitialized = true;
+    s.render.renderingAvailable = true;
+    s.render.resourceCountsAvailable = true;
+    s.render.backendKind = RpcRenderBackendKind::GraphicsApi;
+    s.render.backendName = "GPU \"quoted\"\nline\\tail";
+    s.render.contextGeneration = 4294967296ULL;
+    s.render.captureSubmissionFrame = 9007199254740993ULL;
+    s.render.resources = {18446744073709551615ULL, 4294967297ULL, 9007199254740995ULL,
+        18446744073709551614ULL, 4294967298ULL, 9007199254740997ULL,
+        18446744073709551613ULL, 4294967299ULL, 9007199254740999ULL,
+        18446744073709551612ULL, 4294967300ULL};
+    s.render.screenshots = {true, 9007199254741001ULL, 18446744073709551611ULL,
+        4294967301ULL, 9007199254741003ULL, 18446744073709551610ULL};
+    s.render.screenshotOwnershipComplete = true;
+    s.render.screenshotReadbackTrackingSupported = true;
+    s.render.screenshotReadbacksOutstanding = 4294967302ULL;
+    return s;
+}
+
+// Literal wire oracle: it is not produced by serializing the supplied DTO.
+// These intentionally synthetic widths are protocol values, not real telemetry.
+U27Json u27ExpectedWideStats() {
+    return U27Json::parse(R"({
+      "texture_budget_mb":1536,"texture_tier":2,"texture_tier_name":"tier \"quoted\"\nline",
+      "mesh_count":37,"job_workers":3,"job_pending":5,"lua_kb":123,
+      "jobs":{"supported":true,"running":false,"worker_pending":4294967301,
+        "queued_completions":9007199254740993,"dispatching_completions":18446744073709551615},
+      "async_loader":{"supported":true,"running":true,"pending_waiters":4294967302,
+        "inflight_keys":9007199254740995,"completed_buffered":18446744073709551614,
+        "cache_entries":4294967303,"cache_bytes":9007199254740997},
+      "host":{"supported":true,"initialized":true,"running":true,"lua_paused":true,
+        "delivery":"direct_drain","async_ownership_complete":true,
+        "completed_owner_frames":18446744073709551613,"deferred_async_payloads":4294967304,
+        "draining_async_payloads":9007199254740999,"dispatching_async_payloads":18446744073709551612,
+        "audio_completion_tracking_supported":true,"audio_completions_pending":4294967305,
+        "audio_completions_active":9007199254741001,"audio_completion_owner_refs":1},
+      "audio":{"supported":true,"running":false,"output_mode":"manual_mix",
+        "live_voices":4294967306,"bus_voices":9007199254741003,
+        "session_handles":18446744073709551611,"retiring_bgm":4294967307,
+        "retiring_voice":9007199254741005,"wave_cache_entries":18446744073709551610,
+        "raw_cache_entries":4294967308,"voice_completions_pending":9007199254741007,
+        "restored_sources":18446744073709551609},
+      "render":{"supported":true,"context_initialized":true,"rendering_available":true,
+        "resource_counts_available":true,"backend_kind":"graphics_api",
+        "backend_name":"GPU \"quoted\"\nline\\tail",
+        "context_generation":4294967296,"capture_submission_frame":9007199254740993,
+        "resources":{"dynamic_index_buffers":18446744073709551615,
+          "dynamic_vertex_buffers":4294967297,"frame_buffers":9007199254740995,
+          "index_buffers":18446744073709551614,"occlusion_queries":4294967298,
+          "programs":9007199254740997,"shaders":18446744073709551613,
+          "textures":4294967299,"uniforms":9007199254740999,
+          "vertex_buffers":18446744073709551612,"vertex_layouts":4294967300},
+        "screenshots":{"supported":true,"waiting":9007199254741001,
+          "submitted":18446744073709551611,"terminal":4294967301,
+          "reserved_bytes":9007199254741003,"png_bytes":18446744073709551610},
+        "screenshot_ownership_complete":true,"screenshot_readback_tracking_supported":true,
+        "screenshot_readbacks_outstanding":4294967302}
+    })");
+}
+
+void u27CheckScalar(const U27Json& actual, const U27Json& expected) {
+    CHECK(actual.type() == expected.type());
+    if (expected.is_number_unsigned()) {
+        CHECK(actual.is_number_unsigned());
+        if (actual.is_number_unsigned())
+            CHECK(actual.get<std::uint64_t>() == expected.get<std::uint64_t>());
+    } else CHECK(actual == expected);
+}
+
+// The render group adds another object level. Preserve the existing scalar
+// checks at every leaf, including unsigned JSON type and exact uint64 value.
+void u27CheckNestedStats(const U27Json& actual, const U27Json& expected) {
+    if (!expected.is_object()) {
+        u27CheckScalar(actual, expected);
+        return;
+    }
+    CHECK(actual.is_object());
+    if (!actual.is_object()) return;
+    CHECK(actual.size() == expected.size());
+    for (auto field = expected.begin(); field != expected.end(); ++field) {
+        CAPTURE(field.key());
+        CHECK(actual.contains(field.key()));
+        if (actual.contains(field.key()))
+            u27CheckNestedStats(actual.at(field.key()), field.value());
+    }
+}
+
+void u27CheckStats(const U27Json& actual, const U27Json& expected) {
+    REQUIRE(actual.is_object());
+    CHECK(actual.size() == expected.size());
+    for (auto field = expected.begin(); field != expected.end(); ++field) {
+        CAPTURE(field.key());
+        CHECK(actual.contains(field.key()));
+        if (!actual.contains(field.key())) continue;
+        const auto& value = actual.at(field.key());
+        if (!field.value().is_object()) {
+            u27CheckScalar(value, field.value());
+            continue;
+        }
+        CHECK(value.is_object());
+        if (!value.is_object()) continue;
+        CHECK(value.size() == field.value().size());
+        for (auto member = field.value().begin(); member != field.value().end(); ++member) {
+            CAPTURE(member.key());
+            CHECK(value.contains(member.key()));
+            if (value.contains(member.key())) u27CheckNestedStats(value.at(member.key()), member.value());
+        }
+    }
+    CHECK_FALSE(actual.contains("idle"));
+    CHECK_FALSE(actual.contains("global_idle"));
+}
+
+// Independent literal oracles for the new nested renderer group. Do not build
+// expected JSON through statsJson or by reflecting the supplied DTO fields.
+U27Json u27ExpectedUnsupportedRender() {
+    return U27Json::parse(R"({
+      "supported":false,"context_initialized":false,"rendering_available":false,
+      "resource_counts_available":false,"backend_kind":"unknown","backend_name":"",
+      "context_generation":0,"capture_submission_frame":0,
+      "resources":{"dynamic_index_buffers":0,"dynamic_vertex_buffers":0,
+        "frame_buffers":0,"index_buffers":0,"occlusion_queries":0,"programs":0,
+        "shaders":0,"textures":0,"uniforms":0,"vertex_buffers":0,"vertex_layouts":0},
+      "screenshots":{"supported":false,"waiting":0,"submitted":0,"terminal":0,
+        "reserved_bytes":0,"png_bytes":0},
+      "screenshot_ownership_complete":false,"screenshot_readback_tracking_supported":false,
+      "screenshot_readbacks_outstanding":0
+    })");
+}
+
+struct U27RenderMode {
+    const char* name;
+    RpcStatsResult supplied;
+    U27Json expected;
+};
+
+std::vector<U27RenderMode> u27RenderModes() {
+    std::vector<U27RenderMode> modes;
+    auto unsupported = u27WideStats();
+    unsupported.render = {};
+    auto unsupportedWire = u27ExpectedWideStats();
+    unsupportedWire["render"] = u27ExpectedUnsupportedRender();
+    modes.push_back({"unsupported zero counts", unsupported, unsupportedWire});
+
+    auto wide = u27WideStats();
+    auto wire = u27ExpectedWideStats();
+    modes.push_back({"graphics API with distinct wide counters", wide, wire});
+
+    auto noop = wide; auto noopWire = wire;
+    noop.render.backendKind = RpcRenderBackendKind::Noop;
+    noop.render.backendName = "Noop";
+    noop.render.renderingAvailable = false;
+    noopWire["render"]["backend_kind"] = "noop";
+    noopWire["render"]["backend_name"] = "Noop";
+    noopWire["render"]["rendering_available"] = false;
+    modes.push_back({"Noop stays explicit with retained counters", noop, noopWire});
+
+    auto unknown = wide; auto unknownWire = wire;
+    unknown.render.backendKind = RpcRenderBackendKind::Unknown;
+    unknownWire["render"]["backend_kind"] = "unknown";
+    modes.push_back({"known Unknown enum", unknown, unknownWire});
+    unknown.render.backendKind = static_cast<RpcRenderBackendKind>(777);
+    modes.push_back({"future enum degrades only its name", unknown, unknownWire});
+
+    // Each flag flips independently while every other supplied field remains
+    // unchanged. Transports must not infer these booleans from another flag.
+    auto notSupported = wide; auto notSupportedWire = wire;
+    notSupported.render.supported = false;
+    notSupportedWire["render"]["supported"] = false;
+    modes.push_back({"unsupported retained values", notSupported, notSupportedWire});
+    auto noContext = wide; auto noContextWire = wire;
+    noContext.render.contextInitialized = false;
+    noContextWire["render"]["context_initialized"] = false;
+    modes.push_back({"context flag independent", noContext, noContextWire});
+    auto notRendering = wide; auto notRenderingWire = wire;
+    notRendering.render.renderingAvailable = false;
+    notRenderingWire["render"]["rendering_available"] = false;
+    modes.push_back({"rendering flag independent", notRendering, notRenderingWire});
+    auto noCounts = wide; auto noCountsWire = wire;
+    noCounts.render.resourceCountsAvailable = false;
+    noCountsWire["render"]["resource_counts_available"] = false;
+    modes.push_back({"resource counts flag independent", noCounts, noCountsWire});
+    auto noQueue = wide; auto noQueueWire = wire;
+    noQueue.render.screenshots.supported = false;
+    noQueueWire["render"]["screenshots"]["supported"] = false;
+    modes.push_back({"queue flag independent", noQueue, noQueueWire});
+    auto incomplete = wide; auto incompleteWire = wire;
+    incomplete.render.screenshotOwnershipComplete = false;
+    incompleteWire["render"]["screenshot_ownership_complete"] = false;
+    modes.push_back({"ownership flag independent", incomplete, incompleteWire});
+    auto untracked = wide; auto untrackedWire = wire;
+    untracked.render.screenshotReadbackTrackingSupported = false;
+    untrackedWire["render"]["screenshot_readback_tracking_supported"] = false;
+    modes.push_back({"readback tracking flag independent", untracked, untrackedWire});
+
+    auto empty = unsupported; auto emptyWire = unsupportedWire;
+    empty.render.supported = true;
+    empty.render.contextInitialized = true;
+    empty.render.renderingAvailable = true;
+    empty.render.resourceCountsAvailable = true;
+    empty.render.backendKind = RpcRenderBackendKind::GraphicsApi;
+    empty.render.backendName = "empty graphics fixture";
+    empty.render.contextGeneration = 7;
+    empty.render.screenshots.supported = true;
+    empty.render.screenshotOwnershipComplete = true;
+    empty.render.screenshotReadbackTrackingSupported = true;
+    emptyWire["render"]["supported"] = true;
+    emptyWire["render"]["context_initialized"] = true;
+    emptyWire["render"]["rendering_available"] = true;
+    emptyWire["render"]["resource_counts_available"] = true;
+    emptyWire["render"]["backend_kind"] = "graphics_api";
+    emptyWire["render"]["backend_name"] = "empty graphics fixture";
+    emptyWire["render"]["context_generation"] = std::uint64_t{7};
+    emptyWire["render"]["screenshots"]["supported"] = true;
+    emptyWire["render"]["screenshot_ownership_complete"] = true;
+    emptyWire["render"]["screenshot_readback_tracking_supported"] = true;
+    modes.push_back({"supported zero observations", empty, emptyWire});
+    empty.render.contextGeneration = 0;
+    emptyWire["render"]["context_generation"] = std::uint64_t{0};
+    modes.push_back({"zero context identity is preserved", empty, emptyWire});
+    return modes;
+}
+
+std::vector<std::pair<RpcStatsResult, U27Json>> u27StatsModes() {
+    auto unsupported = u27ExpectedWideStats();
+    for (auto& field : unsupported.items()) {
+        if (field.key() == "render") continue; // Its two nested objects have a literal default oracle.
+        if (field.value().is_object()) {
+            for (auto& member : field.value().items()) {
+                if (member.value().is_boolean()) member.value() = false;
+                else if (member.value().is_string()) member.value() = "unknown";
+                else member.value() = std::uint64_t{0};
+            }
+        } else if (field.value().is_string()) field.value() = "";
+        else field.value() = std::uint64_t{0};
+    }
+    unsupported["render"] = u27ExpectedUnsupportedRender();
+    std::vector<std::pair<RpcStatsResult, U27Json>> cases;
+    cases.emplace_back(RpcStatsResult{}, std::move(unsupported));
+    auto sdl = u27WideStats(); auto sdlWire = u27ExpectedWideStats();
+    sdl.host.delivery = RpcAsyncDelivery::SdlEvents;
+    sdl.host.asyncOwnershipComplete = false;
+    sdl.host.audioCompletionTrackingSupported = false;
+    sdl.audio.outputMode = RpcAudioOutput::Software;
+    sdlWire["host"]["delivery"] = "sdl_events";
+    sdlWire["host"]["async_ownership_complete"] = false;
+    sdlWire["host"]["audio_completion_tracking_supported"] = false;
+    sdlWire["audio"]["output_mode"] = "software";
+    cases.emplace_back(std::move(sdl), std::move(sdlWire));
+    auto unknown = u27WideStats(); auto unknownWire = u27ExpectedWideStats();
+    unknown.host.delivery = static_cast<RpcAsyncDelivery>(99);
+    unknown.host.asyncOwnershipComplete = false;
+    unknown.audio.outputMode = static_cast<RpcAudioOutput>(99);
+    unknownWire["host"]["delivery"] = "unknown";
+    unknownWire["host"]["async_ownership_complete"] = false;
+    unknownWire["audio"]["output_mode"] = "unknown";
+    cases.emplace_back(std::move(unknown), std::move(unknownWire));
+    auto device = u27WideStats(); auto deviceWire = u27ExpectedWideStats();
+    device.audio.outputMode = RpcAudioOutput::Device;
+    deviceWire["audio"]["output_mode"] = "device";
+    cases.emplace_back(std::move(device), std::move(deviceWire));
+    return cases;
+}
+
+std::shared_ptr<RecordingRpcDispatcher> u27StatsDispatcher(const RpcStatsResult& value) {
+    return std::make_shared<RecordingRpcDispatcher>([value](const RpcRequest& request) {
+        if (!std::holds_alternative<RpcStatsRequest>(request.payload))
+            return RpcReply{RpcReplyStatus::Failed, "unexpected_fixture_request", {}, {}};
+        return RpcReply{RpcReplyStatus::Ok, {}, {}, value};
+    });
+}
+
+// Owns both real pipe descriptors and its reader. Destruction closes the
+// original writer before joining; the inner RpcServer first closes its duplicate.
+class U27RpcOutputCapture {
+public:
+    U27RpcOutputCapture() {
+#if defined(_WIN32)
+        if (::_pipe(m_fds, 4096, _O_BINARY | _O_NOINHERIT) != 0)
+#else
+        if (::pipe(m_fds) != 0)
+#endif
+            m_fds[0] = m_fds[1] = -1;
+    }
+    ~U27RpcOutputCapture() { finish(); close(m_fds[0]); }
+    bool valid() const { return m_fds[0] >= 0 && m_fds[1] >= 0; }
+    int writer() const { return m_fds[1]; }
+    void startReader() {
+        m_reader = std::thread([this] {
+            try {
+                char bytes[4096];
+                for (;;) {
+#if defined(_WIN32)
+                    const int n = ::_read(m_fds[0], bytes, sizeof(bytes));
+#else
+                    const int n = static_cast<int>(::read(m_fds[0], bytes, sizeof(bytes)));
+#endif
+                    if (n < 0 && errno == EINTR) continue;
+                    if (n <= 0) { m_readFailed = n < 0; break; }
+                    m_bytes.append(bytes, static_cast<std::size_t>(n));
+                }
+            } catch (...) { m_readFailed = true; }
+        });
+    }
+    void closeWriter() { close(m_fds[1]); }
+    void finish() { closeWriter(); if (m_reader.joinable()) m_reader.join(); }
+    const std::string& bytes() const { return m_bytes; }
+    bool readFailed() const { return m_readFailed; }
+private:
+    static void close(int& fd) {
+        if (fd < 0) return;
+#if defined(_WIN32)
+        ::_close(fd);
+#else
+        ::close(fd);
+#endif
+        fd = -1;
+    }
+    int m_fds[2]{-1, -1};
+    std::thread m_reader;
+    std::string m_bytes;
+    bool m_readFailed = false; // inspected only after join
+};
+} // namespace
+
+TEST_CASE("U27 RPC stats: stdio nested values preserve every counter and legacy field") {
+    auto dispatcher = u27StatsDispatcher(u27WideStats());
+    RpcServer rpc;
+    rpc.setDispatcher(dispatcher);
+    const auto response = U27Json::parse(rpc.processRequestLine(R"({"id":2701,"method":"stats"})"));
+    REQUIRE(response.contains("stats"));
+    CHECK(response.size() == 2);
+    CHECK(response.at("id") == 2701);
+    u27CheckStats(response.at("stats"), u27ExpectedWideStats());
+    REQUIRE(dispatcher->requestCount() == 1);
+    CHECK(std::holds_alternative<RpcStatsRequest>(dispatcher->requestAt(0).payload));
+}
+
+TEST_CASE("U27 RPC stats: stdio keeps unsupported unknown and SDL incomplete explicit") {
+    for (const auto& [value, expected] : u27StatsModes()) {
+        RpcServer rpc;
+        rpc.setDispatcher(u27StatsDispatcher(value));
+        const auto response = U27Json::parse(rpc.processRequestLine(R"({"id":2702,"method":"stats"})"));
+        REQUIRE(response.contains("stats"));
+        CHECK(response.size() == 2);
+        u27CheckStats(response.at("stats"), expected);
+    }
+}
+
+TEST_CASE("U27 RPC stats: real stdio descriptor emits complete ordered uint64 lines") {
+    U27RpcOutputCapture output;
+    REQUIRE(output.valid());
+    auto source = std::make_shared<ControlledLineSource>();
+    source->enqueue(R"({"id":2703,"method":"stats"})");
+    source->enqueue(R"({"id":2704,"method":"stats"})");
+    source->finish();
+    auto dispatcher = u27StatsDispatcher(u27WideStats());
+    {
+        RpcServer rpc(lineSourceFor(source), output.writer());
+        REQUIRE(rpc.outputReady());
+        rpc.setDispatcher(dispatcher);
+        output.startReader();
+        output.closeWriter();
+        rpc.run(); // finite real input/EOF, actual StdioRpcOutput writer
+        CHECK_FALSE(rpc.isRunning());
+    }
+    output.finish();
+    REQUIRE_FALSE(output.readFailed());
+    REQUIRE_FALSE(output.bytes().empty());
+    CHECK(output.bytes().back() == '\n');
+    std::istringstream lines(output.bytes());
+    for (const int id : {2703, 2704}) {
+        std::string line;
+        REQUIRE(static_cast<bool>(std::getline(lines, line)));
+        const auto response = U27Json::parse(line);
+        CHECK(response.at("id") == id);
+        CHECK(response.size() == 2);
+        REQUIRE(response.contains("stats"));
+        u27CheckStats(response.at("stats"), u27ExpectedWideStats());
+    }
+    std::string extra;
+    CHECK_FALSE(static_cast<bool>(std::getline(lines, extra)));
+    CHECK(dispatcher->requestCount() == 2);
+    CHECK(source->readCalls() == 3);
+}
+
+TEST_CASE("U27 RPC stats: real HTTP flat response matches stdio without truncation") {
+    auto dispatcher = u27StatsDispatcher(u27WideStats());
+    EditorServer server;
+    server.setDispatcher(dispatcher);
+    REQUIRE(startOpen(server));
+    httplib::Client client("127.0.0.1", server.port());
+    client.set_connection_timeout(2, 0); client.set_read_timeout(3, 0);
+    const auto response = client.Get("/api/stats");
+    REQUIRE(response);
+    REQUIRE(response->status == 200);
+    auto body = U27Json::parse(response->body);
+    CHECK(body.at("status") == "ok");
+    CHECK_FALSE(body.contains("stats"));
+    body.erase("status");
+    u27CheckStats(body, u27ExpectedWideStats());
+    RpcServer rpc;
+    rpc.setDispatcher(dispatcher);
+    const auto stdio = U27Json::parse(rpc.processRequestLine(R"({"id":2705,"method":"stats"})"));
+    REQUIRE(stdio.contains("stats"));
+    CHECK(body == stdio.at("stats"));
+    CHECK(dispatcher->requestCount() == 2);
+    server.stop();
+    CHECK_FALSE(server.isRunning());
+}
+
+TEST_CASE("U27 RPC stats: real HTTP preserves unsupported and all delivery output modes") {
+    for (const auto& [value, expected] : u27StatsModes()) {
+        EditorServer server;
+        auto dispatcher = u27StatsDispatcher(value);
+        server.setDispatcher(dispatcher);
+        REQUIRE(startOpen(server));
+        httplib::Client client("127.0.0.1", server.port());
+        client.set_connection_timeout(2, 0); client.set_read_timeout(3, 0);
+        const auto response = client.Get("/api/stats");
+        REQUIRE(response);
+        REQUIRE(response->status == 200);
+        auto body = U27Json::parse(response->body);
+        CHECK(body.at("status") == "ok");
+        CHECK_FALSE(body.contains("stats"));
+        body.erase("status");
+        u27CheckStats(body, expected);
+        CHECK(dispatcher->requestCount() == 1);
+        server.stop();
+    }
+}
+
+TEST_CASE("U27 RPC stats: failures and wrong payload never become success snapshots") {
+    struct Failure { RpcReply reply; const char* code; int http; };
+    const std::vector<Failure> failures = {
+        {{RpcReplyStatus::Busy, "request_cancelled", "not started", {}}, "request_cancelled", 503},
+        {{RpcReplyStatus::Busy, "result_unknown", "already started", {}}, "result_unknown", 503},
+        {{RpcReplyStatus::Unavailable, "dispatcher_closed", "closed", {}}, "dispatcher_closed", 503},
+        {{RpcReplyStatus::Ok, {}, {}, RpcStatusResult{true}}, "invalid_dispatcher_reply", 500},
+    };
+    for (const auto& failure : failures) {
+        CAPTURE(failure.code);
+        auto dispatcher = std::make_shared<RecordingRpcDispatcher>([failure](const RpcRequest&) {
+            return failure.reply;
+        });
+        RpcServer rpc; rpc.setDispatcher(dispatcher);
+        const auto stdio = U27Json::parse(rpc.processRequestLine(R"({"id":2706,"method":"stats"})"));
+        CHECK(stdio.at("id") == 2706);
+        CHECK(stdio.at("code") == failure.code);
+        CHECK(stdio.contains("error"));
+        CHECK_FALSE(stdio.contains("stats"));
+        EditorServer server; server.setDispatcher(dispatcher);
+        REQUIRE(startOpen(server));
+        httplib::Client client("127.0.0.1", server.port());
+        client.set_connection_timeout(2, 0); client.set_read_timeout(3, 0);
+        const auto response = client.Get("/api/stats");
+        REQUIRE(response);
+        CHECK(response->status == failure.http);
+        const auto body = U27Json::parse(response->body);
+        CHECK(body.at("code") == failure.code);
+        CHECK(body.at("status") != "ok");
+        for (const char* name : {"stats", "jobs", "async_loader", "host", "audio", "render"}) {
+            CHECK_FALSE(body.contains(name));
+            CHECK_FALSE(stdio.contains(name));
+        }
+        CHECK(dispatcher->requestCount() == 2);
+        server.stop();
+    }
+}
+
+TEST_CASE("U27 Render RPC stats: real stdio descriptor preserves raw flags modes and nested uint64 values") {
+    for (const auto& mode : u27RenderModes()) {
+        CAPTURE(mode.name);
+        U27RpcOutputCapture output;
+        REQUIRE(output.valid());
+        auto source = std::make_shared<ControlledLineSource>();
+        source->enqueue(R"({"id":2711,"method":"stats"})");
+        source->finish();
+        auto dispatcher = u27StatsDispatcher(mode.supplied);
+        {
+            RpcServer rpc(lineSourceFor(source), output.writer());
+            REQUIRE(rpc.outputReady());
+            rpc.setDispatcher(dispatcher);
+            output.startReader();
+            output.closeWriter();
+            rpc.run();
+            CHECK_FALSE(rpc.isRunning());
+        }
+        output.finish();
+        REQUIRE_FALSE(output.readFailed());
+        REQUIRE_FALSE(output.bytes().empty());
+        CHECK(output.bytes().back() == '\n');
+        std::istringstream lines(output.bytes());
+        std::string line;
+        REQUIRE(static_cast<bool>(std::getline(lines, line)));
+        const auto response = U27Json::parse(line);
+        REQUIRE(response.is_object());
+        CHECK(response.size() == 2);
+        CHECK(response.at("id") == 2711);
+        REQUIRE(response.contains("stats"));
+        u27CheckStats(response.at("stats"), mode.expected);
+        CHECK_FALSE(static_cast<bool>(std::getline(lines, line)));
+        CHECK(dispatcher->requestCount() == 1);
+        CHECK(source->readCalls() == 2);
+    }
+}
+
+TEST_CASE("U27 Render RPC stats: real HTTP preserves raw flags modes and nested uint64 values") {
+    for (const auto& mode : u27RenderModes()) {
+        CAPTURE(mode.name);
+        EditorServer server;
+        auto dispatcher = u27StatsDispatcher(mode.supplied);
+        server.setDispatcher(dispatcher);
+        REQUIRE(startOpen(server));
+        httplib::Client client("127.0.0.1", server.port());
+        client.set_connection_timeout(2, 0); client.set_read_timeout(3, 0);
+        const auto response = client.Get("/api/stats");
+        REQUIRE(response);
+        REQUIRE(response->status == 200);
+        auto body = U27Json::parse(response->body);
+        CHECK(body.at("status") == "ok");
+        CHECK_FALSE(body.contains("stats"));
+        body.erase("status");
+        u27CheckStats(body, mode.expected);
+        CHECK(dispatcher->requestCount() == 1);
+        server.stop();
+        CHECK_FALSE(server.isRunning());
+    }
+}

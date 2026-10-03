@@ -1,0 +1,262 @@
+{
+  "schema_version": 1,
+  "suite_id": "screen-offset-regression-v1",
+  "font": {
+    "path": "assets/fonts/NotoSansCJKsc-Regular.otf",
+    "sha256": "2c76254f6fc379fddfce0a7e84fb5385bb135d3e399294f6eeb6680d0365b74b",
+    "pixel_size": 28,
+    "load_flags": "FT_LOAD_DEFAULT",
+    "render_mode": "FT_RENDER_MODE_NORMAL",
+    "sampling": "pixel-center-bilinear-zero-extended",
+    "minimum_opaque_pixels": 64,
+    "minimum_edge_pixels": 16,
+    "opaque_tolerance": 2,
+    "edge_tolerance": 4,
+    "center_tolerance": 0.75
+  },
+  "cases": [
+    {
+      "id": "screen-offset",
+      "expected": "rendered",
+      "fault_requested": "none",
+      "required_checks": [
+        "actual_backend",
+        "core_ready",
+        "not_ifh",
+        "shutdown",
+        "capture:first-empty",
+        "pixels:first-empty",
+        "capture:control",
+        "pixels:control",
+        "capture:shifted",
+        "pixels:shifted",
+        "capture:negative-clamped",
+        "pixels:negative-clamped",
+        "capture:postfx-shifted",
+        "pixels:postfx-shifted",
+        "capture:transition-from",
+        "pixels:transition-from",
+        "capture:transition-to",
+        "pixels:transition-to",
+        "capture:postfx-transition",
+        "pixels:postfx-transition",
+        "capture:scaled-shifted",
+        "pixels:scaled-shifted",
+        "capture:scaled-transition",
+        "pixels:scaled-transition",
+        "capture:returned-zero",
+        "pixels:returned-zero",
+        "capture:nonempty-to-empty",
+        "pixels:nonempty-to-empty"
+      ],
+      "captures": [
+        {
+          "id": "first-empty",
+          "width": 640,
+          "height": 360,
+          "background": [
+            53,
+            29,
+            91,
+            255
+          ],
+          "offset": [
+            0,
+            0
+          ],
+          "postfx": false,
+          "transition_progress": -1,
+          "empty": true
+        },
+        {
+          "id": "control",
+          "width": 640,
+          "height": 360,
+          "background": [
+            0,
+            0,
+            0,
+            255
+          ],
+          "offset": [
+            0,
+            0
+          ],
+          "postfx": false,
+          "transition_progress": -1
+        },
+        {
+          "id": "shifted",
+          "width": 640,
+          "height": 360,
+          "background": [
+            0,
+            0,
+            0,
+            255
+          ],
+          "offset": [
+            32,
+            24
+          ],
+          "postfx": false,
+          "transition_progress": -1
+        },
+        {
+          "id": "negative-clamped",
+          "width": 640,
+          "height": 360,
+          "background": [
+            0,
+            0,
+            0,
+            255
+          ],
+          "offset": [
+            -32,
+            -24
+          ],
+          "postfx": false,
+          "transition_progress": -1
+        },
+        {
+          "id": "postfx-shifted",
+          "width": 640,
+          "height": 360,
+          "background": [
+            0,
+            0,
+            0,
+            255
+          ],
+          "offset": [
+            32,
+            24
+          ],
+          "postfx": true,
+          "transition_progress": -1
+        },
+        {
+          "id": "transition-from",
+          "width": 640,
+          "height": 360,
+          "background": [
+            0,
+            0,
+            0,
+            255
+          ],
+          "offset": [
+            32,
+            24
+          ],
+          "postfx": false,
+          "transition_progress": 0
+        },
+        {
+          "id": "transition-to",
+          "width": 640,
+          "height": 360,
+          "background": [
+            0,
+            0,
+            0,
+            255
+          ],
+          "offset": [
+            32,
+            24
+          ],
+          "postfx": false,
+          "transition_progress": 1
+        },
+        {
+          "id": "postfx-transition",
+          "width": 640,
+          "height": 360,
+          "background": [
+            0,
+            0,
+            0,
+            255
+          ],
+          "offset": [
+            32,
+            24
+          ],
+          "postfx": true,
+          "transition_progress": 0
+        },
+        {
+          "id": "scaled-shifted",
+          "width": 800,
+          "height": 450,
+          "background": [
+            0,
+            0,
+            0,
+            255
+          ],
+          "offset": [
+            32,
+            24
+          ],
+          "postfx": false,
+          "transition_progress": -1
+        },
+        {
+          "id": "scaled-transition",
+          "width": 800,
+          "height": 450,
+          "background": [
+            0,
+            0,
+            0,
+            255
+          ],
+          "offset": [
+            32,
+            24
+          ],
+          "postfx": true,
+          "transition_progress": 1
+        },
+        {
+          "id": "returned-zero",
+          "width": 640,
+          "height": 360,
+          "background": [
+            0,
+            0,
+            0,
+            255
+          ],
+          "offset": [
+            0,
+            0
+          ],
+          "postfx": false,
+          "transition_progress": -1
+        },
+        {
+          "id": "nonempty-to-empty",
+          "width": 640,
+          "height": 360,
+          "background": [
+            70,
+            40,
+            10,
+            255
+          ],
+          "offset": [
+            0,
+            0
+          ],
+          "postfx": false,
+          "transition_progress": -1,
+          "empty": true
+        }
+      ]
+    }
+  ]
+}

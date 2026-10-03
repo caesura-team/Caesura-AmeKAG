@@ -65,20 +65,23 @@ end
 
 function Backend.audio_play(bus, file, opts)
     opts = opts or {}
+    if type(opts) ~= "table" then return false, "audio options must be a table" end
+    local playback = { volume = opts.volume, loop = opts.loop, fadein = opts.fadein }
+    if bus == "bgm" and playback.fadein == nil then playback.fadein = 1.0 end
     local be = get_backend()
     if be then
-        if bus == "bgm" then return be.audio("play_bgm", file, tonumber(opts.fadein) or 1.0)
-        elseif bus == "voice" then return be.audio("play_voice", file)
+        if bus == "bgm" then return be.audio("play_bgm", file, playback)
+        elseif bus == "voice" then return be.audio("play_voice", file, playback)
         elseif bus == "se" then
-            if opts.x and opts.y then return be.audio("play_se_3d", file, opts.x, opts.y, opts.z or 0)
-            else return be.audio("play_se", file) end
+            if opts.x and opts.y then return be.audio("play_se_3d", file, opts.x, opts.y, opts.z or 0, playback)
+            else return be.audio("play_se", file, playback) end
         end
     else
-        if bus == "bgm" then return call_resolved("play_bgm", file, tonumber(opts.fadein) or 1.0)
-        elseif bus == "voice" then return call_resolved("play_voice", file)
+        if bus == "bgm" then return call_resolved("play_bgm", file, playback)
+        elseif bus == "voice" then return call_resolved("play_voice", file, playback)
         elseif bus == "se" then
-            if opts.x and opts.y then return call_resolved("play_se_3d", file, opts.x, opts.y, opts.z or 0)
-            else return call_resolved("play_se", file) end
+            if opts.x and opts.y then return call_resolved("play_se_3d", file, opts.x, opts.y, opts.z or 0, playback)
+            else return call_resolved("play_se", file, playback) end
         end
     end
     return false
@@ -86,15 +89,22 @@ end
 
 function Backend.audio_stop(bus, opts)
     opts = opts or {}
+    if type(opts) ~= "table" then return false, "audio stop options must be a table" end
+    local fadeout = opts.fadeout
+    if fadeout ~= nil and (type(fadeout) ~= "number" or fadeout ~= fadeout
+        or fadeout < 0 or fadeout == math.huge) then
+        return false, "audio fadeout must be a finite nonnegative number"
+    end
+    if fadeout == nil then fadeout = bus == "bgm" and 1.0 or 0 end
     local be = get_backend()
     if be then
-        if bus == "bgm" then return be.audio("stop_bgm", tonumber(opts.fadeout) or 1.0)
+        if bus == "bgm" then return be.audio("stop_bgm", fadeout)
         elseif bus == "voice" then return be.audio("stop_voice")
-        elseif bus == "se" then return be.audio("stop_se") end
+        elseif bus == "se" then return be.audio("stop_se", fadeout) end
     else
-        if bus == "bgm" then return call_resolved("stop_bgm", tonumber(opts.fadeout) or 1.0)
+        if bus == "bgm" then return call_resolved("stop_bgm", fadeout)
         elseif bus == "voice" then return call_resolved("stop_voice")
-        elseif bus == "se" then call_resolved("stop_se") end
+        elseif bus == "se" then return call_resolved("stop_se", fadeout) end
     end
     return false
 end
@@ -165,8 +175,32 @@ end
 -- Render
 -- =========================================================================
 
+-- Native animation bindings deliberately return an explicit failure when
+-- unavailable. They never infer model identity from a global character name.
+local function live2d_call(method, ...)
+    local native = rawget(_G, "Live2D")
+    local fn = type(native) == "table" and native[method]
+    if type(fn) ~= "function" then return false, "Live2D native binding unavailable" end
+    return fn(...)
+end
+
+function Backend.live2d_load(path, name) return live2d_call("load", path, name) end
+function Backend.live2d_show(handle, x, y, scale) return live2d_call("show", handle, x, y, scale) end
+function Backend.live2d_hide(handle) return live2d_call("hide", handle) end
+function Backend.live2d_unload(handle) return live2d_call("unload", handle) end
+function Backend.live2d_set_mouth(handle, value) return live2d_call("set_mouth", handle, value) end
+function Backend.live2d_set_voice_lipsync(handle, enabled) return live2d_call("set_voice_lipsync", handle, enabled) end
+
 function Backend.create_viewport(w, h)
     return render_or_guard("create_viewport", w, h)
+end
+
+function Backend.capture_scene()
+    return render_or_guard("capture_scene")
+end
+
+function Backend.cancel_transition()
+    return render_or_guard("cancel_transition")
 end
 
 function Backend.destroy_viewport(vpId)
@@ -400,6 +434,10 @@ end
 
 function Backend.video_stop(handle)
     return render_or_guard("video_stop", handle)
+end
+
+function Backend.video_draw(handle, x, y, w, h)
+    return render_or_guard("video_draw", handle, x, y, w, h)
 end
 
 function Backend.video_is_playing(handle)

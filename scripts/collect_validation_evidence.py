@@ -21,6 +21,8 @@ import sys
 from typing import Any
 import xml.etree.ElementTree as ET
 
+from validation_sanitizer import CaptureError, LOG_NAME, OPTIONS_CONTRACT, plain_path, read_capture_files
+
 VERSION = 1
 PARSERS = {"doctest", "lua", "ctest-junit", "vitest-json", "unittest", "exit-code"}
 ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
@@ -213,6 +215,11 @@ def load_profile(path: Path, name: str, *, content: bytes | None = None) -> dict
     require(isinstance(data.get("profiles"), dict) and name in data["profiles"], f"Unknown profile: {name}")
     profile = data["profiles"][name]
     require(isinstance(profile, dict), "Invalid profile object")
+    if "sanitizer_capture" in profile:
+        policy = profile["sanitizer_capture"]
+        require(isinstance(policy, dict) and set(policy) == {"version", "required"}
+                and type(policy["version"]) is int and policy["version"] == 1
+                and policy["required"] is True, "Unsupported sanitizer capture profile policy")
     require(isinstance(profile.get("checks"), list) and bool(profile["checks"]), "Profile has no checks")
     seen = set()
     for check in profile["checks"]:
@@ -345,10 +352,134 @@ def check_inputs(spec: dict, check: dict, base: Path, *, confined: bool) -> tupl
     return files, reports
 
 
+def sanitizer_diagnostics(parser: str, reports: dict[str, str]) -> list[str]:
+    """Reject runtime diagnostics in authenticated output, independently of exit/counts.
+
+    This observes retained output only. Child reports discarded by a test need
+    their own authenticated capture; bare tool names/flags are not diagnostics.
+    """
+    streams = [(role, reports[role]) for role in ("stdout", "stderr")]
+    streams.extend((role, text) for role, text in reports.items() if role.startswith("sanitizer/"))
+    if parser == "ctest-junit" and reports.get("report"):
+        try:
+            root = ET.fromstring(reports["report"])
+        except ET.ParseError:
+            pass  # The normal report parser will reject the malformed XML.
+        else:
+            for index, node in enumerate(root.iter()):
+                if node.tag in {"system-out", "system-err"}:
+                    streams.append((f"report/{node.tag}[{index}]", "".join(node.itertext())))
+    family = r"(?:Address|Leak|UndefinedBehavior|Thread|Memory)Sanitizer"
+    diagnostic = re.compile(
+        rf"^[ \t]*(?:==\d+==)?(?:ERROR|WARNING|SUMMARY|FATAL):\s*{family}:"
+        rf"|^[ \t]*{family}:DEADLYSIGNAL\b"
+        r"|^[^\r\n]+:\d+(?::\d+)?:\s*runtime error:\s*\S"
+    )
+    reasons = []
+    sgr = re.compile(r"\x1b\[[0-9;:]*m")
+    for role, text in streams:
+        for number, line in enumerate(text.splitlines(), 1):
+            # LLVM can insert SGR colors inside "runtime error" diagnostics.
+            # Normalize only the matching view; authenticated bytes stay intact.
+            if diagnostic.search(sgr.sub("", line)):
+                # Logs remain bound in full. Keep the manifest compact and do
+                # not copy arbitrary program output into its diagnostic text.
+                reasons.append(f"Sanitizer diagnostic in {role} at line {number}")
+                break
+    return reasons
+
+
+def capture_inputs(check: dict, base: Path, *, required: bool, confined: bool) -> tuple[dict | None, dict, dict]:
+    """Bind the full actual directory to the external executor's inventory."""
+    capture = check.get("sanitizer_capture")
+    require(capture is not None or not required, "Missing required sanitizer capture")
+    if capture is None:
+        require("sanitizer_capture" not in check, "Invalid null sanitizer capture")
+        return None, {}, {}
+    require(isinstance(capture, dict) and set(capture) == {
+        "version", "complete", "directory", "prefix", "options_contract", "files",
+    }, "Invalid sanitizer capture fields")
+    require(type(capture["version"]) is int and capture["version"] == 1,
+            "Unsupported sanitizer capture version")
+    require(capture["complete"] is True, "Incomplete sanitizer capture")
+    require(capture["prefix"] == "sanitizer" and capture["options_contract"] == OPTIONS_CONTRACT,
+            "Unsupported sanitizer capture options contract")
+    ident = check["id"]
+    raw_directory = f"sanitizer/{ident}"
+    bundle_directory = f"inputs/{ident}/sanitizer"
+    require(capture["directory"] == raw_directory, "Wrong sanitizer capture directory")
+    require(isinstance(capture["files"], list), "Missing sanitizer capture file list")
+    expected = {}
+    for ref in capture["files"]:
+        require(isinstance(ref, dict) and set(ref) == {"path", "sha256", "size_bytes"},
+                "Invalid sanitizer capture file reference")
+        name = ref["path"]
+        require(isinstance(name, str) and name.startswith(raw_directory + "/")
+                and LOG_NAME.fullmatch(name[len(raw_directory) + 1:]) is not None,
+                "Invalid sanitizer capture file path")
+        basename = name[len(raw_directory) + 1:]
+        require(basename not in expected, "Duplicate sanitizer capture file")
+        require(isinstance(ref["sha256"], str) and SHA_RE.fullmatch(ref["sha256"]) is not None,
+                "Invalid sanitizer capture digest")
+        integer(ref["size_bytes"], "sanitizer capture size_bytes")
+        expected[basename] = ref
+    directory = base / (bundle_directory if confined else raw_directory)
+    try:
+        actual = read_capture_files(directory)
+    except (CaptureError, OSError) as error:
+        raise EvidenceError(str(error)) from error
+    require(set(actual) == set(expected), "Sanitizer capture inventory differs from executor receipt")
+    refs, copies, reports = [], {}, {}
+    for name, data in actual.items():
+        ref = expected[name]
+        require(len(data) == ref["size_bytes"] and hashlib.sha256(data).hexdigest() == ref["sha256"],
+                f"Sanitizer capture bytes differ from executor receipt: {name}")
+        target = bundle_directory + "/" + name
+        refs.append({**ref, "path": target})
+        copies[target] = directory / name
+        reports[raw_directory + "/" + name] = data.decode("utf-8-sig", errors="replace")
+    return {**capture, "directory": bundle_directory, "files": refs}, copies, reports
+
+
+def capture_inventory(base: Path, actual: dict, copies: dict, *, confined: bool) -> None:
+    """Reject unknown/renamed/unbound files, including empty extra check dirs."""
+    captured = {ident for ident, check in actual.items() if "sanitizer_capture" in check}
+    try:
+        if not confined:
+            namespace = base / "sanitizer"
+            if not captured and not namespace.exists() and not namespace.is_symlink():
+                return
+            plain_path(namespace, directory=True)
+            require({path.name for path in namespace.iterdir()} == captured,
+                    "Sanitizer capture namespace differs from executed checks")
+            return
+        # Each bound file and ancestor is canonical. Extra payload cannot hide a
+        # diagnostic by renaming it outside the reserved sanitizer subdirectory.
+        allowed_files = set(copies) | {"profile.json", "execution-receipt.json", "manifest.json"}
+        allowed_dirs = {f"inputs/{ident}/sanitizer" for ident in captured}
+        for name in allowed_files | set(allowed_dirs):
+            allowed_dirs.update(p.as_posix() for p in Path(name).parents if p != Path("."))
+        pending = [base]
+        while pending:
+            directory = pending.pop()
+            plain_path(directory, directory=True)
+            for path in directory.iterdir():
+                relative = path.relative_to(base).as_posix()
+                if path.is_dir():
+                    require(relative in allowed_dirs, f"Unbound bundle directory: {relative}")
+                    pending.append(path)
+                else:
+                    plain_path(path, directory=False)
+                    require(relative in allowed_files, f"Unbound bundle file: {relative}")
+    except (CaptureError, OSError) as error:
+        raise EvidenceError(str(error)) from error
+
+
 def result_for_check(spec: dict, check: dict, files: dict[str, Path], reports: dict[str, str]) -> dict:
     parsed_counts = None
     skipped = []
-    reasons = []
+    diagnostics = sanitizer_diagnostics(spec["parser"], reports)
+    reasons = list(diagnostics)
     if check["exit_code"] != 0:
         reasons.append(f"Process exit code {check['exit_code']}")
     try:
@@ -365,7 +496,7 @@ def result_for_check(spec: dict, check: dict, files: dict[str, Path], reports: d
     except EvidenceError as error:
         reasons.append(str(error))
     result = "PASS" if not reasons else "FAIL"
-    if check["exit_code"] == 77:
+    if check["exit_code"] == 77 and not diagnostics:
         result = "SKIP"
     return {"id": spec["id"], "parser": spec["parser"], "required": spec["required"],
             "command": check["command"], "cwd": check["cwd"],
@@ -400,7 +531,17 @@ def build_manifest(profile_path: Path, name: str, receipt_path: Path, *, collect
         validate_check(check, spec, run)
         files, reports = check_inputs(spec, check, collected_root or receipt_path.parent, confined=collected_root is not None)
         copies.update({file_name(ident, role): path for role, path in files.items()})
-        results.append(result_for_check(spec, check, files, reports))
+        capture, capture_copies, capture_reports = capture_inputs(
+            check, collected_root or receipt_path.parent,
+            required="sanitizer_capture" in profile, confined=collected_root is not None)
+        copies.update(capture_copies)
+        reports.update(capture_reports)
+        item = result_for_check(spec, check, files, reports)
+        if capture is not None:
+            item["sanitizer_capture"] = capture
+        results.append(item)
+    if "sanitizer_capture" in profile or any("sanitizer_capture" in check for check in actual.values()):
+        capture_inventory(collected_root or receipt_path.parent, actual, copies, confined=collected_root is not None)
     successful = all(item["result"] == "PASS" for item in results if item["required"])
     changed = run["source_changed_during_run"] or run["fixtures_changed_during_run"]
     result = "PASS" if successful and not changed else "FAIL"
@@ -421,6 +562,9 @@ def collect_evidence(profile_path: Path, profile_name: str, run_path: Path, outp
             "Output must end with <source_sha>/<run_id>/<profile_name>")
     try:
         output.mkdir(parents=True, exist_ok=False)
+        for check in manifest["checks"]:
+            if "sanitizer_capture" in check:
+                (output / check["sanitizer_capture"]["directory"]).mkdir(parents=True, exist_ok=False)
         for relative, source in sources.items():
             target = output / relative
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -432,6 +576,8 @@ def collect_evidence(profile_path: Path, profile_name: str, run_path: Path, outp
         # copying can never acquire a completed manifest through a TOCTOU gap.
         copied, _ = build_manifest(profile_path, profile_name, run_path, collected_root=output)
         require(copied == manifest, "Execution input changed while collecting")
+        original, _ = build_manifest(profile_path, profile_name, run_path)
+        require(original == manifest, "Original execution input changed while collecting")
         require(digest(output / "execution-receipt.json") == manifest["receipt_sha256"], "Receipt changed while collecting")
         require(digest(output / "profile.json") == manifest["profile_sha256"], "Profile changed while collecting")
         with (output / "manifest.json").open("x", encoding="utf-8", newline="\n") as stream:

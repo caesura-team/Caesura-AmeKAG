@@ -1,6 +1,12 @@
 -- Real runner click history, layer tree and text submissions. Only native
 -- bindings and scene IO are replaced; this isolated test owns its whole VM.
 package.path = 'scripts/?.lua;scripts/?/init.lua;' .. package.path
+
+-- Test handlers are explicit DSL extensions; a recording KAG table alone
+-- does not register commands. Keep the production public selector intact.
+local fixture_schema = require("kag.schema")
+fixture_schema.define("u12_transaction_picture", {phase={type="string"}})
+fixture_schema.define("u12_transaction_scope", {})
 local function callable(values)
     return setmetatable(values or {}, {__index=function(self,key)
         local fn=function() return true end

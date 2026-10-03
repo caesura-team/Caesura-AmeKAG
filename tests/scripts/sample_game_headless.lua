@@ -57,6 +57,7 @@ _G.backend = callable({
 })
 
 local kag_runner = require("kag_runner")
+local headless = dofile("tests/scripts/headless_render_fixture.lua").install()
 
 local STORY  = os.getenv("SAMPLE_STORY")  or "demo/example_game/story.ks.new"
 local ENDING = os.getenv("SAMPLE_ENDING") -- optional *ending_xxx label
@@ -133,6 +134,7 @@ local result = nil
 while frames < FMAX do
     frames = frames + 1
     local ok, reason = kag_runner.update(0.016)
+    headless.check(kag_runner, ok, reason)
     local ctx = _G._CAESURA_CTX
     if reason == "ended" then
         result = "DONE:" .. frames
@@ -146,7 +148,9 @@ while frames < FMAX do
     if ctx and (ctx.waiting_input or ctx._choiceMode) then
         clicks = clicks + 1
         drive_click()
+        headless.check(kag_runner)
     end
+    headless.pump(kag_runner)
 end
 if not result then result = "FRAME_LIMIT" end
 

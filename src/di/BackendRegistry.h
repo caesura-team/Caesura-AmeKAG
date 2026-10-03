@@ -5,6 +5,10 @@
 #include <vector>
 #include <string>
 #include <functional>
+#include <cstdint>
+#include <type_traits>
+#include <stdexcept>
+#include <limits>
 
 namespace Caesura {
 
@@ -46,7 +50,15 @@ public:
 
     // -- Type-erased storage (header-only for template, needs complete type at call site)
     template<typename I>
-    void setService(I* impl) { m_services[std::type_index(typeid(I))] = static_cast<void*>(impl); }
+    void setService(I* impl) {
+        if constexpr (std::is_same_v<I, IVideoPlayer>) {
+            if (m_videoGeneration == std::numeric_limits<uint64_t>::max())
+                throw std::overflow_error("Video backend generation exhausted");
+            ++m_videoGeneration; // Every registration, including same-address ABA.
+        }
+        m_services[std::type_index(typeid(I))] = static_cast<void*>(impl);
+    }
+    uint64_t videoPlayerGeneration() const noexcept { return m_videoGeneration; }
 
     template<typename I>
     I* getService() const {
@@ -144,6 +156,7 @@ public:
 private:
     BackendRegistry() = default;
     std::unordered_map<std::type_index, void*> m_services;
+    uint64_t m_videoGeneration = 0;
     std::vector<IDeviceLostListener*> m_deviceLostListeners;
     ErrorReporter m_errorReporter;
 };

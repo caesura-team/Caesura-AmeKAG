@@ -537,7 +537,9 @@ async function renderSlots() {
     loadBtn.textContent = 'Load'
     loadBtn.addEventListener('click', async () => {
       log('loading slot ' + s.slot + '…')
-      const out = await player.loadSlot(s.slot)
+      // Loading restores the displayed page; only subsequent player input
+      // may consume its wait. The bridge also serves automatic test drivers.
+      const out = await player.loadSlot(s.slot, { autoClick: false })
       syncTextures()
       await renderer.render()
       syncBacklog()

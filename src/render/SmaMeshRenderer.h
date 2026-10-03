@@ -16,9 +16,8 @@ class BgfxShaderManager;
 //  S2: CPU soft-skinning (SmaSkinner) + transient-vertex-buffer draw reusing
 //  the existing pos+uv layout and the embedded texture program.
 //
-//  S5: GPU compute skinning — per-mesh compute input/output vertex buffers
-//  (positions+UV+bones+weights in, skinned positions+UV out) and a shared
-//  bone transform buffer, driven by a compute shader (D3D11 DXBC embedded;
+//  S5: GPU compute skinning — per-mesh immutable input, per-draw output and
+//  immutable pose/transform snapshot, driven by a compute shader (D3D11 DXBC embedded;
 //  GL 430 GLSL embedded). SkinMode::Auto picks the GPU path when the backend
 //  reports BGFX_CAPS_COMPUTE (D3D11/GL); Metal/SPIR-V/Noop fall back to the
 //  CPU skinner (see docs/design/skeletal-mesh-animation.md §3.1/S5).
@@ -42,12 +41,11 @@ public:
     SkinMode skinMode() const override { return m_skinMode; }
 
     // True when the S5 compute skin pipeline is usable on this backend
-    // (program + bone buffer built; not a per-mesh check). Lets tests and
+    // (program built; per-dispatch allocation is checked at draw). Lets tests and
     // drivers probe capability instead of silently falling back to CPU.
     bool gpuSkinAvailable() const {
         return m_initialized
-            && bgfx::isValid(m_skinProgram)
-            && bgfx::isValid(m_boneBuffer);
+            && bgfx::isValid(m_skinProgram);
     }
 
     MeshHandle createMesh(const SMAMesh& mesh) override;
@@ -73,15 +71,12 @@ private:
         bgfx::IndexBufferHandle ib = BGFX_INVALID_HANDLE;
         std::vector<SmaSkinnedVertex> skinned;
         // S5 GPU skinning resources (valid when gpuSkinReady).
-        // gpuIn is STATIC (D3D11 forbids DYNAMIC usage with an SRV bind).
+        // gpuIn is immutable: mesh topology and weights are uploaded once.
         bgfx::VertexBufferHandle gpuIn = BGFX_INVALID_HANDLE;
-        bgfx::DynamicVertexBufferHandle gpuOut = BGFX_INVALID_HANDLE;
         // Poses stored by updateMesh; packed + dispatched at draw time
         // (same-view ordering: the bone upload + dispatch must precede
         // the draw submit that consumes the output buffer).
         std::vector<BonePose> pendingPoses;
-        bool gpuDirty = false;   // pendingPoses not yet skinned on GPU
-        bool gpuSkinned = false; // gpuOut holds a valid skin
         bool gpuSkinReady = false;
         bool gpuReady = false;
     };
@@ -94,14 +89,22 @@ private:
     // Effective mode for a given mesh: Auto resolves against the backend
     // caps (compute supported + D3D11/GL renderer).
     bool useGpuSkin(const MeshEntry& entry) const;
+    struct GpuDrawPacket {
+        bgfx::VertexBufferHandle snapshot = BGFX_INVALID_HANDLE;
+        bgfx::DynamicVertexBufferHandle output = BGFX_INVALID_HANDLE;
+        GpuDrawPacket() = default;
+        GpuDrawPacket(const GpuDrawPacket&) = delete;
+        GpuDrawPacket& operator=(const GpuDrawPacket&) = delete;
+        ~GpuDrawPacket();
+    };
     void skinOnGpu(MeshEntry& entry, const std::vector<BonePose>& poses,
                    uint16_t targetView, float x, float y, float scale,
-                   float viewW, float viewH);
+                   float viewW, float viewH, GpuDrawPacket& packet);
     void skinOnCpu(MeshEntry& entry, const std::vector<BonePose>& poses);
 
     bgfx::VertexLayout m_layout;      // output: pos + uv
     bgfx::VertexLayout m_skinLayout;  // input: pos + uv + bones + weights
-    bgfx::DynamicVertexBufferHandle m_boneBuffer = BGFX_INVALID_HANDLE;
+    bgfx::VertexLayout m_boneLayout;  // immutable per-dispatch float4 snapshot
     bgfx::ProgramHandle m_skinProgram = BGFX_INVALID_HANDLE;
     std::unique_ptr<BgfxShaderManager> m_shaders;
     std::vector<MeshEntry> m_meshes;

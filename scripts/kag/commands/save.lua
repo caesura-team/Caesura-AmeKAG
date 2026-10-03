@@ -71,12 +71,20 @@ local function capture_state(ctx)
     -- Token position
     state.token_index = ctx._executing_index or ctx._resume_index or ctx.token_index or 1
     state.display_token_index = ctx.token_index or state.token_index
+    -- An inline scene entry yields before its first command: the last
+    -- completed/display cursor is 0 while execution resumes at 1. Persist
+    -- that valid first-position display anchor, including external saves
+    -- at this boundary; ordinary text/page cursors stay unchanged.
+    if state.display_token_index == 0 and state.token_index == 1 then
+        state.display_token_index = 1
+    end
     -- A completed text command followed by [p] shares the resume index with
     -- a suspended [p]. Preserve the actual wait identity, including a loaded
     -- wait that has not yet been reconstructed while the debugger is paused.
     state.resume_page_wait = ctx._resumePageWait == true
         or (ctx.waiting_input == true and ctx._executing_command == "p")
-    if ctx._executing_command == "save" or ctx._executing_command == "saveload" then
+    if ctx._executing_command == "save" or ctx._executing_command == "saveload"
+        or ctx._executing_command == "quickmenu_qsave" then
         state.token_index = state.token_index + 1
     end
 

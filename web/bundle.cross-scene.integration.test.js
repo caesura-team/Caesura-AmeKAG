@@ -182,6 +182,8 @@ describe('bundle cross-scene flow (runFromBundle + __BUNDLE_SCENES)', () => {
     })
     player.lua.global.set('__u11_expect_rejection', reject)
     await player.lua.doString(`
+      -- Register in this same Wasmoon VM before either source or bundle compilation.
+      require('kag.schema').define('u11_async_prepare', {})
       require('kag').u11_async_prepare = function(ctx)
         local ok, value = pcall(function() return __u11_prepare_async():await() end)
         if __u11_expect_rejection then

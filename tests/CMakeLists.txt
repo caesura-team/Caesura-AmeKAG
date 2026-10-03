@@ -4,10 +4,25 @@ if(CAESURA_REQUIRE_TEST_PREREQUISITES)
 else()
     find_package(Python3 COMPONENTS Interpreter QUIET)
 endif()
+if(Python3_Interpreter_FOUND)
+    add_test(NAME CaesuraLive2DNativeEvidence
+        COMMAND ${Python3_EXECUTABLE} -B
+                ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_verify_live2d_native_contract.py)
+    set_tests_properties(CaesuraLive2DNativeEvidence PROPERTIES
+        LABELS "qa;validation;live2d"
+        TIMEOUT 60
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+endif()
 add_library(doctest INTERFACE)
 target_include_directories(doctest INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/cpp)
 
 set(TEST_SOURCES
+    cpp/test_live2d_d3d11_library_lifetime.cpp
+    cpp/test_input_native_contract.cpp
+    cpp/test_video_native_contract.cpp
+    cpp/test_video_strict_contract.cpp
+    cpp/test_asset_directory_contract.cpp
+    cpp/test_blt_native_contract.cpp
     cpp/test_main.cpp
     cpp/test_core.cpp
     cpp/test_debug_manager_edge.cpp
@@ -41,7 +56,9 @@ set(TEST_SOURCES
     cpp/test_ndc_math.cpp
     cpp/test_color_filter.cpp
     cpp/test_lua_manager.cpp
+    cpp/test_lua_lifetime.cpp
     cpp/test_script_bindings.cpp
+    cpp/test_backend_native_contract.cpp
     cpp/test_script_boundary.cpp
     cpp/test_game_state.cpp
     cpp/test_texture_budget_edge.cpp
@@ -84,6 +101,8 @@ set(TEST_SOURCES
     cpp/test_backend_registry.cpp
     cpp/test_mesh_renderer.cpp
     cpp/test_sma_skinner.cpp
+    cpp/test_sma_native_contract.cpp
+    cpp/test_audio_native_contract.cpp
     cpp/test_perf_bench.cpp
     cpp/test_layer_manager.cpp
     cpp/test_texture_manager.cpp
@@ -94,6 +113,8 @@ set(TEST_SOURCES
     cpp/test_sandbox_quota.cpp
     cpp/test_particle_system.cpp
     cpp/test_engine_lifecycle.cpp
+    cpp/test_soak_memory_observation.cpp
+    cpp/test_soak_voice_admission.cpp
     cpp/test_mini_game.cpp
     cpp/test_steam.cpp
     cpp/test_live2d.cpp
@@ -192,7 +213,7 @@ add_caesura_doctest(CaesuraStorageTests
 add_caesura_doctest(CaesuraScriptTests
     LABELS script lua
     RESOURCE_LOCK global-singletons
-    ARGS --source-file=*test_lua_manager.cpp,*test_script_bindings.cpp,*test_script_boundary.cpp,*test_managed_coroutine_lifecycle.cpp,*test_save_binding.cpp,*test_restore_binding.cpp,*test_transient_restore.cpp,*test_kag_binding.cpp,*test_kag_integration.cpp,*test_kag_execution.cpp,*test_game_state.cpp
+    ARGS --source-file=*test_lua_manager.cpp,*test_lua_lifetime.cpp,*test_script_bindings.cpp,*test_script_boundary.cpp,*test_managed_coroutine_lifecycle.cpp,*test_save_binding.cpp,*test_restore_binding.cpp,*test_transient_restore.cpp,*test_kag_binding.cpp,*test_kag_integration.cpp,*test_kag_execution.cpp,*test_game_state.cpp
 )
 add_caesura_doctest(CaesuraRenderResourceTests
     LABELS render resource
@@ -234,6 +255,61 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" OR CMAKE_SYSTEM_NAME STREQUAL "Darwin")
 endif()
 
 if(Python3_EXECUTABLE)
+    # Native host process contract; cross/device/Web work is explicitly separate.
+    if(NOT CMAKE_CROSSCOMPILING AND NOT EMSCRIPTEN)
+        add_test(
+            NAME CaesuraCliAssetDirectory
+            COMMAND "${Python3_EXECUTABLE}" -B
+                    "${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_cli_asset_directory.py"
+                    --test "${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_cli_asset_directory.lua"
+                    --lua "$<TARGET_FILE:lua_cli>"
+                    --scripts "${CMAKE_SOURCE_DIR}/scripts"
+        )
+        set_tests_properties(CaesuraCliAssetDirectory PROPERTIES
+            LABELS "script;lua;filesystem;security"
+            TIMEOUT 60
+            RUN_SERIAL TRUE
+            WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+        )
+        add_executable(CaesuraCloudConflictRestartProbe probes/cloud_conflict_restart_probe.cpp)
+        target_link_libraries(CaesuraCloudConflictRestartProbe PRIVATE
+            Caesura::Storage Caesura::Archive Caesura::BuildOptions)
+        # Normal full builds already produce CaesuraTests; same output directory supplies native DLLs.
+        add_dependencies(CaesuraCloudConflictRestartProbe CaesuraTests)
+        # Keep nested UUID/case/record/temp names below legacy Windows MAX_PATH
+        # in this probe; the cold-process contract does not require long-path support.
+        file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/ccr")
+        add_test(NAME CaesuraCloudConflictRestart
+            COMMAND ${Python3_EXECUTABLE} -B
+                ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_cloud_conflict_restart.py
+                --source-root ${CMAKE_SOURCE_DIR}
+                --probe $<TARGET_FILE:CaesuraCloudConflictRestartProbe>
+                --attempt-root ${CMAKE_BINARY_DIR}/ccr)
+        set_tests_properties(CaesuraCloudConflictRestart PROPERTIES
+            LABELS "storage;filesystem;isolation;recovery"
+            WORKING_DIRECTORY "$<TARGET_FILE_DIR:CaesuraCloudConflictRestartProbe>"
+            FIXTURES_REQUIRED caesura-test-assets
+            TIMEOUT 480
+            RUN_SERIAL TRUE
+            RESOURCE_LOCK save-files)
+        add_executable(CaesuraCloudCoordinatorRestartProbe probes/cloud_coordinator_restart_probe.cpp)
+        target_link_libraries(CaesuraCloudCoordinatorRestartProbe PRIVATE
+            Caesura::Storage Caesura::Archive Caesura::Debug Caesura::BuildOptions)
+        add_dependencies(CaesuraCloudCoordinatorRestartProbe CaesuraTests)
+        add_test(NAME CaesuraCloudCoordinatorRestart
+            COMMAND ${Python3_EXECUTABLE} -B
+                ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_cloud_coordinator_restart.py
+                --source-root ${CMAKE_SOURCE_DIR}
+                --probe $<TARGET_FILE:CaesuraCloudCoordinatorRestartProbe>
+                --attempt-root ${CMAKE_BINARY_DIR}/ccr)
+        set_tests_properties(CaesuraCloudCoordinatorRestart PROPERTIES
+            LABELS "storage;filesystem;isolation;recovery"
+            WORKING_DIRECTORY "$<TARGET_FILE_DIR:CaesuraCloudCoordinatorRestartProbe>"
+            FIXTURES_REQUIRED caesura-test-assets
+            TIMEOUT 480
+            RUN_SERIAL TRUE
+            RESOURCE_LOCK save-files)
+    endif()
     if(WIN32)
         add_executable(CaesuraPresentationColdProbe probes/presentation_cold_probe.cpp)
         target_link_libraries(CaesuraPresentationColdProbe PRIVATE Caesura::Engine)
@@ -243,6 +319,20 @@ if(Python3_EXECUTABLE)
         add_executable(CaesuraScreenshotGpuProbe probes/screenshot_gpu_probe.cpp)
         target_link_libraries(CaesuraScreenshotGpuProbe PRIVATE Caesura::Engine)
         add_dependencies(CaesuraScreenshotGpuProbe CaesuraTests)
+
+        # Opt-in real D3D11/Device workload; a headless CTest must not claim it ran.
+        # Opt-in hidden-window real command corpus; never auto-run by CTest.
+        add_executable(CaesuraCommandContractHost probes/command_contract_host.cpp)
+        target_link_libraries(CaesuraCommandContractHost PRIVATE Caesura::Engine)
+        # Opt-in SMA compute isolation on the same bgfx D3D11 device; no CTest.
+        add_executable(CaesuraSmaComputeProbe probes/sma_compute_contract_probe.cpp)
+        target_link_libraries(CaesuraSmaComputeProbe PRIVATE Caesura::Engine d3d11 dxgi)
+        add_executable(CaesuraEngineSoakProbe probes/engine_soak_probe.cpp)
+        target_link_libraries(CaesuraEngineSoakProbe PRIVATE Caesura::Engine psapi)
+        add_dependencies(CaesuraEngineSoakProbe CaesuraTests)
+        add_executable(CaesuraAudioDeviceClockProbe probes/audio_device_clock_probe.cpp)
+        target_link_libraries(CaesuraAudioDeviceClockProbe PRIVATE Caesura::Engine)
+        add_dependencies(CaesuraAudioDeviceClockProbe CaesuraTests)
         # Full U16 D3D11/OpenGL matrix is opt-in; the Python driver owns scope.
         add_executable(CaesuraRenderContractProbe probes/render_contract_probe.cpp)
         target_link_libraries(CaesuraRenderContractProbe PRIVATE Caesura::Engine bcrypt)
@@ -423,7 +513,6 @@ if(Python3_EXECUTABLE)
         RESOURCE_LOCK "global-singletons"
         FIXTURES_REQUIRED caesura-test-assets
         PASS_REGULAR_EXPRESSION "ALL HEADLESS HTTP SMOKE TESTS PASSED"
-        SKIP_RETURN_CODE 77
         TIMEOUT 90
         WORKING_DIRECTORY "$<TARGET_FILE_DIR:CaesuraAmeKAG>"
     )
@@ -505,6 +594,45 @@ if(Python3_EXECUTABLE)
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
     )
     add_test(
+        NAME CaesuraAudioOutputCli
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_audio_output_cli.py
+                --engine $<TARGET_FILE:CaesuraAmeKAG>
+    )
+    set_tests_properties(CaesuraAudioOutputCli PROPERTIES
+        LABELS "qa;cli;audio"
+        TIMEOUT 360
+        RUN_SERIAL TRUE
+        RESOURCE_LOCK "global-singletons"
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    )
+    add_test(
+        NAME CaesuraFixedStepCli
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_fixed_step_cli.py
+                --engine $<TARGET_FILE:CaesuraAmeKAG>
+    )
+    set_tests_properties(CaesuraFixedStepCli PROPERTIES
+        LABELS "qa;cli;timing"
+        TIMEOUT 360
+        RUN_SERIAL TRUE
+        RESOURCE_LOCK "global-singletons"
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    )
+    add_test(
+        NAME CaesuraResourceCwdCli
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_resource_cwd_cli.py
+                --engine $<TARGET_FILE:CaesuraAmeKAG>
+    )
+    set_tests_properties(CaesuraResourceCwdCli PROPERTIES
+        LABELS "qa;cli;paths"
+        TIMEOUT 120
+        RUN_SERIAL TRUE
+        RESOURCE_LOCK "global-singletons"
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    )
+    add_test(
         NAME CaesuraTargetCapabilities
         COMMAND ${CMAKE_COMMAND} -E env
                 "CAESURA_ENGINE=$<TARGET_FILE:CaesuraAmeKAG>"
@@ -520,6 +648,92 @@ if(Python3_EXECUTABLE)
         TIMEOUT 240
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
     )
+    # Filesystem/protocol contract tests are separate from final package
+    # runtime acceptance. Host Lua and generator are explicitly this build's.
+    foreach(_package_contract release_package_contract native_package_contract
+                              package_runtime web_package_contract package_build_metadata
+                              package_validation_runner native_package_runtime
+                              web_package_runtime package_containers appimage_build_contract ci_package_lane
+                              package_runtime_install macos_runtime_install macos_openssl_metadata
+                              macos_runtime_coordinator android_package_contract android_validation android_output_copy)
+        add_test(
+            NAME CaesuraPackage_${_package_contract}
+            COMMAND ${CMAKE_COMMAND} -E env
+                    "CAESURA_TEST_LUA=$<TARGET_FILE:lua_cli>"
+                    "CAESURA_TEST_CMAKE_GENERATOR=${CMAKE_GENERATOR}"
+                    "CAESURA_TEST_CMAKE_INSTANCE=${CMAKE_GENERATOR_INSTANCE}"
+                    "CAESURA_TEST_CMAKE_MAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}"
+                    ${Python3_EXECUTABLE}
+                    ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_${_package_contract}.py
+        )
+        set_tests_properties(CaesuraPackage_${_package_contract} PROPERTIES
+            LABELS "qa;package;validation"
+            TIMEOUT 240
+            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+        )
+    endforeach()
+
+    # The Android driver suite exercises many real owned Python subprocesses;
+    # it does not run a compiler, Gradle or an Android device.
+    set_tests_properties(CaesuraPackage_android_validation PROPERTIES TIMEOUT 600)
+
+    # Hosted metadata, byte transfer and policy contracts do not themselves
+    # authenticate a CI run; the dry-run controller performs that separately.
+    foreach(_release_contract release_inputs package_bundle execution_bundle
+                              release_artifact_download release_aggregate release_policy
+                              ci_execution_lane ci_release_gate pages_artifact platform_evidence)
+        add_test(NAME CaesuraRelease_${_release_contract}
+            COMMAND ${Python3_EXECUTABLE}
+                    ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_${_release_contract}.py)
+        set_tests_properties(CaesuraRelease_${_release_contract} PROPERTIES
+            LABELS "qa;release;validation"
+            TIMEOUT 240
+            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    endforeach()
+
+    add_test(NAME CaesuraBenchmark_compare_contract
+        COMMAND ${Python3_EXECUTABLE} -B
+                ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_compare_benchmarks.py)
+    add_test(NAME CaesuraSoak_quiet_contract
+        COMMAND ${Python3_EXECUTABLE} -B
+                ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_engine_soak_contract.py)
+    set_tests_properties(CaesuraSoak_quiet_contract PROPERTIES
+        LABELS "qa;performance;validation" TIMEOUT 60
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    add_test(NAME CaesuraSoak_trace_contract
+        COMMAND ${Python3_EXECUTABLE} -B
+                ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_engine_soak_trace.py)
+    set_tests_properties(CaesuraSoak_trace_contract PROPERTIES
+        LABELS "qa;performance;validation" TIMEOUT 60
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    add_test(NAME CaesuraSoak_driver_contract
+        COMMAND ${Python3_EXECUTABLE} -B
+                ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_engine_soak_driver.py)
+    set_tests_properties(CaesuraSoak_driver_contract PROPERTIES
+        LABELS "qa;performance;validation" TIMEOUT 120
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    add_test(NAME CaesuraBenchmark_compiled_sampler
+        COMMAND ${Python3_EXECUTABLE} -B
+                ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_cpu_benchmark_sampler.py
+                --binary $<TARGET_FILE:CaesuraTests>)
+    set_tests_properties(CaesuraBenchmark_compare_contract CaesuraBenchmark_compiled_sampler
+        PROPERTIES LABELS "qa;performance;validation" TIMEOUT 240
+                   WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+
+    find_program(CAESURA_NODE_PROGRAM node)
+    if(CAESURA_REQUIRE_TEST_PREREQUISITES AND NOT CAESURA_NODE_PROGRAM)
+        message(FATAL_ERROR "Complete validation requires Node 22+ for package probe contracts")
+    endif()
+    if(CAESURA_NODE_PROGRAM)
+        add_test(NAME CaesuraPackage_web_probe
+            COMMAND ${CAESURA_NODE_PROGRAM} --test
+                    ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_web_package_probe.mjs)
+        set_tests_properties(CaesuraPackage_web_probe PROPERTIES
+            LABELS "qa;package;validation;web"
+            TIMEOUT 240
+            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    endif()
+
     # Web package gate (t144 design A): contract tests for
     # scripts/verify_web_package.sh against a synthetic dist/<game>/ tree.
     # SKIP_RETURN_CODE 77 when bash or node is missing from the host.
@@ -586,6 +800,25 @@ if(CAESURA_BASH_PROGRAM)
         )
     endif()
 
+endif()
+
+if(WIN32 AND MSVC AND CAESURA_LIVE2D AND TARGET Live2DCubismCore
+        AND Python3_Interpreter_FOUND AND CMAKE_GENERATOR MATCHES "^Visual Studio ")
+    add_test(NAME CaesuraCubismRuntimeLibrary
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_cubism_runtime_library.py
+            --existing-build "${CMAKE_BINARY_DIR}" --configuration "$<CONFIG>"
+            --cmake "${CMAKE_COMMAND}"
+            --helper "${CMAKE_SOURCE_DIR}/cmake/CaesuraCubismRuntime.cmake"
+            --core-dir "${CUBISM_CORE_DIR}"
+            --work-root "${CMAKE_BINARY_DIR}/crt"
+            --generator "${CMAKE_GENERATOR}"
+            --generator-instance "${CMAKE_GENERATOR_INSTANCE}")
+    set_tests_properties(CaesuraCubismRuntimeLibrary PROPERTIES
+        LABELS "live2d;cmake;validation"
+        RUN_SERIAL TRUE
+        TIMEOUT 720
+        PASS_REGULAR_EXPRESSION "ALL CUBISM CRT CONFIGURATION TESTS PASSED")
 endif()
 
 # Always refresh runtime fixtures when CaesuraTests is built, including when

@@ -67,7 +67,149 @@ export class DomRenderer {
     this._pending = false
     this._pendingPromise = null
     this._pendingResolve = null
+    this._sceneFrame = 0
+    this._presentedFilter = 'none'
+    this._destroyed = false
+    this._transitionElement = null
+    this._transitionIdentity = null
+    this._transitionHidden = new Map()
+    this._frameWaits = new Set()
+    this._presenter = {
+      get frame() { return this.renderer._sceneFrame },
+      get content() { return this.renderer._presentedContent },
+      get textures() { return this.renderer._presentedTextures },
+      get urls() { return this.renderer._presentedUrls },
+      resolveTextureUrl:id=>this._resolveTextureUrl(id),
+      renderer:this,
+      capture:()=>this._captureScene(),
+      nextFrame:()=>this._nextSceneFrame(),
+      clearOverlay:()=>this._clearTransition(),
+    }
+    this.core.attachScenePresenter?.(this._presenter)
     this._subscribe()
+  }
+
+  _nextSceneFrame() {
+    if (this._destroyed) return Promise.reject(new Error('Scene renderer is closed'))
+    if(typeof requestAnimationFrame!=='function') return Promise.reject(new Error('Animation frame presenter is unavailable'))
+    return new Promise((resolve,reject)=>{
+      const wait={frame:null,timer:null,reject}
+      const finish=()=>{clearTimeout(wait.timer);this._frameWaits.delete(wait)}
+      wait.timer=setTimeout(()=>{
+        if(wait.frame!==null) cancelAnimationFrame(wait.frame)
+        finish();reject(new Error('Transition presentation deadline exceeded'))
+      },2000)
+      wait.frame=requestAnimationFrame(()=>{
+        if(this._destroyed){finish();reject(new Error('Scene renderer is closed'));return}
+        // Canonical JS layer nodes already contain the Lua changes. Do not
+        // reenter Wasmoon while it is suspended on this presentation promise.
+        try {this._renderWithList(this.core.renderList());finish();resolve(this._sceneFrame)}
+        catch(error){finish();reject(error)}
+      })
+      this._frameWaits.add(wait)
+    })
+  }
+
+  _resolveTextureUrl(id) {
+    return id && (!this.core.textures || this.core.textures.get(id))
+      ? this.textureUrls.get(id) : null
+  }
+
+  _copySceneNode(source, budget = {pixels:0}) {
+    const copy=source.cloneNode(true)
+    if(this._transitionHidden.has(source)) copy.style.visibility=this._transitionHidden.get(source)
+    const originals=[source,...source.querySelectorAll('canvas')].filter(n=>n.tagName==='CANVAS')
+    const copies=[copy,...copy.querySelectorAll('canvas')].filter(n=>n.tagName==='CANVAS')
+    for(let i=0;i<originals.length;++i){
+      const a=originals[i],b=copies[i]
+      budget.pixels+=a.width*a.height
+      if(!Number.isSafeInteger(budget.pixels)||budget.pixels>16*1024*1024) throw new Error('Scene snapshot pixel budget exceeded')
+      b.width=a.width;b.height=a.height
+      const input=a.getContext('2d'),output=b.getContext('2d')
+      if(!input||!output) throw new Error('Scene canvas capture is unavailable')
+      if(a.width&&a.height) output.putImageData(input.getImageData(0,0,a.width,a.height),0,0)
+    }
+    return copy
+  }
+
+  _captureScene() {
+    if(!this._sceneFrame || this._destroyed) return null
+    const node=document.createElement('div')
+    Object.assign(node.style,{position:'absolute',inset:'0',width:'100%',height:'100%',pointerEvents:'none',overflow:'hidden'})
+    const owned=new Set([...this._els.values(),this._textEl].filter(Boolean))
+    const budget={pixels:0}
+    let count=0
+    for(const child of this.root.children){
+      if(!owned.has(child)) continue
+      count+=1+child.querySelectorAll('*').length
+      if(count>4096) throw new Error('Scene snapshot node budget exceeded')
+      node.appendChild(this._copySceneNode(child,budget))
+    }
+    node.style.filter=this._presentedFilter
+    node.style.backgroundColor=getComputedStyle(this.root).backgroundColor
+    const frame=this._sceneFrame
+    return {frame,node,dispose(){for(const c of node.querySelectorAll('canvas')){c.width=0;c.height=0}node.replaceChildren()}}
+  }
+
+  _clearTransition() {
+    for(const canvas of this._transitionElement?.querySelectorAll('canvas')??[]){canvas.width=0;canvas.height=0}
+    this._transitionElement?.remove()
+    this._transitionElement=null
+    this._transitionIdentity=null
+    for(const [element,visibility] of this._transitionHidden)element.style.visibility=visibility
+    this._transitionHidden.clear()
+    setStyle(this.root,'filter',paletteFilter(this.core.palette))
+  }
+
+  _renderTransition() {
+    const state=this.core.transitionOverlay
+    if(!state){if(this._transitionElement)this._clearTransition();return}
+    const a=this.core.sceneSnapshots?.get(state.from),b=this.core.sceneSnapshots?.get(state.to)
+    if(!a||!b) throw new Error('Transition snapshot is no longer owned')
+    const identity=`${state.from}:${state.to}:${state.method}:${state.rule}`
+    if(identity!==this._transitionIdentity){
+      this._clearTransition()
+      const overlay=document.createElement('div')
+      overlay.className='caesura-transition';overlay.setAttribute('aria-hidden','true')
+      Object.assign(overlay.style,{position:'absolute',inset:'0',zIndex:'2147483647',pointerEvents:'none',overflow:'hidden'})
+      overlay.style.isolation='isolate'
+      const from=this._copySceneNode(a.node),to=this._copySceneNode(b.node)
+      from.classList.add('caesura-transition-from');to.classList.add('caesura-transition-to')
+      overlay.append(from,to);this.root.appendChild(overlay)
+      this._transitionElement=overlay;this._transitionIdentity=identity
+    }
+    // Filter is part of each captured scene. Applying today's stage grade to
+    // both old and new snapshots would double-grade or relabel the old scene.
+    setStyle(this.root,'filter','none')
+    for(const element of [...this._els.values(),this._textEl].filter(Boolean)){
+      if(!this._transitionHidden.has(element))this._transitionHidden.set(element,element.style.visibility)
+      setStyle(element,'visibility','hidden')
+    }
+    const from=this._transitionElement.querySelector('.caesura-transition-from')
+    const to=this._transitionElement.querySelector('.caesura-transition-to')
+    const percent=state.progress*100
+    setStyle(to,'opacity',state.method===0?String(state.progress):'1')
+    setStyle(from,'opacity',state.method===0?String(1-state.progress):'1')
+    setStyle(from,'mixBlendMode',state.method===0?'plus-lighter':'normal')
+    setStyle(to,'mixBlendMode',state.method===0?'plus-lighter':'normal')
+    let clip='none'
+    if(state.method===2)clip=`inset(0 ${100-percent}% 0 0)`
+    if(state.method===3)clip=`inset(0 0 0 ${100-percent}%)`
+    if(state.method===4)clip=`inset(${100-percent}% 0 0 0)`
+    if(state.method===5)clip=`inset(0 0 ${100-percent}% 0)`
+    setStyle(to,'clipPath',clip)
+    if(state.method===1){
+      const texture=this.core.textures.get(state.rule)?.prepared
+      if(!texture)throw new Error('Rule texture is unavailable')
+      const mask=document.createElement('canvas');mask.width=texture.width;mask.height=texture.height
+      const ctx=mask.getContext('2d');if(!ctx)throw new Error('Rule mask canvas unavailable')
+      texture.draw(ctx)
+      const image=ctx.getImageData(0,0,mask.width,mask.height)
+      for(let i=0;i<image.data.length;i+=4)image.data[i+3]=image.data[i]/255<=state.progress?255:0
+      ctx.putImageData(image,0,0)
+      const url=ctx.canvas.toDataURL('image/png')
+      setStyle(to,'maskImage',`url("${url}")`);setStyle(to,'maskSize','100% 100%');setStyle(to,'maskMode','alpha')
+    }
   }
 
   _subscribe() {
@@ -136,6 +278,7 @@ export class DomRenderer {
    *  DOM is never observed half-updated (the only await in the render path is
    *  the layer fetch above). */
   _renderWithList(list) {
+    const presentedUrls=[]
     const alive = new Set()
     let messageZ = '0'
     // Web-side color grading: the active LUT (backend.set_palette ->
@@ -180,8 +323,8 @@ export class DomRenderer {
       setStyle(el, 'zIndex', String(n.z))
       // Keep the accepted CSS value, including its integer representation.
       if (Number(el.style.zIndex) > Number(messageZ)) messageZ = el.style.zIndex
-      const url = n.texture && (!this.core.textures || texture)
-        ? this.textureUrls.get(n.texture) : null
+      const url = this._resolveTextureUrl(n.texture)
+      presentedUrls.push([n.texture,url])
       if (prepared) {
         if (this._drawnPrepared.get(el) !== prepared) {
           el.width = prepared.width
@@ -279,9 +422,27 @@ export class DomRenderer {
       }
     }
     if (!hasText && this._textEl) { this._textEl.remove(); this._textEl = null }
+    this._renderTransition()
+    // This ID records an actual completed DOM scene pass, not a Lua tick.
+    this._presentedFilter=paletteFilter(this.core.palette)
+    // Bind completion to the model actually consumed in this synchronous pass,
+    // before Promise continuations can mutate the core again.
+    // Lightweight render models remain supported. Without a content witness
+    // they render normally but cannot certify a reusable transition receipt.
+    this._presentedContent=typeof this.core._presentationContent==='function'
+      ?this.core._presentationContent(list):null
+    this._presentedTextures=this.core.textures
+      ?[...this.core.textures].map(([id,texture])=>[id,texture,texture.path,texture.prepared]):[]
+    this._presentedUrls=presentedUrls
+    ++this._sceneFrame
+    if(!Number.isSafeInteger(this._sceneFrame))throw new Error('Scene frame identity exhausted')
   }
 
   destroy() {
+    this._destroyed=true
+    for(const wait of this._frameWaits){clearTimeout(wait.timer);cancelAnimationFrame(wait.frame);wait.reject(new Error('Scene renderer closed'))}
+    this._frameWaits.clear()
+    if(this.core._scenePresenter===this._presenter){this.core.clearSceneSnapshots();this.core._scenePresenter=null}
     for (const el of this._els.values()) el.remove()
     this._els.clear()
     if (this._textEl) { this._textEl.remove(); this._textEl = null }

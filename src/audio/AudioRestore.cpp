@@ -215,6 +215,7 @@ void SoLoudAudioEngine::stopSessionAudio() {
     m_soloud.clearResamplerBuffers(m_bgmBusHandle);
     m_soloud.clearResamplerBuffers(m_voiceBusHandle);
     m_soloud.clearResamplerBuffers(m_seBusHandle);
+    invalidateVoiceMeter();
     releaseAudioHandles(released);
 }
 

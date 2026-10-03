@@ -10,6 +10,7 @@ namespace {
 
 class LifetimeTrackingProvider final : public Caesura::IAssetProvider {
 public:
+    Caesura::AssetDirectoryResult listDirectory(const std::string&, size_t, size_t) override { return {}; }
     explicit LifetimeTrackingProvider(int& destructionCount)
         : m_destructionCount(destructionCount) {}
 

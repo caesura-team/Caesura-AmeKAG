@@ -68,7 +68,7 @@ cmake --build build --config Debug --parallel
 ```
 
 CMake 探测顺序：显式 `CUBISM_SDK_ROOT` → `thirdparty/CubismSdkForNative-5-r.5` → 项目根目录 `CubismSdkForNative-5-r.5`。找到后：
-- 定义 `CAESURA_HAS_LIVE2D` 预处理器宏
+- 为 `CaesuraLive2D` 和组合根 `CaesuraEntry` 定义 `CAESURA_LIVE2D` 预处理器宏
 - 链接对应平台的 Cubism Core 库
 - 编译 `Live2DBackend` 替代 `NullAnimationBackend`
 
@@ -90,25 +90,42 @@ assets/live2d/
         └── happy.exp3.json
 ```
 
-### 5. 在 KAG 脚本中使用
+### 5. 当前可调用入口与验证范围
 
-```kag
-; 加载 Live2D 模型
-@fg storage="live2d/character_name/character_name.model3.json"
+2026-09-28 当前源码：模型加载、显示、动作、表情、参数与语音口型控制的 C++ 接口位于 `src/live2d/api/IAnimationBackend.h`。引擎初始化后，通过 `BackendRegistry::instance().getAnimationBackend()` 取得接口；先确认 `isCubismAvailable()`，避免把静态 PNG 降级当作 Cubism 已初始化。Windows 真实模型验证需要 D3D11、对应模型纹理和实际渲染结果。
 
-; 播放动作
-@motion name="idle"
+现有编辑器 HTTP `POST /api/live2d/load` 支持模型加载及显示。在编辑器服务器已经启动、请求满足其令牌认证要求时，可使用以下请求体；`modelPath` 必须指向实际资源根内的文件，SDK 目录存在本身不满足资源路径约束。
 
-; 设置表情
-@expression name="happy"
+```json
+{
+  "modelPath": "assets/live2d/character_name/character_name.model3.json",
+  "x": 0,
+  "y": 0,
+  "scale": 1,
+  "show": true
+}
 ```
+
+取得模型句柄只证明加载调用成功。纹理、实际图像、动作和释放行为仍需分别验证；本轮 Windows 真实模型、口型和设备证据见 [U26 语音口型执行记录](../plans/2026-09-28-001-u26-voice-lipsync-validation.md)，更早的边界见 [U26 历史记录](../plans/2026-09-20-016-optional-sdk-cloud-boundaries-execution.md)。C++ `playMotion`、`setExpression` 与 `setParameter` 是已有入口，但本轮没有因此宣称动作分组及表情所有权问题已闭环。
+
+原生 KAG 现已接通 `[live2d_load]`、`[live2d_show]`、`[live2d_hide]`、`[live2d_unload]` 和 `[live2d_lip_sync]`。它们通过 Script 模块的 Lua `Live2D` 表调用实际 Cubism 后端；模型句柄属于当前场景上下文，不写入存档。带活动模型的保存会明确拒绝。`live2d_motion`、`live2d_expression` 仍只记录上下文，不能据此宣称真实动作或表情已播放；Web 不提供这些动态 Cubism 命令。
+
+```ks
+[live2d_load model=haru storage="assets/live2d/Haru/Haru.model3.json"]
+[live2d_show model=haru x=0 y=0 scale=0.5]
+[live2d_lip_sync model=haru source=voice]
+[playvoice storage="assets/voice/line.wav"]
+[live2d_lip_sync model=haru source=off]
+[live2d_unload model=haru]
+```
+
+`source=voice` 还要求音频播放能力可用：后端只读当前 VOICE 总线已混出的 PCM 电平，经模型包络驱动真实 `ParamMouthOpenY`；初始静音、暂停/恢复、自然结束和停止均重置相应代次。`source=manual value=0.5` 写入指定嘴型并关闭自动驱动；`source=off` 关闭自动驱动且不能同时传 `value`。缺 SDK、未初始化的 Cubism、无该参数的模型或 Web 路径不会伪装为成功。Windows D3D11 + Haru 的图像与 WinMM 设备路径已按本轮记录验证；电平与像素证据不等于扬声器声压或硬件回调精确时刻。
 
 ## 编译宏参考
 
 | 宏 | 说明 |
 |-----|------|
-| `CAESURA_HAS_LIVE2D` | SDK 可用时自动定义，启用 Live2DBackend |
-| `CAESURA_LIVE2D` | CMake 选项，用户手动设置 |
+| `CAESURA_LIVE2D` | CMake 选项默认 OFF；启用并找到 SDK 后，也作为目标的编译宏启用真实后端 |
 
 ## 渲染路径
 
@@ -125,7 +142,9 @@ assets/live2d/
 - `MetalNativeRenderPath.cpp`
 - `OpenGLSharedRenderPath.cpp` / `OpenGLReadbackRenderPath.cpp`
 
-## 当前实现状态（2026-07-31 审计）
+## 历史验证记录（2026-07/08）
+
+以下记录保留各自日期和当时的验证范围，不证明当前候选的 SDK ON、模型、动作或各平台完整验收。当前进度以 [U26 执行记录](../plans/2026-09-20-016-optional-sdk-cloud-boundaries-execution.md) 为准。
 
 > 状态更新（2026-08-07）：**D3D11 路径再次全量编译+运行验证**（`CAESURA_LIVE2D=ON` 全量构建零错误；editor HTTP RPC `POST /api/live2d/load {modelPath:"models/Haru.model3.json"}` 返回 modelId 1，模型加载成功）。**Metal 路径由 stub 完整实现**（ObjC++ 离屏读回）；**OpenGL shader 部署缺失已修复**（FrameworkShaders 随激活渲染器复制）。OpenGL/Metal 运行验证仍需 Linux/macOS 硬件。`CAESURA_LIVE2D` 默认仍 OFF。
 
@@ -150,7 +169,7 @@ assets/live2d/
 有 SDK 访问权限的开发者应按以下顺序验证，并在完成后更新状态：
 
 1. 下载 Cubism SDK for Native（R5），放到项目根目录（默认查找 `CubismSdkForNative-5-r.5`）或通过 `CUBISM_SDK_ROOT` 指定位置。
-2. 执行 `cmake -B build -DCAESURA_LIVE2D=ON`，确认 `CAESURA_HAS_LIVE2D` 被定义、`Live2DBackend` 编译通过（✓ 2026-08-01 完成：修复 3 个编译硬错误后零错误构建）。
+2. 执行 `cmake -B build -DCAESURA_LIVE2D=ON`，确认实际编译包含 `CAESURA_LIVE2D`、`Live2DBackend` 编译通过（2026-08-01 的编译结果仅是历史记录；当前候选需对应的新证据）。
 3. Windows 上以 D3D11 渲染器运行，加载 `.moc3` 模型并渲染，验证 D3D11Native 路径（✓ 2026-08-01 完成：HTTP RPC 加载 `Samples/Resources/Haru/Haru.model3.json`，渲染多帧无崩溃、无设备丢失）。
 4. 逐路径验证其余平台（Linux/macOS 的 OpenGLShared → OpenGLReadback → MetalNative），修复发现的问题后，同步更新能力矩阵（`docs/design/engine-capability-matrix.md` 的 C1 行）与本文档的状态表。
 
@@ -167,6 +186,11 @@ assets/live2d/
 
 
 ## 常见问题
+
+**Q: Windows 日志出现 `Failed to load effect shader` 或 `Fail Compile shader`**
+A: D3D11 运行目录必须同时包含匹配当前 SDK 的 `FrameworkShaders/CubismEffect.fx` 和 `FrameworkShaders/CubismBlendMode.fx`。CMake 会将它们复制到引擎输出目录及源码根；独立游戏目录或验证目录也必须保留这项运行资源，只有模型文件不够。当前引擎在实际 shader/layout 初始化失败时拒绝加载模型，不再继续提交失效绘制。修复资源后重新启动进程；失败结果在当前渲染路径生命周期内缓存。
+
+2026-10-03 的限定实测已确认 D3D11 Haru 可见、手动嘴型变化及隐藏/卸载恢复背景，并验证缺失和损坏 shader 均正常拒绝和退出。具体产物、像素与未测边界见[命令审计结果](../plans/2026-10-03-001-command-native-audit-results.md)，不将此前 round 108 的历史计数作为当前证据。
 
 **Q: 构建提示找不到 `Live2DCubismCore.h`**
 A: 确认 `CUBISM_SDK_ROOT/Core/include/Live2DCubismCore.h` 存在。

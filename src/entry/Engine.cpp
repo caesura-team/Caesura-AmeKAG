@@ -73,6 +73,25 @@ namespace Caesura {
 
 namespace {
 
+// Declare before the payload owner so cleanup retains its debt until the
+// payloads have been destroyed. Each scope removes only its own contribution,
+// preserving outer batches/dispatches during owner-thread reentry.
+class HostPayloadScope {
+public:
+    explicit HostPayloadScope(uint64_t& total, uint64_t count = 0) noexcept
+        : m_total(total), m_remaining(count) { m_total += count; }
+    ~HostPayloadScope() { m_total -= m_remaining; }
+    HostPayloadScope(const HostPayloadScope&) = delete;
+    HostPayloadScope& operator=(const HostPayloadScope&) = delete;
+
+    void add(uint64_t count) noexcept { m_total += count; m_remaining += count; }
+    void releaseOne() noexcept { --m_total; --m_remaining; }
+
+private:
+    uint64_t& m_total;
+    uint64_t m_remaining;
+};
+
 // Wait for this already-submitted readback; never manufacture another bgfx
 // frame or read a filename that could belong to an earlier request.
 ScreenshotResult awaitScreenshot(IRenderDevice& renderer, const ScreenshotTicket& ticket) {
@@ -228,6 +247,29 @@ void Engine::requireInitialized() const {
     }
 }
 
+EngineHostSnapshot Engine::getHostSnapshot() const {
+    CAESURA_ASSERT_MAIN_THREAD();
+    EngineHostSnapshot snapshot;
+    snapshot.supported = true;
+    snapshot.initialized = m_initialized;
+    snapshot.running = m_running;
+    snapshot.luaPaused = m_initialized && isLuaExecutionPaused();
+    const bool direct = m_config.headless || m_config.editorMode;
+    snapshot.delivery = direct ? AsyncHostDelivery::DirectDrain : AsyncHostDelivery::SdlEvents;
+    // SDL-published events and external consumers are outside these counters.
+    snapshot.asyncOwnershipComplete = direct;
+    snapshot.completedOwnerFrames = m_completedOwnerFrames;
+    for (const auto& completed : m_deferredAsyncLoads)
+        if (completed) ++snapshot.deferredAsyncPayloads;
+    snapshot.drainingAsyncPayloads = m_drainingAsyncPayloads;
+    snapshot.dispatchingAsyncPayloads = m_dispatchingAsyncPayloads;
+    snapshot.audioCompletionTrackingSupported = true;
+    snapshot.audioCompletionsPending = m_audioVoiceCompletionsPending;
+    snapshot.audioCompletionsActive = m_activeAudioCompletions;
+    snapshot.audioCompletionOwnerRefs = m_audioCompletionOwnerRef > 0 ? 1 : 0;
+    return snapshot;
+}
+
 IRenderDevice& Engine::renderDevice() { requireInitialized(); return *m_renderDevice; }
 IAudioBackend& Engine::audio() { requireInitialized(); return *m_audioBackend; }
 IPlatformBackend& Engine::platform() { requireInitialized(); return *m_platformBackend; }
@@ -238,6 +280,16 @@ bool Engine::init() {
         return false;
     }
     m_initAttempted = true;
+
+    if (m_config.fixedStepMs > 250) {
+        fprintf(stderr, "[Engine] fixedStepMs must be 0 (realtime) or 1..250.\n");
+        return false;
+    }
+    if (m_config.fixedStepMs == 0) {
+        printf("[Engine] Simulation clock: realtime\n");
+    } else {
+        printf("[Engine] Simulation clock: fixed; step_ms=%u\n", m_config.fixedStepMs);
+    }
 
 #if defined(__ANDROID__)
     // Android audio-focus bridge (t211): install the drain sink up front;
@@ -729,7 +781,10 @@ void Engine::run(const OwnerPump& ownerPump) {
         m_lastTick = now;
         if (dt < 0.0f) dt = 0.0f;
         if (dt > 0.25f) dt = 0.25f;
-        (void)dt; // reserved for frame-time tracking
+        // Select once so Lua, audio and all frame-driven consumers advance
+        // on the same simulation clock. The default retains real tick dt.
+        if (m_config.fixedStepMs != 0)
+            dt = static_cast<float>(m_config.fixedStepMs) / 1000.0f;
 
         // Keep reload and Lua GC stopped while a coroutine is suspended.
         // Rendering and transport pumping remain active.
@@ -863,15 +918,20 @@ void Engine::run(const OwnerPump& ownerPump) {
                     lua_setglobal(L, "_CAESURA_VOICE_COMPLETE");
                 }
             }
-            const unsigned int completed =
-                m_audioBackend->consumeVoiceCompletions();
-            if (completed > 0 && m_audioVoiceCompletionsPending == 0 && L && GameState::push(L))
-                m_audioCompletionOwnerRef = luaL_ref(L, LUA_REGISTRYINDEX);
-            const unsigned int capacity =
-                std::numeric_limits<unsigned int>::max() -
-                m_audioVoiceCompletionsPending;
-            m_audioVoiceCompletionsPending +=
-                completed > capacity ? capacity : completed;
+            {
+                const unsigned int completed =
+                    m_audioBackend->consumeVoiceCompletions();
+                // The backend has released these notices. Account for the
+                // local transfer before Lua binds the batch's owner reference.
+                const HostPayloadScope transferring(m_activeAudioCompletions, completed);
+                if (completed > 0 && m_audioVoiceCompletionsPending == 0 && L && GameState::push(L))
+                    m_audioCompletionOwnerRef = luaL_ref(L, LUA_REGISTRYINDEX);
+                const unsigned int capacity =
+                    std::numeric_limits<unsigned int>::max() -
+                    m_audioVoiceCompletionsPending;
+                m_audioVoiceCompletionsPending +=
+                    completed > capacity ? capacity : completed;
+            } // Adopted notices belong to pending; excess follows the existing cap.
 
             if (m_audioBackend->isVoicePlaying() && L) {
                 lua_pushboolean(L, 0);
@@ -888,6 +948,10 @@ void Engine::run(const OwnerPump& ownerPump) {
                     lua_setglobal(L, "_CAESURA_VOICE_COMPLETE");
                     break;
                 }
+                // Retain the current notice through lookup, protected Lua
+                // execution and error/non-function stack cleanup, even when a
+                // callback replaces its owner or requests Engine exit.
+                const HostPayloadScope dispatching(m_activeAudioCompletions, 1);
                 --m_audioVoiceCompletionsPending;
                 lua_pushboolean(L, 1);
                 lua_setglobal(L, "_CAESURA_VOICE_COMPLETE");
@@ -970,6 +1034,12 @@ void Engine::run(const OwnerPump& ownerPump) {
             }
         }
 
+        // Only completed owner-loop iterations count. Standalone captures and
+        // shutdown renderer drains never reach this boundary; recovery and
+        // failed iterations exit earlier. Keep --frames/export numbering intact.
+        if (!m_shutdownComplete && !m_renderFailed && !m_deviceRecoveryPaused)
+            ++m_completedOwnerFrames;
+
         // -- Deterministic frame limit (--frames N): lets CI drive a real
         // GPU window for N frames, then exits cleanly with code 0. --
         if (m_config.frameLimit > 0 &&
@@ -1017,6 +1087,7 @@ bool Engine::pendingVoiceOwnerMatches(lua_State* L) const {
 }
 
 void Engine::clearPendingVoiceCompletions(lua_State* L) {
+    // Local transfers/dispatches release their own debt after their stacks unwind.
     if (L && m_audioCompletionOwnerRef > 0)
         luaL_unref(L, LUA_REGISTRYINDEX, m_audioCompletionOwnerRef);
     m_audioCompletionOwnerRef = 0;
@@ -1062,8 +1133,13 @@ void Engine::quit() {
 }
 
 
-void Engine::dispatchAsyncLoad(std::unique_ptr<CompletedLoad> completed) {
-    if (!completed || !m_asyncLoader->isCurrent(*completed)) return;
+void Engine::dispatchAsyncLoad(std::unique_ptr<CompletedLoad> incoming) {
+    if (!incoming) return;
+    HostPayloadScope dispatching(m_dispatchingAsyncPayloads, 1);
+    // A by-value parameter outlives local guards. Move to a local declared
+    // after the guard so its payload is disposed before dispatch debt drops.
+    auto completed = std::move(incoming);
+    if (!m_asyncLoader->isCurrent(*completed)) return;
     if (isLuaExecutionPaused()) {
         m_deferredAsyncLoads.push_back(std::move(completed));
         return;
@@ -1243,21 +1319,49 @@ void Engine::processEvents() {
     // Move the deferred batch out before invoking Lua: a callback may reload,
     // cancel, or pause again. Every result is rechecked at its dispatch point.
     if (!isLuaExecutionPaused() && !m_deferredAsyncLoads.empty()) {
+        HostPayloadScope draining(m_drainingAsyncPayloads,
+                                  static_cast<uint64_t>(m_deferredAsyncLoads.size()));
         auto deferred = std::move(m_deferredAsyncLoads);
         m_deferredAsyncLoads.clear();
         for (auto& completed : deferred) {
             dispatchAsyncLoad(std::move(completed));
+            draining.releaseOne(); // Dispatch has disposed or transferred this item.
             if (m_shutdownComplete) return;
         }
     }
 
-    // Headless/Editor mode: no SDL event loop -- deliver completed async
-    // loads directly (texture upload + Lua callback) instead of queueing
-    // SDL events that nothing would ever consume.
+    // Headless/editor loads complete directly on the owner thread, without
+    // forwarding SDL input to a game. The editor still owns an SDL window:
+    // SDL's POSIX signal handlers turn SIGTERM/SIGINT into queued quit events,
+    // which require an event pump before they can stop the editor loop.
     if (m_config.headless || m_config.editorMode) {
-        for (auto& c : m_asyncLoader->drainCompleted()) {
-            dispatchAsyncLoad(std::make_unique<CompletedLoad>(std::move(c)));
-            if (m_shutdownComplete) return;
+        {
+            HostPayloadScope draining(m_drainingAsyncPayloads);
+            auto completed = m_asyncLoader->drainCompleted();
+            draining.add(static_cast<uint64_t>(completed.size()));
+            for (auto& c : completed) {
+                dispatchAsyncLoad(std::make_unique<CompletedLoad>(std::move(c)));
+                draining.releaseOne();
+                if (m_shutdownComplete) return;
+            }
+        } // Dispose any unfinished batch before its guard removes the debt.
+        if (m_config.editorMode) {
+            SDL_PumpEvents();
+            // Discard ordinary editor-window input so it cannot fill the SDL
+            // queue and prevent a later quit from being enqueued. Drain only
+            // this snapshot: continuous producers must not starve owner work.
+            int remaining = SDL_PeepEvents(nullptr, 0, SDL_PEEKEVENT, SDL_EVENT_FIRST, SDL_EVENT_LAST);
+            while (remaining > 0) {
+                SDL_Event events[64];
+                const int count = SDL_PeepEvents(events, remaining < 64 ? remaining : 64,
+                                                SDL_GETEVENT, SDL_EVENT_FIRST, SDL_EVENT_LAST);
+                if (count <= 0) break;
+                remaining -= count;
+                for (int i = 0; i < count; ++i) {
+                    if (events[i].type == SDL_EVENT_QUIT) m_running = false;
+                }
+            }
+            if (!m_running) return;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(16));
         return;

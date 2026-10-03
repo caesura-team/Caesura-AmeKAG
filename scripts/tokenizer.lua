@@ -32,7 +32,7 @@ local uval    = C((1 - S(" \t\r\n]"))^1)
 -- One capture spanning the whole dotted key, so the pair is {1, "f.name"}.
 local dkey    = C(ident * (P(".") * ident)^0)
 local param   = Ct(dkey * space * "=" * space * (qval + uval))
-              + Ct(Cc("1") * C(uval))
+              + Ct(Cc("1") * (qval + uval))
 
 -- Command body: ["cmd", name, {{key,val},...}]
 local cmd_body = Ct(Cc("cmd") * C(ident) * space * Ct(param * space)^0)

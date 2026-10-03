@@ -71,7 +71,15 @@ print("[demo] iscript set demo_value=" .. tostring(ctx.tf.demo_value))
 [ch name="Narrator" text="You chose the library route."]
 [p]
 [er]
+[jump target="*route_common"]
 
+*route_b
+[ch name="Narrator" text="You chose the rooftop route."]
+[p]
+[er]
+[jump target="*route_common"]
+
+*route_common
 ; ---- Transition + quake ----
 [trans time=400 method="crossfade"]
 [quake time=300 amplitude=4]

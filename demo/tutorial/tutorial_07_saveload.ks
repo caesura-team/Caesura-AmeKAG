@@ -12,7 +12,7 @@
 ;   - 无存档后端的环境（旧 Web 构建）中 save/load 返回 error，
 ;     剧本通过 tf.save_result / tf.load_result 优雅降级
 ;
-; 本教程覆盖命令：[save] [load] [set] [if] [else] [endif] [ch] [p] [end]
+; 本教程覆盖命令：[save] [load] [set] [if] [else] [endif] [jump] [ch] [p] [end]
 ; =============================================================================
 
 [font face="default" size=22]
@@ -20,12 +20,21 @@
 
 [bg storage="assets/bg/classroom.png"]
 [wait time=300]
+; 本教程明确保存金币的初值，读取后应恢复为 0。
+[set f.coins = 0]
 
 ; ---- 1. 保存到槽位 ---------------------------------------------------------
 ; [save] 是阻塞命令：写入完成后继续。结果在 tf.save_result（"ok"/"error"）。
 [ch name="Narrator" text="先把进度保存到槽位 1。"]
 [p]
 [save slot=1]
+
+; 成功读取会回到 save 后一条指令。识别恢复后的续行，避免再次读档循环。
+[if exp="tf.load_result == 'ok'"]
+[ch name="Narrator" text="读取成功！金币已恢复为存档时的 ${f.coins} 枚。"]
+[p]
+[jump *saveload_complete]
+[endif]
 
 [if exp="tf.save_result == 'ok'"]
 [ch name="Narrator" text="保存成功！存档槽位 1 已写入（Web 播放器会存进浏览器存储）。"]
@@ -42,11 +51,19 @@
 [p]
 [ch name="Narrator" text="现在执行 [load slot=1]：剧本会跳回存档点，金币变量也会恢复为存档时的值。"]
 [p]
+
+; ---- 3. 读取本轮成功保存的槽位（只读取一次）---------------------------------
+; 成功后从 save 后继续并跳到完成标签；失败则明确提示后结束，不重试。
+[if exp="tf.save_result == 'ok'"]
+[load slot=1]
+[ch name="Narrator" text="读取失败，当前进度保留；本轮不重复读取。"]
+[p]
+[else]
+[ch name="Narrator" text="本轮保存失败，不读取槽位中的旧进度。"]
+[p]
+[endif]
+
+*saveload_complete
 [ch name="Narrator" text="存档教程完成！下一个教程：系统 UI（tutorial_08）。"]
 [p]
-
-; ---- 3. 读档（放在剧本末尾）------------------------------------------------
-; [load] 成功后当前执行停止，引擎从存档位置继续 —— 所以它之后的
-; 剧本内容不会在本轮显示（两环境一致的语义）。
-[load slot=1]
 [end]

@@ -433,9 +433,12 @@ public:
     }
     void begin(Color background) {
         device().beginFrame();
-        device().setViewRect(VIEW_MAIN, 0, 0, static_cast<uint16_t>(width_), static_cast<uint16_t>(height_));
+        // Offset regression must observe the production-selected view rect;
+        // setting a test rect here would itself erase camera/quake state.
+        if (options_.caseId != "screen-offset")
+            device().setViewRect(VIEW_MAIN, 0, 0, static_cast<uint16_t>(width_), static_cast<uint16_t>(height_));
         device().setViewClear(VIEW_MAIN, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, packed(background), 1, 0);
-        device().touch(VIEW_MAIN);
+        if (options_.caseId != "screen-offset") device().touch(VIEW_MAIN);
     }
     void present() {
         device().commit_frame(); device().advanceFrame(); ++advances_; platform_->postFrame();
@@ -543,6 +546,7 @@ private:
     void fillCase();
     void alphaCase();
     void transitionCase();
+    void screenOffsetCase();
     void lutCase();
     void optionalCase();
     void coreFailure();
@@ -673,6 +677,95 @@ void ContractProbe::transitionCase() {
         device().submitTransition(VIEW_MAIN, texture(from), texture(to), texture(ruleId),
             params.at("method"), params.at("progress"));
     });
+}
+
+void ContractProbe::screenOffsetCase() {
+    const auto red=solid({200,40,60,255}), green=solid({30,180,80,255});
+    const auto blue=solid({40,60,200,255}), yellow=solid({180,160,30,255});
+    auto pattern = [&](bool alternate) {
+        draw(alternate ? blue : red, json::array({64,96,80,48}));
+        draw(alternate ? yellow : green, json::array({350,240,50,60}));
+    };
+    for (const auto& capture : definition_.at("captures")) {
+        const int pw=capture.at("width"), ph=capture.at("height");
+        if (pw!=width_ || ph!=height_) {
+            platform_->resizeWindow(pw,ph);
+            require(platform_->drawableSize()==std::array<int,2>{pw,ph},"Offset drawable size differs");
+            device().setPresentSize(pw,ph); // Keep logical size 640x360.
+            width_=pw; height_=ph;
+        }
+        device().clearPostFx();
+        if (capture.at("postfx").get<bool>()) {
+            IRenderDevice::PostFxParams params; params.strength=0;
+            require(device().createPostFx(IRenderDevice::PostFxKind::Vignette,params)!=0,
+                "Real identity postfx stage unavailable");
+        }
+        device().setScreenOffset(0,0);
+        const bool empty=capture.value("empty",false);
+        // Do not seed first-empty: the production begin/commit must really
+        // clear its first logical scene even when no draw is submitted.
+        if (capture.at("id")!="first-empty") {
+            begin({10,20,90,255});
+            draw(blue,json::array({0,0,640,360})); present();
+        }
+        SceneSnapshot from{}, to{};
+        const int progress=capture.at("transition_progress");
+        if (progress>=0) {
+            begin({0,0,0,255}); pattern(false); present();
+            from=device().captureSceneSnapshot();
+            require(bool(from.viewport),"Actual from snapshot unavailable");
+            targets_.push_back(from.viewport);
+            begin({0,0,0,255}); pattern(true); present();
+            to=device().captureSceneSnapshot();
+            require(bool(to.viewport) && to.frameId>from.frameId,"Actual destination snapshot is not newer");
+            targets_.push_back(to.viewport);
+        }
+        const int dx=capture.at("offset")[0], dy=capture.at("offset")[1];
+        device().setScreenOffset(dx,dy);
+        frame(capture,[&] {
+            if (!empty) pattern(progress>=0);
+            if (progress>=0) device().submitTransition(VIEW_TRANSITION,
+                device().getViewportTexture(from.viewport),device().getViewportTexture(to.viewport),{},0,float(progress));
+        });
+        const auto id=capture.at("id").get<std::string>();
+        const auto& rgba=captured_.at(id);
+        const int ox=std::clamp(dx,0,639), oy=std::clamp(dy,0,359);
+        bool passed=true; size_t sampled=0, mismatches=0; json examples=json::array();
+        // Independent pixel-center reference: legacy offsets are surface pixels,
+        // bounded by logical dimensions. Avoid texture-filter boundary pixels.
+        for (int y=4;y<ph;y+=8) for (int x=4;x<pw;x+=8) {
+            const double lx=(x+.5-ox)*640.0/pw, ly=(y+.5-oy)*360.0/ph;
+            bool edge=false; Color expected=color(capture.at("background"));
+            const std::array<std::array<int,4>,2> rects{{{64,96,80,48},{350,240,50,60}}};
+            const std::array<Color,2> colors=progress==1
+                ? std::array<Color,2>{{{40,60,200,255},{180,160,30,255}}}
+                : std::array<Color,2>{{{200,40,60,255},{30,180,80,255}}};
+            for (size_t r=0;!empty && r<rects.size();++r) {
+                const auto& rect=rects[r];
+                if (lx>rect[0]-2 && lx<rect[0]+rect[2]+2 && ly>rect[1]-2 && ly<rect[1]+rect[3]+2) {
+                    if (lx<rect[0]+2 || lx>rect[0]+rect[2]-2 || ly<rect[1]+2 || ly>rect[1]+rect[3]-2) edge=true;
+                    else expected=colors[r];
+                }
+            }
+            if (edge) continue;
+            ++sampled; const size_t index=(size_t(y)*pw+x)*4;
+            bool match=true;
+            for (int channel=0;channel<3;++channel)
+                match &= std::abs(int(rgba[index+channel])-int(expected[channel]))<=2;
+            if (!match) {
+                passed=false; ++mismatches;
+                if (examples.size()<12) examples.push_back({{"x",x},{"y",y},
+                    {"actual",json::array({rgba[index],rgba[index+1],rgba[index+2]})},
+                    {"expected",json::array({expected[0],expected[1],expected[2]})}});
+            }
+        }
+        check("pixels:"+id,passed && sampled>1000,{{"samples",sampled},{"mismatches",mismatches},
+            {"examples",examples},{"logical",json::array({640,360})},{"offset",capture.at("offset")},
+            {"present",json::array({pw,ph})},{"from_frame",from.frameId},{"to_frame",to.frameId}});
+        if (from.viewport) device().destroyRenderTarget(from.viewport);
+        if (to.viewport) device().destroyRenderTarget(to.viewport);
+    }
+    device().setScreenOffset(0,0);
 }
 
 void ContractProbe::lutCase() {
@@ -853,6 +946,7 @@ void ContractProbe::run() {
     } else if (options_.caseId == "alpha-layers-batch") alphaCase();
     else if (options_.caseId == "rtt-fill-resize") fillCase();
     else if (options_.caseId == "transition") transitionCase();
+    else if (options_.caseId == "screen-offset") screenOffsetCase();
     else if (options_.caseId == "lut3d") lutCase();
     else if (definition_.at("expected") == "optional_degrade") optionalCase();
     else throw std::runtime_error("Unknown render contract case");
@@ -870,7 +964,8 @@ int wmain(int argc, wchar_t** argv) {
         options = arguments(argc, argv);
         const auto bytes = readBytes(options.manifest, 1024 * 1024);
         manifest = json::parse(bytes);
-        require(manifest.at("schema_version") == 1 && manifest.at("suite_id") == "u16-render-contracts-v4", "Unsupported manifest");
+        require(manifest.at("schema_version") == 1 && (manifest.at("suite_id") == "u16-render-contracts-v4"
+            || (manifest.at("suite_id") == "screen-offset-regression-v1" && options.caseId=="screen-offset")), "Unsupported manifest");
         const auto& cases = manifest.at("cases");
         const auto found = std::find_if(cases.begin(), cases.end(), [&](const json& value) { return value.at("id") == options.caseId; });
         require(found != cases.end(), "Case absent from manifest");

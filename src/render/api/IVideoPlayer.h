@@ -1,6 +1,7 @@
 #pragma once
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace Caesura {
 
@@ -22,13 +23,15 @@ public:
     virtual ~IVideoPlayer() = default;
 
     virtual VideoHandle open(const char* path) = 0;
+    // Owned, bounded asset bytes only: no filename/URL fallback or secondary I/O.
+    virtual VideoHandle openMemory(std::vector<uint8_t> bytes) = 0;
     virtual void close(VideoHandle handle) = 0;
     // Stop every video immediately, retaining the backend for subsequent open().
     // Physical decoder/GPU release follows close() at the updateAll() boundary.
     virtual void closeAll() = 0;
     // Loop mode (pl_mpeg: plm_set_loop; FFmpeg: rewind on end).
     virtual void setLoop(VideoHandle handle, bool loop) = 0;
-    // Playback volume [0..1] applied to the video audio handles.
+    // Playback volume [0..1.5] applied to the video audio handles.
     virtual void setVolume(VideoHandle handle, float volume) = 0;
     virtual bool update(VideoHandle handle, double dt) = 0;
     // Advance every playing video by dt (called by the engine frame loop).

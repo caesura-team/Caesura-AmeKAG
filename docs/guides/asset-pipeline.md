@@ -1,5 +1,13 @@
 # 资源管线 (Asset Pipeline)
 
+## 运行时目录枚举与视频入口
+
+目录扫描使用 [`KAG.list_assets` 和安全视频API](../api/lua-modules.md#kag-资产目录与安全视频)对应的挂载资源服务，不通过`io.popen`、shell命令或写文件探测。枚举是非递归的完整叶名列表，有4096条／1MiB名称上限；provider不支持、非法或链接路径、超限、I/O失败均拒绝，不能当空目录继续。
+
+`fileutil.scan_dir`的过滤器是Lua pattern，不支持正则表达式的`|`。多个音频／图片扩展名应分别匹配，或枚举后显式比较扩展名。独立Lua工具使用LuaFileSystem，必须保留`lfs.dir`返回的iterator与directory userdata，并排除符号链接项。
+
+KAG视频只接受相对资产路径，经读取器的64MiB上限和`openMemory`解码。会话token属于当前VM和后端generation；不是TextureManager ID或原始decoder handle。真实解码／绘制／关闭与硬件可用性按实际验证记录描述。
+
 > Caesura (AmeKAG) 引擎的资源管线负责加载、解码和管理游戏所需的所有外部资源。
 > 本文档给出：**格式支持矩阵**（对照 src/ 解码器）、**资产目录规范**（每目录的
 > 支持格式 / 尺寸建议 / 命名约定）、**资源加载流程**（异步预加载与运行时解析）。

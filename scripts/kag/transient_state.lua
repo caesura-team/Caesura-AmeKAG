@@ -19,7 +19,7 @@ function M.assert_saveable(ctx)
     end
     if ctx._videoPlayback and not ctx._videoPlayback.closed then reject('active video playback') end
     if nonempty(ctx._particleEmitters) or nonempty(ctx._weatherEmitters) then reject('active particle declarations') end
-    if nonempty(ctx.live2d) then reject('unrestorable animation declarations') end
+    if nonempty(ctx.live2d) or nonempty(ctx._live2dHandles) then reject('unrestorable animation declarations') end
     if nonempty(ctx.macros) or nonempty(ctx._macroStack) or nonempty(ctx.macro_args) then
         reject('runtime macro state')
     end
@@ -66,6 +66,20 @@ function M.stop(ctx)
     ctx._particleEmitters,ctx._weatherEmitters={},{}
     if not ok then return false,tostring(result) end
     if result==false then return false,tostring(reason or 'Transient cleanup failed') end
+    -- Native Restore.stop_transients already clears the models. Direct Lua
+    -- hosts instead retire this ctx's handles through the same backend proxy.
+    if not (api and type(api.stop_transients)=='function') and nonempty(ctx._live2dHandles) then
+        local backend=require('backend')
+        for name,handle in pairs(ctx._live2dHandles) do
+            local called,unloaded,why=pcall(backend.live2d_unload,handle)
+            if not called or unloaded~=true then
+                return false,tostring(called and (why or 'Model cleanup failed') or unloaded)
+            end
+            ctx._live2dHandles[name]=nil
+            if ctx.live2d then ctx.live2d[name]=nil end
+        end
+    end
+    ctx._live2dHandles,ctx.live2d={},{}
     return true
 end
 return M

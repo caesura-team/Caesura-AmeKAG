@@ -26,8 +26,8 @@
 
 ; ---- 2. 切换背景 + 转场 ---------------------------------------------------
 ; [trans] 让背景切换带过渡动画（method 可选 crossfade/dissolve 等）。
-[trans time=400 method=dissolve]
 [bg storage="assets/bg/hana.png"]
+[trans time=400 method=dissolve]
 [ch name="Narrator" text="切换到了花田背景，并带有溶解转场。"]
 [p]
 

@@ -9,6 +9,9 @@ extern "C" {
 }
 #include "render/BgfxRenderDevice.h"
 #include "di/api/ITextureBudget.h"
+#include "resource/api/IAsyncLoader.h"
+#include "audio/api/IAudioBackend.h"
+#include "entry/api/IEngineHostSnapshot.h"
 #include "job/api/IJobSystem.h"
 #include "render/api/IMeshRenderer.h"
 #include "audio/SoLoudAudioEngine.h"
@@ -18,6 +21,7 @@ extern "C" {
 #include "script/vm/LuaManager.h"
 #include "script/vm/ManagedCoroutine.h"
 #include "entry/Engine.h"
+#include "entry/RuntimeStats.h"
 #include "rpc/OwnerRpcQueue.h"
 #include "CaesuraCapabilityBuild.h"
 #include "debug/DebugProtocol.h"
@@ -26,6 +30,7 @@ extern "C" {
 #include "rpc/RpcServer.h"
 #include "rpc/api/IRpcDispatcher.h"
 #include <atomic>
+#include <charconv>
 #include <cmath>
 #if defined(__ANDROID__)
 #include <android/log.h>
@@ -114,19 +119,19 @@ bool archivePublisherKeyPath(int argc, char* argv[], int optionIndex,
     }
 }
 
-std::string archiveKeyPathLabel(const std::filesystem::path& path) {
+std::string nativePathLabel(const std::filesystem::path& path) {
     try {
         const auto utf8 = path.u8string();
         return {reinterpret_cast<const char*>(utf8.data()), utf8.size()};
     } catch (const std::exception&) {
         // A diagnostic conversion must not prevent opening a valid native path.
-        return "<host-selected path>";
+        return "<native path>";
     }
 }
 
 bool readArchivePublisherKey(const std::filesystem::path& keyPath,
                              Caesura::carc::ArchivePublicKey& key) {
-    const std::string pathLabel = archiveKeyPathLabel(keyPath);
+    const std::string pathLabel = nativePathLabel(keyPath);
     try {
         std::error_code ec;
         if (!std::filesystem::is_regular_file(keyPath, ec)) {
@@ -461,11 +466,7 @@ private:
                     lua_settop(L, stackTop);
                 }
                 if (saveRes.ok) {
-                    std::string writePath = operation.path;
-                    for (char& ch : writePath) {
-                        if (ch == '/') ch = '\\';
-                    }
-                    std::ofstream out(writePath, std::ios::binary);
+                    std::ofstream out(operation.path, std::ios::binary);
                     if (!out) {
                         saveRes.ok = false;
                         saveRes.errors.push_back("cannot open file for writing");
@@ -493,6 +494,121 @@ private:
                 stats.jobPending = m_engine.jobSystem().pendingJobs();
                 if (lua_State* L = m_engine.lua().state()) {
                     stats.luaKb = static_cast<int>(lua_gc(L, LUA_GCCOUNT, 0));
+                }
+                // execute() is called only by OwnerRpcQueue's owner executor.
+                // Copy each observer once; transports never access these backends.
+                // Independent worker/mixer phases are not one atomic idle sample.
+                const auto observed = Caesura::captureRuntimeStats(m_engine);
+                {
+                    const auto& snapshot = observed.jobs;
+                    stats.jobs.supported = snapshot.supported;
+                    stats.jobs.running = snapshot.running;
+                    stats.jobs.workerPending = snapshot.workerPending;
+                    stats.jobs.queuedCompletions = snapshot.queuedCompletions;
+                    stats.jobs.dispatchingCompletions = snapshot.dispatchingCompletions;
+                }
+                {
+                    const auto& snapshot = observed.asyncLoader;
+                    stats.asyncLoader.supported = snapshot.supported;
+                    stats.asyncLoader.running = snapshot.running;
+                    stats.asyncLoader.pendingWaiters = snapshot.pendingWaiters;
+                    stats.asyncLoader.inflightKeys = snapshot.inflightKeys;
+                    stats.asyncLoader.completedBuffered = snapshot.completedBuffered;
+                    stats.asyncLoader.cacheEntries = snapshot.cacheEntries;
+                    stats.asyncLoader.cacheBytes = snapshot.cacheBytes;
+                }
+                const auto& host = observed.host;
+                stats.host.supported = host.supported;
+                stats.host.initialized = host.initialized;
+                stats.host.running = host.running;
+                stats.host.luaPaused = host.luaPaused;
+                switch (host.delivery) {
+                case Caesura::AsyncHostDelivery::DirectDrain:
+                    stats.host.delivery = Caesura::RpcAsyncDelivery::DirectDrain;
+                    break;
+                case Caesura::AsyncHostDelivery::SdlEvents:
+                    stats.host.delivery = Caesura::RpcAsyncDelivery::SdlEvents;
+                    break;
+                default: break; // Unsupported future values remain Unknown.
+                }
+                stats.host.asyncOwnershipComplete = host.supported
+                    && host.asyncOwnershipComplete
+                    && stats.host.delivery == Caesura::RpcAsyncDelivery::DirectDrain;
+                stats.host.completedOwnerFrames = host.completedOwnerFrames;
+                stats.host.deferredAsyncPayloads = host.deferredAsyncPayloads;
+                stats.host.drainingAsyncPayloads = host.drainingAsyncPayloads;
+                stats.host.dispatchingAsyncPayloads = host.dispatchingAsyncPayloads;
+                stats.host.audioCompletionTrackingSupported = host.audioCompletionTrackingSupported;
+                stats.host.audioCompletionsPending = host.audioCompletionsPending;
+                stats.host.audioCompletionsActive = host.audioCompletionsActive;
+                stats.host.audioCompletionOwnerRefs = host.audioCompletionOwnerRefs;
+                {
+                    const auto& snapshot = observed.audio;
+                    stats.audio.supported = snapshot.supported;
+                    stats.audio.running = snapshot.running;
+                    switch (snapshot.outputMode) {
+                    case Caesura::AudioOutputMode::Device:
+                        stats.audio.outputMode = Caesura::RpcAudioOutput::Device;
+                        break;
+                    case Caesura::AudioOutputMode::ManualMix:
+                        stats.audio.outputMode = Caesura::RpcAudioOutput::ManualMix;
+                        break;
+                    case Caesura::AudioOutputMode::Software:
+                        stats.audio.outputMode = Caesura::RpcAudioOutput::Software;
+                        break;
+                    case Caesura::AudioOutputMode::Unknown: break;
+                    default: break;
+                    }
+                    stats.audio.liveVoices = snapshot.liveVoices;
+                    stats.audio.busVoices = snapshot.busVoices;
+                    stats.audio.sessionHandles = snapshot.sessionHandles;
+                    stats.audio.retiringBGM = snapshot.retiringBGM;
+                    stats.audio.retiringVoice = snapshot.retiringVoice;
+                    stats.audio.waveCacheEntries = snapshot.waveCacheEntries;
+                    stats.audio.rawCacheEntries = snapshot.rawCacheEntries;
+                    stats.audio.voiceCompletionsPending = snapshot.voiceCompletionsPending;
+                    stats.audio.restoredSources = snapshot.restoredSources;
+                }
+                {
+                    const auto& snapshot = observed.render;
+                    auto& render = stats.render;
+                    render.supported = snapshot.supported;
+                    render.contextInitialized = snapshot.contextInitialized;
+                    render.renderingAvailable = snapshot.renderingAvailable;
+                    render.resourceCountsAvailable = snapshot.resourceCountsAvailable;
+                    switch (snapshot.backendKind) {
+                    case Caesura::RenderBackendKind::Noop:
+                        render.backendKind = Caesura::RpcRenderBackendKind::Noop;
+                        break;
+                    case Caesura::RenderBackendKind::GraphicsApi:
+                        render.backendKind = Caesura::RpcRenderBackendKind::GraphicsApi;
+                        break;
+                    case Caesura::RenderBackendKind::Unknown: break;
+                    default: break; // Future native values retain the Unknown default.
+                    }
+                    render.backendName = snapshot.backendName;
+                    render.contextGeneration = snapshot.contextGeneration;
+                    render.captureSubmissionFrame = snapshot.captureSubmissionFrame;
+                    render.resources.dynamicIndexBuffers = snapshot.resources.dynamicIndexBuffers;
+                    render.resources.dynamicVertexBuffers = snapshot.resources.dynamicVertexBuffers;
+                    render.resources.frameBuffers = snapshot.resources.frameBuffers;
+                    render.resources.indexBuffers = snapshot.resources.indexBuffers;
+                    render.resources.occlusionQueries = snapshot.resources.occlusionQueries;
+                    render.resources.programs = snapshot.resources.programs;
+                    render.resources.shaders = snapshot.resources.shaders;
+                    render.resources.textures = snapshot.resources.textures;
+                    render.resources.uniforms = snapshot.resources.uniforms;
+                    render.resources.vertexBuffers = snapshot.resources.vertexBuffers;
+                    render.resources.vertexLayouts = snapshot.resources.vertexLayouts;
+                    render.screenshots.supported = snapshot.screenshots.supported;
+                    render.screenshots.waiting = snapshot.screenshots.waiting;
+                    render.screenshots.submitted = snapshot.screenshots.submitted;
+                    render.screenshots.terminal = snapshot.screenshots.terminal;
+                    render.screenshots.reservedBytes = snapshot.screenshots.reservedBytes;
+                    render.screenshots.pngBytes = snapshot.screenshots.pngBytes;
+                    render.screenshotOwnershipComplete = snapshot.screenshotOwnershipComplete;
+                    render.screenshotReadbackTrackingSupported = snapshot.screenshotReadbackTrackingSupported;
+                    render.screenshotReadbacksOutstanding = snapshot.screenshotReadbacksOutstanding;
                 }
                 Caesura::RpcReply reply = rpcOk();
                 reply.payload = std::move(stats);
@@ -1147,8 +1263,11 @@ extern "C" int main(int argc, char* argv[]) {
     bool editorInsecure = false;
     // Optional GPU backend override: --backend <opengl|vulkan|dx11|dx12|metal|webgpu>
     std::string renderBackend;
+    auto audioOutput = Caesura::SoLoudAudioEngine::OutputMode::Device;
+    bool audioOutputExplicit = false;
     // Optional deterministic frame limit: --frames N (GPU smoke runs; 0 = unlimited)
     uint32_t frameLimit = 0;
+    uint32_t fixedStepMs = 0;
     // Optional demo/video export: --export-replay <replay.json> drives the
     // recorded input while each rendered frame is written as PNG into
     // --export-dir (default export_out). Bounded by --frames N.
@@ -1195,7 +1314,9 @@ extern "C" int main(int argc, char* argv[]) {
             printf("  --editor-stdio        run the stdin/stdout JSON-RPC editor transport\n");
             printf("  --editor-insecure     disable the default-deny editor auth gate (loud warning; use at your own risk)\n");
             printf("  --backend <name>      GPU backend override (opengl|vulkan|dx11|dx12|metal|webgpu)\n");
+            printf("  --audio-output <mode> device (default) or software (real mixer; no physical output)\n");
             printf("  --frames <N>          deterministic frame limit (0 = unlimited)\n");
+            printf("  --fixed-step-ms <N>   fixed simulation dt, integer 1..250 ms (default: realtime)\n");
             printf("  --resolution <WxH>    render canvas size (default 1920x1080)\n");
             printf("  --export-replay <f>   replay a recorded input JSON while exporting frames\n");
             printf("  --export-dir <dir>    frame export directory (default export_out)\n");
@@ -1210,7 +1331,8 @@ extern "C" int main(int argc, char* argv[]) {
         std::string arg = argv[i];
         const bool takesValue = arg == "--resource-root" || arg == "--carc-trust" ||
             arg == "--carc-public-key" || arg == "--backend" || arg == "--frames" ||
-            arg == "--export-replay" || arg == "--export-dir" || arg == "--resolution";
+            arg == "--export-replay" || arg == "--export-dir" || arg == "--resolution" ||
+            arg == "--audio-output" || arg == "--fixed-step-ms";
         if (takesValue && (i + 1 >= argc || argv[i + 1][0] == '\0' ||
                            std::string(argv[i + 1]).rfind("--", 0) == 0)) {
             fprintf(stderr, "[main] ERROR: %s requires a value.\n", arg.c_str());
@@ -1254,6 +1376,34 @@ extern "C" int main(int argc, char* argv[]) {
             publisherKeyPath = std::move(value);
         } else if (arg == "--backend" && i + 1 < argc) {
             renderBackend = argv[++i];
+        } else if (arg == "--audio-output") {
+            const std::string value = argv[++i];
+            if (value != "device" && value != "software") {
+                fprintf(stderr, "[main] ERROR: Invalid --audio-output value: %s\n", value.c_str());
+                return 1;
+            }
+            const auto mode = value == "software" ? Caesura::SoLoudAudioEngine::OutputMode::Software
+                                                   : Caesura::SoLoudAudioEngine::OutputMode::Device;
+            if (audioOutputExplicit && audioOutput != mode) {
+                fprintf(stderr, "[main] ERROR: Conflicting --audio-output options.\n");
+                return 1;
+            }
+            audioOutput = mode;
+            audioOutputExplicit = true;
+        } else if (arg == "--fixed-step-ms") {
+            const std::string value = argv[++i];
+            uint32_t step = 0;
+            const auto parsed = std::from_chars(value.data(), value.data() + value.size(), step);
+            if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size() ||
+                step == 0 || step > 250) {
+                fprintf(stderr, "[main] ERROR: Invalid --fixed-step-ms value: %s (expected integer 1..250).\n", value.c_str());
+                return 1;
+            }
+            if (fixedStepMs != 0 && fixedStepMs != step) {
+                fprintf(stderr, "[main] ERROR: Conflicting --fixed-step-ms options.\n");
+                return 1;
+            }
+            fixedStepMs = step;
         } else if (arg == "--frames" && i + 1 < argc) {
             char* end = nullptr;
             const long v = strtol(argv[++i], &end, 10);
@@ -1338,7 +1488,9 @@ extern "C" int main(int argc, char* argv[]) {
         std::error_code ec;
         fs::current_path(target, ec);
         if (!ec) {
-            fprintf(stderr, "[main] Working directory: %s\n", target.string().c_str());
+            // path.string() uses the Windows ANSI code page and can throw for
+            // a valid native directory. Logging must not abort game startup.
+            fprintf(stderr, "[main] Working directory: %s\n", nativePathLabel(target).c_str());
         }
     }
 
@@ -1366,6 +1518,7 @@ extern "C" int main(int argc, char* argv[]) {
     config.enableDebugger = headless || editorMode;
     config.renderBackend  = renderBackend.empty() ? nullptr : renderBackend.c_str();
     config.frameLimit     = frameLimit;
+    config.fixedStepMs    = fixedStepMs;
     config.exportReplayFile = exportReplayFile;
     config.exportDir        = exportDir;
     config.archiveTrustMode = archiveTrustMode;
@@ -1375,8 +1528,12 @@ extern "C" int main(int argc, char* argv[]) {
     if (!headless || editorMode) {
         config.platform = new Caesura::SDL3PlatformBackend();
         config.render   = new Caesura::BgfxRenderDevice();
-        config.audio    = new Caesura::SoLoudAudioEngine();
         config.miniGame = new Caesura::BgfxMiniGameBackend();
+    }
+    // Explicit audio output also applies to a headless host. Its default remains
+    // the existing Null backend; an explicit request is never silently ignored.
+    if (!headless || editorMode || audioOutputExplicit) {
+        config.audio = new Caesura::SoLoudAudioEngine(audioOutput);
     }
 
     CAESURA_LOGI("[main] EngineConfig assembled; constructing Engine...");

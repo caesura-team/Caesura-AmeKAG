@@ -10,6 +10,7 @@ local layers  = require("layers")
 local Operation = require("kag.operation")
 local TextScene = require("kag.text_scene")
 local TextLayout = require("kag.text_layout")
+local FontState = require("kag.font_state")
 
 -- NVL mode (Ren'Py parity): full-screen accumulated text block. Text
 -- lines append below the previous one instead of replacing the message
@@ -267,6 +268,7 @@ local function _renderChoices(ctx, buttons)
 end
 
 local TextCommands = {}
+local input_layer_serial = 0
 
 -- =============================================================================
 --  Internal: push a message entry to the ctx.backlog (spec [4.1])
@@ -277,16 +279,16 @@ local TextCommands = {}
 local schema = require("kag.schema")
 schema.define("ch", {
     _meta = { category = "text", blocking = true, desc = "KAG3-compatible ch command" },
-    name   = { type = "string", default = "" },
-    text   = { type = "string", default = "", interpolate = true },
-    voice  = { type = "string", default = "" },
+    name   = { type = "string", default = "", aliases = {"character"} },
+    text   = { type = "string", default = "", interpolate = true, aliases = {"message"} },
+    voice  = { type = "string", default = "", aliases = {"voicefile"} },
     sprite = { type = "string" },  -- no default: "" is truthy and would shadow storage/file
     max_width = { type = "number", default = 0, min = 0, max = 4096 },
     chars_per_line = { type = "number", default = 0, min = 0, max = 512 },
 })
 schema.define("text", {
     _meta = { category = "text", blocking = false, desc = "KAG3-compatible text command" },
-    text = { type = "string", default = "", interpolate = true },
+    text = { type = "string", default = "", interpolate = true, aliases = {"message","content"} },
     fade_time = { type = "number", default = 0, min = 0, max = 30000 },
     fade = { type = "number", default = 0, min = 0, max = 30000 },
 })
@@ -1303,7 +1305,7 @@ end
 -- =============================================================================
 schema.define("typewriter", {
     _meta = { category = "text", blocking = false, desc = "Configure typewriter sound effects on character reveal" },
-    sound    = { type = "string", default = "" },
+    sound    = { type = "string", default = "", aliases = {"file"} },
     file     = { type = "string", default = "" },
     interval = { type = "number", default = 1, min = 1, max = 100 },
     volume   = { type = "number", default = 1.0, min = 0.0, max = 2.0 },
@@ -1313,7 +1315,7 @@ schema.define("typewriter", {
 
 schema.define("typewriter_sound", {
     _meta = { category = "text", blocking = false, desc = "Alias for typewriter sound configuration" },
-    sound    = { type = "string", default = "" },
+    sound    = { type = "string", default = "", aliases = {"file"} },
     file     = { type = "string", default = "" },
     interval = { type = "number", default = 1, min = 1, max = 100 },
     volume   = { type = "number", default = 1.0, min = 0.0, max = 2.0 },
@@ -1366,7 +1368,7 @@ Future enhancement: extract to a standalone ChoiceController Lua class if comple
 -- lacked schema contracts).
 schema.define("button", {
     _meta = { category = "text", blocking = false, desc = "register a choice button label ([endbutton] draws it)" },
-    text = { type = "string", default = "", interpolate = true },
+    text = { type = "string", default = "", interpolate = true, aliases = {"caption"} },
     caption = { type = "string" },
     target = { type = "string" },
     cond = { type = "string" },
@@ -1546,8 +1548,11 @@ function TextCommands.endbutton(ctx, params)
                 targetTbl[key] = selected.target or ""
             end
         end
-        if selected.target then
+        if type(selected.target) == "string" and selected.target ~= "" then
             ctx._pendingJump = selected.target
+            -- The runner consumes deferred jumps only after this scheduler
+            -- coroutine ends. Do not execute the fallthrough branch first.
+            ctx.stop_flag = true
         end
     end
     operation:complete()
@@ -1763,6 +1768,7 @@ function TextCommands.input(ctx, params)
     local inputHandlers = {}
     local cleaned = false
     local nativeInputStarted = false
+    local font_restore, background, background_texture, background_viewport
     local function cleanup()
         if cleaned then return end
         cleaned = true
@@ -1772,17 +1778,79 @@ function TextCommands.input(ctx, params)
         ctx._inputMode = false
         ctx.waiting_input = false
         TextScene.remove_group(ctx, "text_input")
+        local errors = {}
+        local function release(fn, ...)
+            local ok, result = pcall(fn, ...)
+            if not ok or result == false then errors[#errors + 1] = tostring(result) end
+        end
+        if background then
+            local owned = background; background = nil
+            -- This modal owns its explicitly sized RTT, not the layer pool.
+            owned.rt = nil
+            release(layers.remove_layer, owned)
+        end
+        if background_viewport then
+            local owned = background_viewport; background_viewport = nil
+            release(backend.destroy_viewport, owned)
+        end
+        if background_texture then
+            local owned = background_texture; background_texture = nil
+            release(backend.destroy_texture, owned)
+        end
+        if font_restore then
+            local owned = font_restore; font_restore = nil
+            release(FontState.apply, owned)
+        end
         if nativeInputStarted then
             nativeInputStarted = false
-            backend.stop_text_input()
+            release(backend.stop_text_input)
         end
+        if #errors > 0 then error("Input cleanup failed: " .. table.concat(errors, "; "), 0) end
     end
     operation.token:register(cleanup)
 
     -- 3. Notify platform backend
-    backend.set_text_input_rect(box_x, box_y, box_w, box_h, 0)
+    local ime_x, ime_y = math.floor(box_x), math.floor(box_y)
+    local ime_w = math.max(1, math.ceil(box_x + box_w) - ime_x)
+    local ime_h = math.max(1, math.ceil(box_y + box_h) - ime_y)
+    backend.set_text_input_rect(ime_x, ime_y, ime_w, ime_h, 0)
     nativeInputStarted = true
     backend.start_text_input()
+
+    -- Scale only the input draws using the renderer's actual selected point
+    -- size. Line spacing and an absent ctx mirror are not font-size evidence.
+    local saved_font = FontState.capture()
+    font_restore = FontState.prepare(saved_font)
+    local active_font = saved_font
+    if not active_font.active then
+        FontState.apply(FontState.prepare(nil))
+        active_font = FontState.capture()
+    end
+    assert(active_font.active and active_font.size, "Input font metrics unavailable")
+    local input_scale = (tonumber(params.font_size) or 28) / active_font.size
+
+    local text_color = parse_hex_color(params.color) or {r=255, g=255, b=255, a=255}
+    local background_color = parse_hex_color(params.bg_color) or {r=32, g=32, b=32, a=255}
+    local texture = backend.create_solid_texture(background_color.r, background_color.g, background_color.b, 255)
+    if type(texture) ~= "number" or texture <= 0 or texture % 1 ~= 0 then
+        error("Input background creation failed", 0)
+    end
+    background_texture = texture
+    local id
+    repeat
+        input_layer_serial = input_layer_serial + 1
+        id = "_text_input_" .. input_layer_serial
+    until layers.get_layer(id) == nil
+    -- Create without an RTT first so the operation owns the node before the
+    -- next fallible renderer allocation. Display geometry stays independent.
+    background = layers.add_layer(layers.get_root(), {id=id, x=box_x, y=box_y, z=999, w=0, h=0})
+    background.w, background.h, background.tex = box_w, box_h, texture
+    -- Display geometry may be fractional; native RTT allocation takes pixels.
+    local viewport = backend.create_viewport(math.max(1, math.ceil(box_w)), math.max(1, math.ceil(box_h)))
+    if type(viewport) ~= "number" or viewport <= 0 or viewport % 1 ~= 0 then
+        error("Input background viewport creation failed", 0)
+    end
+    background_viewport, background.rt = viewport, viewport
 
     -- UTF-8 Helpers
     local function utf8_length(s)
@@ -1830,7 +1898,7 @@ function TextCommands.input(ctx, params)
         TextScene.remove_group(ctx, "text_input")
         if #prompt_text > 0 then
             TextScene.add_text(ctx, prompt_text, box_x + 16, box_y + 16,
-                { r = 220, g = 220, b = 220, a = 255 }, "text_input", 1, true, false, true)
+                text_color, "text_input", input_scale, true, false, true)
         end
         local display_buf = is_password and string.rep("*", utf8_length(buffer)) or buffer
         local full_line = display_buf
@@ -1839,12 +1907,12 @@ function TextCommands.input(ctx, params)
         end
         full_line = full_line .. "|"
         TextScene.add_text(ctx, full_line, box_x + 20, box_y + 64,
-            { r = 255, g = 255, b = 255, a = 255 }, "text_input", 1, false, false, true)
+            text_color, "text_input", input_scale, false, false, true)
         TextScene.add_text(ctx, "[" .. btn_ok_label .. "]", btn_ok_rect.x, btn_ok_rect.y,
-            { r = 100, g = 255, b = 100, a = 255 }, "text_input", 1, true, false, true)
+            text_color, "text_input", input_scale, true, false, true)
         if #btn_cancel_label > 0 then
             TextScene.add_text(ctx, "[" .. btn_cancel_label .. "]", btn_cancel_rect.x, btn_cancel_rect.y,
-                { r = 255, g = 100, b = 100, a = 255 }, "text_input", 1, true, false, true)
+                text_color, "text_input", input_scale, true, false, true)
         end
     end
 

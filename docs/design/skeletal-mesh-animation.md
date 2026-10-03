@@ -187,34 +187,29 @@ JSON 加载）；渲染测试走 deferred-gpu 模式（无 GPU 环境仅构造+�
 | S2 | CPU 软变形实现 + 顶点缓冲上传 + 绘制（复用 AffineBlt shader） | S1 |
 | S3 | `scripts/kag/sma.lua` 数据加载/动画驱动 + KAG 命令契约 | S1 |
 | S4 | 测试（确定性矩阵/权重/LERP + deferred-gpu 渲染） | S2/S3 |
-| S5 | GPU 蒙皮（bgfx compute）——**已交付（round 18）**，见 §10 | S2 |
+| S5 | GPU 蒙皮（bgfx compute）——round18历史实现；当前布局与证据见§9 | S2 |
 
-## 9. S5 GPU 蒙皮（bgfx compute，round 18）
+## 9. S5 GPU 蒙皮（当前布局与历史证据）
 
-**管线**：每个网格在 `createMesh` 时上传**静态 compute 输入顶点缓冲**（
-pos+uv+bone0/bone1+w0/w1，32B/顶点；D3D11 禁止 DYNAMIC 用法带 SRV 绑定，
-故输入必须是静态）与**动态输出缓冲**（pos+uv，16B/顶点，COMPUTE_WRITE）；
-共享骨骼缓冲（64 骨骼 × vec4 + 槽 64/65 携带**绘制变换** (x,y,scale) 与视口
-尺寸 (sw,sh)）。`updateMesh` 只存姿势；`drawMesh` 时打包骨骼 → 上传 →
-**同 view dispatch**（compute 排序先于 draw，提交序保证）→ 计算着色器完成
-蒙皮 + NDC 变换 → 绘制复用引擎已验证的直通程序（vs_sprite + fs_texture）。
+当前布局以2026-10-02命令合同修复为准，详见[执行记录](../plans/2026-10-02-001-command-contract-validation-followup.md)。`createMesh`只保留网格自身的静态compute输入（pos+uv+bone0/bone1+w0/w1，32B/顶点）；`updateMesh`保存完整姿势。每次`drawMesh`拥有独立的immutable骨骼/绘制快照及COMPUTE_WRITE输出（最终NDC位置+UV，16B/顶点），同view先dispatch再由该draw消费自己的output，不复用按旧transform计算的最终位置，也不让同mesh多次提交互相覆盖。
 
-**关键实现细节**：
-- D3D11 compute 缓冲是 **typed float4 视图**（非 structured）——HLSL 用
-  `Buffer<float4>`/（输出）`RWBuffer<float4> : register(u2)`（**寄存器必须
-  与绑定 stage 一致**；GLSL 用 std430 binding=0/1/2）。
-- 骨骼打包 `packBonePose`：vec4=(cos·scale, sin·scale, ox, oy)，与 CPU
-  `applyBonePose` 严格等价（shader 数学复刻单测 <1e-4）。
-- 内存生命周期：`bgfx::update`/create 的 makeRef 内存必须存活到
-  `bgfx::frame()`——一律用 `bgfx::copy` 移交所有权。
-- 回退：无 BGFX_CAPS_COMPUTE / Metal / SPIR-V → CPU 软变形（SkinMode::Auto）。
-- **验证**：D3D11 GPU 子测试（隐藏窗 + framebuffer 读回）——同一网格同一
-  姿势 GPU/CPU 两帧逐像素比对（容差 ±1 + 边缘预算）通过（14 断言）。
-- **性能基准**（round 19，D3D11 主机侧计时，8k 顶点 / 64 骨 / ~16k 三角，
-  120 帧取后 100 帧均值）：**CPU 1.268 ms/帧 vs GPU 0.080 ms/帧（主机侧，
-  ≈15.8×）**——GPU 路径（打包 64 个 vec4 + dispatch 提交）比软变形 + 上传
-  便宜一个数量级；断言 gpu < cpu 在 CI Windows WARP 同样成立（只测主机
-  侧成本，不测 GPU 执行）。
+| 快照float4行 | 内容 |
+|---|---|
+| 0 | draw x、y、scale、reserved |
+| 1 | view width、height、vertexCount原始uint32 bits、poseCount原始uint32 bits |
+| 2+i | 真实pose i的(cos(rot)·scale, sin(rot)·scale, ox, oy) |
+
+poseCount为`min(poses.size(), 65536)`，保留全部uint16索引可达姿势；这不是把骨索引夹到64。缺失骨骼不填identity行冒充有效。两个元数据行与骨骼行分离，最大65538行／1,048,608B。HLSL仍用typed `Buffer<float4>`、输出`RWBuffer<float4>`，t0/t1/u2对应绑定stage0/1/2；GLSL保持std430 binding0/1/2。64线程工作组先核vertexCount尾界，才访问输入/输出。
+
+shader按当前CPU `skinMesh`分支执行：两个骨骼有效时，总权重<=0保留原位置，否则归一化混合；只有bone0有效时不论权重都应用其变换；bone0无效时保留原位置，即使bone1有效。有效性仅按索引小于poseCount判断，因此65536个姿势时索引65535有效；不能把接口的默认sentinel注释改造成不同于CPU的额外排除。预乘系数和CPU算式浮点结合次序不同，按维护容差验证，不宣称逐bit等价。
+
+上传使用`bgfx::copy`交付字节所有权。不可复制的每draw资源包在dispatch及submit排入后才排入snapshot/output销毁；compute output是独立底层VB，沿bgfx延迟free退役。先核TIB可用量及实际分配size，分配失败明确拒绝或由既有异常边界转为Lua错误，不用旧输出或默默转CPU掩盖。原`SkinMode::Auto`无compute能力时的CPU选择仍是独立能力规则。
+
+**2026-10-02 初始限定验证**：新布局真实FXC与内嵌生成完成，两个vertex shader字节不变；WARP软件三组9例真实compute与CPU像素对照mismatch均0，含transform、多输出及65535/65536边界；新布局TIB不足时剩余5→5且无绘制，恢复后1582白像素、mismatch0；独立WARP compute数学与headless19用例/3200断言通过。该时点的软件后端证据不等价于物理GPU证明。
+
+**2026-10-03 增量**：Lua 位置数组与 C++ 具名字段已按具名优先、nil 回退位置槽统一；缺省 view 使用 MAIN=1，显式 0 保留。CPU/GPU 每次 draw 使用实际读取 `u_color` 的 modulated shader 应用 opacity。真实 Engine 默认视图/透明度像素与 D3D11 同帧三透明度、两种源 alpha 的 GPU 合成测试通过；五条 SMA DSL 场景执行动画、IK、variant 和 stop，原生网格数回到零。当前完整 Windows C++/Lua/CTest 结果及 Web 性能仍失败的边界见[命令审计结果](../plans/2026-10-03-001-command-native-audit-results.md)。这些数据不替代当前逐 draw 布局的性能基准。
+
+**历史证据，不能外推当前补丁**：round18记录过D3D11隐藏窗GPU/CPU两帧读回、14断言通过；round19在8k顶点/64骨/~16k三角、120帧取后100帧均值的主机侧计时为CPU1.268ms/帧、GPU0.080ms/帧（约15.8×），并记录过Windows WARP的主机提交成本断言。这些属于当时shared64骨/每mesh输出实现及设备配置，不是当前逐draw分配布局的性能或物理GPU验收；当前性能需要独立测量。
 
 ## 9b. 播放控制与高级动画（round 18）
 
@@ -265,7 +260,7 @@ pos+uv+bone0/bone1+w0/w1，32B/顶点；D3D11 禁止 DYNAMIC 用法带 SRV 绑�
 
 | 风险 | 对策 |
 |---|---|
-| 软变形 CPU 成本随角色数线性增长 | 顶点预算 + 同屏上限；GPU 蒙皮为后备（§9 性能基准：8k 顶点主机侧成本显著低于 CPU 路径） |
+| 软变形 CPU 成本随角色数线性增长 | 顶点预算 + 同屏上限；GPU蒙皮为后备；§9的round19数据仅为历史，当前逐draw布局成本须另测 |
 | 数据格式与 Live2D 生态不兼容 | 定位为"轻量替代"，非 Live2D 导入器 |
 | 网格渲染与图层系统集成复杂度 | 复用 sprite 图层路径（z 序/透明度） |
 | 手写 SMA JSON 易出错 | **已闭环**：sma_check 校验器（CLI/库/RPC）+ 资产模板 + IDE 校验面板（round 19） |

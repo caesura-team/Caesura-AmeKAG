@@ -57,8 +57,15 @@ def scan_lua_bindings():
         text = open(os.path.join(bind_dir, fn), encoding="utf-8", errors="replace").read()
         # luaL_Reg array entries: { "name", func },
         regs = re.findall(r'\{\s*"([A-Za-z_][A-Za-z0-9_]*)"\s*,\s*[A-Za-z_][A-Za-z0-9_]*\s*\}', text)
-        # registration target: lua_setglobal(L, "name") or setfuncs on KAG
+        # Explicit global-table registration also publishes callable APIs.
+        # Requiring lua_getglobal excludes metatable __gc/data field writes.
+        direct = re.findall(
+            r'lua_getglobal\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*,\s*"([A-Za-z_][A-Za-z0-9_]*)"\s*\)\s*;\s*'
+            r'lua_pushcfunction\(\s*\1\s*,\s*[A-Za-z_][A-Za-z0-9_]*\s*\)\s*;\s*'
+            r'lua_setfield\(\s*\1\s*,\s*-2\s*,\s*"([A-Za-z_][A-Za-z0-9_]*)"\s*\)', text)
+        regs = list(dict.fromkeys(regs + [name for _, _, name in direct]))
         globals_ = re.findall(r'lua_setglobal\([^,]+,\s*"([A-Za-z_][A-Za-z0-9_]*)"\)', text)
+        globals_ = list(dict.fromkeys(globals_ + [target for _, target, _ in direct]))
         if regs:
             bindings[fn] = {"apis": regs, "globals": globals_}
     return bindings

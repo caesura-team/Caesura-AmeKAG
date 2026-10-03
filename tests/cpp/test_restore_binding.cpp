@@ -25,6 +25,7 @@ EngineConfig restoreConfig() {
 
 class RestoreReader final : public IAssetReader {
 public:
+    Caesura::AssetDirectoryResult listDirectory(const std::string&, size_t, size_t) override { return {}; }
     std::vector<uint8_t> readAsset(const std::string& path, size_t limit) override {
         ++reads;
         lastPath = path;

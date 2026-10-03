@@ -9,6 +9,7 @@
 #include <Model/CubismUserModel.hpp>
 #include <ICubismModelSetting.hpp>
 #include <CubismModelSettingJson.hpp>
+#include <Effect/CubismPose.hpp>
 #include <stb_image.h>
 #include <Motion/CubismMotion.hpp>
 #include <Motion/CubismMotionManager.hpp>
@@ -29,6 +30,8 @@
 #include "ILive2DRenderPath.h"
 #include "../PathConfinement.h"
 #include "../../render/api/IRenderDevice.h"
+#include "audio/api/IAudioBackend.h"
+#include "di/BackendRegistry.h"
 #include "debug/api/DebugLog.h"
 #ifdef _WIN32
 #include "D3D11NativeRenderPath.h"
@@ -41,6 +44,8 @@
 #endif
 
 #include <fstream>
+#include <algorithm>
+#include <cmath>
 #include <vector>
 #include <cstring>
 #include <cctype>
@@ -270,21 +275,31 @@ Live2DBackend::~Live2DBackend() = default;
 
 void Live2DBackend::shutdown() {
     clearModels();
-    if (m_renderPath) {
-        m_renderPath->shutdown();
-        delete m_renderPath;
-        m_renderPath = nullptr;
-    }
+    const auto releaseRenderPath = [this] {
+        if (m_renderPath) {
+            m_renderPath->shutdown();
+            delete m_renderPath;
+            m_renderPath = nullptr;
+        }
+    };
+#ifndef _WIN32
+    releaseRenderPath();
+#endif
     if (m_initialized) {
 #ifdef _WIN32
         // CubismFramework::Dispose() does not release the D3D11 render-state
         // / shader objects held in the static device-info map; release them
-        // while the device is still alive.
+        // while the render path still retains the context and D3D11 DLL.
         CubismDeviceInfo_D3D11::ReleaseAllDeviceInfo();
 #endif
         CubismFramework::Dispose();
         m_initialized = false;
     }
+#ifdef _WIN32
+    // Last: release target/context COM owners, then the counted runtime DLL
+    // reference. bgfx may already have destroyed its renderer after loss.
+    releaseRenderPath();
+#endif
     m_deviceReady = false;
 }
 
@@ -324,6 +339,27 @@ bool Live2DBackend::loadModelInternal(Live2DModel& model) {
         reinterpret_cast<const csmByte*>(model.mocData.data()),
         static_cast<csmSizeInt>(model.mocData.size())
     );
+
+    // Pose groups select mutually exclusive parts (for example, arm variants).
+    // CubismUserModel owns the parsed pose and deletes it with the model.
+    const char* poseFile = model.setting->GetPoseFileName();
+    if (poseFile && poseFile[0] != '\0') {
+        const std::string posePath = joinPath(dir, poseFile);
+        const auto poseData = readFile(posePath); // same resource-root confinement
+        if (poseData.empty()) {
+            DEBUG_ERR(SubSys::Live2D, ErrCode::Ok,
+                "[Live2D] Cannot read declared pose: %s", posePath.c_str());
+            return false;
+        }
+        model.userModel->LoadPose(
+            reinterpret_cast<const csmByte*>(poseData.data()),
+            static_cast<csmSizeInt>(poseData.size()));
+        if (!static_cast<Live2DUserModel*>(model.userModel.get())->pose()) {
+            DEBUG_ERR(SubSys::Live2D, ErrCode::Ok,
+                "[Live2D] Cannot parse declared pose: %s", posePath.c_str());
+            return false;
+        }
+    }
 
     // 4. Create renderer + bgfx texture
     if (!createRenderer(model)) return false;
@@ -394,9 +430,9 @@ bool Live2DBackend::loadModelInternal(Live2DModel& model) {
 
     // 7b. Cache motions (P1-1: motionCache was never populated, so
     // playMotion() could never find any clip).
-    const csmInt32 motionCount = model.setting->GetMotionCount();
-    if (motionCount > 0) {
-        for (csmInt32 i = 0; i < motionCount; ++i) {
+    const csmInt32 motionGroupCount = model.setting->GetMotionGroupCount();
+    if (motionGroupCount > 0) {
+        for (csmInt32 i = 0; i < motionGroupCount; ++i) {
             const char* groupName = model.setting->GetMotionGroupName(i);
             if (!groupName) continue;
             const std::string group(groupName);
@@ -410,10 +446,11 @@ bool Live2DBackend::loadModelInternal(Live2DModel& model) {
                 // Key the clip by its file stem and by "group/index" so
                 // playMotion(name) and playMotion("group/index") both hit.
                 const std::string stem = std::filesystem::path(fileName).stem().string();
+                CachedMotion cachedMotion{std::move(motionData), group, j};
                 if (model.motionCache.find(stem) == model.motionCache.end()) {
-                    model.motionCache[stem] = motionData;
+                    model.motionCache[stem] = cachedMotion;
                 }
-                model.motionCache[group + "/" + std::to_string(j)] = motionData;
+                model.motionCache[group + "/" + std::to_string(j)] = std::move(cachedMotion);
             }
         }
     }
@@ -424,6 +461,14 @@ bool Live2DBackend::loadModelInternal(Live2DModel& model) {
 
 bool Live2DBackend::createRenderer(Live2DModel& model) {
     if (!model.userModel) return false;
+#ifdef _WIN32
+    if (!m_renderPath ||
+        !static_cast<D3D11NativeRenderPath*>(m_renderPath)->ensureShadersReady()) {
+        DEBUG_ERR(SubSys::Live2D, ErrCode::Ok,
+            "[Live2D] Cannot create renderer: D3D11 shaders are not ready");
+        return false;
+    }
+#endif
 
     model.userModel->CreateRenderer(model.renderWidth, model.renderHeight);
 #ifdef _WIN32
@@ -454,15 +499,40 @@ bool Live2DBackend::createRenderer(Live2DModel& model) {
 // ============================================================
 void Live2DBackend::render(float dt) {
     if (!m_renderPath) return;
+
+    // One owner-thread observation shared by all opted-in models. The audio
+    // backend may be replaced or shut down between frames; never cache it.
+    VoiceLevelSnapshot voice;
+    for (const auto& [handle, model] : m_models) {
+        if (!model->voiceLipSync.enabled()) continue;
+        if (auto* audio = BackendRegistry::instance().getAudioBackend()) {
+            voice = audio->getVoiceLevel();
+        }
+        break;
+    }
     for (auto& [handle, model] : m_models) {
         if (!model->visible || !model->renderer || !model->userModel) continue;
 
         auto* cubismModel = model->userModel->GetModel();
         if (!cubismModel) continue;
 
-        // Update model (motions, expressions)
-        static_cast<Live2DUserModel*>(model->userModel.get())->motionManager()->UpdateMotion(cubismModel, dt);
-        static_cast<Live2DUserModel*>(model->userModel.get())->expressionManager()->UpdateMotion(cubismModel, dt);
+        // Apply pose after motions/expressions, before recomputing drawables.
+        auto* userModel = static_cast<Live2DUserModel*>(model->userModel.get());
+        userModel->motionManager()->UpdateMotion(cubismModel, dt);
+        userModel->expressionManager()->UpdateMotion(cubismModel, dt);
+        if (auto* pose = userModel->pose()) {
+            pose->UpdateParameters(cubismModel, dt);
+        }
+        if (model->voiceLipSync.enabled()) {
+            auto* rawModel = cubismModel->GetModel();
+            const int mouthIndex = model->voiceLipSync.parameterIndex();
+            if (rawModel && mouthIndex >= 0 && mouthIndex < csmGetParameterCount(rawModel)) {
+                if (float* values = csmGetParameterValues(rawModel)) {
+                    model->voiceLipSync.apply(voice.supported && voice.playing && voice.sampled,
+                        voice.rms, voice.generation, dt, values[mouthIndex]);
+                }
+            }
+        }
         // Recompute model vertices/deformations before drawing (csmUpdateModel).
         cubismModel->Update();
 
@@ -472,7 +542,7 @@ void Live2DBackend::render(float dt) {
 
         // Blit bgfx texture to screen
         if (m_renderDevice && model->bgfxTexValid) {
-            m_renderDevice->blitTexture(0, model->bgfxTex.idx,
+            m_renderDevice->blitTexture(VIEW_MAIN, model->bgfxTex.idx,
                 model->x, model->y,
                 static_cast<float>(model->renderWidth)  * model->scale,
                 static_cast<float>(model->renderHeight) * model->scale,
@@ -502,17 +572,20 @@ bool Live2DBackend::playMotion(int handle, const std::string& name) {
         return false;
     }
 
-    auto& data = mit->second;
+    auto& cachedMotion = mit->second;
+    // Model-setting fade overrides require the clip's original group/index,
+    // even when it was selected by a file-stem alias or substring match.
     auto* motion = model.userModel->LoadMotion(
-        reinterpret_cast<const csmByte*>(data.data()),
-        static_cast<csmSizeInt>(data.size()),
+        reinterpret_cast<const csmByte*>(cachedMotion.data.data()),
+        static_cast<csmSizeInt>(cachedMotion.data.size()),
         name.c_str(),
         nullptr, nullptr,
-        model.setting
+        model.setting, cachedMotion.group.c_str(), cachedMotion.index
     );
     if (!motion) return false;
 
-    static_cast<Live2DUserModel*>(model.userModel.get())->motionManager()->StartMotion(motion, false);
+    // Each load creates a fresh motion; the queue owns it through completion or unload.
+    static_cast<Live2DUserModel*>(model.userModel.get())->motionManager()->StartMotion(motion, true);
     return true;
 }
 
@@ -535,7 +608,8 @@ void Live2DBackend::setExpression(int handle, const std::string& name) {
     );
     if (!expression) return;
 
-    static_cast<Live2DUserModel*>(model.userModel.get())->expressionManager()->StartMotion(expression, false);
+    // Each load creates a fresh expression; the queue owns it through replacement or unload.
+    static_cast<Live2DUserModel*>(model.userModel.get())->expressionManager()->StartMotion(expression, true);
 }
 
 // ============================================================
@@ -554,6 +628,9 @@ void Live2DBackend::setParameter(int handle, const std::string& param, float val
     float* values = csmGetParameterValues(rawModel);
     for (csmInt32 i = 0; i < count; ++i) {
         if (ids[i] && param == ids[i]) {
+            if (param == "ParamMouthOpenY") {
+                it->second->voiceLipSync.disable(values[i]);
+            }
             values[i] = value;
             return;
         }
@@ -563,6 +640,39 @@ void Live2DBackend::setParameter(int handle, const std::string& param, float val
 // ============================================================
 // Model lifecycle
 // ============================================================
+bool Live2DBackend::setVoiceLipSync(int modelHandle, bool enabled) {
+    if (!m_initialized) return false;
+    auto it = m_models.find(modelHandle);
+    if (it == m_models.end() || !it->second->userModel) return false;
+    auto* cubismModel = it->second->userModel->GetModel();
+    if (!cubismModel) return false;
+    auto* rawModel = cubismModel->GetModel();
+    if (!rawModel) return false;
+
+    // Query Core arrays directly: Framework GetParameterIndex can silently
+    // manufacture an index for a missing parameter. Only a real 0..1-capable
+    // ParamMouthOpenY is eligible for this minimal shared-VOICE contract.
+    const csmInt32 count = csmGetParameterCount(rawModel);
+    const char** ids = csmGetParameterIds(rawModel);
+    const float* minimum = csmGetParameterMinimumValues(rawModel);
+    const float* maximum = csmGetParameterMaximumValues(rawModel);
+    float* values = csmGetParameterValues(rawModel);
+    if (!ids || !minimum || !maximum || !values) return false;
+    for (csmInt32 i = 0; i < count; ++i) {
+        if (!ids[i] || std::strcmp(ids[i], "ParamMouthOpenY") != 0) continue;
+        if (!std::isfinite(minimum[i]) || !std::isfinite(maximum[i]) ||
+            minimum[i] > 0.0f || maximum[i] < 1.0f) {
+            return false;
+        }
+        if (enabled) {
+            return it->second->voiceLipSync.enable(i, minimum[i], maximum[i], values[i]);
+        }
+        it->second->voiceLipSync.disable(values[i]);
+        return true;
+    }
+    return false;
+}
+
 int Live2DBackend::loadModel(const std::string& path, const std::string& name) {
     const std::string confined = confineToModelRoot(path);
     if (confined.empty()) {
@@ -622,7 +732,19 @@ void Live2DBackend::showModel(int handle, float x, float y, float scale) {
 
 void Live2DBackend::hideModel(int handle) {
     auto it = m_models.find(handle);
-    if (it != m_models.end()) it->second->visible = false;
+    if (it == m_models.end()) return;
+    auto& model = *it->second;
+    model.visible = false;
+    if (!model.voiceLipSync.enabled() || !model.userModel) return;
+    auto* cubismModel = model.userModel->GetModel();
+    if (!cubismModel) return;
+    auto* rawModel = cubismModel->GetModel();
+    const int mouthIndex = model.voiceLipSync.parameterIndex();
+    if (rawModel && mouthIndex >= 0 && mouthIndex < csmGetParameterCount(rawModel)) {
+        if (float* values = csmGetParameterValues(rawModel)) {
+            model.voiceLipSync.hide(values[mouthIndex]);
+        }
+    }
 }
 
 void Live2DBackend::setOpacity(int handle, float opacity) {

@@ -542,6 +542,8 @@ local RENDER_WHITELIST = {
     cancel_async_loads  = true,
     -- Viewport operations (for RTT layer compositing)
     create_viewport     = true,
+    capture_scene       = true,
+    cancel_transition   = true,
     destroy_viewport    = true,
     draw_viewport       = true,
     fill_viewport       = true,
@@ -560,8 +562,8 @@ local RENDER_WHITELIST = {
     text_set_font       = true,
     text_reset_state    = true,
     -- NOTE: video_play/video_stop/video_is_playing are deliberately NOT
-    -- whitelisted -- AI scripts may not drive video; the BackendFactory
-    -- closure captures the real Render, so engine scripts are unaffected.
+    -- whitelisted. High-level commands use asset-only KAG.video_asset_*
+    -- sessions; no raw Render capture or arbitrary decoder URL is authorized.
 }
 
 -- Whitelist: DevCore module -- allowed functions for AI scripts

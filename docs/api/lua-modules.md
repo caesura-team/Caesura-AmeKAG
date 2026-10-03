@@ -13,7 +13,7 @@
 
 > 阶段 G（round 102）新增 **PostFx 后处理家族 5 API**（set_postfx / destroy_postfx /
 > clear_postfx / is_postfx_supported / is_postfx_active，见下方「Blend / Transition / VFX」表）；
-> api-stats 记账 Render 共 **38 个绑定 API**（自动生成，勿手改）。
+> 绑定数量以[自动API统计](api-stats.md)为准；注册数量不是运行结果。
 
 ### Texture Management
 
@@ -27,7 +27,7 @@
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `text_set_font` | `(face, size, color?)` | Set font face/size; `"default"` resets to the built-in bitmap font |
+| `text_set_font` | `(face?, size?) → bool` | `default`/空名称选择项目 `assets/fonts/NotoSansCJKsc-Regular.otf`；`bitmap`/`builtin`选择Small16。失败返回false；不是默认退化为位图。 |
 | `text_reset_state` | `()` | Reset the text renderer's internal line/char state |
 
 > The text entry-points `render_text`, `render_ruby`, `clear_text`, `set_font`,
@@ -74,7 +74,7 @@ Each quad entry:
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `submit_blend` | `(baseTexId, blendTexId, mode, baseAlpha, blendAlpha, globalAlpha)` | Submit blend effect |
-| `submit_transition` | `(fromTexId, toTexId, ruleTexId, method, progress)` | Submit transition |
+| `submit_transition` | `(fromTexId, toTexId, ruleTexId, method, progress)` | 五参数绑定，wrapper不得额外传viewId；来源／目标必须为真实有效捕获。 |
 | `submit_vfx` | `(srcTexId, effect, fadeAlpha, r, g, b, blur, quakeX, quakeY)` | Submit VFX |
 | `stretch_blt` | `(dstTexId, dx,dy,dw,dh, srcTexId, sx,sy,sw,sh, filter)` | Stretch blit (0=Nearest,1=Linear,2=Aniso) |
 | `affine_blt` | `(dstTexId, dx,dy,dw,dh, srcTexId, sx,sy,sw,sh, m0..m5)` | Affine 2×3 matrix blit |
@@ -88,9 +88,11 @@ Each quad entry:
 
 ### Video Playback
 
+这些 `Render.video_*` 是宿主原始接口，不向受限场景开放任意路径／URL；KAG视频命令使用下方的安全资产会话API。原始decoder纹理、TextureManager逻辑ID和安全session token不可混用。
+
 | Function | Signature | Returns | Description |
 |----------|-----------|---------|-------------|
-| `video_play` | `(path)` | `handle` | Open and start playing video |
+| `video_play` | `(path, {loop?, volume?}?)` | `handle` | 原始宿主入口；场景使用 `KAG.video_asset_play` |
 | `video_stop` | `(handle)` | `bool` | Close video and release resources |
 | `video_update` | `(handle)` | `bool` | Decode next frame (manual drive; the engine frame loop already advances all playing videos automatically with frame-rate pacing). |
 | `video_get_texture` | `(handle)` | `texId` | Get current frame as texture ID (0=no frame) |
@@ -256,12 +258,28 @@ JSON scenes load via `load_scene(path)` + `enter(handle)`.
 
 ---
 
+## KAG 资产目录与安全视频
+
+| API | 合同 |
+|---|---|
+| `KAG.list_assets(directory, maxEntries?, maxNameBytes?)` | 返回完整叶文件名数组和nil；失败返回nil和reason。相对目录，最多4096条、名称总计1MiB；无shell回退。 |
+| `KAG.video_asset_play(path, options?)` | 返回正整数session或nil/reason；options为loop布尔、volume 0..1.5。经IAssetReader读取最多64MiB，调用openMemory；单VM最多4会话。 |
+| `KAG.video_asset_draw(session, x?, y?, w?, h?)` | 返回实际提交bool，错误可附reason；0尺寸沿用backbuffer。不会把safe token当raw decoder handle。 |
+| `KAG.video_asset_is_playing(session)` | 返回bool，未知或过期会话返回false/reason。 |
+| `KAG.video_asset_stop(session)` | 关闭并退休该VM／后端generation拥有的会话；重复使用过期token明确拒绝。 |
+
+源码：[目录绑定](../../src/script/bindings/AssetDirectoryBinding.cpp)、[安全视频绑定](../../src/script/bindings/AssetVideoBinding.cpp)。`fileutil.scan_dir`还会验证、排序并用Lua pattern过滤；Standalone CLI依赖真实LuaFileSystem iterator和directory userdata，不在沙箱中启用popen。原始纹理／decoder API仍是宿主能力，不能绕过此资产边界。
+
+## 公开 KAG 标签与 Lua helpers
+
+[命令契约](command-contracts.md)当前声明145项；公开182名称另含28流程和9兼容名。`kag.schema`的公开选择器同时约束编译、运行回退和静态检查。内部helper及table保留Lua用途，不能仅因存在于`require("kag")`表就成为标签；用户宏仍按原优先级解析。Aliases列记录有顺序的别名，显式canonical值优先、别名先于默认值解析；不降低类型／范围验证。
+
 ## KAG (C++ Audio Bindings)
 
 > ⚠️ 阶段 G 的 `[tween]` / `[layout]` / `[vfx postfx=` 是**纯 Lua 命令handler**
 > （scripts/kag/commands/tween.lua / layout.lua / vfx.lua + scripts/kag/layout_math.lua），
 > 不新增 C++ 绑定——它们经 KAG 调度器执行并写 `layers.move_layer` / `ctx.tweens`。
-> 其契约（参数/钳制/枚举）见 `docs/api/command-contracts.md`（123 命令，自动生成）；
+> 其契约（参数/钳制/枚举）见 `docs/api/command-contracts.md`（以当前生成声明表为准）；
 > 本文件只记录 C++ 侧绑定（`Render.set_postfx` 家族属于此列）。
 
 
@@ -272,11 +290,11 @@ JSON scenes load via `load_scene(path)` + `enter(handle)`.
 
 | Function | Signature | Returns | Description |
 |----------|-----------|---------|-------------|
-| `play_bgm` | `(file, volume?, loop?)` | `bool` | Play background music |
-| `stop_bgm` | `(fadeTime?)` | `bool` | Stop BGM with optional fade (ms) |
-| `play_se` | `(file, volume?)` | `bool` | Play sound effect |
-| `stop_se` | `()` | `bool` | Stop all sound effects |
-| `play_se_3d` | `(file, x, y, z?)` | `bool` | Play a positional sound effect |
+| `play_bgm` | `(file, options?)` | `bool` | options为 `{volume?, loop?, fadein?}`；旧数值第二参数表示fade秒数，不是volume。失败可附reason。 |
+| `stop_bgm` | `(fadeSeconds?)` | `bool` | BGM淡出单位为秒；Lua命令层负责其毫秒参数转换。 |
+| `play_se` | `(file, options?)` | `bool` | options为 `{volume?, loop?, fadein?}`，失败可附reason。 |
+| `stop_se` | `(fadeSeconds?)` | `bool` | 停止SE总线；默认0秒。 |
+| `play_se_3d` | `(file, x, y, z?, options?)` | `bool` | 有限坐标及同一音频options合同。 |
 | `is_se_playing` | `()` | `bool` | Whether the SE bus is active |
 | `audio_fade_volume` | `(bus, target, seconds)` | `bool` | Smooth volume change (bus: bgm/se/voice) |
 | `audio_get_length` | `(bus)` | `number` | Current track length (seconds) |
@@ -286,7 +304,7 @@ JSON scenes load via `load_scene(path)` + `enter(handle)`.
 | `flush_wave_cache` | `()` | `bool` | Flush the decoded-wave cache |
 | `quake` | `(duration_ms, amplitude?)` | `bool` | Screen shake (KAG3 classic) |
 | `render_ruby` | `(text, ruby, x, y)` | `bool` | Furigana annotation for the current text line |
-| `play_voice` | `(file, volume?)` | `bool` | Play voice line |
+| `play_voice` | `(file, options?)` | `bool` | options为 `{volume?, loop?, fadein?}`，失败可附reason。 |
 | `stop_voice` | `()` | `bool` | Stop current voice |
 | `set_global_volume` | `(vol)` | — | Master volume 0.0–1.0 |
 | `get_global_volume` | `() → number` | — | Current master volume |

@@ -678,6 +678,11 @@ function Layers.render()
         backend.submit_batch(cmds)
     end
 
+    -- Keep the old presented scene during the scheduler's normal token yield
+    -- (and debugger pauses), until the exact adjacent [trans] takes ownership.
+    local transition = package.loaded["transition"]
+    if transition and transition.render_pending then transition.render_pending() end
+
     -- Accessibility color filter (Neo-Genesis): config.accessibility
     -- color_filter = "deuteranopia"|"protanopia"|"tritanopia"|"grayscale"
     -- |"high_contrast" applies a full-screen matrix pass (VFX effect 4)

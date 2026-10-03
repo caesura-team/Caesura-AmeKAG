@@ -11,12 +11,12 @@ local layers  = require("layers")
 local _schema3 = require("kag.schema")
 _schema3.define("layfade", {
     _meta = { category = "layer", blocking = true, desc = "fade one layer to an opacity" },
-    layer = { type = "string", default = "bg" },
+    layer = { type = "string", default = "bg", aliases = {"name"} },
     name = { type = "string" },
     to = { type = "number", default = 255, min = 0, max = 255 },
     opacity = { type = "number", min = 0, max = 255 },  -- legacy hybrid: <=1 fraction, >1 byte (handler converts)
     alpha   = { type = "number", min = 0, max = 255 },  -- alias (KAG3 name)
-    time = { type = "number", default = 300, min = 0, max = 30000 },
+    time = { type = "number", default = 300, min = 0, max = 30000, aliases = {"duration"} },
     duration = { type = "number", default = 300, min = 0, max = 30000 },
 })
 
@@ -100,7 +100,7 @@ schema.define("position", {
     x = { type = "number", default = 0 },
     y = { type = "number", default = 0 },
     scale = { type = "number", default = 1.0, min = 0.01, max = 16 },
-    layer = { type = "string", default = "" },  -- KAG3 layer name
+    layer = { type = "string", default = "fg", aliases = {"name"} },  -- KAG3 layer name
     name  = { type = "string", default = "" },
     pos   = { type = "string", default = "" },  -- left/center/right
 })
@@ -112,10 +112,10 @@ schema.define("layopt", {
 })
 schema.define("fadeout", {
     _meta = { category = "layer", blocking = true, desc = "KAG3-compatible fadeout command" },
-    layer = { type = "string", default = "bg" },
-    opacity = { type = "number", default = 0, min = 0, max = 1.0 },
+    layer = { type = "string", default = "bg", aliases = {"name"} },
+    opacity = { type = "number", default = 0, min = 0, max = 1.0, aliases = {"alpha"} },
     alpha = { type = "number", default = 0, min = 0, max = 1.0 },
-    time = { type = "number", default = 500, min = 0, max = 30000 },
+    time = { type = "number", default = 500, min = 0, max = 30000, aliases = {"duration"} },
     duration = { type = "number", default = 500, min = 0, max = 30000 },
 })
 

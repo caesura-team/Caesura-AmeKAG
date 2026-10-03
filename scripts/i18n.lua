@@ -342,7 +342,15 @@ local function prepareDictionary(code)
     end
     local file, message, errno = io.open("assets/lang/" .. code .. ".lua", "r")
     if not file then
-        if errno and errno ~= 2 then error(message, 0) end
+        -- Native libc uses ENOENT=2; hosts such as Wasmoon have their own
+        -- error-number domain (where 2 is EACCES). Classify at the host
+        -- boundary, and never treat an unknown/permission error as absence.
+        local host = rawget(_G, "backend")
+        local classify = type(host) == "table" and host.is_file_missing_error
+        local missing
+        if type(classify) == "function" then missing = classify(errno) == true
+        else missing = errno == 2 end
+        if not missing then error(message or "Language dictionary read failed", 0) end
         return copyDictionary(i18n._builtinStrings(code), 0)
     end
     local text = file:read(MAX_DICTIONARY_BYTES + 1)

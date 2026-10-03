@@ -235,6 +235,7 @@ function KAG.close(ctx, params)
         backend.audio_stop("se")
     end
     require("kag.operation").cancel_all(ctx)
+    ctx.stop_flag = true
     return "stop"
 end
 
@@ -381,7 +382,7 @@ KAG.fadeout = function(ctx, params)
     local opacity255 = math.floor((tonumber(params.opacity or params.alpha) or 0) * 255)
     return Layer.layfade(ctx, {
         layer = params.layer or params.name or "bg",
-        opacity = opacity255,
+        to = opacity255,
         time = params.time or params.duration or 500,
     })
 end
@@ -438,7 +439,7 @@ function KAG.voice(ctx, params)
         params = schema.coerce("play", params, ctx)
     end
     local audio = require("kag.commands.audio")
-    audio.playvoice(ctx, { file = params.file or params[1], storage = params.storage })
+    audio.playvoice(ctx, { file = params.file or params[1], storage = params.storage, volume = params.volume })
 end
 
 -- [se file=X] -- KAG3 alternate; unified through [play bus=se]
@@ -470,11 +471,16 @@ function KAG.play(ctx, params)
     local audio = require("kag.commands.audio")
     local bus = params.bus or "bgm"
     if bus == "bgm" then
-        return audio.playbgm(ctx, { file = params.file or params[1], storage = params.storage, volume = params.volume })
+        local canonical = require("kag.schema").coerce("playbgm", {
+            file = params.file or params[1], storage = params.storage,
+            volume = params.volume, fadein = params.fadein, loop = params.loop,
+        }, ctx)
+        return audio.playbgm(ctx, canonical)
     elseif bus == "se" then
-        return audio.playse(ctx, { file = params.file or params[1], storage = params.storage, volume = params.volume })
+        return audio.playse(ctx, { file = params.file or params[1], storage = params.storage,
+            volume = params.volume, fadein = params.fadein })
     elseif bus == "voice" then
-        return audio.playvoice(ctx, { file = params.file or params[1], storage = params.storage })
+        return audio.playvoice(ctx, { file = params.file or params[1], storage = params.storage, volume = params.volume })
     end
     print("[play] unknown bus: " .. tostring(bus))
 end

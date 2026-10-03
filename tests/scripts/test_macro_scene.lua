@@ -29,12 +29,18 @@
 --  implementation (scripts/scheduler.lua, scripts/kag/compiler.lua) is
 --  authoritative and is NOT modified. We only lock observed, adjudicated
 --  behavior. Scene-ordering markers use the custom 'mark' command (NOT part
---  of the schema, so its tag param survives the coerce pass that strips
+--  of the product registry; this test declares tag so it survives coercion of
 --  undocumented params from migrated builtins like [ch]); macro-body content
 --  rides [ch text=] which the schema preserves.
 -- =============================================================================
 
 package.path = "scripts/?.lua;scripts/kag/?.lua;" .. package.path
+
+-- Test handlers are explicit DSL extensions; a recording KAG table alone
+-- does not register commands. Keep the production public selector intact.
+require("kag.commands.text") -- actual ch/text contracts before recorder replacement
+local fixture_schema = require("kag.schema")
+fixture_schema.define("mark", {tag={type="string"}})
 
 local scheduler = require("scheduler")
 
@@ -63,7 +69,7 @@ end
 
 local kag_orig = package.loaded["kag"]
 local kmock = {}
--- custom ordering marker (not in the schema -> 'tag' survives coerce)
+-- Declared custom ordering marker; tag is preserved by its explicit schema.
 kmock.mark = function(ctx, p)
     ctx.dispatched = ctx.dispatched or {}
     ctx.dispatched[#ctx.dispatched + 1] = { cmd = "mark", params = p }

@@ -10,6 +10,10 @@
 
 package.path = "scripts/?.lua;scripts/kag/?.lua;" .. package.path
 
+-- Test handlers are explicit DSL extensions; a recording KAG table alone
+-- does not register commands. Keep the production public selector intact.
+require("kag.commands.text") -- actual ch/text contracts before recorder replacement
+
 local tokenizer = require("tokenizer")
 local compiler = require("kag.compiler")
 local scheduler = require("scheduler")
@@ -28,8 +32,8 @@ end
 print("\n=== Scheduler Dispatch Benchmark ===\n")
 
 -- Mock kag table (test_scheduler pattern): handlers record into ctx.dispatched
--- so we can count real dispatches without a GPU. 'ch' is NOT schema-migrated
--- (isMigrated false), so the hot loop passes params straight through.
+-- so we can count real dispatches without a GPU. 'ch' retains its real contract
+-- while only the handler boundary is replaced by this recorder.
 local kag_mock = {}
 kag_mock.ch = function(ctx, params)
     ctx.dispatched[#ctx.dispatched + 1] = { cmd = "ch", params = params }

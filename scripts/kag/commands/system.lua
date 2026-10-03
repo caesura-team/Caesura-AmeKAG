@@ -155,7 +155,7 @@ function SystemCommands.emb(ctx, params)
         pairs   = pairs,
         ipairs  = ipairs,
         next    = next,
-        print   = Sandbox.print_redirect,
+        print   = print,
         pcall   = pcall,
         select  = select,
         unpack  = unpack or table.unpack,

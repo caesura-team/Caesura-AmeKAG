@@ -104,7 +104,7 @@ it('rejects a competing drive while an asynchronous scheduler operation owns the
   const gate = new Promise(resolve => { release = resolve })
   const began = new Promise(resolve => { entered = resolve })
   player.lua.global.set('__WAIT_FOR_OWNER', () => { entered(); return gate })
-  await player.lua.doString("require('kag').u11_wait_owner=function(ctx) __WAIT_FOR_OWNER():await(); ctx.f.done=1 end")
+  await player.lua.doString("require('kag.schema').define('u11_wait_owner', {}); require('kag').u11_wait_owner=function(ctx) __WAIT_FOR_OWNER():await(); ctx.f.done=1 end")
   const running = player.runScene('[u11_wait_owner]\n[end]', 'pending.ks')
   try {
     await began
@@ -221,4 +221,109 @@ it('malformed textbox styles reject before replacing the live session', async ()
     expect(await player.lua.doString("return __CTXREF==TEXTBOX_OWNER and __CO==TEXTBOX_CO and coroutine.status(__CO)=='suspended'")).toBe(true)
     expect(player.core.draws).toEqual(draws)
   }
+})
+
+// Regression: a missing language asset is supported at boot and must remain
+// restorable. Emscripten errno numbers are not native libc errno numbers.
+async function localeRegressionPlayer({ missing = false, malformed = false } = {}) {
+  const slots = new Map()
+  return createPlayer({
+    ...options,
+    storageBackend: {
+      get: key => slots.get(key) ?? null,
+      set: (key, value) => { slots.set(key, value); return true },
+      del: key => slots.delete(key),
+    },
+    fetchImpl: async url => {
+      if (new URL(url).pathname.startsWith('/assets/lang/')) {
+        if (missing) return { ok: false, status: 404, text: async () => '' }
+        if (malformed) return { ok: true, status: 200, text: async () => 'return {' }
+      }
+      return options.fetchImpl(url)
+    },
+  })
+}
+
+it('actual Wasmoon ENOENT prepares builtin locale without changing active state', async () => {
+  const isolated = await localeRegressionPlayer({ missing: true })
+  try {
+    const observed = await isolated.lua.doString(`
+      local file, message, errno = io.open('assets/lang/zh.lua', 'r')
+      assert(file == nil); __LOCALE_BEFORE = require('i18n').strings
+      print('LOCALE_REAL_ENOENT:' .. tostring(errno) .. ':' .. tostring(message))
+      return errno
+    `)
+    expect(observed).toBe(44)
+    expect(await isolated.lua.doString(`
+      local locale = require('i18n')
+      local prepared = locale.prepare('zh', 'en')
+      return prepared.current == 'zh' and type(prepared.strings) == 'table'
+        and locale.strings == __LOCALE_BEFORE
+    `)).toBe(true)
+  } finally { expect(await isolated.dispose()).toBe(true) }
+})
+
+it('builtin locale survives an actual inline save and load through a caller frame', async () => {
+  const isolated = await localeRegressionPlayer({ missing: true })
+  const scenes = {
+    'locale_caller.ks': '[set f.reward = 0]\n[call locale_callee.ks]\n[set f.returned = 1]\n[end]',
+    'locale_callee.ks': '[save slot=86]\n[set f.reward = 1]\n[return]',
+    'locale_loader.ks': '[load slot=86]\n[end]',
+  }
+  try {
+    expect(await isolated.runScene(scenes['locale_caller.ks'], 'locale_caller.ks',
+      { sceneSources: scenes, autoClick: true })).toMatch(/^DONE:/)
+    expect(await isolated.lua.doString("return __CTXREF.tf.save_result")).toBe('ok')
+    expect(await isolated.runScene(scenes['locale_loader.ks'], 'locale_loader.ks',
+      { sceneSources: scenes, autoClick: true })).toMatch(/^DONE:/)
+    expect(await isolated.lua.doString(`return __CTXREF.tf.load_result == 'ok'
+      and __CTXREF.f.reward == 1 and __CTXREF.f.returned == 1 and #(__CTXREF.call_stack or {}) == 0`)).toBe(true)
+  } finally { expect(await isolated.dispose()).toBe(true) }
+})
+
+it('actual Wasmoon EACCES 2 remains a rejecting locale preparation error', async () => {
+  const isolated = await localeRegressionPlayer()
+  // These are real permissions in this instance's Emscripten MEMFS; io.open
+  // itself is unmodified. Never chmod host paths or alter another instance.
+  let fs, mode, ignored
+  const file = 'assets/lang/zh.lua'
+  try {
+    fs = isolated.lua.global.lua._emscripten.FS
+    expect(fs.lookupPath(file).node.mount.type).toBe(fs.filesystems.MEMFS)
+    mode = fs.stat(file).mode
+    ignored = fs.ignorePermissions
+    await isolated.lua.doString('__LOCALE_BEFORE = require("i18n").strings')
+    fs.chmod(file, 0)
+    fs.ignorePermissions = false
+    const observed = await isolated.lua.doString(`
+      local file, message, errno = io.open('assets/lang/zh.lua', 'r')
+      assert(file == nil)
+      print('LOCALE_REAL_EACCES:' .. tostring(errno) .. ':' .. tostring(message))
+      return errno
+    `)
+    expect(observed).toBe(2)
+    expect(await isolated.lua.doString(`
+      local ok = pcall(require('i18n').prepare, 'zh', 'en')
+      return ok
+    `)).toBe(false)
+    expect(await isolated.lua.doString("return require('i18n').strings == __LOCALE_BEFORE")).toBe(true)
+  } finally {
+    try {
+      if (mode !== undefined) {
+        fs.ignorePermissions = ignored
+        fs.chmod(file, mode)
+      }
+    } finally { expect(await isolated.dispose()).toBe(true) }
+  }
+})
+
+it('malformed present locale is rejected without committing builtin fallback', async () => {
+  const isolated = await localeRegressionPlayer({ malformed: true })
+  try {
+    expect(await isolated.lua.doString(`
+      local locale = require('i18n'); local before = locale.strings
+      local ok = pcall(locale.prepare, 'zh', 'en')
+      return not ok and locale.strings == before
+    `)).toBe(true)
+  } finally { expect(await isolated.dispose()).toBe(true) }
 })

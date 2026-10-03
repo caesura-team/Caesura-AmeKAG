@@ -20,6 +20,7 @@
 #include "../bindings/AudioRestoreBinding.h"
 #include "../bindings/FontRestoreBinding.h"
 #include "../bindings/TransientRestoreBinding.h"
+#include "../bindings/Live2DBinding.h"
 #include "../bindings/SteamBinding.h"
 #include "../bindings/AIBinding.h"
 #include "../../di/BackendRegistry.h"
@@ -111,6 +112,10 @@ void LuaManager::lockdownScriptEnv() {
     }
 }
 
+LuaManager::~LuaManager() {
+    shutdown();
+}
+
 void LuaManager::shutdown() {
     if (m_L) {
         if (!GameState::stopRunner(m_L)) {
@@ -147,6 +152,7 @@ void LuaManager::registerModules() {
     registerAudioRestoreBinding(m_L);
     registerFontRestoreBinding(m_L);
     registerTransientRestoreBinding(m_L);
+    registerLive2DBinding(m_L);
     registerVFXBinding(m_L);
     registerMiniGameBinding(m_L);
     registerSmaBinding(m_L);

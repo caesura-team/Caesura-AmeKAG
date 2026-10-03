@@ -9,6 +9,7 @@ namespace Caesura {
 
 class DirAssetProvider : public IAssetProvider {
 public:
+    AssetDirectoryResult listDirectory(const std::string&, size_t, size_t) override;
     explicit DirAssetProvider(std::string rootDir)
         : m_rootDir(std::move(rootDir)) {}
 

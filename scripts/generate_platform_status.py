@@ -3,8 +3,9 @@
 """
 generate_platform_status.py — Authoritative Platform Status Matrix Generator
 
-Parses docs/status/platform-matrix.yaml, validates schema rules and evidence integrity,
-and generates docs/status/platform-status.md.
+Parses docs/status/platform-matrix.yaml and validates recorded declarations and
+document references. Original execution logs are verified only when explicitly
+selected using --evidence-selection and its external identity locks.
 
 Supports:
   --check        CI mode: validates schema and ensures docs/status/platform-status.md is fresh (exit 0 on match, 1 on diff/error).
@@ -420,7 +421,35 @@ def resolve_head_commit(cli_head: Optional[str], data: dict) -> Tuple[Optional[s
     return (yaml_str if yaml_str else None), "yaml"
 
 
-def generate_markdown(data: dict, head_commit: Optional[str] = None) -> str:
+def _unverified_current_evidence() -> dict:
+    return {"status": "NOT_RUN", "current_verified": False, "release_ready": False,
+            "claims": {}, "scope": "No external execution or package selection was supplied."}
+
+
+def _markdown_cell(value: Any) -> str:
+    return str(value).replace("|", "\\|").replace("\r", " ").replace("\n", " ").replace("`", "'")
+
+
+def _current_evidence_markdown(verification: Optional[dict]) -> list[str]:
+    result = verification or _unverified_current_evidence()
+    lines = ["## Explicitly Selected Current Evidence", "",
+             f"Verification result: `{_markdown_cell(result['status'])}`. Publication approval: not granted."]
+    if result.get("source_sha"):
+        lines.append(f"Selected source: `{_markdown_cell(result['source_sha'])}`.")
+    if not result.get("claims"):
+        lines.extend(["No original execution or package bytes were selected for verification in this generation.", ""])
+        return lines
+    lines.extend(["", "| Claim | Result | Verification scope | Raw stage evidence |",
+                  "|---|---|---|---|"])
+    for claim_id, claim in result['claims'].items():
+        cells = [claim_id, claim.get('result'), claim.get('verification_scope'), claim.get('raw_stage_evidence', 'NOT_RUN')]
+        lines.append("| " + " | ".join(_markdown_cell(value) for value in cells) + " |")
+    lines.extend(["", "Execution profiles, package byte checks, physical devices and hosted authentication remain separate scopes.", ""])
+    return lines
+
+
+def generate_markdown(data: dict, head_commit: Optional[str] = None,
+                      evidence_verification: Optional[dict] = None) -> str:
     """Generate docs/status/platform-status.md content from validated matrix data.
 
     head_commit is the effective commit resolved by resolve_head_commit(); when
@@ -452,13 +481,16 @@ def generate_markdown(data: dict, head_commit: Optional[str] = None) -> str:
     lines.append("# Caesura (AmeKAG) — Unified Platform Status Matrix")
     lines.append("")
     lines.append(f"> **Single Source of Truth**: [`docs/status/platform-matrix.yaml`](platform-matrix.yaml)<br>")
-    lines.append(f"> **Evidence HEAD Commit**: `{head_commit}`<br>")
+    lines.append(f"> **Documentation Synchronization Commit**: `{head_commit}`<br>")
     lines.append(f"> **Generated At**: `{generated_at}`<br>")
-    lines.append(f"> **Verification Status**: 100% Evidence-Backed (Zero Undocumented Claims)")
+    lines.append("> **Recorded Evidence Validation**: `NOT_REVERIFIED` — schema and document references checked; original logs, packages and devices are not revalidated by this table.")
+    lines.append("> Capability statuses below preserve their recorded commits and dates. The synchronization commit is not an execution identity or release approval.")
+    lines.append("")
+    lines.extend(_current_evidence_markdown(evidence_verification))
     lines.append("")
     lines.append("---")
     lines.append("")
-    lines.append("## 1. Global Platform Status Summary")
+    lines.append("## 1. Recorded Platform Status Summary")
     lines.append("")
     lines.append("| Platform | Tier | Summary Status | Build | Runtime | First-VN | Device / Browser | Package / Sign | Release Gate |")
     lines.append("|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|")
@@ -502,8 +534,8 @@ def generate_markdown(data: dict, head_commit: Optional[str] = None) -> str:
     lines.append("")
     lines.append("| Enum | Symbol | Definition & Release Rules |")
     lines.append("|---|---|---|")
-    lines.append("| `verified` | 🟢 `verified` | Fully implemented and verified with automated test / physical device execution evidence attached. |")
-    lines.append("| `probe` | 🟡 `probe` | Verified at compiler / toolchain / shader asset probe level in CI; windowed or device runtime pending. |")
+    lines.append("| `verified` | 🟢 `verified` | Historical verification recorded at the row's commit and date; original execution is not reverified by document-reference validation. |")
+    lines.append("| `probe` | 🟡 `probe` | Recorded compiler / toolchain / shader probe scope; windowed or device runtime is not implied. |")
     lines.append("| `pending` | ⏳ `pending` | Capability planned or currently undergoing implementation / verification. |")
     lines.append("| `hardware-gated` | 🔒 `hardware-gated` | Blocked exclusively by physical absence of target hardware (e.g., physical Apple Silicon Mac / iPhone). |")
     lines.append("| `credential-gated` | 🔑 `credential-gated` | Blocked exclusively by missing production certificates or deployment credentials (e.g. Apple Developer ID). |")
@@ -565,7 +597,7 @@ def generate_markdown(data: dict, head_commit: Optional[str] = None) -> str:
     lines.append("")
     lines.append("## 3. Global Evidence Registry Index")
     lines.append("")
-    lines.append("All `verified` and `probe` capabilities are anchored by concrete evidence artifacts in the repository:")
+    lines.append("These links locate recorded declarations and execution references. An existing source, workflow or document is not proof that its command ran or that an original log or package is available:")
     lines.append("")
 
     evidence_items = []
@@ -591,45 +623,12 @@ def generate_markdown(data: dict, head_commit: Optional[str] = None) -> str:
     lines.append("")
     lines.append("## 4. Release Candidate Gate & Blockers")
     lines.append("")
-    # Evidence must not be retyped here: hardcoded suite totals silently rot as
-    # the suites grow (this line claimed 1052 doctests / 158 Lua suites long
-    # after the real numbers had moved on). Derive the Windows gate line from
-    # the matrix entry that is actually validated above.
-    win_runtime = (
-        platforms.get("windows", {})
-        .get("capabilities", {})
-        .get("runtime", {})
-        .get("evidence", {})
-    )
-    win_notes = str(win_runtime.get("notes", "")).strip()
-    win_commit = str(win_runtime.get("commit", "")).strip()
-    if win_notes:
-        suffix = f" (commit `{win_commit}`)" if win_commit else ""
-        lines.append(f"- [x] **Windows (Tier 1)**: {win_notes}{suffix}; First-VN E2E verified.")
-    else:
-        lines.append("- [x] **Windows (Tier 1)**: see the Windows runtime evidence row above; First-VN E2E verified.")
-    lines.append("- [x] **Linux (Tier 1)**: 11/11 CTest targets verified, headless Xvfb bundle boot verified.")
-    lines.append("- [x] **Web (Tier 1)**: Vitest suite green (cd web && npm test; 368 tests / 27 files, all run and passed with the story bundle and web dist present, measured 2026-08-28), CDP real-browser unlock and reload save persistence verified.")
-    # Same rot class as the Windows line above: the hardware retyped here still
-    # said "Xiaomi 11 Adreno 660" long after 3f742f0b established the device is a
-    # Redmi K40 (Adreno 650, Android 13) -- and it contradicted this very
-    # document's own Android environment block ~120 lines earlier. Derive the
-    # device from the matrix instead of naming it a second time.
-    android_env = platforms.get("android", {}).get("environment", {})
-    android_device = str(android_env.get("device", "")).strip()
-    android_gpu = str(android_env.get("soc_gpu", "")).strip()
-    if android_device:
-        android_hw = android_device
-    elif android_gpu:
-        android_hw = android_gpu
-    else:
-        android_hw = "the device named in the Android environment block above"
-    lines.append(
-        f"- [x] **Android (Tier 1)**: Real device {android_hw} -- CJK RGBA8 atlas, "
-        "multi-texture batching, IME bridge, and V1/V2/V3 release signing verified."
-    )
-    lines.append("- [ ] **macOS (Tier 2)**: CI compile probe verified; physical Apple Silicon hardware gated.")
-    lines.append("- [ ] **iOS (Tier 2)**: Xcode / Metal shader compilation probe verified; physical device / TestFlight hardware & credential gated.")
+    lines.append("The following values come from the recorded matrix. They are not a current candidate gate and do not grant publication approval.")
+    lines.append("")
+    for plat_id, plat in platforms.items():
+        caps = plat.get("capabilities", {})
+        values = [f"{name}=`{cap.get('status', 'pending')}`" for name, cap in caps.items()]
+        lines.append(f"- **{plat.get('display_name', plat_id)}**: " + "; ".join(values) + ". Original evidence: `NOT_REVERIFIED`.")
     lines.append("")
     lines.append("<!-- End of auto-generated platform status matrix -->")
     lines.append("")
@@ -637,13 +636,16 @@ def generate_markdown(data: dict, head_commit: Optional[str] = None) -> str:
     return "\n".join(lines)
 
 
-def export_json(data: dict) -> str:
+def export_json(data: dict, evidence_verification: Optional[dict] = None) -> str:
     """Export clean summary JSON representation of platform status."""
     platforms = data.get("platforms", {})
     summary = {
         "schema_version": data.get("schema_version", "1.0.0"),
         "evidence_head_commit": _yaml_evidence_head(data),
         "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "recorded_evidence_validation": "NOT_REVERIFIED",
+        "release_ready": False,
+        "current_evidence": evidence_verification or _unverified_current_evidence(),
         "platforms": {},
     }
 
@@ -708,8 +710,31 @@ def main():
         metavar="SHA",
         help="Explicit matrix head commit SHA (overrides auto git HEAD; used by generation and --check drift detection).",
     )
+    parser.add_argument("--evidence-selection", type=Path,
+                        help="External immutable selection of original execution bundles or final package receipts.")
+    parser.add_argument("--evidence-selection-sha256", help="Caller-selected SHA256 of the selection file.")
+    parser.add_argument("--candidate-source", help="Full source SHA expected in every selected claim; not the docs synchronization anchor.")
+    parser.add_argument("--evidence-root", type=Path, help="Explicit root containing selected artifacts; internal paths must remain within it.")
+    parser.add_argument("--evidence-profile", type=Path, help="Caller-selected validation profile, outside each execution bundle.")
+    parser.add_argument("--evidence-report", type=Path, help="Write a new verification JSON report, including failures; never overwrite an earlier report.")
 
     args = parser.parse_args()
+    evidence_arguments = (args.evidence_selection, args.evidence_selection_sha256, args.candidate_source,
+                          args.evidence_root, args.evidence_profile)
+    if any(value is not None for value in evidence_arguments) or args.evidence_report is not None:
+        if not all(value is not None for value in evidence_arguments):
+            parser.error("Evidence verification requires --evidence-selection, --evidence-selection-sha256, "
+                         "--candidate-source, --evidence-root and --evidence-profile together.")
+        if not args.dry_run and args.output.resolve() == DEFAULT_OUTPUT_PATH.resolve():
+            parser.error("Selected local evidence requires --dry-run or a separate --output artifact; "
+                         "the default repository document records historical declarations without local artifacts.")
+        output_paths = [path for path in (args.evidence_report, args.json_output,
+                        args.output if not args.dry_run and not args.check else None) if path is not None]
+        resolved_outputs = [path.resolve() for path in output_paths]
+        if len(set(resolved_outputs)) != len(resolved_outputs):
+            parser.error("Evidence report, JSON and Markdown outputs must be distinct paths.")
+        if any(path.exists() or path.is_symlink() for path in output_paths):
+            parser.error("Selected evidence outputs must be new paths; existing evidence will not be overwritten.")
 
     # 1. Load YAML
     try:
@@ -728,13 +753,38 @@ def main():
 
     # 2b. Resolve the effective head commit (--head > evidence HEAD > yaml static value).
     effective_head, head_source = resolve_head_commit(args.head, data)
+    evidence_verification = None
+    if args.evidence_selection is not None:
+        from platform_evidence import verify_current_evidence
+        evidence_verification = verify_current_evidence(
+            args.evidence_selection, selection_sha256=args.evidence_selection_sha256,
+            expected_source_sha=args.candidate_source, profile_path=args.evidence_profile,
+            evidence_root=args.evidence_root)
+        if args.evidence_report is not None:
+            try:
+                args.evidence_report.parent.mkdir(parents=True, exist_ok=True)
+                with args.evidence_report.open('x', encoding='utf-8') as stream:
+                    json.dump(evidence_verification, stream, ensure_ascii=False, indent=2)
+                    stream.write('\n')
+            except OSError as error:
+                print(f"[ERROR] Cannot preserve evidence report: {error}", file=sys.stderr)
+                return 1
+        if evidence_verification.get('status') != 'CURRENT_EVIDENCE_VERIFIED' or not evidence_verification.get('current_verified'):
+            print("[ERROR] Selected current evidence failed verification: " +
+                  json.dumps(evidence_verification, ensure_ascii=False), file=sys.stderr)
+            return 1
 
     # 3. Handle JSON output
     if args.json or args.json_output:
-        json_str = export_json(data)
+        json_str = export_json(data, evidence_verification)
         if args.json_output:
             args.json_output.parent.mkdir(parents=True, exist_ok=True)
-            args.json_output.write_text(json_str + "\n", encoding="utf-8")
+            try:
+                with args.json_output.open('x' if evidence_verification is not None else 'w', encoding='utf-8') as stream:
+                    stream.write(json_str + '\n')
+            except OSError as error:
+                print(f"[ERROR] Cannot write JSON output: {error}", file=sys.stderr)
+                return 1
             print(f"[OK] Wrote JSON status to {args.json_output}")
         if args.json:
             print(json_str)
@@ -742,7 +792,7 @@ def main():
             return
 
     # 4. Generate Markdown (the matrix documents the effective head, not the raw yaml value)
-    generated_md = generate_markdown(data, effective_head)
+    generated_md = generate_markdown(data, effective_head, evidence_verification)
 
     # 5. Check mode (CI Freshness Guard)
     if args.check:
@@ -801,11 +851,16 @@ def main():
     # 6. Write Output
     if not args.dry_run:
         args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(generated_md, encoding="utf-8", newline="\n")
+        try:
+            with args.output.open('x' if evidence_verification is not None else 'w', encoding='utf-8', newline='\n') as stream:
+                stream.write(generated_md)
+        except OSError as error:
+            print(f"[ERROR] Cannot write Markdown output: {error}", file=sys.stderr)
+            return 1
         print(f"[OK] Successfully validated schema and generated {args.output} ({len(generated_md.splitlines())} lines).")
     else:
         print(f"[OK] Dry run successful. Generated {len(generated_md.splitlines())} lines (not written to disk).")
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

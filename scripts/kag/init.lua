@@ -71,6 +71,8 @@ local layout_math = require("kag.layout_math")
 -- P1 extensions
 local gallery    = require("gallery")
 local music_room = require("music_room")
+local chapter_select = require("chapter_select") -- [chapter] executes after sandbox lockdown
+local history_ui = require("history_ui") -- [history] executes after sandbox lockdown
 local pool       = require("pool")
 
 local i18n       = require("i18n")

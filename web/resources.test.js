@@ -16,6 +16,8 @@ import { describe, it, expect } from 'vitest'
 import { readFileSync, existsSync, readdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
+import { createHash } from 'node:crypto'
+import { createContext, Script } from 'node:vm'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const root = join(here, '..')
@@ -32,6 +34,22 @@ const BAKE_CMD = 'build/lua/Debug/lua.exe scripts/ks_bake.lua --dir demo --web c
 const BUILD_CMD = 'cd web && npm run build'
 const hasRootStory = existsSync(ROOT_STORY)
 const hasDist = existsSync(DIST)
+
+it.skipIf(!hasDist)('production offline inventory binds the emitted worker and every runtime resource', () => {
+  const context = createContext({ self: {} })
+  new Script(readFileSync(join(DIST, 'offline-assets.js'), 'utf8')).runInContext(context)
+  const manifest = context.self.__CAESURA_OFFLINE_MANIFEST__
+  const digest = bytes => createHash('sha256').update(bytes).digest('hex')
+  const worker = readFileSync(join(DIST, 'sw.js'))
+  expect(worker.toString()).toContain('const REQUIRE_OFFLINE_MANIFEST = true;')
+  expect(digest(worker)).toBe(manifest.worker_sha256)
+  expect(manifest.resources.some(item => /web-assets\/index-.*\.js$/.test(item.url))).toBe(true)
+  for (const item of manifest.resources) {
+    const bytes = readFileSync(join(DIST, decodeURIComponent(item.url)))
+    expect(bytes.length, item.url).toBe(item.bytes)
+    expect(digest(bytes), item.url).toBe(item.sha256)
+  }
+})
 
 describe('web player resource layout', () => {
   // Committed / repo-tracked inputs: always asserted, no artifact needed.
@@ -61,6 +79,37 @@ describe('web player resource layout', () => {
     expect(idx['kag.schema']).toBe(true)
     expect(idx['layers']).toBe(true)
   })
+
+  it.skipIf(!hasDist)(
+    'built PWA manifest entry and icons resolve within root and subpath deployments [requires: ' + BUILD_CMD + ']',
+    () => {
+      const html = readFileSync(join(DIST, 'index.html'), 'utf8')
+      const tag = html.match(/<link\b[^>]*\brel=["']manifest["'][^>]*>/i)?.[0]
+      const href = tag?.match(/\bhref=["']([^"']+)["']/i)?.[1]
+      expect(href).toBeTruthy()
+      for (const prefix of ['/', '/games/author/']) {
+        const base = new URL(prefix, 'https://package.invalid')
+        const manifestUrl = new URL(href, new URL('index.html', base))
+        const localFile = (url) => {
+          expect(url.origin).toBe(base.origin)
+          expect(url.pathname.startsWith(base.pathname)).toBe(true)
+          return join(DIST, decodeURIComponent(url.pathname.slice(base.pathname.length)))
+        }
+        const manifest = JSON.parse(readFileSync(localFile(manifestUrl), 'utf8'))
+        const iconTag = html.match(/<link\b[^>]*\brel=["']icon["'][^>]*>/i)?.[0]
+        const iconHref = iconTag?.match(/\bhref=["']([^"']+)["']/i)?.[1]
+        expect(iconHref, 'declare a packaged favicon instead of browser /favicon.ico fallback').toBeTruthy()
+        expect(existsSync(localFile(new URL(iconHref, new URL('index.html', base))))).toBe(true)
+        const start = new URL(manifest.start_url, manifestUrl)
+        expect(start.href).toBe(new URL('index.html', base).href)
+        expect(existsSync(localFile(start))).toBe(true)
+        expect(manifest.icons.length).toBeGreaterThan(0)
+        for (const icon of manifest.icons) {
+          expect(existsSync(localFile(new URL(icon.src, manifestUrl))), icon.src).toBe(true)
+        }
+      }
+    },
+  )
 
   it.skipIf(!hasDist)(
     'dist build layout: runtime dirs copied, bundle under web-assets [requires: ' + BUILD_CMD + ']',

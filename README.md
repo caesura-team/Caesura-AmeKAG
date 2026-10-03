@@ -25,8 +25,7 @@ Caesura 是面向程序员与独立团队的开源视觉小说引擎。剧本语
 脚本语言的现代化迭代（由 KAG3 演化而来、兼容 KAG3，旧工程可导入迁移）；从写下第一行剧本，
 到把游戏打包成 Windows / Linux / macOS / Web 四个平台的成品，全部工作流在一个仓库内完成。
 
-引擎内核为 C++20：bgfx 渲染、SDL3 窗口、SoLoud 音频、Lua 5.4 脚本 VM —— 16 个静态模块库、
-34 个纯虚接口、零循环依赖（[实时 API 普查](docs/api/api-stats.md)）。
+引擎内核为 C++20：bgfx 渲染、SDL3 窗口、SoLoud 音频、Lua 5.4 脚本 VM。模块、接口头和纯虚方法数量由[源码 API 普查](docs/api/api-stats.md)生成；这些统计不表示运行测试或覆盖率。
 
 **当前开发方向：底层优先，Studio 暂停。** 后续工作以运行时正确性、状态恢复、真实后端与交付验证为主，进度和验收范围见[当前计划](docs/plans/README.md)。已有编辑器入口保留供维护，创作入门以引擎和 CLI 为主。
 
@@ -34,21 +33,21 @@ Caesura 是面向程序员与独立团队的开源视觉小说引擎。剧本语
 
 **创作体验**
 
-- **KAG Neo-Genesis 剧本语言**：134 个声明式契约命令——对白、选择支、存档/回滚/履历、NVL、参数化宏、内联文本标记、i18n 热切换（[命令参考](docs/api/command-contracts.md)）
+- **KAG Neo-Genesis 剧本语言**：声明式契约命令涵盖对白、选择支、存档/回滚/履历、NVL、参数化宏、内联文本标记、i18n 热切换（数量以[自动生成的命令参考](docs/api/command-contracts.md)为准）
 - **KAG + Lua 混合脚本**：`[eval]` / `[iscript]` 在剧本内嵌 Lua，`kag.*` API 反向驱动剧情；也可以纯 Lua 直驱引擎
 - **Caesura Studio（开发暂停）**：仓库保留编辑器与 RPC 实现；现阶段不作为完整创作流程的就绪承诺，底层与 CLI 的开发优先。
 - **caesura 命令行**：`doctor` 环境体检、`create` 五模板脚手架、`check` 剧本契约校验、`flow` 分支图与死分支诊断、`i18n` 本地化管线、`build` / `package` 一键出包
 
 **引擎内核**
 
-- **渲染**：bgfx 多后端（D3D11 / OpenGL 已真机验证，Metal 收尾中）——三层合成、GPU 粒子、视频播放、转场特效、后处理链（bloom / vignette / LUT）、FreeType CJK + Ruby 注音
+- **渲染**：bgfx 多后端——三层合成、GPU 粒子、视频播放、转场特效、后处理链（bloom / vignette / LUT）、FreeType CJK + Ruby 注音。D3D11/OpenGL 的已执行图像范围见[U16记录](docs/plans/2026-09-09-007-native-render-effects-execution.md)；Metal、设备与当前整合候选按各自证据验证。
 - **音频与动画**：SoLoud 三总线（BGM / Voice / SE）、Live2D（Cubism SDK 可选）、SMA 骨骼动画、3D 小游戏场景
-- **存档系统**：加密存档 + 版本迁移 + 回滚快照 + 履历回看；Steamworks 集成（成就 / 统计 / 云存档）
-- **分发安全**：CARC 加密归档（AES-256-GCM + Ed25519 签名），发布包自包含并附 30 项自动验证
+- **存档系统**：加密存档、版本迁移、回滚快照、履历回看及显式云传输。可选 Steamworks/Live2D 的 SDK ON 编译与实际账号、模型运行分层记录，见[U26边界](docs/plans/2026-09-20-016-optional-sdk-cloud-boundaries-execution.md)及[当前 Windows 语音口型诊断](docs/plans/2026-09-28-001-u26-voice-lipsync-validation.md)。
+- **分发安全**：CARC 加密归档（AES-256-GCM + Ed25519 签名）；最终包按指定路径和摘要接受静态、依赖与隔离运行检查，实际通过范围见[包验证记录](docs/plans/2026-09-13-013-final-package-isolation-execution.md)。
 
 **质量保障**
 
-- 三平台 CI（Windows MSVC / Linux GCC / macOS Clang，另有 iOS / Android 编译探针），每次提交经 C++ / Lua / 编辑器 / Web / Golden 项目多层测试门禁
+- CI 配置包含 Windows MSVC、Linux GCC、macOS Clang 及 iOS/Android 检查。工作流存在不等于本次执行成功；各源码的完整运行、可选跳过和最终产物记录见[当前待办](docs/plans/2026-09-05-003-runtime-foundation-todo.md)。
 - 崩溃诊断面向玩家友好呈现（项目/场景/命令定位 + 日志目录直达），ErrorUI 零 GUI 框架依赖、崩溃时也能显示错误
 
 ## 快速开始
@@ -57,7 +56,7 @@ Caesura 是面向程序员与独立团队的开源视觉小说引擎。剧本语
 
 **路径 A —— 发布包**：从 [Releases](https://github.com/caesura-team/Caesura-AmeKAG/releases) 下载解压即用（各版本世代差异见入门指南）。
 
-**路径 B —— 源码构建**（Windows 需 vcpkg 提供 SDL3；Linux / macOS 见指南）：
+**路径 B —— 源码构建**（下例用 vcpkg 提供 SDL3；Windows 未指定工具链或 SDL3_DIR 时可选用仓库内 SDL3，Linux / macOS 见指南）：
 
 ```bash
 git clone --filter=blob:none https://github.com/caesura-team/Caesura-AmeKAG.git   # 部分克隆 ~25MB
@@ -91,7 +90,7 @@ python scripts/caesura.py build my_vn --engine build/Debug/CaesuraAmeKAG.exe --c
 |---|---|
 | 入门：从克隆到第一个游戏 | [guides/getting-started.md](docs/guides/getting-started.md) |
 | KAG3 兼容性与迁移 | [compatibility.md](docs/compatibility.md) |
-| KAG 命令参考（134 条契约） | [api/command-contracts.md](docs/api/command-contracts.md) |
+| KAG 命令参考（自动生成） | [api/command-contracts.md](docs/api/command-contracts.md) |
 | 表达式语言（`[if]` / `[eval]` / `${}`） | [api/kag-expression-language.md](docs/api/kag-expression-language.md) |
 | Lua API 参考 | [api/lua-modules.md](docs/api/lua-modules.md) |
 | 编辑器 RPC API | [api/editor-api-reference.md](docs/api/editor-api-reference.md) |
@@ -104,15 +103,15 @@ python scripts/caesura.py build my_vn --engine build/Debug/CaesuraAmeKAG.exe --c
 
 ## 平台支持
 
-| 平台 | 状态 | 产物 |
+| 平台 | 已记录的范围 | 继续验证的边界 |
 |---|---|---|
-| Windows | 稳定 | ZIP（CPack，30 项自动验证） |
-| Linux | 稳定 | TGZ |
-| Web | 稳定 | 静态站点（现代浏览器） |
-| macOS | 收尾中 | TGZ（打包链路已验证，Metal 渲染修复中） |
-| Android / iOS | 推进中 | CI 编译探针绿；真机链路详见平台矩阵 |
+| Windows / Linux | U22/U23记录了指定源码的原生门禁和最终包隔离运行 | 新整合候选须单独验证；不由旧包结果推导当前发布通过 |
+| Web | 指定最终包的 Chrome 根/子路径、存读档和离线恢复有记录 | 其他浏览器、物理音频及新整合候选按实际执行范围说明 |
+| macOS | 指定 TGZ/DMG 的安装、重定位、实际进程映像和包内依赖有记录 | ad-hoc 签名不等于 Developer ID/公证；Metal与物理设备范围单独验收 |
+| Android | 记录了交叉编译、APK/AAB结构及测试签名 | 当前新合同的完整构建、安装和真实设备运行分别验收 |
+| iOS | 历史 Expo 编译与模拟器测试有独立记录 | 当前整合源码、真机Metal、安装与签名交付仍须验证 |
 
-平台矩阵与验证证据：[docs/status/platform-status.md](docs/status/platform-status.md)
+具体提交、原始证据摘要和未测条件见[当前待办](docs/plans/2026-09-05-003-runtime-foundation-todo.md)。[平台矩阵](docs/status/platform-status.md)保留逐项历史记录；普通文档生成只检查结构和引用，不重新执行设备、日志或包验证。
 
 ## 参与开发
 

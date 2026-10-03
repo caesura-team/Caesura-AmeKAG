@@ -6,7 +6,12 @@
 // and Lua-heap growth under collectgarbage — so engine/script hot-path
 // changes that would regress the browser player surface detectably.
 //
-// Measurement surface (jsdom-headless, wasmoon): wall time around runScene
+// Story throughput uses real Chromium/Wasmoon: jsdom's Node interval-based rAF
+// has a platform-dependent timer cadence and is not a browser rendering clock.
+// It retains jsdom's unavailable-audio workload through a real closed context
+// passed to createPlayer's public injection point. Audio positive behavior has
+// its own real-browser checks; this benchmark must not add audio-wait resumes.
+// All other measurements use jsdom-headless/Wasmoon. Wall time around runScene
 // includes parsing, scheduling, bridge work and final state publication.
 // Throughput uses one representative warmup and the median of three runs
 // in the same VM; it does not measure first-player startup. Every run still
@@ -32,31 +37,20 @@ import { readFileSync, existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { createPlayer } from './bridge.js'
+import { installCanvasHost } from './test-support/canvas-host.js'
+import { createRepositoryFetch, repositoryAssetUrl } from './test-support/repository-fetch.js'
+import { DomRenderer } from './dom-renderer.js'
+import { execFile, spawnSync } from 'node:child_process'
+import { promisify } from 'node:util'
+import { validateStoryBrowserReport } from './test-support/run-story-browser-benchmark.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const rootDir = join(here, '..')
-const scriptsDir = join(rootDir, 'scripts')
-const assetsDir = join(rootDir, 'assets')
 const index = JSON.parse(readFileSync(join(here, 'scripts-index.json'), 'utf8'))
 const syntheticMinFrames = 2.0
 const syntheticMinTokens = 1.5
 
-const fileFetch = async (url) => {
-  const u = new URL(url)
-  if (u.pathname.startsWith('/assets/lang/')) {
-    const rel = u.pathname.replace('/assets/lang/', '')
-    const p = join(assetsDir, 'lang', ...rel.split('/'))
-    return {
-      ok: existsSync(p), status: existsSync(p) ? 200 : 404,
-      text: async () => (existsSync(p) ? readFileSync(p, 'utf8') : ''),
-      json: async () => index,
-    }
-  }
-  const rel = u.pathname.replace('/scripts/', '')
-  const p = join(scriptsDir, ...rel.split('/'))
-  const ok = existsSync(p)
-  return { ok, status: ok ? 200 : 404, text: async () => (ok ? readFileSync(p, 'utf8') : ''), json: async () => index }
-}
+const fileFetch = createRepositoryFetch(rootDir, index)
 
 function sourceFor(key) {
   for (const dir of ['../demo/', '../demo/tutorial/', '../demo/example_game/']) {
@@ -235,26 +229,57 @@ describe('performance measurement statistics', () => {
 })
 
 describe('web player performance baseline (round 109)', () => {
-  let player = null
+  let player = null, renderer = null, stage = null, restoreCanvas = null
   beforeAll(async () => {
+    restoreCanvas = installCanvasHost()
     player = await createPlayer({
       scriptsBase: 'http://local/scripts/',
       fetchImpl: fileFetch,
+      assetUrl: repositoryAssetUrl, audioAssetUrl: repositoryAssetUrl,
       langBase: 'http://local/assets/lang/',
       capabilities: JSON.parse(readFileSync(join(here, '../demo/caesura.project.json'), 'utf8')).capabilities,
       wasmFile: join(here, 'node_modules', 'wasmoon', 'dist', 'glue.wasm'),
     })
+    stage = document.createElement('div')
+    document.body.appendChild(stage)
+    renderer = new DomRenderer(player.core, stage)
   }, 60000)
-  afterAll(async () => { await player?.dispose() })
+  afterAll(async () => {
+    try { await player?.dispose() }
+    finally { renderer?.destroy(); stage?.remove(); restoreCanvas?.() }
+  })
 
   it('story.ks main path: frame throughput + completes clean', async () => {
     const src = sourceFor('story.ks')
     expect(src, 'demo/example_game/story.ks should exist').toBeTruthy()
-    const r = await steadyRun(player, src, 'story.ks')
+    let python
+    const candidates = process.env.PYTHON ? [process.env.PYTHON]
+      : process.platform === 'win32' ? ['python', 'python3'] : ['python3', 'python']
+    for (const candidate of candidates) {
+      const probe = spawnSync(candidate, ['-c', 'import sys; assert sys.version_info >= (3,10); print(sys.executable)'],
+        {encoding:'utf8', windowsHide:true, timeout:5000})
+      if (probe.status === 0) { python = probe.stdout.trim(); break }
+    }
+    expect(python, 'Existing Python process-tree owner is required').toBeTruthy()
+    const {stdout} = await promisify(execFile)(python,
+      ['-B', '-X', 'utf8', join(rootDir, 'tests/scripts/run_story_browser_benchmark.py'), process.execPath],
+      {cwd:rootDir, windowsHide:true, timeout:105000, maxBuffer:16*1024*1024})
+    const report = JSON.parse(stdout)
+    const samples = validateStoryBrowserReport(report)
+    process.stdout.write(`[perf] real browser=${report.browserVersion}; report=${report.output}/report.json\n`)
+    process.stdout.write('[perf] browser workload '+JSON.stringify({sourceManifestSha256:report.sourceManifestSha256,
+      audioProfile:report.result.audioProfile,owner:report.owner,
+      samples:samples.map(sample=>({out:sample.out,wallMs:sample.wallMs,frames:sample.frames,
+        renderedFrames:sample.renderedFrames,tokensPerMs:sample.tokensPerMs,
+        audioBefore:sample.audioBefore,audioAfter:sample.audioAfter,audioAvailable:sample.audioAvailable}))})+'\n')
+    const r = medianRun(samples, 'story.ks')
     assertThroughput(r, 'story.ks', 0.8, 0.08)
   }, 120000)
 
   it('story.ks Lua heap growth stays bounded (< 1024 KB)', async () => {
+    // The throughput case now owns a browser VM. Keep this shared jsdom VM's
+    // heap measurement warm as before, rather than accidentally measuring boot.
+    await benchmarkRun(player, sourceFor('story.ks'), 'story.ks')
     const r = await benchmarkRun(player, sourceFor('story.ks'), 'story.ks-mem')
     expect(r.memGrowthKB, 'story.ks heap growth < 1024 KB (got ' + r.memGrowthKB.toFixed(1) + ' KB)').toBeLessThan(1024)
   }, 120000)
