@@ -3,6 +3,7 @@ title: "refactor: 运行时可靠性与交付闭环迭代计划"
 type: refactor
 status: active
 date: 2026-09-05
+updated: 2026-10-26
 execution: code
 baseline_commit: 87a96f3d846caf5ad2aac6e3b8585133e7a5aed5
 supersedes: all_previous_iteration_plans
@@ -127,6 +128,59 @@ flowchart TB
 **并行与合并纪律**：默认最多三个实现分支。资源/Job/Engine、存档/归档、脚本/Web、构建/发布按实际文件集分配；同一 Engine.cpp、SaveManager.cpp、tests/CMakeLists.txt 或 workflow 的变更由一个集成人串行合并。接口变更先形成小补丁并更新所有实现，再允许依赖任务开始。每个 U 单独交付，不做整份路线图的大合并。
 
 **首个可交付批次**：U1、U2、U3、U4。必须得到“可信 baseline + 异步 ownership 回归 + 默认 provider 加密回归”；不要等全部 29 项完成才交付一次改进。
+
+### 5.1 2026-10-26 续排：起点、证据与下一阶段方向
+
+#### 5.1.1 当前起点
+
+2026-10-05 至 2026-10-26 期间没有新的产品代码提交；本轮先锁定已完成证据，再更新后续安排。以下事实对应本次计划修订，实施时先按源码和原始运行记录复核。
+
+| 观察 | 依据 | 对续排的影响 |
+|---|---|---|
+| 最后一个完整候选 | PR #27 的 head `e4e40be2`；CI run [37195162558](https://github.com/caesura-team/Caesura-AmeKAG/actions/runs/37195162558) attempt 1 的 12 个 job 全部 success（Windows/Linux/macOS Debug 与 Release&Package、Web Final Package、iOS 探针、Android 静态与编译包探针、release-input 聚合） | 作为 I8 候选验收的输入；不自动等于已验收、可发布或全部 U 完成 |
+| 候选产物 | 同一 run 产出 Windows/Linux/macOS/Web/Pages/Android 附件及 `release-input-gate-evidence`；本次计划修订时查询 `expired=false` | U31 按 run/job/artifact 身份登记，不复制、不重打包字节 |
+| 合并状态 | PR #27 合并 `b994cfe6`，其后 master CI run [37200233061](https://github.com/caesura-team/Caesura-AmeKAG/actions/runs/37200233061) success；PR #28 仅文档，合并 `01c52fad` | 代码候选仍是 `e4e40be2`；文档合并不改变代码身份 |
+| 记录计数（不重跑） | C++ 1,630/1,630、460,880 assertions（2026-10-02 记录）；Lua 153/153 + 60/60；CTest 74 通过 + 1 项预声明 AI 跳过（2026-10-02 记录）；Web 58 文件 770/770（2026-10-04 记录） | 引用时保留记录日期与来源；新执行另行取数 |
+| 版本与发布 | CMake `1.0.1`；`v1.0.1` tag 早于本轮全部工作；CHANGELOG 最新节为 1.0.0；`release.yml` 的 tag 触发入口无运行记录；release_ready=false | 版本、tag 与发布进入 G1–G3 决策门 |
+| 能力结构 | 145 声明 = CLOSED 131 + PARTIAL 5 + UNWIRED 7 + EXPERIMENTAL 2；Platform/Packaged 声明 0 | 仅为结构扫描，不是运行闭合或覆盖率 |
+| 待清理 | 草稿 PR #25 仅余 1 个旧矩阵同步提交 `cf7ff48a` | 由 U32 评估关闭，不合并 |
+| 生成文档同步 | PR #28 触及 README 与 `.github/FUNDING.yml` 后，平台生成器解析的有效证据 HEAD 变为 `c440f5ed`，而 YAML 仍为 `0ae83992`，本地 `--check` 已失败 | P0（本批已完成）：U30 同步 YAML 锚点并重生成 `platform-status.md`（`f065fec1`）；后续任何非 docs 提交须重复该规则，能力行出现变化必须调查 |
+
+#### 5.1.2 未闭合项与外部条件
+
+- 验收与声明：尚无本轮候选范围的正式验收记录；公开平台声明（`docs/design/platform-support-matrix.md`、README 平台表）仍引用更早证据；U29 未整体完成。
+- 发布链：tag 触发的 release dry-run 正向入口仍是 NOT_RUN；本轮版本与 CHANGELOG 未准备；正式发布、商店上传与 Pages 部署未授权。
+- 已知红点：Linux sanitizer strict 仍 FAIL（既有第三方 Mesa/EGL LSan 诊断与替代验证记录）；CPU 性能基线 INCONCLUSIVE；物理音频 NOT_MEASURED。原失败与不确定结论保留，不因新计划改写。
+- 外部条件：EAS Apple 三 lane（额度）、Android 真机、iOS 真机与签名、macOS 窗口化 Metal、Steam 账号/depot、正式商店签名。
+- 能力残余：5 PARTIAL + 7 UNWIRED + 2 EXPERIMENTAL + 5 个明确拒绝命令（blur、xfadebgm、live2d_motion、live2d_expression、SDK-off 的 steam_achievement）。
+
+#### 5.1.3 方向选择
+
+下一轮按 **交付闭环 → 已知红点 → 外部条件验证** 排序：
+
+1. 当前最高价值是把 PR #27 的完整绿色运行转成可追溯的候选范围记录、公开声明与发布准备。没有这一步，已验证的构建、测试与打包成果无法交付，也不能支持后续 tag 或 release 决策。
+2. 平台矩阵生成文档漂移是当前 master 的具体红点，先由 U30 修复。
+3. 设备、账号、EAS、Steam 与商店属外部条件，只能作为条件 lane；它们不阻塞 U31–U36 的可执行工作。
+4. 已知红点（sanitizer、CPU、能力闭包）无需外部资源，可与 I8 并行收敛；只有可重复退化才启动专项优化。
+5. Studio 继续暂停；I8–I10 不涉及编辑器功能。
+
+未被采用的备选：直接扩展新能力或恢复 Studio（交付链未收口且 Studio 暂停）；以设备/SDK 验证为主线（受外部条件阻塞）；只写文档不修 P0（master 持续红）；立即打 tag 或发布（缺少候选验收与版本决策）。
+
+#### 5.1.4 迭代续排
+
+| 迭代 | 任务 | 交付重点 | 依赖 | 阶段出口 |
+|---|---|---|---|---|
+| I8 | U30–U33 | 平台矩阵同步、候选范围验收、公开声明、版本与 dry-run 准备 | U30 先行；U31/U32/U33 依次 | 候选范围有记录、声明可追溯、版本/CHANGELOG 草案与 dry-run 步骤就绪；不发布 |
+| I9 | U34–U36 | sanitizer strict、CPU 基线、能力闭包残余 | U30 后可与 I8 并行 | 三项均有可复核结论；未决项保留具体条件和失败原件 |
+| I10 | U37–U38 | Android 实机、Apple/Steam/物理音频条件 lane | 设备、账号或额度可用 | 逐项 PASS 或 NOT_RUN；不升级商店、签名或发布声明 |
+
+估算：I8 约 3–5 人日，I9 约 4–8 人日，I10 由外部条件决定；不承诺日历日期。每个任务单独交付，不合并成一次大提交；U 编号从 U30 继续，不重编号 U1–U29。
+
+#### 5.1.5 决策门与非目标
+
+- G1 下一版本号：建议 `1.1.0`（1.0.1 之后包含新增能力与修复）；若只准备补丁发布则 `1.0.2`。由用户决定。
+- G2 是否推送新 tag 并执行 `release.yml` dry-run；G3 是否正式发布、上传商店或部署 Pages；G4 是否使用设备、Steam 账号与 EAS 额度；G5 是否批准第三方 LSan 的带证据范围调整；G6 是否恢复 Studio（当前否）。
+- 非目标：本续排不推送 tag、不创建 release、不执行商店上传或部署、不恢复 Studio、不改写历史计划或执行记录、不把未测项改写成通过。
 
 ---
 
@@ -463,6 +517,91 @@ Cancelled是逻辑终态，不能立即销毁worker仍在读写的缓冲。Relea
 - **测试**：AE1–AE8；用户档跨候选读取；坏候选退回上一可验证包；缺凭据、缺required检查和调包时拒绝。
 - **验收**：所有required项真实PASS，故障/skip/未测没有藏入百分比；余项列具体外部条件；产物与报告可复查。输出“该范围候选通过/未通过”，不自动发布，也不恢复Studio。
 
+### 2026-10-26 续排任务（U30–U38）
+
+以下任务接续 U1–U29；U1–U29 的未闭合项继续按原验收保留，不因本节重编号或改写。每项完成后按实际执行结果进入 `docs/plans/` 的日期记录，不预填未来结论。
+
+#### U30. 平台矩阵同步锚点与生成文档修复
+
+- **目标/需求**：恢复生成文档 freshness，使 master 的平台矩阵校验可重新通过；满足 R1/R4。
+- **依赖/估算**：无；0.1–0.3 人日。
+- **文件**：docs/status/platform-matrix.yaml、docs/status/platform-status.md、scripts/generate_platform_status.py（只运行，不改）。
+- **方案与模式**：以 `git log -1 --format=%H -- . ':(exclude)docs'` 解析有效证据 HEAD，写入 YAML 的 evidence_head_commit；运行生成器重写 Markdown；只接受同步提交、生成时间与矩阵派生固定行的变化。任一能力行出现 status、commit 或日期变化必须停止并调查，不得当作常规同步接受。
+- **测试**：`python scripts/generate_platform_status.py --check`；`python tests/scripts/test_generate_platform_status.py`；`python tests/scripts/test_platform_matrix_adversarial.py`；确认 checkout 非 shallow。
+- **验收**：`--check` 退出 0；CI「Platform Matrix Freshness & Validation」通过；diff 无能力或证据升级；生成文档保留 NOT_REVERIFIED 边界。
+
+#### U31. 当前候选范围的验收记录
+
+- **目标/需求**：把 PR #27 的绿色运行转成可追溯的候选范围记录，作为声明与发布准备的事实来源；满足 R1–R3。
+- **依赖/估算**：U30；0.5–1 人日。
+- **文件**：新增 `docs/plans/2026-10-26-002-*.md` 日期记录；更新 `docs/plans/2026-09-05-003-runtime-foundation-todo.md` 的当前状态段；计划 §5.1 的状态引用。
+- **方案与模式**：记录候选源码 SHA（`e4e40be2`）、run/attempt、12 个 job 的名称与结论、artifact ID 与摘要、本地记录计数的来源日期；把 EAS、真实设备、Steam、物理音频、窗口化 Metal 与 hosted tag dry-run 逐项列为 NOT_RUN 或硬件/凭据门；给出“选定范围候选通过/未通过”结论，只覆盖实际执行范围，不宣称 U29 完成。
+- **测试**：用 GitHub API 只读回读 run、job、artifact 元数据；核对 SHA、workflow 与 attempt；不重打包、不改历史回执。artifact 过期时记录过期事实，不伪造摘要。
+- **验收**：第三方可从 run 链接、job 名、artifact ID 与 commit 重建范围；不产生 release_ready=true 或发布授权；未测项保持具体 NOT_RUN 条件。
+
+#### U32. 公开平台与能力声明同步
+
+- **目标/需求**：让公开声明与 U31 的记录一致；满足 R4/R12/R13。
+- **依赖/估算**：U31；0.5–1 人日（如需更新 YAML 行另计）。
+- **文件**：docs/design/platform-support-matrix.md、README.md（平台支持表）；如更新 docs/status/platform-matrix.yaml 则同批运行生成器；历史状态报告保留原迁移边界。
+- **方案与模式**：七级阶梯逐格标注证据码与 run/commit/日期；Store 保持 `?`；macOS 运行时、iOS 设备与签名、Android 真机、Steam 与物理音频继续标 gated/NOT_RUN；把“新整合候选须单独验证”改为引用 U31 的实际范围，但不得升级未测能力或历史失败。评估关闭草稿 PR #25（仅余旧矩阵同步提交，不合并）。
+- **测试**：`generate_platform_status.py --check`；平台矩阵单元测试；相对链接存在性；`git diff --check`；如改 README 或其他非 docs 路径，必须同批更新 YAML 锚点并重生成。
+- **验收**：每条公开声明可追溯到 U31 记录；固定计数或旧百分比不被当作当前状态；历史报告边界不变。
+
+#### U33. 版本、CHANGELOG 与 release dry-run 准备
+
+- **目标/需求**：为 G1/G2 提供可直接执行的发布准备，但不执行发布动作；满足 R2/R3。
+- **依赖/估算**：U31/U32；0.5 人日 + 用户决策。
+- **文件**：CHANGELOG.md（草案/条目）、docs/guides/release-process.md（如需补充 dry-run 命令）、日期记录。
+- **方案与模式**：按现有 `scripts/gen_changelog.py` 从 v1.0.1 生成候选段落并人工核对；提出版本号（建议 1.1.0，备选 1.0.2）；列出 tag 推送与 release.yml dry-run 的精确命令、预期 artifact 与回滚方式；在 G1/G2 获批前不 bump CMake 版本、不创建 tag、不 push tag。
+- **测试**：changelog 生成器预览；release-process 命令与当前 workflow 输入核对；`git diff --check`。
+- **验收**：版本决策与 CHANGELOG 草案可审阅；dry-run 路径明确且不触发上传或发布；release_ready 仍为 false。
+
+#### U34. Linux sanitizer strict 收敛
+
+- **目标/需求**：给出 LSan/Mesa 泄漏的可复核结论或经批准的范围调整；满足 R5/R14。
+- **依赖/估算**：U30；1–2 人日（视复现环境）。
+- **文件**：`scripts/validation_profiles.json`（仅当经批准调整范围）、日期记录、外部原件索引。
+- **方案与模式**：在固定源码与配置上复现 strict；区分第三方 Mesa/EGL 分配与第一方生命周期；优先修复第一方问题；第三方无法修复时保留原始诊断并记录替代的第一方检查，范围调整需 G5 批准，不得静默排除或删除业务模块检查。
+- **测试**：sanitizer profile 的真实执行与原始日志；定向生命周期回归；缺失 first-party 断言时的负控必须失败。
+- **验收**：strict 有 PASS 或明确的范围/证据裁决；原失败与不确定记录保留；不重采样或 suppression 后宣称无问题。
+
+#### U35. CPU 性能基线可判定化
+
+- **目标/需求**：把 INCONCLUSIVE 变为 MEASURED 或明确的 NOT_MEASURED；满足 R14。
+- **依赖/估算**：U30；1–2 人日 + 测量时间。
+- **文件**：`scripts/compare_benchmarks.py`、`scripts/run_benchmarks.sh`（仅在证据要求时改动）、`docs/design/engine-performance-baseline.md`（如更新须保留历史边界）、日期记录。
+- **方案与模式**：固定 Release、工作负载、seed 与机器；预热后至少 10 样本、3 个独立进程，base/candidate 交错对比；阈值在测量前锁定；环境噪声不可消除时记录条件并保留 INCONCLUSIVE，不重采样挑绿。
+- **测试**：判定规则单元测试（如涉及）、实际样本与原始日志；人为遗漏释放或挂死的负控。
+- **验收**：measurement_status 明确；性能结论不被静默升级或放宽；长跑与短跑分开记录。
+
+#### U36. 能力闭包残余（PARTIAL / UNWIRED / 拒绝命令）
+
+- **目标/需求**：对残余结构缺口做证据化裁决与必要实现；满足 R8/R12。
+- **依赖/估算**：U30；2–5 人日（按项拆分）。
+- **文件**：`scripts/kag/commands/`、`docs/design/capability-closure-overrides.json`、`docs/design/capability-closure-matrix.md`（由生成器更新）、测试入口、日期记录。
+- **方案与模式**：逐项核对 5 PARTIAL、7 UNWIRED 与 5 个拒绝命令（blur、xfadebgm、live2d_motion、live2d_expression、SDK-off 的 steam_achievement）；能接线并验证的补运行面契约，不能的写明 unsupported 原因与条件；不把静态扫描改成运行通过。
+- **测试**：新增或更新 Lua/C++ 运行面测试并注册进真实 runner；`python scripts/capability_closure.py` 同步生成矩阵；拒绝命令保持明确错误而非静默成功。
+- **验收**：计数只随证据移动；每项有运行面测试或明确 unsupported；不宣称全部命令跨平台可用。
+
+#### U37. Android 当前候选实机 lane
+
+- **目标/需求**：用当前候选的真实 APK/AAB 绑定设备运行证据；满足 R9/R13。
+- **依赖/估算**：可用 Android 设备；按设备日估算。
+- **文件**：现有 `scripts/android_device_smoke.sh`（如需扩展）、日期记录；不改变测试签名范围。
+- **方案与模式**：安装/升级、启动、CJK/IME、触摸、音频焦点、前后台、存读档与重启；记录设备型号、OS、构建 SHA、APK/AAB 摘要；设备不可达时保持 NOT_RUN。
+- **测试**：设备实际执行；日志、截图、进程退出与清理；测试签名与正式签名结论分开记录。
+- **验收**：证据绑定当前候选 SHA；不升级商店或正式签名声明；无设备时保留 NOT_RUN 条件。
+
+#### U38. Apple、Steam 与物理输出条件 lane
+
+- **目标/需求**：对 Apple/Metal、Steam 与物理音频逐项取得证据或明确条件；满足 R9/R12/R13。
+- **依赖/估算**：Mac/iOS 硬件、签名凭据、Steam 账号、EAS 额度；按条件执行。
+- **文件**：日期记录；必要时更新 docs/status 的证据引用。
+- **方案与模式**：macOS 窗口化 Metal 实际运行；iOS 模拟器/真机编译与（有凭据时）签名/TestFlight；EAS 三 lane 在额度可用时执行；Steam 账号可用的成就/统计/云冲突；物理音频测量单独记录。正式商店与发布动作需 G3 授权。
+- **测试**：各条件的真实执行或明确 NOT_RUN；凭据与账号不进仓库；失败原件保留。
+- **验收**：逐项结果可追溯；未执行项保持 NOT_RUN；不把编译、模拟器或测试签名升级为设备或商店声明。
+
 ---
 
 ## 8. 风险、回退与执行时待决事项
@@ -496,7 +635,14 @@ Cancelled是逻辑终态，不能立即销毁worker仍在读写的缓冲。Relea
 - 性能及长跑拥有固定方法和可重复样本，没有未解释的资源增长或挂死。
 - Studio仍暂停；后续是否恢复、扩展哪个底层能力，以新的用户指令和已测缺口决定。
 
-计划入口为 docs/plans/README.md。历史计划仅用于背景与证据追溯，不提供当前优先级或执行授权。
+### 9.1 2026-10-26 续排的完成判据与下一轮入口
+
+- I8 的出口：U30 生成文档同步通过；U31 候选范围记录可复核；U32 公开声明与记录一致；U33 版本/CHANGELOG 草案与 dry-run 步骤就绪。G1/G2 未批准前不执行 tag 或发布动作。
+- I9 的出口：U34–U36 每项有独立结论、原始日志和未测条件；不能把 INCONCLUSIVE、FAIL 或 NOT_MEASURED 改写成通过。
+- I10 的出口：U37/U38 逐项 PASS 或 NOT_RUN；外部条件、账号、设备与签名范围不得因 CI 绿色升级。
+- U1–U29 的未闭合项（EAS 三 lane、真实设备、Steam 账号、物理音频、hosted tag dry-run、CPU INCONCLUSIVE、sanitizer strict）继续保留；I8–I10 不替代 U29 的完整验收，也不改变其历史结论。
+
+2026-10-26 续排的计划入口仍是 docs/plans/README.md；历史计划与执行记录仅用于背景和证据追溯，不提供新的执行授权。
 
 ---
 
@@ -509,3 +655,6 @@ Cancelled是逻辑终态，不能立即销毁worker仍在读写的缓冲。Relea
 - 既有设计观察：docs/design/save-security-audit.md。provider加密行为以当前组合根回归为准。
 - 独立历史CI：[run 33891363233](https://github.com/ailiasdesu/Caesura-AmeKAG/actions/runs/33891363233)。只能证明该run实际执行的检查。
 - 外部接口依据已在关键决策中链接：SDL3成功/失败语义与OpenSSL认证失败边界；其余方案主要基于仓内实现。
+- 当前候选运行：PR #27 的 [run 37195162558 attempt 1](https://github.com/caesura-team/Caesura-AmeKAG/actions/runs/37195162558)（12/12 success）与合并后 master [run 37200233061](https://github.com/caesura-team/Caesura-AmeKAG/actions/runs/37200233061)。只能证明该 run/attempt 实际执行的检查，不等同于全平台、全设备或发布通过。
+- 生成文档与计划入口：docs/status/platform-matrix.yaml、docs/status/platform-status.md、scripts/generate_platform_status.py；PR #28 合并 `01c52fad` 仅文档，代码身份仍为 `e4e40be2`。
+- 当前待办与外部条件：docs/plans/2026-09-05-003-runtime-foundation-todo.md 的 2026-10-26 状态段保留 EAS、设备、Steam、物理音频、hosted tag dry-run、CPU INCONCLUSIVE 与 sanitizer strict 的具体条件和已记录原件索引。
