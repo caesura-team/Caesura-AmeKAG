@@ -6,7 +6,7 @@
 
 ## 事实状态（自动生成 — 勿手改）
 
-- **closure: PARTIAL=5 / CLOSED=131 / UNWIRED=7 / EXTRA=33 / EXPERIMENTAL=2**
+- **closure: PARTIAL=2 / CLOSED=141 / UNWIRED=0 / EXTRA=33 / EXPERIMENTAL=2**
   - 证据：docs/design/capability-closure-matrix.md:16 (stats line)
 - **Node migration: COMPLETE**
   - 证据：scripts/package_game.mjs; src/rpc/services/PackagingService.cpp findNode & no findGitBash; scripts/caesura_build.py find_node; scripts/package_distribution.py _find_node -- all satisfied
