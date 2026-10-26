@@ -12,10 +12,11 @@ Before producer fanout, `scripts/prepare_release_policy.py` freezes the clean
 execution source, engine version, complete validation profile bytes and the
 tracked `scripts/release_input_policy.json` selection. The policy requires
 Debug and Release evidence for Windows, Linux and macOS, four final package
-roles, a separate Pages artifact role, the iOS configuration gate and the
-Android static gate. Android compile
-keeps its separately declared audit status. PR execution uses the explicit head
-SHA; the caller/reusable workflow commit is recorded separately.
+roles, a separate Pages artifact role, the iOS compile gate and both Android
+gates (static contract + compile) — ten required jobs, checked by exact name.
+PR execution uses the explicit head SHA; the caller/reusable workflow commit is
+recorded separately. The tag-triggered entry point and its hard prerequisites
+are documented in §6.2.
 
 The aggregate uses exact job names and fixed artifact IDs from controlled
 workflow outputs. It authenticates every required attempt through GitHub,
@@ -241,9 +242,18 @@ python scripts/gen_changelog.py --from-tag v1.0.0-alpha
 # Title the section for a release version:
 python scripts/gen_changelog.py --from-tag v1.0.0-alpha --tag v1.0.1
 
+# Current draft range (U33; preview only):
+python scripts/gen_changelog.py --from-tag v1.0.1 --tag 1.1.0 --dry-run
+
 # Preview without writing:
 python scripts/gen_changelog.py --dry-run
 ```
+
+> **Writing behaviour**: without `--dry-run` the script **rewrites
+> `CHANGELOG.md` wholesale** with only the selected range, dropping the
+> existing history. Preview with `--dry-run` and merge the curated entries by
+> hand (this is how the `[Unreleased]` 1.1.0 draft was produced); never let the
+> generator clobber an accumulated changelog.
 
 Output is grouped by semantic type (`Feat` / `Fix` / `Refactor` / `Test` /
 `Docs` / `Build` / `Ci` / `Chore` / `Plan`), each entry with its short SHA.
@@ -470,22 +480,25 @@ HTTP, because a missing runtime DLL kills the process before the listener binds.
 
 ## 6. Publish a GitHub release
 
-> **What a release actually contains today (measured on the published `v1.0.1`,
-> 2026-08-27).** Both release paths produce **Windows-only desktop artifacts**:
-> - `.github/workflows/release.yml` (tag-triggered) has exactly two build jobs —
->   `build-windows` (CPack ZIP) and `build-web` (`caesura-web-pwa.tar.gz`). There is
->   **no Linux, macOS, Android or iOS job**, so the `find` step that globs
->   `*.apk` never matches anything.
-> - The published `v1.0.1` assets are `CaesuraAmeKAG-1.0.1-Windows-AMD64.zip`
->   (403 files) and `example_game-web.zip` — verified with
->   `gh release view --json assets`.
-> - Platform statuses in [platform-status.md](../status/platform-status.md) describe
->   **build/runtime verification**, not shipped artifacts: Linux/Android are
->   `verified` there yet nothing for them is attached to a GitHub release, and
->   every platform's `release` capability is `pending`.
+> **Historical snapshot (2026-08-27, published `v1.0.1`).** At that time both
+> release paths produced **Windows-only desktop artifacts**: `release.yml`
+> (tag-triggered) had two build jobs (`build-windows`, `build-web`), and the
+> published `v1.0.1` assets were
+> `CaesuraAmeKAG-1.0.1-Windows-AMD64.zip` (403 files) and
+> `example_game-web.zip` — verified with `gh release view --json assets`.
+> Platform statuses in [platform-status.md](../status/platform-status.md) describe
+> **build/runtime verification**, not shipped artifacts. Keep this only as
+> history; do not promise cross-platform downloads until a job produces them.
 >
-> Do not promise cross-platform downloads in release notes until a job produces
-> those artifacts.
+> **Current entry point (since the 2026-10-04 candidate).**
+> `.github/workflows/release.yml` is now a **Release input dry-run**, not a
+> publisher: it triggers on `push` of a numeric `v*` tag or on
+> `workflow_dispatch` (input `version` = an existing tag resolving to this
+> source), runs `prepare → validate → aggregate` (12 run jobs), uploads
+> verification evidence and final-package **artifacts**, and creates no release,
+> no release asset and no Pages deployment. Exact prerequisites, commands,
+> expected artifacts and rollback notes are in §6.2. Publishing anything remains
+> a separate G3 authorization.
 
 Use the GitHub CLI. Two flows are supported.
 
@@ -505,6 +518,12 @@ gh release create v1.0.1 \
 
 Use the **real asset name** `build/CaesuraAmeKAG-1.0.1-Windows-AMD64.zip` (see §4).
 
+> **Manual fallback only.** This `gh release create` flow is a publication
+> action (G3) and is **not** performed by `release.yml`. The current workflow
+> only produces final-package artifacts through the dry-run in §6.2; use bytes
+> from the same candidate run, verify their digests first, and record the
+> authorization.
+
 > **`gh release create` has no `--dry-run` flag.** To test the publish flow without
 > publishing, create the release with `--draft`: it uploads the asset and lets you
 > review the page, but doesn't publish. Verify your exact command with
@@ -515,19 +534,93 @@ Use the **real asset name** `build/CaesuraAmeKAG-1.0.1-Windows-AMD64.zip` (see �
 `--draft` lets you review the release page before publishing; drop it when
 ready. `--notes-file CHANGELOG.md` uses your curated changelog as the body.
 
-### 6.2 Release from CI artifacts (tag-triggered)
-- Push a tag like `v1.0.1` and the CI `release` job (which runs on tags)
-  builds and CPack-zips Windows automatically.
-- Download the `caesura-amekag-windows-x64` artifact from the workflow run -- it
-  is an **upload folder** named `caesura-amekag-windows-x64` (containing the CPack
-  ZIP `CaesuraAmeKAG-<ver>-Windows-AMD64.zip`, the exe, and SDL3.dll),
-  not a file with that name. Then:
+### 6.2 Release input dry-run (tag-triggered; no publish)
+
+**What `release.yml` does today** (checked against the candidate workflow file
+at `e4e40be2`; scope record: [U31](../plans/2026-10-26-002-i8-candidate-scope-acceptance.md)):
+
+- Triggers: `push` of a tag matching `v*`, or `workflow_dispatch` with required
+  input `version` (an existing tag that resolves to the run's source).
+- Jobs: `Lock source and candidate policy` (prepare — validates the tag/source
+  identity and freezes the release policy), `Validate engine` (reuses
+  `validate-engine.yml`; the ten required producer jobs), `Verify release
+  inputs` (aggregate — downloads and re-authenticates every producer artifact).
+- Result: the aggregate writes `DRY_RUN_INPUTS_VERIFIED` / `INPUTS_VERIFIED` /
+  `HOSTED_INPUTS_VERIFIED` with `release_ready=false`. The workflow contains
+  **no** release upload, Pages upload or deployment job.
+
+**Hard prerequisites (any failure stops the run; nothing is published):**
+
+1. **G1 version decision applied.** `CMakeLists.txt` must contain the decided
+   `project(CaesuraAmeKAG VERSION <x.y.z> ...)`;
+   `scripts/prepare_release_policy.py` requires `release_tag == "v" + engine_version`
+   exactly. The repository is currently at `1.0.1` (§7).
+2. **G2 tag authorization.** The tag must be numeric
+   `v<major>.<minor>.<patch>` (workflow regex
+   `v[0-9]+(?:\.[0-9]+){2,3}`) and must resolve to the exact source commit of the
+   run (`git rev-parse refs/tags/<tag>^{commit}` must equal the run's source
+   SHA). `v1.0.1` points at `9aa299d4` (2026-08-21) and cannot be reused for the
+   current candidate.
+3. **Full checkout.** The workflow already sets `fetch-depth: 0` and
+   `submodules: recursive`; a shallow fork of the workflow is not equivalent.
+4. **Source on `master`.** Releases are tagged from `master` after its gates
+   were green.
+5. The candidate scope record already states `release_ready=false`; a green
+   dry-run still does not authorize publishing.
+
+**Commands (only after G1/G2; NOT executed while writing this document):**
+
 ```bash
-gh release create v1.0.1 ./releases/CaesuraAmeKAG-1.0.1-Windows-AMD64.zip \
-  --title "Caesura (AmeKAG) v1.0.1" --notes-file CHANGELOG.md
+# 1) G1: version bump + changelog section land on master (no tag yet)
+#    CMakeLists.txt: project(CaesuraAmeKAG VERSION 1.1.0 LANGUAGES C CXX)
+
+# 2) G2: annotated tag on the release commit, then push it
+git tag -a v1.1.0 -m "Caesura (AmeKAG) v1.1.0"
+git push origin v1.1.0        # triggers "Release input dry-run"
+
+# 3) Alternatively dispatch the existing workflow with an existing matching tag:
+gh workflow run release.yml -f version=v1.1.0
+
+# 4) Read-only checks (no release is created)
+gh run list --workflow release.yml --limit 5
+gh run view <run-id> --log-failed
 ```
 
+**Expected artifacts** (same run; names include run id/attempt): the ten required
+producer jobs' execution evidence (`u23-*`), final packages
+(`caesura-amekag-*`, `android-release-artifacts`, `android-slices`,
+`caesura-pages-*`), package evidence (`u22-*-package-evidence`),
+authoring/audio/replay evidence, and `release-input-gate-evidence`. The
+aggregate must report `DRY_RUN_INPUTS_VERIFIED` with `release_ready=false`;
+original bytes stay in Actions and are not re-published.
+
+**Failure and rollback:**
+
+- A failed dry-run creates no release and deploys no Pages; keep the failed run
+  and its artifacts — a later green retry does not erase the earlier failure.
+- Never move an existing tag. If a retry is needed: record the failure, delete
+  the just-pushed tag (`git push origin :refs/tags/vX.Y.Z`, only while it is not
+  referenced elsewhere), fix, and tag a **new** release commit — or decide a new
+  version through G1 and repeat G2.
+- Deleting or re-pointing a pushed tag is an external action requiring
+  G2-scope authorization and a record; historical tags such as `v1.0.1` must not
+  be rewritten.
+- If a manual `gh release create` happened by mistake, remove it with
+  `gh release delete <tag> --yes` (tag kept) or `gh release delete-tag <tag> --yes`;
+  both are publication actions requiring G3 authorization and a record.
+
+**Current status (2026-10-26):** `gh run list --workflow release.yml` is empty —
+the workflow has never run. The hosted tag-triggered dry-run remains **NOT_RUN**
+(as recorded in U31/U33); executing it requires G1/G2 user approval. No version
+bump, tag creation/push, workflow trigger, release or Pages deployment was
+performed while preparing this document. See
+[2026-10-26-004](../plans/2026-10-26-004-i8-release-1.1.0-prep.md).
+
 ### 6.3 Manage existing releases
+
+`gh release ...` commands are publication actions (G3); `release.yml` never
+runs them.
+
 ```bash
 gh release list                        # list releases
 gh release view v1.0.1               # view a release
@@ -540,11 +633,21 @@ gh release delete-tag v1.0.1 --yes   # delete the tag separately
 
 ## 7. Versioning
 
-- Project version lives in `CMakeLists.txt` (`project(CaesuraAmeKAG VERSION ...)`);
-  it flows into the CPack package version and the ZIP name automatically.
-- Bump the version before tagging a release (commit the bump, then tag).
-- `CHANGELOG.md` sections may be titled with the version (`--tag v1.0.1`) in
-  addition to the date.
+- The engine version lives in `CMakeLists.txt`
+  (`project(CaesuraAmeKAG VERSION ...)`), currently **`1.0.1`**. It flows into
+  CPack package names and into `scripts/release_input_policy.json`
+  `required_files`; the release tag must equal `v<version>` (§6.2).
+- Existing tags: `v1.0.0`, `v1.0.0-alpha`, and `v1.0.1` (annotated, commit
+  `9aa299d4`, 2026-08-21). `v1.0.1` predates all current candidate work; no tag
+  matches the current candidate yet.
+- Next version recommendation: **1.1.0** (new capabilities and behaviour changes
+  after `v1.0.1`); fallback **1.0.2** only if the release is judged fix-only.
+  The choice is a user decision (G1) recorded in
+  [2026-10-26-004](../plans/2026-10-26-004-i8-release-1.1.0-prep.md).
+- The bump changes package names and release-policy expectations, so it must
+  land on `master` before the G2 tag; never tag from an unversioned tree.
+- The `[Unreleased]` draft in `CHANGELOG.md` is prepared for either choice;
+  rename the section only after G1 decides.
 
 See also: `docs/guides/getting-started.md` (build/runtime), `AGENTS.md` §12
 (docs layout). Commit conventions: `type(scope): description` with types
@@ -565,13 +668,16 @@ build/lua/Debug/lua.exe scripts/ks_check.lua demo/galgame_demo.ks demo/full_pipe
 node web/gen-index.mjs --check
 
 # changelog + package
-python scripts/gen_changelog.py --from-tag v1.0.0-alpha --tag v1.0.1
+python scripts/gen_changelog.py --from-tag v1.0.1 --tag 1.1.0 --dry-run   # preview; G1 decides title
 cmake --build build --config Release --parallel
 cd build && cpack -C Release -G ZIP && cd ..
 bash scripts/verify_release_package.sh          # stranger path on the real ZIP (see §5.1)
 
-# publish
-git tag -a v1.0.1 -m "Caesura (AmeKAG) v1.0.1"
-git push origin v1.0.1
-gh release create v1.0.1 build/CaesuraAmeKAG-1.0.1-Windows-AMD64.zip --title "Caesura (AmeKAG) v1.0.1" --notes-file CHANGELOG.md --draft
+# release input dry-run (after G1/G2 approval; creates no release and deploys nothing)
+git tag -a v1.1.0 -m "Caesura (AmeKAG) v1.1.0"   # example version; decided by G1, must equal CMake VERSION
+git push origin v1.1.0
+gh run list --workflow release.yml --limit 5
+
+# manual publishing is a separate G3 action (not run by release.yml):
+# gh release create v1.1.0 <verified-final-package> --title "Caesura (AmeKAG) v1.1.0" --notes-file CHANGELOG.md --draft
 ```
