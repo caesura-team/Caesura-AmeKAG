@@ -14,13 +14,15 @@
 
 **当前未闭合/需处理**
 
-- [ ] U30：随后续任何非 docs 提交重新同步矩阵锚点并重生成（本项已完成一次性修复，保留为维护规则）。2026-10-26 再次应用：U32 的 README 内容提交 `ae79a0fc` 使有效证据 HEAD 移动，已在 docs-only 提交 `ca537011` 同步 YAML 锚点并重生成；U33 的 CHANGELOG 根路径提交 `e1a3d63c` 同样移动有效证据 HEAD，已在 docs-only 提交 `cdc19202` 同步并重生成（`--check` exit 0，平台矩阵单测 13 + 42 通过）。
+- [ ] U30：随后续任何非 docs 提交重新同步矩阵锚点并重生成（本项已完成一次性修复，保留为维护规则）。2026-10-26 再次应用：U32 的 README 内容提交 `ae79a0fc` 使有效证据 HEAD 移动，已在 docs-only 提交 `ca537011` 同步 YAML 锚点并重生成；U33 的 CHANGELOG 根路径提交 `e1a3d63c` 同样移动有效证据 HEAD，已在 docs-only 提交 `cdc19202` 同步并重生成；i8/i9 整合分支的有效证据 HEAD 变为 `e6c8bd76`，已在 docs-only 提交 `5a7127da` 同步并重生成（`--check` exit 0）。
 - [x] U31：冻结当前候选范围并写验收记录；明确 EAS、真实设备、Steam、物理音频、窗口化 Metal、hosted tag dry-run 的 NOT_RUN 条件；release_ready 保持 false。→ 2026-10-26 完成：[I8 候选范围验收记录](2026-10-26-002-i8-candidate-scope-acceptance.md) 绑定候选 `e4e40be2` 与 run 37195162558/attempt 1 的 12 个 job、30 个 artifact；run 证据 artifact 内文记录六配置 PASS（Windows C++ 1,626、Linux/macOS C++ 1,601；Lua 153/153 + 60/60；CTest 73 通过 + 1 项预声明 AI 跳过）与 `release_ready=false`；EAS、真实设备、Steam、物理音频、窗口化 Metal、hosted tag dry-run 按条件逐项列为 NOT_RUN。
 - [x] U32：同步公开平台/能力声明；评估关闭草稿 PR #25（仅余旧矩阵同步提交）。→ 2026-10-26 完成：`docs/design/platform-support-matrix.md` 与 README「平台支持」表已按 [U31 记录](2026-10-26-002-i8-candidate-scope-acceptance.md) 同步（Store 保持 ?；macOS 窗口化 Metal、iOS 设备/签名、Android 真机、Steam、物理音频保持 gated/NOT_RUN）；内容提交 `ae79a0fc`、docs-only 锚点提交 `ca537011`（`docs/status/platform-matrix.yaml` 证据 HEAD=`ae79a0fc`、重生成 `platform-status.md`，`--check` exit 0，平台矩阵单测 13 + 42 通过）。草稿 PR #25 已关闭（Lead 2026-10-26，gh pr close；理由：被当前 master 集成取代、仅剩旧矩阵同步），本任务未执行 GitHub 关闭动作。
 - [x] U33：版本/CHANGELOG 与 release dry-run 准备；版本号（建议 1.1.0）与 tag 推送需用户决策，未授权前不执行。→ 2026-10-26 完成：[U33 发布准备记录](2026-10-26-004-i8-release-1.1.0-prep.md)；CHANGELOG 增加 `[Unreleased]` 草案（建议 1.1.0、备选 1.0.2，由 `gen_changelog.py --from-tag v1.0.1 --tag 1.1.0 --dry-run` 预览人工归类，797 commits）；release-process §6.2 补充 tag 触发 Release input dry-run 的前提/命令/预期 artifact/失败回滚（G1/G2 未决，release.yml 从未运行=NOT_RUN）。未 bump CMake VERSION（仍 1.0.1）、未创建/推送 tag、未触发 release、未发布；CHANGELOG 根路径提交 `e1a3d63c` 后按 U30 规则在 docs-only 提交 `cdc19202` 重同步平台矩阵锚点（`--check` exit 0）。
-- [ ] U34–U36：Linux sanitizer strict、CPU 基线、能力闭包残余；保留原 FAIL/INCONCLUSIVE 与未测条件。
-- [ ] U37–U38：Android 实机、Apple/Steam/物理音频条件 lane；设备、账号、额度、签名未到位时保持 NOT_RUN。
-- [ ] U1–U29 其余未闭合项与历史失败原件继续保留，不能因 PR #27 的 CI 绿色改写为全平台、全设备或发布通过。
+- [x] U34：Linux sanitizer strict 复现与结论。→ 2026-10-26 完成：[U34 记录](2026-10-26-006-i9-u34-sanitizer-strict.md)：WSL clang21/Mesa 26.0.8 上 strict 仍 FAIL；第三方 libgallium 240 B/3 泄漏（无 Caesura/bgfx 的独立 EGL 控制同型），第一方 ASan/UBSan 零诊断；建议 B 带证据范围调整，待 G5 用户批准，未抑制、未降门槛、未改历史 FAIL。
+- [x] U35：CPU 基线正式配对测量。→ 2026-10-26 完成：[U35 记录](2026-10-26-007-i9-u35-cpu-baseline.md)：windows-release 验证链 PASS（C++ 1,626、Lua 153+60、CTest 74/0/1 预声明跳过、strict verify 0）；请求/6 进程采样/比较均实际执行，结果为 execution PASS + `measurement_status=INCONCLUSIVE`；噪声判据未放宽、未重采样挑绿，原 INCONCLUSIVE 延续。
+- [x] U36：能力闭包残余 triage 与实现。→ 2026-10-26 完成：[U36 记录](2026-10-26-001-i9-u36-capability-closure-residuals.md)：修复 `scripts/capability_closure.py` 嵌套函数切片缺陷（5 个 RED 回归先失败后通过，16 tests OK）；新增 82 断言运行面套件并注册真实 runner；12 条人工裁决 + 生成矩阵，UNWIRED 7→0、PARTIAL 5→2、CLOSED 131→141（恒等式 145=141+2+0+2）；quickmenu_log/config 保持 PARTIAL、live2d_motion/expression 保持 EXPERIMENTAL、5 条明确拒绝保持。
+- [x] U37/U38：外部条件 lane 记录。→ 2026-10-26 完成：[I10 条件记录](2026-10-26-005-i10-platform-condition-lanes.md)：Android 真机、iOS 真机/签名/EAS、macOS 窗口化 Metal、Steam 账号/depot、物理音频逐项 NOT_RUN/NOT_MEASURED，并给出具体资源条件；未执行设备、账号、商店或付费动作。
+- [ ] U34 的 G5 sanitizer 范围调整、U35 的 MEASURED 环境、U37/U38 的设备/账号/EAS/签名资源仍待用户决策；U1–U29 其余未闭合项与历史失败原件继续保留，不能因本轮证据改写为全平台、全设备或发布通过。
 
 ## 2026-10-01 b533 最终字节与范围接续
 
