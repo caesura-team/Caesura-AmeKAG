@@ -1,5 +1,27 @@
 # 当前待办与进度
 
+## 2026-10-26 状态同步与续排
+
+完整目标仍为 U1–U29；底层优先、Studio 暂停。2026-10-26 的下一轮方向与任务见[计划 §5.1 与 U30–U38](2026-09-05-001-refactor-runtime-foundation-plan.md)。以下历史段落保留各自时点；当前状态以本段和对应原始记录为准，旧表不机械升级为新门禁。
+
+**已取得的当前证据**
+
+- [x] PR #27 的候选 `e4e40be2` 在 CI [run 37195162558](https://github.com/caesura-team/Caesura-AmeKAG/actions/runs/37195162558) attempt 1 十二项全部成功；同一 run 产出 Windows/Linux/macOS/Web/Pages/Android 附件与 release-input 证据，查询时未过期。
+- [x] PR #27 合并 `b994cfe6`，合并后 master CI [run 37200233061](https://github.com/caesura-team/Caesura-AmeKAG/actions/runs/37200233061) 成功。
+- [x] PR #28 仅文档，合并 `01c52fad`；代码候选仍为 `e4e40be2`。
+- [x] 记录计数（按原记录日期引用，不重跑）：C++ 1,630/1,630、460,880 assertions（2026-10-02）；Lua 153/153 + 60/60；CTest 74 通过 + 1 项预声明 AI 跳过（2026-10-02）；Web 58 文件 770/770（2026-10-04）。
+- [x] 平台矩阵生成漂移已修复：YAML 证据 HEAD 由 `0ae83992` 同步为 `c440f5ed` 并重生成 `docs/status/platform-status.md`；`--check` 通过。
+
+**当前未闭合/需处理**
+
+- [ ] U30：随后续任何非 docs 提交重新同步矩阵锚点并重生成（本项已完成一次性修复，保留为维护规则）。
+- [ ] U31：冻结当前候选范围并写验收记录；明确 EAS、真实设备、Steam、物理音频、窗口化 Metal、hosted tag dry-run 的 NOT_RUN 条件；release_ready 保持 false。
+- [ ] U32：同步公开平台/能力声明；评估关闭草稿 PR #25（仅余旧矩阵同步提交）。
+- [ ] U33：版本/CHANGELOG 与 release dry-run 准备；版本号（建议 1.1.0）与 tag 推送需用户决策，未授权前不执行。
+- [ ] U34–U36：Linux sanitizer strict、CPU 基线、能力闭包残余；保留原 FAIL/INCONCLUSIVE 与未测条件。
+- [ ] U37–U38：Android 实机、Apple/Steam/物理音频条件 lane；设备、账号、额度、签名未到位时保持 NOT_RUN。
+- [ ] U1–U29 其余未闭合项与历史失败原件继续保留，不能因 PR #27 的 CI 绿色改写为全平台、全设备或发布通过。
+
 ## 2026-10-01 b533 最终字节与范围接续
 
 完整目标仍为U1–U29，详见[b533记录](2026-10-01-004-b533-final-package-validation.md)。003及以下旧段落保留原时点，不能把旧未勾选项机械解释为新增当前门禁。

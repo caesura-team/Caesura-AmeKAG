@@ -1,5 +1,7 @@
 # 当前迭代计划
 
+2026-10-26 计划续排：[交付闭环优先的下一轮迭代（I8–I10 / U30–U38）](2026-09-05-001-refactor-runtime-foundation-plan.md)。PR #27 在 `e4e40be2` 上的 [CI run 37195162558](https://github.com/caesura-team/Caesura-AmeKAG/actions/runs/37195162558) 十二项全部成功（三桌面 Debug 与 Release&Package、Web Final Package、iOS 探针、Android 静态与编译包探针、release-input 聚合），合并 `b994cfe6` 后 master CI 亦成功；PR #28 仅文档，合并 `01c52fad`。赞助文档提交触及仓库根 README 与 .github/FUNDING.yml 后平台矩阵有效证据 HEAD 变为 `c440f5ed`，已同步 YAML 锚点并重生成 `platform-status.md`（`f065fec1`）。原 CPU INCONCLUSIVE、Linux sanitizer strict FAIL、EAS/设备/Steam/物理音频与 hosted tag dry-run 保留；U1–U29 未闭合项不变，Studio 暂停。续排按 I8 交付闭环 → I9 已知红点 → I10 外部条件验证推进，任务见计划 §5.1、U30–U38 与[当前待办](2026-09-05-003-runtime-foundation-todo.md)。
+
 2026-10-04 GitHub 接续：[PR #27 的 Windows Release 性能门禁与最终验收](2026-10-04-001-github-ci-finalization.md)。图层快照、固定数值规则和ASCII backlog传输完成有界优化；Lua153+60及完整Web770/770通过，原吞吐门槛和恢复工作量保持。新的托管CI与合并结果以PR最终提交的检查为准。
 
 2026-10-03 GitHub 接续：[PR #27 的 CI 修复与真实浏览器性能基准](2026-10-03-002-github-ci-integration.md)。macOS 的反证测试时序、平台矩阵代码锚点和 Windows Node/jsdom 计时宿主问题已分别修正；本地完整 Web 711/711 通过，吞吐原阈值保持。最终托管复验与合并状态以 PR 最新 head 的检查为准，旧失败原件保留。
