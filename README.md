@@ -121,11 +121,11 @@ python scripts/caesura.py build my_vn --engine build/Debug/CaesuraAmeKAG.exe --c
 
 ## 赞助项目
 
-欢迎通过 **微信支付** 或 **支付宝** 支持 Caesura 的开发与维护：[查看收款码与赞助方式](docs/guides/sponsorship.md)。感谢每一份支持。
+欢迎通过 **微信支付**、**支付宝** 或 **PayPal** 支持 Caesura 的开发与维护：[查看收款码与赞助方式](docs/guides/sponsorship.md)。感谢每一份支持。
 
-| 微信支付 | 支付宝 |
-| :---: | :---: |
-| <img src="docs/assets/sponsorship/wechat.jpg" alt="微信支付收款码" width="320"> | <img src="docs/assets/sponsorship/alipay.jpg" alt="支付宝收款码" width="320"> |
+| 微信支付 | 支付宝 | PayPal |
+| :---: | :---: | :---: |
+| <img src="docs/assets/sponsorship/wechat.jpg" alt="微信支付收款码" width="260"> | <img src="docs/assets/sponsorship/alipay.jpg" alt="支付宝收款码" width="260"> | <img src="docs/assets/sponsorship/paypal.png" alt="PayPal 收款码" width="260"> |
 
 ## 许可证
 
