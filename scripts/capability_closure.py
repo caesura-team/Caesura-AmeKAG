@@ -754,14 +754,114 @@ def v4_penetrated_hits(body, file_path):
 
 
 
+def lua_block_depths(code):
+    """Cumulative Lua block depth after each physical line (U36/B1).
+
+    Counts structural keywords (function/if/do/repeat openers; end/until
+    closers) while skipping comments and string literals, including long
+    bracket forms that may span lines. This is the boundary oracle for
+    StringUtils_file_slice: a function body ends at the first later line whose
+    cumulative depth returns to the depth before the function header line.
+    """
+    depths = []
+    depth = 0
+    i = 0
+    n = len(code)
+    while i < n:
+        c = code[i]
+        if c == chr(10):
+            depths.append(depth)
+            i += 1
+            continue
+        if c == "-" and i + 1 < n and code[i + 1] == "-":
+            # line comment or --[[ long comment ]] (levels --[=[ ... ]=])
+            j = i + 2
+            level = 0
+            if j < n and code[j] == "[":
+                k = j + 1
+                while k < n and code[k] == "=":
+                    level += 1
+                    k += 1
+                if k < n and code[k] == "[":
+                    close = "]" + ("=" * level) + "]"
+                    e = code.find(close, k + 1)
+                    e = n if e < 0 else e + len(close)
+                    depths.extend([depth] * code.count(chr(10), i, e))
+                    i = e
+                    continue
+            e = code.find(chr(10), i)
+            i = n if e < 0 else e
+            continue
+        if c == '"' or c == "'":
+            j = i + 1
+            while j < n:
+                if code[j] == chr(92):
+                    j += 2
+                    continue
+                if code[j] == c:
+                    j += 1
+                    break
+                if code[j] == chr(10):
+                    # unterminated quoted string: terminate at the line end
+                    depths.append(depth)
+                    j += 1
+                    break
+                j += 1
+            i = j
+            continue
+        if c == "[":
+            # long string [[ ... ]] / [=[ ... ]=]
+            k = i + 1
+            level = 0
+            while k < n and code[k] == "=":
+                level += 1
+                k += 1
+            if k < n and code[k] == "[":
+                close = "]" + ("=" * level) + "]"
+                e = code.find(close, k + 1)
+                e = n if e < 0 else e + len(close)
+                depths.extend([depth] * code.count(chr(10), i, e))
+                i = e
+                continue
+        if c.isalpha() or c == "_":
+            j = i + 1
+            while j < n and (code[j].isalnum() or code[j] == "_"):
+                j += 1
+            ident = code[i:j]
+            if ident in ("function", "if", "do", "repeat"):
+                depth += 1
+            elif ident in ("end", "until"):
+                depth -= 1
+            i = j
+            continue
+        i += 1
+    depths.append(depth)
+    return depths
+
+
 def StringUtils_file_slice(info, idx):
+    """Return one function body slice for v4 one-hop penetration (U36/B1).
+
+    Boundary is the matching block close, NOT the next function keyword: a
+    nested local function used to truncate the slice, hiding real effect calls
+    after it (blur/flash/chapter false PARTIAL)."""
     lines = info["lines"]
+    if idx < 0 or idx >= len(lines):
+        return ""
+    depths = info.get("lua_depths")
+    if depths is None:
+        depths = lua_block_depths(NL.join(lines))
+        info["lua_depths"] = depths
+    base = depths[idx - 1] if idx > 0 and idx - 1 < len(depths) else 0
     end = len(lines)
-    for j in range(idx + 1, len(lines)):
-        s = lines[j].strip()
-        if (s.startswith("function ") and "(" in s) or (s.startswith("local function ") and "(" in s) or (s.startswith("local ") and "= function" in s):
-            end = j
-            break
+    if idx < len(depths) and depths[idx] <= base:
+        # one-line function body (function f() return 1 end): no lines follow
+        end = idx + 1
+    else:
+        for j in range(idx + 1, len(lines)):
+            if j < len(depths) and depths[j] <= base:
+                end = j + 1
+                break
     return NL.join(lines[idx:end])
 
 

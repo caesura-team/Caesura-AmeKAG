@@ -263,5 +263,139 @@ class TestStatsLine(unittest.TestCase):
         self.assertEqual(d1, d2)
 
 
+class TestV4NestedFunctionSlices(unittest.TestCase):
+    """U36/B1 regression: v4 one-hop penetration must include effect-surface
+    calls that appear AFTER a nested function inside a penetrated body.
+
+    Before the fix StringUtils_file_slice() stopped at the first nested
+    `local function`/`function` line, so real calls such as
+    `backend.submit_vfx` (VFX.blur), `backend.create_solid_texture`
+    (VFX.flash) and `backend.render_text` (ChapterSelect.show) were cut out of
+    the slice -- blur/flash/chapter were misgraded PARTIAL. These tests are the
+    RED/GREEN lock for that defect (plus the real repository handler chain).
+    """
+
+    def _info(self, lines):
+        return {"lines": list(lines)}
+
+    def test_01_slice_includes_effect_after_nested_local_function(self):
+        info = self._info([
+            "function VFX.flash(ctx, params)",
+            "    local flashLayer = {}",
+            "    local function cleanup()",
+            "        flashLayer.alpha = 0",
+            "        flashLayer.dirty = true",
+            "    end",
+            "    backend.create_solid_texture(255, 255, 255, 255)",
+            "end",
+            "",
+            "function VFX.next(ctx)",
+            "    return true",
+            "end",
+        ])
+        body = cc.StringUtils_file_slice(info, 0)
+        self.assertIn("backend.create_solid_texture(255, 255, 255, 255)", body)
+        self.assertNotIn("function VFX.next", body)
+
+    def test_02_slice_includes_effect_after_multi_level_nested_functions(self):
+        info = self._info([
+            "function ChapterSelect.show(ctx)",
+            "    local bg = {}",
+            "    local function cleanup()",
+            "        local function inner()",
+            "            return true",
+            "        end",
+            "        return inner()",
+            "    end",
+            "    backend.render_text('Chapter Select', 20, 8, 255, 200, 60, 255)",
+            "    layers.ensure(ctx, '_chapter_bg', 190)",
+            "end",
+            "",
+            "function ChapterSelect.next(ctx)",
+            "    return nil",
+            "end",
+        ])
+        body = cc.StringUtils_file_slice(info, 0)
+        self.assertIn("backend.render_text('Chapter Select'", body)
+        self.assertIn("layers.ensure(ctx, '_chapter_bg', 190)", body)
+        self.assertNotIn("function ChapterSelect.next", body)
+
+    def test_03_slice_handles_multiline_strings_and_comments(self):
+        info = self._info([
+            "function X.blur(ctx)",
+            "    local msg = [[",
+            "        function not_code() end",
+            "    ]]",
+            "    -- function commented_out() end",
+            "    backend.submit_vfx(1, 2, 0, 0, 0, 0, 4, 0, 0)",
+            "end",
+            "",
+            "function X.after(ctx)",
+            "    return true",
+            "end",
+        ])
+        body = cc.StringUtils_file_slice(info, 0)
+        self.assertIn("backend.submit_vfx(1, 2, 0, 0, 0, 0, 4, 0, 0)", body)
+        self.assertNotIn("function X.after", body)
+
+    def test_04_one_line_and_last_function_slices_are_bounded(self):
+        info = self._info([
+            "function X.one_liner(ctx) return true end",
+            "function X.last(ctx)",
+            "    return true",
+            "end",
+        ])
+        first = cc.StringUtils_file_slice(info, 0)
+        self.assertIn("function X.one_liner", first)
+        self.assertNotIn("function X.last", first)
+        last = cc.StringUtils_file_slice(info, 1)
+        self.assertIn("function X.last", last)
+        self.assertIn("return true", last)
+
+    def test_05_penetration_reaches_effect_behind_nested_function(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "scripts" / "kag" / "commands").mkdir(parents=True)
+            handler_path = "scripts/kag/commands/synthetic.lua"
+            handler = (
+                "function SyntheticCommands.flash(ctx, params)\n"
+                "    local VFX = require(\"vfx\")\n"
+                "    VFX.flash(ctx, params)\n"
+                "end\n"
+            )
+            module = (
+                "local VFX = {}\n"
+                "function VFX.flash(ctx, params)\n"
+                "    local layer = {}\n"
+                "    local function cleanup()\n"
+                "        layer.alpha = 0\n"
+                "    end\n"
+                "    backend.create_solid_texture(1, 2, 3, 255)\n"
+                "end\n"
+                "return VFX\n"
+            )
+            (root / handler_path).write_text(handler, encoding="utf-8")
+            (root / "scripts" / "vfx.lua").write_text(module, encoding="utf-8")
+            saved_repo = cc.REPO
+            try:
+                with mock.patch.object(cc, "REPO", root):
+                    cc.V4_FILES_CACHE.clear()
+                    hits = cc.v4_penetrated_hits(handler, handler_path)
+            finally:
+                cc.V4_FILES_CACHE.clear()
+                cc.REPO = saved_repo
+        self.assertIn("backend.", hits)
+
+    def test_06_real_repo_partial_commands_reach_effect_surface(self):
+        """The three U36 false-PARTIAL commands must penetrate to backend.*."""
+        handlers, _private = cc.parse_command_modules()
+        for name in ("blur", "flash", "chapter"):
+            self.assertIn(name, handlers, name + " handler is registered")
+            handler = handlers[name]
+            hits = cc.consumed_for({"file": handler["file"]}, handler["body"])
+            self.assertIn("backend.", hits,
+                          name + " handler one-hop must reach a backend.* call")
+
+
 if __name__ == "__main__":
     unittest.main()
