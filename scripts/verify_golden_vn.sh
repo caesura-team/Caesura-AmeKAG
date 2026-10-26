@@ -166,12 +166,14 @@ done
 note "Step 4: feature surface coverage in story.ks"
 SRC="$(cat "$STORY")"
 FEATURES="playbgm playse playvoice save load select nvl tween layout layout_slot i18n history replay trans eval macro jump set end"
+# Literal substring match; do NOT pipe into grep -q. On macOS the pipe buffer
+# is small enough that grep -q can exit before bash finishes writing SRC, and
+# "set -o pipefail" then reports SIGPIPE as a false "missing from story.ks".
 for feat in $FEATURES; do
-    if printf "%s" "$SRC" | grep -q "\[$feat"; then
-        check "feature [$feat] present" 0
-    else
-        check "feature [$feat] present" 4 "missing from story.ks"
-    fi
+    case "$SRC" in
+        *"[$feat"*) check "feature [$feat] present" 0 ;;
+        *) check "feature [$feat] present" 4 "missing from story.ks" ;;
+    esac
 done
 
 # ---- 4b. v1 headless flags (golden_vn_headless.lua: eval/save-load/macro/xscene) ----

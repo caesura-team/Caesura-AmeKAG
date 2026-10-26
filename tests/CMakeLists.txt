@@ -271,6 +271,19 @@ if(Python3_EXECUTABLE)
             RUN_SERIAL TRUE
             WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
         )
+        # Capability-closure scanner regression (U36): the v4 one-hop slice must
+        # include effect calls after nested local functions; blur/flash/chapter
+        # were misgraded PARTIAL when the slice stopped at the nested function.
+        add_test(
+            NAME CaesuraCapabilityClosure
+            COMMAND ${Python3_EXECUTABLE} -B
+                    ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_capability_closure.py
+        )
+        set_tests_properties(CaesuraCapabilityClosure PROPERTIES
+            LABELS "qa;docs;validation"
+            TIMEOUT 120
+            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+        )
         add_executable(CaesuraCloudConflictRestartProbe probes/cloud_conflict_restart_probe.cpp)
         target_link_libraries(CaesuraCloudConflictRestartProbe PRIVATE
             Caesura::Storage Caesura::Archive Caesura::BuildOptions)

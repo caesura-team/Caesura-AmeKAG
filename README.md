@@ -105,13 +105,13 @@ python scripts/caesura.py build my_vn --engine build/Debug/CaesuraAmeKAG.exe --c
 
 | 平台 | 已记录的范围 | 继续验证的边界 |
 |---|---|---|
-| Windows / Linux | U22/U23记录了指定源码的原生门禁和最终包隔离运行 | 新整合候选须单独验证；不由旧包结果推导当前发布通过 |
-| Web | 指定最终包的 Chrome 根/子路径、存读档和离线恢复有记录 | 其他浏览器、物理音频及新整合候选按实际执行范围说明 |
-| macOS | 指定 TGZ/DMG 的安装、重定位、实际进程映像和包内依赖有记录 | ad-hoc 签名不等于 Developer ID/公证；Metal与物理设备范围单独验收 |
-| Android | 记录了交叉编译、APK/AAB结构及测试签名 | 当前新合同的完整构建、安装和真实设备运行分别验收 |
-| iOS | 历史 Expo 编译与模拟器测试有独立记录 | 当前整合源码、真机Metal、安装与签名交付仍须验证 |
+| Windows / Linux | 候选 `e4e40be2` 的托管 run [37195162558](https://github.com/caesura-team/Caesura-AmeKAG/actions/runs/37195162558) 记录了 Windows/Linux Debug 与 Release&Package 的门禁、执行计数和最终包运行校验；U22/U23 记录保留更早的最终包隔离与发布输入 dry-run 范围 | 新整合候选须单独验证；托管结果不推导发布、设备或商店通过 |
+| Web | 同一候选 run 记录了 Web Final Package（目录/ZIP/Pages tar）及包内运行校验；更早记录保留 Chrome 根/子路径、存读档和离线恢复 | 其他浏览器、物理音频、Pages 部署及新整合候选按实际执行范围说明 |
+| macOS | 同一候选 run 记录了 macOS Debug/Release&Package 与 TGZ/DMG 运行收据；更早记录保留安装、重定位、实际进程映像和包内依赖 | 窗口化 Metal 运行仍 hardware-gated；ad-hoc 签名不等于 Developer ID/公证 |
+| Android | 同一候选 run 记录了编译、TEST 签名 APK/AAB 与包契约证据；K40 历史真机记录保留为独立范围 | 当前候选真机安装/运行 NOT_RUN；正式签名与商店仍为 ? |
+| iOS | 同一候选 run 记录了 CMake 编译探针与 Metal shader 校验；历史 Expo 编译与模拟器记录有独立记录 | 当前候选真机 Metal、安装与签名交付仍须验证；未签名编译不等于设备通过 |
 
-具体提交、原始证据摘要和未测条件见[当前待办](docs/plans/2026-09-05-003-runtime-foundation-todo.md)。[平台矩阵](docs/status/platform-status.md)保留逐项历史记录；普通文档生成只检查结构和引用，不重新执行设备、日志或包验证。
+具体提交、原始证据摘要和未测条件见[当前待办](docs/plans/2026-09-05-003-runtime-foundation-todo.md)与 [I8 候选范围验收记录](docs/plans/2026-10-26-002-i8-candidate-scope-acceptance.md)；该记录给出 `release_ready=false` 以及 EAS、真机、Steam、物理音频与 hosted tag dry-run 的 NOT_RUN 条件。[平台矩阵](docs/status/platform-status.md)保留逐项历史记录；普通文档生成只检查结构和引用，不重新执行设备、日志或包验证。
 
 ## 参与开发
 
