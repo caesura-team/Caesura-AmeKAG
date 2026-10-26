@@ -185,6 +185,10 @@ local tests = {
     "test_layered_vfs",
     "test_steam_achievements",
     "test_quickmenu",
+    -- U36: closure-residual runtime evidence (PARTIAL chains, dynamic quickmenu
+    -- dispatch, explicit capability refusals). Must stay after test_quickmenu:
+    -- both load the real dispatch table / capability stack at suite end.
+    "test_capability_closure_residuals",
 }
 
 local passed, failed = 0, 0

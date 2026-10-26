@@ -2,24 +2,24 @@
 
 > 由 python scripts/capability_closure.py 生成；勿手动编辑。
 > **证据边界：CLOSED / Tested 仅为静态源码扫描与历史人工覆写；本生成器不运行引擎、不读取本轮执行终态，不代表本轮 runtime PASS，也不代表测试覆盖率。**
-> 生成时间（输入源最新 mtime）：2026-10-04T10:19:07Z
+> 生成时间（输入源最新 mtime）：2026-10-26T05:33:07Z
 > 生成命令：python scripts/capability_closure.py
-> 源指纹（输入内容 sha256 前 16 hex）：eb91cd3abff8059d
+> 源指纹（输入内容 sha256 前 16 hex）：7f01bc4de1cf1769
 > 输出确定性：同源指纹同字节（generated_at 为输入源最新 mtime；跨机 checkout 的 mtime 差异属 by-design，确定性以指纹为准）
 
 ## 概述
 
 - 合约总数（Declared，docs/api/command-contracts.md）：**145**
 - 已注册（Dispatched）：**171**
-- 触达效果面（Consumed，调用形上下文+一跳穿透 v4）：**92**
+- 触达效果面（Consumed，调用形上下文+一跳穿透 v4）：**96**
 - 测试引用（Tested，启发式计数）：**156**
-- UNWIRED：7 · PARTIAL：5 · CLOSED：131 · EXTRA：33 · EXPERIMENTAL(人工)：2
-- **结构扫描与人工声明**：Structural Closed=131 · Test references=156 · Platform declarations=4 · Package declarations=0
+- UNWIRED：0 · PARTIAL：2 · CLOSED：141 · EXTRA：33 · EXPERIMENTAL(人工)：2
+- **结构扫描与人工声明**：Structural Closed=141 · Test references=156 · Platform declarations=4 · Package declarations=0
   - 列注记：测试引用只表示源码中发现引用；未读取运行日志，不代表执行、通过或覆盖率。Platform/Package/Observable 为人工声明，原始平台、包和设备证据未由本扫描器重验。
 - **幻影绑定（v5）**：**0** 处 backend.<name> 调用命中
   - 提取模式：union of: bindings/*.cpp luaL_Reg { name, lua_X }; backend.lua ^function Backend.X; backend_factory.lua cmd==X; kag.lua ^function KAG.X
   - 清单大小：208 个可解析名（cpp=162 · shim=78 · factory=67 · kag=20，绑定文件 18 个）
-- **恒等式：**145 = CLOSED(131) + PARTIAL(5) + UNWIRED(7) + EXPERIMENTAL(在册 2)；171 = 145(Declared) + EXTRA(33) + EXPERIMENTAL(合约外 0)**
+- **恒等式：**145 = CLOSED(141) + PARTIAL(2) + UNWIRED(0) + EXPERIMENTAL(在册 2)；171 = 145(Declared) + EXTRA(33) + EXPERIMENTAL(合约外 0)**
 
 **范围声明（t103 MUST-FIX 3）**：本矩阵的 145 = 声明式 KAG 命令合约闭包（docs/api/command-contracts.md 全量条目）。下列能力**不在 145 内**：
 - 原生手势链：SwipeDown / SwipeUp / LongPress / Pinch / TwoFingerTap / ThreeFingerHold（平台层）；
@@ -102,7 +102,7 @@
 | auto | Y | Y | n | CLOSED | 6 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/text.lua:1163 |
 | bg | Y | Y | Y | CLOSED | 40 | - | - | ? | scripts/kag/commands/layer.lua:122 |
 | bgm | Y | Y | Y | CLOSED | 4 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag.lua:498 |
-| blur | Y | Y | n | PARTIAL | 4 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/transition.lua:295 |
+| blur | Y | Y | Y | CLOSED | 5 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/transition.lua:295 |
 | br | Y | Y | n | CLOSED | 3 | - ⚠ | - ⚠ | VERIFIED（位置级） ⚠ | scripts/kag.lua:212 |
 | button | Y | Y | n | CLOSED ⚠ | 39 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/text.lua:1394 |
 | call | n | Y | n | EXTRA | 87 | - | - | ? | scripts/kag.lua:520 |
@@ -110,7 +110,7 @@
 | cancel | Y | Y | Y | CLOSED | 7 | - | - | ? | scripts/kag.lua:222 |
 | capture_state | n | Y | n | EXTRA | - | - | - | ? | scripts/kag/commands/save.lua:258 |
 | ch | Y | Y | Y | CLOSED | 704 | - | - | ? | scripts/kag/commands/text.lua:612 |
-| chapter | Y | Y | n | PARTIAL | 3 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/system.lua:323 |
+| chapter | Y | Y | Y | CLOSED | 4 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/system.lua:323 |
 | cl | Y | Y | Y | CLOSED | 14 | - | - | ? | scripts/kag/commands/layer.lua:185 |
 | clear | n | Y | Y | EXTRA | 3 | - | - | ? | scripts/kag.lua:352 |
 | clearscreen | n | Y | Y | EXTRA | - | - | - | ? | scripts/kag.lua:209 |
@@ -140,14 +140,14 @@
 | fadeout | Y | Y | n | CLOSED ⚠ | 3 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag.lua:374 |
 | fadevol | Y | Y | Y | CLOSED | - | - | - | ? | scripts/kag/commands/audio.lua:115 |
 | fg | Y | Y | Y | CLOSED | 4 | - | - | ? | scripts/kag/commands/layer.lua:158 |
-| flash | Y | Y | n | PARTIAL | 7 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/vfx.lua:382 |
+| flash | Y | Y | Y | CLOSED | 8 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/vfx.lua:382 |
 | flush_cache | n | Y | Y | EXTRA | 2 | - | - | ? | scripts/kag/commands/resource.lua:261 |
 | font | Y | Y | Y | CLOSED | 7 | - | - | ? | scripts/kag/commands/text.lua:1119 |
 | g | n | Y | n | EXTRA | 2 | - | - | ? | scripts/kag.lua:366 |
 | gallery | Y | Y | Y | CLOSED | 6 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/system.lua:307 |
 | get_texture | n | Y | Y | EXTRA | - | - | - | ? | scripts/kag/commands/resource.lua:233 |
 | has_pending_transition | n | Y | n | EXTRA | - | - | - | ? | scripts/kag/commands/resource.lua:315 |
-| history | Y | Y | n | CLOSED ⚠ | 9 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/system.lua:205 |
+| history | Y | Y | Y | CLOSED ⚠ | 9 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/system.lua:205 |
 | hr | Y | Y | Y | CLOSED ⚠ | 6 | win ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag.lua:217 |
 | i18n | Y | Y | n | CLOSED ⚠ | 62 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/system.lua:648 |
 | image | Y | Y | Y | CLOSED | 7 | - | - | ? | scripts/kag/commands/layer.lua:219 |
@@ -164,11 +164,11 @@
 | layout_slot | Y | Y | Y | CLOSED | 25 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/layout.lua:204 |
 | ld | Y | Y | Y | CLOSED | 3 | - | - | ? | scripts/kag.lua:400 |
 | listsaves | Y | Y | Y | CLOSED | 6 | - | - | ? | scripts/kag/commands/save.lua:496 |
-| live2d_expression | Y | Y | n | EXPERIMENTAL ⚠ | 2 | - ⚠ | - ⚠ | ? ⚠ | scripts/kag/commands/character.lua:209 |
+| live2d_expression | Y | Y | n | EXPERIMENTAL ⚠ | 4 | - ⚠ | - ⚠ | ? ⚠ | scripts/kag/commands/character.lua:209 |
 | live2d_hide | Y | Y | Y | CLOSED | 2 | - | - | ? | scripts/kag/commands/character.lua:257 |
 | live2d_lip_sync | Y | Y | Y | CLOSED ⚠ | 24 | win ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/character.lua:269 |
 | live2d_load | Y | Y | Y | CLOSED | 6 | - | - | ? | scripts/kag/commands/character.lua:237 |
-| live2d_motion | Y | Y | n | EXPERIMENTAL ⚠ | 4 | - ⚠ | - ⚠ | ? ⚠ | scripts/kag/commands/character.lua:197 |
+| live2d_motion | Y | Y | n | EXPERIMENTAL ⚠ | 6 | - ⚠ | - ⚠ | ? ⚠ | scripts/kag/commands/character.lua:197 |
 | live2d_show | Y | Y | Y | CLOSED | 2 | - | - | ? | scripts/kag/commands/character.lua:252 |
 | live2d_unload | Y | Y | Y | CLOSED | 1 | - | - | ? | scripts/kag/commands/character.lua:262 |
 | load | Y | Y | Y | CLOSED | 65 | - | - | ? | scripts/kag/commands/save.lua:403 |
@@ -202,13 +202,13 @@
 | pt | Y | Y | n | CLOSED | 17 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/text.lua:1206 |
 | push_backlog | n | Y | n | EXTRA | - | - | - | ? | scripts/kag/commands/text.lua:336 |
 | quake | Y | Y | n | CLOSED | 3 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag.lua:424 |
-| quickmenu_auto | Y | n | n | UNWIRED | 2 | - | - | ? | - |
-| quickmenu_config | Y | n | n | UNWIRED | 2 | - | - | ? | - |
-| quickmenu_log | Y | n | n | UNWIRED | 2 | - | - | ? | - |
-| quickmenu_qload | Y | n | n | UNWIRED | 2 | - | - | ? | - |
-| quickmenu_qsave | Y | n | n | UNWIRED | 2 | - | - | ? | - |
-| quickmenu_skip | Y | n | n | UNWIRED | 2 | - | - | ? | - |
-| quickmenu_title | Y | n | n | UNWIRED | 2 | - | - | ? | - |
+| quickmenu_auto | Y | n | n | CLOSED ⚠ | 2 | - ⚠ | - ⚠ | VERIFIED ⚠ | - |
+| quickmenu_config | Y | n | n | PARTIAL ⚠ | 2 | - ⚠ | - ⚠ | ? ⚠ | - |
+| quickmenu_log | Y | n | n | PARTIAL ⚠ | 2 | - ⚠ | - ⚠ | ? ⚠ | - |
+| quickmenu_qload | Y | n | n | CLOSED ⚠ | 2 | - ⚠ | - ⚠ | VERIFIED ⚠ | - |
+| quickmenu_qsave | Y | n | n | CLOSED ⚠ | 2 | - ⚠ | - ⚠ | VERIFIED ⚠ | - |
+| quickmenu_skip | Y | n | n | CLOSED ⚠ | 2 | - ⚠ | - ⚠ | VERIFIED ⚠ | - |
+| quickmenu_title | Y | n | n | CLOSED ⚠ | 2 | - ⚠ | - ⚠ | VERIFIED ⚠ | - |
 | r | Y | Y | Y | CLOSED | 3 | - ⚠ | - ⚠ | VERIFIED（位置级） ⚠ | scripts/kag.lua:291 |
 | random | Y | Y | n | CLOSED | 14 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/system.lua:485 |
 | relocalize_backlog | n | Y | n | EXTRA | - | - | - | ? | scripts/kag/commands/text.lua:1594 |
@@ -220,7 +220,7 @@
 | rollback | Y | Y | n | CLOSED | 9 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/system.lua:363 |
 | ruby | Y | Y | Y | CLOSED | 8 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/text.lua:1086 |
 | s | Y | Y | n | CLOSED | 7 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag.lua:306 |
-| save | Y | Y | Y | CLOSED | 110 | - | - | ? | scripts/kag/commands/save.lua:274 |
+| save | Y | Y | Y | CLOSED | 111 | - | - | ? | scripts/kag/commands/save.lua:274 |
 | saveload | Y | Y | n | CLOSED | 12 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/save.lua:468 |
 | saveplace | Y | Y | n | CLOSED ⚠ | 7 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/save.lua:523 |
 | scroll | Y | Y | Y | CLOSED | 6 | - | - | ? | scripts/kag/commands/transition.lua:218 |
@@ -243,16 +243,16 @@
 | sprite_move | Y | Y | Y | CLOSED | 5 | - | - | ? | scripts/kag/commands/text.lua:509 |
 | sprite_scale | Y | Y | Y | CLOSED | 6 | - | - | ? | scripts/kag/commands/text.lua:548 |
 | sprite_swap | Y | Y | Y | CLOSED | 7 | - | - | ? | scripts/kag/commands/text.lua:590 |
-| steam_achievement | Y | Y | Y | CLOSED | 5 | - | - | ? | scripts/kag/commands/system.lua:748 |
+| steam_achievement | Y | Y | Y | CLOSED | 5 | - ⚠ | - ⚠ | ? ⚠ | scripts/kag/commands/system.lua:748 |
 | stopbgm | Y | Y | Y | CLOSED | 8 | - | - | ? | scripts/kag/commands/audio.lua:142 |
 | stopse | Y | Y | Y | CLOSED | 7 | - | - | ? | scripts/kag/commands/audio.lua:232 |
-| stopvideo | Y | Y | Y | PARTIAL | 3 | - | - | ? | scripts/kag/commands/video.lua:124 |
+| stopvideo | Y | Y | Y | CLOSED ⚠ | 4 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/video.lua:124 |
 | stopvoice | Y | Y | Y | CLOSED | 1 | - | - | ? | scripts/kag/commands/audio.lua:327 |
 | sub | Y | Y | n | CLOSED ⚠ | 8 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/math.lua:122 |
 | text | Y | Y | Y | CLOSED ⚠ | 67 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/text.lua:847 |
 | textbox | Y | Y | Y | CLOSED | 9 | - | - | ? | scripts/kag/commands/text.lua:384 |
 | textspeed | Y | Y | n | CLOSED | 42 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/text.lua:1268 |
-| trans | Y | Y | Y | PARTIAL | 16 | - | - | ? | scripts/kag/commands/transition.lua:302 |
+| trans | Y | Y | Y | CLOSED ⚠ | 16 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/transition.lua:302 |
 | tween | Y | Y | Y | CLOSED | 15 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/tween.lua:201 |
 | typewriter | Y | Y | n | CLOSED ⚠ | 7 | win ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/text.lua:1326 |
 | typewriter_sound | Y | Y | n | CLOSED ⚠ | 6 | - ⚠ | - ⚠ | ? ⚠ | scripts/kag/commands/text.lua:1340 |
@@ -271,7 +271,7 @@
 | waitclick | Y | Y | n | CLOSED | 3 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag.lua:315 |
 | waitforclick | Y | Y | n | CLOSED | 7 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag.lua:391 |
 | waitsound | Y | Y | Y | CLOSED | 7 | - | - | ? | scripts/kag/commands/audio.lua:346 |
-| xfadebgm | Y | Y | Y | CLOSED | 3 | - | - | ? | scripts/kag/commands/audio.lua:196 |
+| xfadebgm | Y | Y | Y | CLOSED | 3 | - ⚠ | - ⚠ | ? ⚠ | scripts/kag/commands/audio.lua:196 |
 
 ## 人工覆盖（⚠）
 
@@ -288,7 +288,7 @@
   - reason：t117 复核：别名链 KAG.bgm=KAG.play→play 的 backend 链
   - evidence：scripts/kag.lua:490（KAG.bgm=KAG.play）→ play（见 play 条目）→ backend.audio_*
 - blur — Observable=VERIFIED · PlatformTested=- · Packaged=-
-  - reason：t117 复核：模块委托链 VFX.blur→rtt.alloc GPU blur（headless 无 GPU 降级注记）
+  - reason：t117 复核：模块委托链 VFX.blur→rtt.alloc GPU blur（headless 无 GPU 降级注记）；U36/B1：扫描器嵌套函数切片缺陷修复后机器判级自动 CLOSED（效果面 scripts/vfx.lua:267 backend.submit_vfx effect=2，位于嵌套 local function 之后）；运行面能力 render.blur 仍 unsupported/command_not_wired（C 类明确拒绝），静态 CLOSED 不代表运行支持。
   - evidence：scripts/kag/commands/transition.lua:292 → scripts/vfx.lua:183 VFX.blur（rtt.alloc GPU blur）
 - br — Observable=VERIFIED（位置级） · PlatformTested=- · Packaged=-
   - reason：t119 复核：自派发链 br→KAG.l（t117 位置级已核）——行断效果；照 l 先例用位置级口径
@@ -297,7 +297,7 @@
   - reason：t110 复核：组合链（staging→render 分离系设计，架构注 :1297-1310）——button 注册本地化选项，endbutton cond 过滤+_renderChoices 绘制+blocking+命中跳转，间接真实触达 backend.render_text。
   - evidence：scripts/kag/commands/text.lua:1340-1372（注册 ctx._choiceButtons）→ :1374+ endbutton（_renderChoices 绘制+阻塞+跳转）→ TextScene draws → backend.render_text
 - chapter — Observable=VERIFIED · PlatformTested=- · Packaged=-
-  - reason：t119 复核：模块链+状态-流链——ChapterSelect.show（层系统+render_text）→ctx._pendingJump runner 消费
+  - reason：t119 复核：模块链+状态-流链——ChapterSelect.show（层系统+render_text）→ctx._pendingJump runner 消费；U36/B1：切片修复后机器判级 CLOSED（效果面 scripts/chapter_select.lua:78 backend.set_input_focus、:89/:99/:102 backend.render_text 位于嵌套 cleanup 之后）；运行证据 tests/scripts/test_chapter_select.lua + tests/scripts/test_capability_closure_residuals.lua。
   - evidence：scripts/kag/commands/system.lua:349-361 → scripts/chapter_select.lua:51 layers.ensure/_chapter_bg + :59/:69 backend.render_text → ctx._pendingJump
 - cps — Observable=VERIFIED · PlatformTested=- · Packaged=-
   - reason：t189 批3b §cps：apply_text_cps 写 ctx.text_speed（kag_runner:482 真实读取）+ test_textspeed.lua 语义。
@@ -330,12 +330,12 @@
   - reason：t119 复核：模块委托 Layer.layfade（opacity 0..1→0..255 换算注记）→层透明度动画
   - evidence：scripts/kag.lua:371-385 → scripts/kag/commands/layer.lua layfade
 - flash — Observable=VERIFIED · PlatformTested=- · Packaged=-
-  - reason：t116 复核：模块表委托 VFX.flash→backend.create_solid_texture+__flash 层，阻塞全屏闪白
+  - reason：t116 复核：模块表委托 VFX.flash→backend.create_solid_texture+__flash 层，阻塞全屏闪白；U36/B1：切片修复后机器判级 CLOSED（效果面 scripts/vfx.lua:386 backend.create_solid_texture 位于嵌套 cleanup/pcall 之后）；运行证据 tests/scripts/test_capability_closure_residuals.lua。
   - evidence：scripts/kag/commands/vfx.lua:368-370 → scripts/vfx.lua:266-320 VFX.flash（backend.create_solid_texture :314 + __flash 层 :286-292, z=9998）
 - gallery — Observable=VERIFIED · PlatformTested=- · Packaged=-
   - reason：t117 复核：模块委托链 gallery.lua show→backend.set_input_focus/get_resolution+layers.ensure 覆盖层，UI 全链路通过
   - evidence：scripts/kag/commands/system.lua:333 → scripts/gallery.lua:97 show → :133 backend.set_input_focus(GAME) / :135 backend.get_resolution / :143 layers.ensure(_gallery_overlay,95)
-- history — Observable=VERIFIED · PlatformTested=- · Packaged=- · Status=CLOSED (raw: PARTIAL)
+- history — Observable=VERIFIED · PlatformTested=- · Packaged=- · Status=CLOSED (raw: CLOSED)
   - reason：t116 复核：HistoryUI.show 模块调用→backlog 覆盖层（层系统+backend 渲染），真实可观察
   - evidence：scripts/kag/commands/system.lua:231-241 → scripts/history_ui.lua :19 backend.create_solid_texture / :27-31 layers.get / :86-87 layers.ensure(_history_bg/_history_title)+注释 :9 自证 backend.render_text；jump→ctx._pendingJump
 - hr — Observable=VERIFIED · PlatformTested=win · Packaged=- · Status=CLOSED (raw: PARTIAL)
@@ -357,14 +357,14 @@
   - reason：t113 复核：同链——槽位注册→recompute+apply_container→layers.move_layer，真实图层重排。
   - evidence：scripts/kag/commands/layout.lua:204-238 → :126-137 apply_container（layers.move_layer）
 - live2d_expression — Observable=? · PlatformTested=- · Packaged=- · Status=EXPERIMENTAL (raw: PARTIAL)
-  - reason：t119 判级：写 ctx.live2d[model].expression 状态；LIVE2D=OFF 无消费+Tested=0——feature-gated
-  - evidence：scripts/kag/commands/character.lua:189-197
+  - reason：t119 判级：写 ctx.live2d[model].expression 状态；LIVE2D=OFF 无消费+Tested=0——feature-gated；U36 复核：原生绑定 Live2DBinding.cpp:119-126 仅 load/show/hide/unload/set_mouth/set_voice_lipsync，无 expression API；能力目录 kag.live2d_expression native=unsupported/command_not_wired；审计列为明确拒绝（运行面拒绝实测：精确 feature/reason、0 效果）。
+  - evidence：scripts/kag/commands/character.lua:209-217；src/script/bindings/Live2DBinding.cpp:119-126；config/runtime-capabilities.json:61-64；tests/fixtures/command_contracts/corpus.json:1670-1691（live2d-expression-refusal）；tests/scripts/test_live2d_cmds.lua:32/:46-48；tests/scripts/test_capability_closure_residuals.lua（拒绝证据）
 - live2d_lip_sync — Observable=VERIFIED · PlatformTested=win · Packaged=- · Status=CLOSED (raw: CLOSED)
   - reason：2026-09-28：原生 KAG 从模型上下文句柄调用 Live2D 绑定；SDK-ON Windows Haru 的 VOICE PCM、Core 参数与 D3D11 像素均有同源码指纹的实际执行证据。仅在 Cubism 与所需音频能力可用时支持；Web 仍不支持。
   - evidence：scripts/kag/commands/character.lua:269-298 → src/script/bindings/Live2DBinding.cpp → src/live2d/Live2D/Live2DBackend.cpp；docs/plans/2026-09-28-001-u26-voice-lipsync-validation.md 引用 L1/M5 本地 receipt SHA-256 96c7db490383afd792b87606d5d654182e6ce834418c93c2ddf41fb811ef32f3
 - live2d_motion — Observable=? · PlatformTested=- · Packaged=- · Status=EXPERIMENTAL (raw: PARTIAL)
-  - reason：t119 判级：handler 仅写 ctx.live2d[model].current_motion 状态；本构建 CAESURA_LIVE2D=OFF（NullAnimation）无消费方+Tested=0——feature-gated
-  - evidence：scripts/kag/commands/character.lua:177-186
+  - reason：t119 判级：handler 仅写 ctx.live2d[model].current_motion 状态；本构建 CAESURA_LIVE2D=OFF（NullAnimation）无消费方+Tested=0——feature-gated；U36 复核：原生绑定 Live2DBinding.cpp:119-126 无 motion API；能力目录 kag.live2d_motion native=unsupported/command_not_wired；审计列为明确拒绝（运行面拒绝实测：精确 feature/reason、0 效果）。
+  - evidence：scripts/kag/commands/character.lua:197-206；src/script/bindings/Live2DBinding.cpp:119-126；config/runtime-capabilities.json:57-60；tests/fixtures/command_contracts/corpus.json:1645-1667（live2d-motion-refusal）；tests/scripts/test_live2d_cmds.lua:31/:37-41；tests/scripts/test_capability_closure_residuals.lua（拒绝证据）
 - loadplace — Observable=VERIFIED · PlatformTested=- · Packaged=-
   - reason：t117 复核：状态-流链——ctx._pendingJump+stop_flag→runner 跳转路径（bookmark 恢复可观察；test_flow_edge_call.lua:363-381 有覆盖）
   - evidence：scripts/kag/commands/save.lua:554-556 → scripts/system.lua:334-345 loadplace（ctx._pendingJump={scene,index}+ctx.stop_flag=true）→ runner 跳转
@@ -404,6 +404,27 @@
 - quake — Observable=VERIFIED · PlatformTested=- · Packaged=-
   - reason：t119 复核：模块委托 vfx.quake（修正绑定注记：standalone [quake] 不再跑 shake）
   - evidence：scripts/kag.lua:421-424 → scripts/kag/commands/vfx.lua:376-378 → scripts/vfx.lua:28 VFX.quake
+- quickmenu_auto — Observable=VERIFIED · PlatformTested=- · Packaged=- · Status=CLOSED (raw: UNWIRED)
+  - reason：U36 人工裁决（扫描器 B2 未授权：不识别动态注册）：handler 由 scripts/kag/quickmenu.lua 实现，scripts/kag/init.lua:30 预载后 register_all()（quickmenu.lua:169-180）把 7 个 handler 写入 KAG 派发表；scheduler.lua:1467 经 schema.resolveHandler(cmd, kag) 真实派发。capability_closure.py 的 parse_kag_lua_mappings 只识别 function KAG.x/字面量注册，因此静态误判 UNWIRED；运行面已实测可派发。ctx.auto_mode 是真实运行面状态：kag_runner.lua:960 消费并自动前进；test_quickmenu 断言 toggle/on/off 与返回状态。
+  - evidence：scripts/kag/init.lua:30 → scripts/kag/quickmenu.lua:169-180 → scripts/scheduler.lua:1467；运行证据 tests/scripts/test_quickmenu.lua（run_lua_tests.lua:187 注册：handler 语义 :56-181、KAG 注册 :184-190、schema :192-205）+ tests/scripts/test_capability_closure_residuals.lua（run_lua_tests.lua 注册：resolveHandler 派发解析 + kag 表注册 + 7 命令状态）
+- quickmenu_config — Observable=? · PlatformTested=- · Packaged=- · Status=PARTIAL (raw: UNWIRED)
+  - reason：U36 人工裁决：ctx.config_open = true（quickmenu.lua:163-166），全仓无读取方——只写状态、未打开设置 UI（Settings.show 未接）。 运行面可派发但未以调用形触达效果面，不能按 CLOSED 取证；保持 PARTIAL，待产品决定是否接真实 UI（见 B 提案）。
+  - evidence：scripts/kag/quickmenu.lua:73-79/:159-166；grep backlog_visible/config_open 仅 quickmenu.lua + test_quickmenu.lua 命中；test_quickmenu 只断言状态写。
+- quickmenu_log — Observable=? · PlatformTested=- · Packaged=- · Status=PARTIAL (raw: UNWIRED)
+  - reason：U36 人工裁决：ctx.backlog_visible = true（quickmenu.lua:76-79），全仓无读取方——只写状态、未打开真实 backlog UI（HistoryUI.show/SystemCommands.history 未接）。 运行面可派发但未以调用形触达效果面，不能按 CLOSED 取证；保持 PARTIAL，待产品决定是否接真实 UI（见 B 提案）。
+  - evidence：scripts/kag/quickmenu.lua:73-79/:159-166；grep backlog_visible/config_open 仅 quickmenu.lua + test_quickmenu.lua 命中；test_quickmenu 只断言状态写。
+- quickmenu_qload — Observable=VERIFIED · PlatformTested=- · Packaged=- · Status=CLOSED (raw: UNWIRED)
+  - reason：U36 人工裁决（扫描器 B2 未授权：不识别动态注册）：handler 由 scripts/kag/quickmenu.lua 实现，scripts/kag/init.lua:30 预载后 register_all()（quickmenu.lua:169-180）把 7 个 handler 写入 KAG 派发表；scheduler.lua:1467 经 schema.resolveHandler(cmd, kag) 真实派发。capability_closure.py 的 parse_kag_lua_mappings 只识别 function KAG.x/字面量注册，因此静态误判 UNWIRED；运行面已实测可派发。handler 经懒解析 kag_table() 调用真实 [load] handler（slot clamp、ctx.tf.load_result 结果约定）；test_quickmenu:151-170 用真实 kag 表断言。
+  - evidence：scripts/kag/init.lua:30 → scripts/kag/quickmenu.lua:169-180 → scripts/scheduler.lua:1467；运行证据 tests/scripts/test_quickmenu.lua（run_lua_tests.lua:187 注册：handler 语义 :56-181、KAG 注册 :184-190、schema :192-205）+ tests/scripts/test_capability_closure_residuals.lua（run_lua_tests.lua 注册：resolveHandler 派发解析 + kag 表注册 + 7 命令状态）
+- quickmenu_qsave — Observable=VERIFIED · PlatformTested=- · Packaged=- · Status=CLOSED (raw: UNWIRED)
+  - reason：U36 人工裁决（扫描器 B2 未授权：不识别动态注册）：handler 由 scripts/kag/quickmenu.lua 实现，scripts/kag/init.lua:30 预载后 register_all()（quickmenu.lua:169-180）把 7 个 handler 写入 KAG 派发表；scheduler.lua:1467 经 schema.resolveHandler(cmd, kag) 真实派发。capability_closure.py 的 parse_kag_lua_mappings 只识别 function KAG.x/字面量注册，因此静态误判 UNWIRED；运行面已实测可派发。handler 经懒解析 kag_table() 调用真实 [save] handler（含 slot clamp 0-99、ctx.tf.save_result 结果约定、handler 异常不逃逸）；test_quickmenu:103-149 用真实 kag 表断言。
+  - evidence：scripts/kag/init.lua:30 → scripts/kag/quickmenu.lua:169-180 → scripts/scheduler.lua:1467；运行证据 tests/scripts/test_quickmenu.lua（run_lua_tests.lua:187 注册：handler 语义 :56-181、KAG 注册 :184-190、schema :192-205）+ tests/scripts/test_capability_closure_residuals.lua（run_lua_tests.lua 注册：resolveHandler 派发解析 + kag 表注册 + 7 命令状态）
+- quickmenu_skip — Observable=VERIFIED · PlatformTested=- · Packaged=- · Status=CLOSED (raw: UNWIRED)
+  - reason：U36 人工裁决（扫描器 B2 未授权：不识别动态注册）：handler 由 scripts/kag/quickmenu.lua 实现，scripts/kag/init.lua:30 预载后 register_all()（quickmenu.lua:169-180）把 7 个 handler 写入 KAG 派发表；scheduler.lua:1467 经 schema.resolveHandler(cmd, kag) 真实派发。capability_closure.py 的 parse_kag_lua_mappings 只识别 function KAG.x/字面量注册，因此静态误判 UNWIRED；运行面已实测可派发。ctx.skip_mode 是真实运行面状态：kag_runner.lua:888/:923 消费（skip 推进/seen 语义）；test_quickmenu 断言 toggle/on/off/seen。
+  - evidence：scripts/kag/init.lua:30 → scripts/kag/quickmenu.lua:169-180 → scripts/scheduler.lua:1467；运行证据 tests/scripts/test_quickmenu.lua（run_lua_tests.lua:187 注册：handler 语义 :56-181、KAG 注册 :184-190、schema :192-205）+ tests/scripts/test_capability_closure_residuals.lua（run_lua_tests.lua 注册：resolveHandler 派发解析 + kag 表注册 + 7 命令状态）
+- quickmenu_title — Observable=VERIFIED · PlatformTested=- · Packaged=- · Status=CLOSED (raw: UNWIRED)
+  - reason：U36 人工裁决（扫描器 B2 未授权：不识别动态注册）：handler 由 scripts/kag/quickmenu.lua 实现，scripts/kag/init.lua:30 预载后 register_all()（quickmenu.lua:169-180）把 7 个 handler 写入 KAG 派发表；scheduler.lua:1467 经 schema.resolveHandler(cmd, kag) 真实派发。capability_closure.py 的 parse_kag_lua_mappings 只识别 function KAG.x/字面量注册，因此静态误判 UNWIRED；运行面已实测可派发。handler 调用真实 kag.jump(ctx, scene)（缺失时打印诊断并返回 false）；test_quickmenu:172-181 断言默认 title 与 scene 转发。
+  - evidence：scripts/kag/init.lua:30 → scripts/kag/quickmenu.lua:169-180 → scripts/scheduler.lua:1467；运行证据 tests/scripts/test_quickmenu.lua（run_lua_tests.lua:187 注册：handler 语义 :56-181、KAG 注册 :184-190、schema :192-205）+ tests/scripts/test_capability_closure_residuals.lua（run_lua_tests.lua 注册：resolveHandler 派发解析 + kag 表注册 + 7 命令状态）
 - r — Observable=VERIFIED（位置级） · PlatformTested=- · Packaged=-
   - reason：t119 复核：别名链 KAG.r=KAG.l or KAG.br → l/br（位置级）
   - evidence：scripts/kag.lua:288（KAG.r = KAG.l or KAG.br）→ l/br 位置级链
@@ -455,6 +476,12 @@
 - sma_variant — Observable=VERIFIED · PlatformTested=- · Packaged=-
   - reason：t119 复核：sma.set_variant→actor variant/tex→sma.render 消费
   - evidence：scripts/kag/sma.lua:741-745 → :652 sma.set_variant → sma.render:540-556 消费
+- steam_achievement — Observable=? · PlatformTested=- · Packaged=-
+  - reason：U36 复核（C 类条件项）：静态 handler 链真实（system.lua:748-830 调用真实 steam 绑定分支）。SDK-off/无 Steam 客户端运行面：handler 不崩，WARN + ctx.tf.steam_achievement_result='unavailable' 并返回 true（:730-746 契约、:780-792）；能力目录 steam.achievements 在 compiled.steam=false 时拒绝为 sdk_disabled（实测）。有 Steam 的账号正向写入仍 NOT_RUN（需账号 + 测试 AppID + 已声明成就）。
+  - evidence：scripts/kag/commands/system.lua:748-830（:780-792 缺绑定路径）；config/runtime-capabilities.json:69-72；tests/scripts/test_steam_achievements.lua（mock 正向 + :257 silent 拒绝记录）；tests/fixtures/command_contracts/corpus.json:1693-1715（steam-capability：CONDITIONAL_ACCOUNT_CAPABILITY、NOT_RUN）；tests/scripts/test_capability_closure_residuals.lua（sdk_disabled 拒绝 + handler unavailable 记录）
+- stopvideo — Observable=VERIFIED · PlatformTested=- · Packaged=- · Status=CLOSED (raw: PARTIAL)
+  - reason：U36 裁决：v4/v5 机器判级已 CLOSED（handler → 同文件 close_playback → backend.video_stop 真实绑定），此前仅因 v3 保守策略（矩阵『可疑翻转清单』）压回 PARTIAL 待裁决；运行证据证实只消费自己的 owner handle 一次、幂等、不会误停无关/替换播放。
+  - evidence：scripts/kag/commands/video.lua:124 → :19-24 close_playback → backend.video_stop；运行证据 tests/scripts/test_video.lua:104-148（factory+direct 两路径：stop 计数/owner 清理/replacement 不误杀）+ test_contracts_runtime.lua:76-77、:241-243（headless 安全并继续推进）+ tests/scripts/test_capability_closure_residuals.lua（owner handle 消费/幂等）
 - sub — Observable=VERIFIED · PlatformTested=- · Packaged=- · Status=CLOSED (raw: PARTIAL)
   - reason：t181 核真：binop 驱动器 math.lua:83-119（resolve_var 五作用域+nil-safe 起始 0+div/mod 零除可视错误+no-op）；handler :121-141；效果面=变量状态写。
   - evidence：scripts/kag/commands/math.lua:83-119（handler :121-141）-> ctx.{f,sf,tf,mp,lf}；tests/scripts/test_math_cmds.lua:40-127
@@ -464,6 +491,9 @@
 - textspeed — Observable=VERIFIED · PlatformTested=- · Packaged=-
   - reason：t110 复核：apply_text_cps 写 ctx.text_speed（注释自证 real read point kag_runner），kag_runner.update 揭示速率消费——状态写+明确消费点，字符揭示速度变化可观察。
   - evidence：scripts/kag/commands/text.lua:1214-1216（handler）→ :1173-1198 apply_text_cps（ctx.text_speed=floor(1000/cps)）→ scripts/kag_runner.lua update()（揭示速率消费，reference :446-455）
+- trans — Observable=VERIFIED · PlatformTested=- · Packaged=- · Status=CLOSED (raw: PARTIAL)
+  - reason：U36 裁决：v4/v5 机器判级已 CLOSED（handler 经 scripts/transition.lua 的 capture_scene/submit_transition/cancel_transition/load_texture 真实绑定触达效果面），此前仅因 v3 保守策略（矩阵『可疑翻转清单』）压回 PARTIAL 待裁决；真实 scheduler 视觉回归已断言 submit_transition 提交。
+  - evidence：scripts/kag/commands/transition.lua:302 → scripts/transition.lua:89/:140/:262/:316（capture_scene/submit_transition）与 :119/:422（cancel_transition）、:192（load_texture）；运行证据 tests/scripts/test_trans_scheduler_visual.lua:54-164（真 tokenizer/scheduler/layers/commands + 记录型 render 边界，断言 submit_transition）+ tests/scripts/test_transitions.lua + test_trans_behavior.lua
 - tween — Observable=VERIFIED · PlatformTested=- · Packaged=-
   - reason：t113 复核：工具函数链——resolve_layer/step_tween/apply_step 内 layers.move_layer/set_layer_opacity/mark_dirty，真实图层属性动画（blocking Operation；wait=false 由 kag_runner.update 驱动）。
   - evidence：scripts/kag/commands/tween.lua:201-254（handler）→ :58-62 resolve_layer（layers.get/find）+ :73-83 step_tween/apply_step（layers.move_layer/set_layer_opacity/mark_dirty）+ :165-186 update 驱动
@@ -497,6 +527,9 @@
 - waitforclick — Observable=VERIFIED · PlatformTested=- · Packaged=-
   - reason：t188 批3a §waitforclick：waiting_input while-loop 重建（与 waitclick 同机制）；test_contract_runtime_gaps.lua + test_kag3_compat.lua。
   - evidence：scripts/kag.lua:388-396 -> scripts/kag_runner.lua; 测试 test_contract_runtime_gaps.lua/test_kag3_compat.lua
+- xfadebgm — Observable=? · PlatformTested=- · Packaged=-
+  - reason：U36 复核（C 类明确拒绝）：静态链真实——AudioCommands.xfadebgm （audio.lua:196-205）→ Backend.audio_xfade（backend.lua:456-468）。运行面按设计拒绝：能力目录 audio.crossfade native=unsupported/backend_route_not_wired（config/runtime-capabilities.json:49-52），capability_backend.lua:77 在调用原函数前拒绝（实测 applied=false、0 效果调用）。根因：backend_factory.lua:103-124 无 xfade 路由，原生音频引擎无交叉淡化 API；scripts/audio.lua:126-133 仅有顺序 stop→play 兜底，非真交叉。
+  - evidence：config/runtime-capabilities.json:49-52；scripts/capability_backend.lua:77；tests/fixtures/command_contracts/corpus.json:1584-1609（audio-crossfade-refusal，external_boundary 明示重评前不得沿用旧拒绝策略）；tests/scripts/test_audio_fade.lua、test_target_capabilities.lua:270、test_schema_types.lua:87；tests/scripts/test_capability_closure_residuals.lua（能力层拒绝精确 feature/reason、0 效果）
 
 ## 人工判级（范围外能力）
 
@@ -513,13 +546,13 @@
 ## EXPERIMENTAL
 
 - live2d_expression - 人工覆盖状态 EXPERIMENTAL（能力存在但无消费方/无真实测试面）；机器判级：PARTIAL（合约内）
-  - reason：t119 判级：写 ctx.live2d[model].expression 状态；LIVE2D=OFF 无消费+Tested=0——feature-gated
-  - evidence：scripts/kag/commands/character.lua:189-197
-  - note：同 live2d_motion（M4 特性矩阵 Live2D 行）。
+  - reason：t119 判级：写 ctx.live2d[model].expression 状态；LIVE2D=OFF 无消费+Tested=0——feature-gated；U36 复核：原生绑定 Live2DBinding.cpp:119-126 仅 load/show/hide/unload/set_mouth/set_voice_lipsync，无 expression API；能力目录 kag.live2d_expression native=unsupported/command_not_wired；审计列为明确拒绝（运行面拒绝实测：精确 feature/reason、0 效果）。
+  - evidence：scripts/kag/commands/character.lua:209-217；src/script/bindings/Live2DBinding.cpp:119-126；config/runtime-capabilities.json:61-64；tests/fixtures/command_contracts/corpus.json:1670-1691（live2d-expression-refusal）；tests/scripts/test_live2d_cmds.lua:32/:46-48；tests/scripts/test_capability_closure_residuals.lua（拒绝证据）
+  - note：同 live2d_motion（M4 特性矩阵 Live2D 行）。C 类：保持 unsupported 明确拒绝。B4 提案：IAnimationBackend 增 expression/motion 播放 + Live2DBinding luaL_Reg + handler 改绑定调用，需 Cubism SDK 实机/资产证据后再重评。
 - live2d_motion - 人工覆盖状态 EXPERIMENTAL（能力存在但无消费方/无真实测试面）；机器判级：PARTIAL（合约内）
-  - reason：t119 判级：handler 仅写 ctx.live2d[model].current_motion 状态；本构建 CAESURA_LIVE2D=OFF（NullAnimation）无消费方+Tested=0——feature-gated
-  - evidence：scripts/kag/commands/character.lua:177-186
-  - note：CAESURA_LIVE2D=ON 构建下由 Live2D 后端消费并按 M4 特性矩阵重判。
+  - reason：t119 判级：handler 仅写 ctx.live2d[model].current_motion 状态；本构建 CAESURA_LIVE2D=OFF（NullAnimation）无消费方+Tested=0——feature-gated；U36 复核：原生绑定 Live2DBinding.cpp:119-126 无 motion API；能力目录 kag.live2d_motion native=unsupported/command_not_wired；审计列为明确拒绝（运行面拒绝实测：精确 feature/reason、0 效果）。
+  - evidence：scripts/kag/commands/character.lua:197-206；src/script/bindings/Live2DBinding.cpp:119-126；config/runtime-capabilities.json:57-60；tests/fixtures/command_contracts/corpus.json:1645-1667（live2d-motion-refusal）；tests/scripts/test_live2d_cmds.lua:31/:37-41；tests/scripts/test_capability_closure_residuals.lua（拒绝证据）
+  - note：C 类：保持 unsupported 明确拒绝（本构建 CAESURA_LIVE2D=OFF 无消费方，SDK-ON 也无绑定 API）。B4 提案：IAnimationBackend 扩展 motion 播放 + 绑定 + handler 接线，需 SDK 实机/资产证据。
 
 ## 可疑翻转清单（v4 保守维持；含队长裁决）
 
@@ -543,21 +576,12 @@
 
 ## UNWIRED
 
-- quickmenu_auto - 合约行 903；无处理器注册（flow 命令由 scheduler.lua 内联分发；详见局限）
-- quickmenu_config - 合约行 911；无处理器注册（flow 命令由 scheduler.lua 内联分发；详见局限）
-- quickmenu_log - 合约行 918；无处理器注册（flow 命令由 scheduler.lua 内联分发；详见局限）
-- quickmenu_qload - 合约行 925；无处理器注册（flow 命令由 scheduler.lua 内联分发；详见局限）
-- quickmenu_qsave - 合约行 933；无处理器注册（flow 命令由 scheduler.lua 内联分发；详见局限）
-- quickmenu_skip - 合约行 941；无处理器注册（flow 命令由 scheduler.lua 内联分发；详见局限）
-- quickmenu_title - 合约行 949；无处理器注册（flow 命令由 scheduler.lua 内联分发；详见局限）
+（无）
 
 ## PARTIAL
 
-- blur - scripts/kag/commands/transition.lua:295；处理器体未以调用形触达效果面（v4 一跳穿透下仍无命中；注释/字符串已剥离）
-- chapter - scripts/kag/commands/system.lua:323；处理器体未以调用形触达效果面（v4 一跳穿透下仍无命中；注释/字符串已剥离）
-- flash - scripts/kag/commands/vfx.lua:382；处理器体未以调用形触达效果面（v4 一跳穿透下仍无命中；注释/字符串已剥离）
-- stopvideo - scripts/kag/commands/video.lua:124；处理器体未以调用形触达效果面（v4 一跳穿透下仍无命中；注释/字符串已剥离）
-- trans - scripts/kag/commands/transition.lua:302；处理器体未以调用形触达效果面（v4 一跳穿透下仍无命中；注释/字符串已剥离）
+- quickmenu_config - None；处理器体未以调用形触达效果面（v4 一跳穿透下仍无命中；注释/字符串已剥离）
+- quickmenu_log - None；处理器体未以调用形触达效果面（v4 一跳穿透下仍无命中；注释/字符串已剥离）
 
 ## EXTRA
 
