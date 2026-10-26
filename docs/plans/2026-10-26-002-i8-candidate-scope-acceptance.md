@@ -226,7 +226,7 @@ manifest 路径：`release-input-gate/aggregate/execution-contents-<execution>-e
 - **物理音频 NOT_MEASURED**（§6）。
 - **能力闭包仅为结构扫描**：145 声明 = CLOSED 131 + PARTIAL 5 + UNWIRED 7 + EXPERIMENTAL 2；Platform/Packaged 声明 0；不是运行闭合、覆盖率或全平台可用证明。由 U36 处理。
 - 历史失败原件（Web 671/672、EAS 三 lane、设备、Steam、hosted tag 等）均保留且未被本记录改写。
-- 草稿 PR #25 仍为 OPEN：其相对当前 master 的唯一净差异是 `docs/status` 旧锚点同步（`cf7ff48a`，锚点 79467afe→b51e44c1，生成时间 2026-09-23T18:20:26Z），不含产品/源码增量；是否关闭由 U32 评估，本记录不执行 GitHub 操作。
+- 草稿 PR #25 已被 Lead 于 2026-10-26 关闭（gh pr close；理由：被当前 master 集成取代、仅剩旧矩阵同步）：其相对当前 master 的唯一净差异是 `docs/status` 旧锚点同步（`cf7ff48a`，锚点 79467afe→b51e44c1，生成时间 2026-09-23T18:20:26Z），不含产品/源码增量；本记录未执行 GitHub 关闭动作。
 
 ## 9. 复用边界与后续出口
 
