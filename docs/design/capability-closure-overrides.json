@@ -21,9 +21,10 @@
       "observable": "VERIFIED",
       "platform_tested": "-",
       "packaged": "-",
-      "reason": "t117 复核：模块委托链 VFX.blur→rtt.alloc GPU blur（headless 无 GPU 降级注记）",
+      "reason": "t117 复核：模块委托链 VFX.blur→rtt.alloc GPU blur（headless 无 GPU 降级注记）；U36/B1：扫描器嵌套函数切片缺陷修复后机器判级自动 CLOSED（效果面 scripts/vfx.lua:267 backend.submit_vfx effect=2，位于嵌套 local function 之后）；运行面能力 render.blur 仍 unsupported/command_not_wired（C 类明确拒绝），静态 CLOSED 不代表运行支持。",
       "evidence": "scripts/kag/commands/transition.lua:292 → scripts/vfx.lua:183 VFX.blur（rtt.alloc GPU blur）",
-      "source": "t117 task output"
+      "source": "t117 task output",
+      "note": "U36/B1：扫描器嵌套函数切片缺陷修复后，机器判级自动 CLOSED（效果面 scripts/vfx.lua:267 backend.submit_vfx effect=2，位于嵌套 local function 之后）；运行面能力 render.blur 仍为 unsupported/command_not_wired（C 类明确拒绝），本条静态 CLOSED 不代表运行支持。"
     },
     "br": {
       "observable": "VERIFIED（位置级）",
@@ -47,9 +48,10 @@
       "observable": "VERIFIED",
       "platform_tested": "-",
       "packaged": "-",
-      "reason": "t119 复核：模块链+状态-流链——ChapterSelect.show（层系统+render_text）→ctx._pendingJump runner 消费",
+      "reason": "t119 复核：模块链+状态-流链——ChapterSelect.show（层系统+render_text）→ctx._pendingJump runner 消费；U36/B1：切片修复后机器判级 CLOSED（效果面 scripts/chapter_select.lua:78 backend.set_input_focus、:89/:99/:102 backend.render_text 位于嵌套 cleanup 之后）；运行证据 tests/scripts/test_chapter_select.lua + tests/scripts/test_capability_closure_residuals.lua。",
       "evidence": "scripts/kag/commands/system.lua:349-361 → scripts/chapter_select.lua:51 layers.ensure/_chapter_bg + :59/:69 backend.render_text → ctx._pendingJump",
-      "source": "t119 task output"
+      "source": "t119 task output",
+      "note": "U36/B1：切片修复后机器判级 CLOSED（效果面 scripts/chapter_select.lua:78 backend.set_input_focus、:89/:99/:102 backend.render_text，位于嵌套 cleanup 之后）；运行证据 tests/scripts/test_chapter_select.lua + tests/scripts/test_capability_closure_residuals.lua。"
     },
     "delay": {
       "observable": "VERIFIED",
@@ -96,9 +98,10 @@
       "observable": "VERIFIED",
       "platform_tested": "-",
       "packaged": "-",
-      "reason": "t116 复核：模块表委托 VFX.flash→backend.create_solid_texture+__flash 层，阻塞全屏闪白",
+      "reason": "t116 复核：模块表委托 VFX.flash→backend.create_solid_texture+__flash 层，阻塞全屏闪白；U36/B1：切片修复后机器判级 CLOSED（效果面 scripts/vfx.lua:386 backend.create_solid_texture 位于嵌套 cleanup/pcall 之后）；运行证据 tests/scripts/test_capability_closure_residuals.lua。",
       "evidence": "scripts/kag/commands/vfx.lua:368-370 → scripts/vfx.lua:266-320 VFX.flash（backend.create_solid_texture :314 + __flash 层 :286-292, z=9998）",
-      "source": "t116 task output"
+      "source": "t116 task output",
+      "note": "U36/B1：切片修复后机器判级 CLOSED（效果面 scripts/vfx.lua:386 backend.create_solid_texture，位于嵌套 cleanup/pcall 之后）；运行证据 tests/scripts/test_capability_closure_residuals.lua。"
     },
     "gallery": {
       "observable": "VERIFIED",
@@ -156,10 +159,10 @@
       "platform_tested": "-",
       "packaged": "-",
       "status": "EXPERIMENTAL",
-      "reason": "t119 判级：写 ctx.live2d[model].expression 状态；LIVE2D=OFF 无消费+Tested=0——feature-gated",
-      "evidence": "scripts/kag/commands/character.lua:189-197",
+      "reason": "t119 判级：写 ctx.live2d[model].expression 状态；LIVE2D=OFF 无消费+Tested=0——feature-gated；U36 复核：原生绑定 Live2DBinding.cpp:119-126 仅 load/show/hide/unload/set_mouth/set_voice_lipsync，无 expression API；能力目录 kag.live2d_expression native=unsupported/command_not_wired；审计列为明确拒绝（运行面拒绝实测：精确 feature/reason、0 效果）。",
+      "evidence": "scripts/kag/commands/character.lua:209-217；src/script/bindings/Live2DBinding.cpp:119-126；config/runtime-capabilities.json:61-64；tests/fixtures/command_contracts/corpus.json:1670-1691（live2d-expression-refusal）；tests/scripts/test_live2d_cmds.lua:32/:46-48；tests/scripts/test_capability_closure_residuals.lua（拒绝证据）",
       "source": "t119 task output",
-      "note": "同 live2d_motion（M4 特性矩阵 Live2D 行）。"
+      "note": "同 live2d_motion（M4 特性矩阵 Live2D 行）。C 类：保持 unsupported 明确拒绝。B4 提案：IAnimationBackend 增 expression/motion 播放 + Live2DBinding luaL_Reg + handler 改绑定调用，需 Cubism SDK 实机/资产证据后再重评。"
     },
     "live2d_lip_sync": {
       "observable": "VERIFIED",
@@ -176,10 +179,10 @@
       "platform_tested": "-",
       "packaged": "-",
       "status": "EXPERIMENTAL",
-      "reason": "t119 判级：handler 仅写 ctx.live2d[model].current_motion 状态；本构建 CAESURA_LIVE2D=OFF（NullAnimation）无消费方+Tested=0——feature-gated",
-      "evidence": "scripts/kag/commands/character.lua:177-186",
+      "reason": "t119 判级：handler 仅写 ctx.live2d[model].current_motion 状态；本构建 CAESURA_LIVE2D=OFF（NullAnimation）无消费方+Tested=0——feature-gated；U36 复核：原生绑定 Live2DBinding.cpp:119-126 无 motion API；能力目录 kag.live2d_motion native=unsupported/command_not_wired；审计列为明确拒绝（运行面拒绝实测：精确 feature/reason、0 效果）。",
+      "evidence": "scripts/kag/commands/character.lua:197-206；src/script/bindings/Live2DBinding.cpp:119-126；config/runtime-capabilities.json:57-60；tests/fixtures/command_contracts/corpus.json:1645-1667（live2d-motion-refusal）；tests/scripts/test_live2d_cmds.lua:31/:37-41；tests/scripts/test_capability_closure_residuals.lua（拒绝证据）",
       "source": "t119 task output",
-      "note": "CAESURA_LIVE2D=ON 构建下由 Live2D 后端消费并按 M4 特性矩阵重判。"
+      "note": "C 类：保持 unsupported 明确拒绝（本构建 CAESURA_LIVE2D=OFF 无消费方，SDK-ON 也无绑定 API）。B4 提案：IAnimationBackend 扩展 motion 播放 + 绑定 + handler 接线，需 SDK 实机/资产证据。"
     },
     "loadplace": {
       "observable": "VERIFIED",
@@ -271,6 +274,76 @@
       "reason": "t119 复核：模块委托 vfx.quake（修正绑定注记：standalone [quake] 不再跑 shake）",
       "evidence": "scripts/kag.lua:421-424 → scripts/kag/commands/vfx.lua:376-378 → scripts/vfx.lua:28 VFX.quake",
       "source": "t119 task output"
+    },
+    "quickmenu_auto": {
+      "observable": "VERIFIED",
+      "platform_tested": "-",
+      "packaged": "-",
+      "status": "CLOSED",
+      "reason": "U36 人工裁决（扫描器 B2 未授权：不识别动态注册）：handler 由 scripts/kag/quickmenu.lua 实现，scripts/kag/init.lua:30 预载后 register_all()（quickmenu.lua:169-180）把 7 个 handler 写入 KAG 派发表；scheduler.lua:1467 经 schema.resolveHandler(cmd, kag) 真实派发。capability_closure.py 的 parse_kag_lua_mappings 只识别 function KAG.x/字面量注册，因此静态误判 UNWIRED；运行面已实测可派发。ctx.auto_mode 是真实运行面状态：kag_runner.lua:960 消费并自动前进；test_quickmenu 断言 toggle/on/off 与返回状态。",
+      "evidence": "scripts/kag/init.lua:30 → scripts/kag/quickmenu.lua:169-180 → scripts/scheduler.lua:1467；运行证据 tests/scripts/test_quickmenu.lua（run_lua_tests.lua:187 注册：handler 语义 :56-181、KAG 注册 :184-190、schema :192-205）+ tests/scripts/test_capability_closure_residuals.lua（run_lua_tests.lua 注册：resolveHandler 派发解析 + kag 表注册 + 7 命令状态）",
+      "source": "U36 i9-u36-closure（2026-10-26）",
+      "note": "静态派发表注册是运行期动态完成；若以后扫描器增加动态注册识别（B 提案），可将该条改回机器判级。"
+    },
+    "quickmenu_config": {
+      "observable": "?",
+      "platform_tested": "-",
+      "packaged": "-",
+      "status": "PARTIAL",
+      "reason": "U36 人工裁决：ctx.config_open = true（quickmenu.lua:163-166），全仓无读取方——只写状态、未打开设置 UI（Settings.show 未接）。 运行面可派发但未以调用形触达效果面，不能按 CLOSED 取证；保持 PARTIAL，待产品决定是否接真实 UI（见 B 提案）。",
+      "evidence": "scripts/kag/quickmenu.lua:73-79/:159-166；grep backlog_visible/config_open 仅 quickmenu.lua + test_quickmenu.lua 命中；test_quickmenu 只断言状态写。",
+      "source": "U36 i9-u36-closure（2026-10-26）",
+      "note": "原机器判级 UNWIRED 来自扫描器不识别动态注册；PARTIAL 更准确（已派发、无效果面）。接 HistoryUI/Settings.show 会改变阻塞语义，需 Lead 产品决策，未擅自改行为。"
+    },
+    "quickmenu_log": {
+      "observable": "?",
+      "platform_tested": "-",
+      "packaged": "-",
+      "status": "PARTIAL",
+      "reason": "U36 人工裁决：ctx.backlog_visible = true（quickmenu.lua:76-79），全仓无读取方——只写状态、未打开真实 backlog UI（HistoryUI.show/SystemCommands.history 未接）。 运行面可派发但未以调用形触达效果面，不能按 CLOSED 取证；保持 PARTIAL，待产品决定是否接真实 UI（见 B 提案）。",
+      "evidence": "scripts/kag/quickmenu.lua:73-79/:159-166；grep backlog_visible/config_open 仅 quickmenu.lua + test_quickmenu.lua 命中；test_quickmenu 只断言状态写。",
+      "source": "U36 i9-u36-closure（2026-10-26）",
+      "note": "原机器判级 UNWIRED 来自扫描器不识别动态注册；PARTIAL 更准确（已派发、无效果面）。接 HistoryUI/Settings.show 会改变阻塞语义，需 Lead 产品决策，未擅自改行为。"
+    },
+    "quickmenu_qload": {
+      "observable": "VERIFIED",
+      "platform_tested": "-",
+      "packaged": "-",
+      "status": "CLOSED",
+      "reason": "U36 人工裁决（扫描器 B2 未授权：不识别动态注册）：handler 由 scripts/kag/quickmenu.lua 实现，scripts/kag/init.lua:30 预载后 register_all()（quickmenu.lua:169-180）把 7 个 handler 写入 KAG 派发表；scheduler.lua:1467 经 schema.resolveHandler(cmd, kag) 真实派发。capability_closure.py 的 parse_kag_lua_mappings 只识别 function KAG.x/字面量注册，因此静态误判 UNWIRED；运行面已实测可派发。handler 经懒解析 kag_table() 调用真实 [load] handler（slot clamp、ctx.tf.load_result 结果约定）；test_quickmenu:151-170 用真实 kag 表断言。",
+      "evidence": "scripts/kag/init.lua:30 → scripts/kag/quickmenu.lua:169-180 → scripts/scheduler.lua:1467；运行证据 tests/scripts/test_quickmenu.lua（run_lua_tests.lua:187 注册：handler 语义 :56-181、KAG 注册 :184-190、schema :192-205）+ tests/scripts/test_capability_closure_residuals.lua（run_lua_tests.lua 注册：resolveHandler 派发解析 + kag 表注册 + 7 命令状态）",
+      "source": "U36 i9-u36-closure（2026-10-26）",
+      "note": "静态派发表注册是运行期动态完成；若以后扫描器增加动态注册识别（B 提案），可将该条改回机器判级。"
+    },
+    "quickmenu_qsave": {
+      "observable": "VERIFIED",
+      "platform_tested": "-",
+      "packaged": "-",
+      "status": "CLOSED",
+      "reason": "U36 人工裁决（扫描器 B2 未授权：不识别动态注册）：handler 由 scripts/kag/quickmenu.lua 实现，scripts/kag/init.lua:30 预载后 register_all()（quickmenu.lua:169-180）把 7 个 handler 写入 KAG 派发表；scheduler.lua:1467 经 schema.resolveHandler(cmd, kag) 真实派发。capability_closure.py 的 parse_kag_lua_mappings 只识别 function KAG.x/字面量注册，因此静态误判 UNWIRED；运行面已实测可派发。handler 经懒解析 kag_table() 调用真实 [save] handler（含 slot clamp 0-99、ctx.tf.save_result 结果约定、handler 异常不逃逸）；test_quickmenu:103-149 用真实 kag 表断言。",
+      "evidence": "scripts/kag/init.lua:30 → scripts/kag/quickmenu.lua:169-180 → scripts/scheduler.lua:1467；运行证据 tests/scripts/test_quickmenu.lua（run_lua_tests.lua:187 注册：handler 语义 :56-181、KAG 注册 :184-190、schema :192-205）+ tests/scripts/test_capability_closure_residuals.lua（run_lua_tests.lua 注册：resolveHandler 派发解析 + kag 表注册 + 7 命令状态）",
+      "source": "U36 i9-u36-closure（2026-10-26）",
+      "note": "静态派发表注册是运行期动态完成；若以后扫描器增加动态注册识别（B 提案），可将该条改回机器判级。"
+    },
+    "quickmenu_skip": {
+      "observable": "VERIFIED",
+      "platform_tested": "-",
+      "packaged": "-",
+      "status": "CLOSED",
+      "reason": "U36 人工裁决（扫描器 B2 未授权：不识别动态注册）：handler 由 scripts/kag/quickmenu.lua 实现，scripts/kag/init.lua:30 预载后 register_all()（quickmenu.lua:169-180）把 7 个 handler 写入 KAG 派发表；scheduler.lua:1467 经 schema.resolveHandler(cmd, kag) 真实派发。capability_closure.py 的 parse_kag_lua_mappings 只识别 function KAG.x/字面量注册，因此静态误判 UNWIRED；运行面已实测可派发。ctx.skip_mode 是真实运行面状态：kag_runner.lua:888/:923 消费（skip 推进/seen 语义）；test_quickmenu 断言 toggle/on/off/seen。",
+      "evidence": "scripts/kag/init.lua:30 → scripts/kag/quickmenu.lua:169-180 → scripts/scheduler.lua:1467；运行证据 tests/scripts/test_quickmenu.lua（run_lua_tests.lua:187 注册：handler 语义 :56-181、KAG 注册 :184-190、schema :192-205）+ tests/scripts/test_capability_closure_residuals.lua（run_lua_tests.lua 注册：resolveHandler 派发解析 + kag 表注册 + 7 命令状态）",
+      "source": "U36 i9-u36-closure（2026-10-26）",
+      "note": "静态派发表注册是运行期动态完成；若以后扫描器增加动态注册识别（B 提案），可将该条改回机器判级。"
+    },
+    "quickmenu_title": {
+      "observable": "VERIFIED",
+      "platform_tested": "-",
+      "packaged": "-",
+      "status": "CLOSED",
+      "reason": "U36 人工裁决（扫描器 B2 未授权：不识别动态注册）：handler 由 scripts/kag/quickmenu.lua 实现，scripts/kag/init.lua:30 预载后 register_all()（quickmenu.lua:169-180）把 7 个 handler 写入 KAG 派发表；scheduler.lua:1467 经 schema.resolveHandler(cmd, kag) 真实派发。capability_closure.py 的 parse_kag_lua_mappings 只识别 function KAG.x/字面量注册，因此静态误判 UNWIRED；运行面已实测可派发。handler 调用真实 kag.jump(ctx, scene)（缺失时打印诊断并返回 false）；test_quickmenu:172-181 断言默认 title 与 scene 转发。",
+      "evidence": "scripts/kag/init.lua:30 → scripts/kag/quickmenu.lua:169-180 → scripts/scheduler.lua:1467；运行证据 tests/scripts/test_quickmenu.lua（run_lua_tests.lua:187 注册：handler 语义 :56-181、KAG 注册 :184-190、schema :192-205）+ tests/scripts/test_capability_closure_residuals.lua（run_lua_tests.lua 注册：resolveHandler 派发解析 + kag 表注册 + 7 命令状态）",
+      "source": "U36 i9-u36-closure（2026-10-26）",
+      "note": "静态派发表注册是运行期动态完成；若以后扫描器增加动态注册识别（B 提案），可将该条改回机器判级。"
     },
     "r": {
       "observable": "VERIFIED（位置级）",
@@ -386,6 +459,25 @@
       "evidence": "scripts/kag/sma.lua:741-745 → :652 sma.set_variant → sma.render:540-556 消费",
       "source": "t119 task output"
     },
+    "steam_achievement": {
+      "observable": "?",
+      "platform_tested": "-",
+      "packaged": "-",
+      "reason": "U36 复核（C 类条件项）：静态 handler 链真实（system.lua:748-830 调用真实 steam 绑定分支）。SDK-off/无 Steam 客户端运行面：handler 不崩，WARN + ctx.tf.steam_achievement_result='unavailable' 并返回 true（:730-746 契约、:780-792）；能力目录 steam.achievements 在 compiled.steam=false 时拒绝为 sdk_disabled（实测）。有 Steam 的账号正向写入仍 NOT_RUN（需账号 + 测试 AppID + 已声明成就）。",
+      "evidence": "scripts/kag/commands/system.lua:748-830（:780-792 缺绑定路径）；config/runtime-capabilities.json:69-72；tests/scripts/test_steam_achievements.lua（mock 正向 + :257 silent 拒绝记录）；tests/fixtures/command_contracts/corpus.json:1693-1715（steam-capability：CONDITIONAL_ACCOUNT_CAPABILITY、NOT_RUN）；tests/scripts/test_capability_closure_residuals.lua（sdk_disabled 拒绝 + handler unavailable 记录）",
+      "source": "U36 i9-u36-closure（2026-10-26）",
+      "note": "C 类条件项：SDK-off 如实拒绝/记录；账号/AppID 外部条件，不宣称支持。"
+    },
+    "stopvideo": {
+      "observable": "VERIFIED",
+      "platform_tested": "-",
+      "packaged": "-",
+      "status": "CLOSED",
+      "reason": "U36 裁决：v4/v5 机器判级已 CLOSED（handler → 同文件 close_playback → backend.video_stop 真实绑定），此前仅因 v3 保守策略（矩阵『可疑翻转清单』）压回 PARTIAL 待裁决；运行证据证实只消费自己的 owner handle 一次、幂等、不会误停无关/替换播放。",
+      "evidence": "scripts/kag/commands/video.lua:124 → :19-24 close_playback → backend.video_stop；运行证据 tests/scripts/test_video.lua:104-148（factory+direct 两路径：stop 计数/owner 清理/replacement 不误杀）+ test_contracts_runtime.lua:76-77、:241-243（headless 安全并继续推进）+ tests/scripts/test_capability_closure_residuals.lua（owner handle 消费/幂等）",
+      "source": "U36 i9-u36-closure（2026-10-26）",
+      "note": "保守维持依据是 v3 直接体判据；v4 一跳穿透 + 真实绑定校验后已有运行证据。"
+    },
     "textspeed": {
       "observable": "VERIFIED",
       "platform_tested": "-",
@@ -393,6 +485,16 @@
       "reason": "t110 复核：apply_text_cps 写 ctx.text_speed（注释自证 real read point kag_runner），kag_runner.update 揭示速率消费——状态写+明确消费点，字符揭示速度变化可观察。",
       "evidence": "scripts/kag/commands/text.lua:1214-1216（handler）→ :1173-1198 apply_text_cps（ctx.text_speed=floor(1000/cps)）→ scripts/kag_runner.lua update()（揭示速率消费，reference :446-455）",
       "source": "t110 task output"
+    },
+    "trans": {
+      "observable": "VERIFIED",
+      "platform_tested": "-",
+      "packaged": "-",
+      "status": "CLOSED",
+      "reason": "U36 裁决：v4/v5 机器判级已 CLOSED（handler 经 scripts/transition.lua 的 capture_scene/submit_transition/cancel_transition/load_texture 真实绑定触达效果面），此前仅因 v3 保守策略（矩阵『可疑翻转清单』）压回 PARTIAL 待裁决；真实 scheduler 视觉回归已断言 submit_transition 提交。",
+      "evidence": "scripts/kag/commands/transition.lua:302 → scripts/transition.lua:89/:140/:262/:316（capture_scene/submit_transition）与 :119/:422（cancel_transition）、:192（load_texture）；运行证据 tests/scripts/test_trans_scheduler_visual.lua:54-164（真 tokenizer/scheduler/layers/commands + 记录型 render 边界，断言 submit_transition）+ tests/scripts/test_transitions.lua + test_trans_behavior.lua",
+      "source": "U36 i9-u36-closure（2026-10-26）",
+      "note": "保守维持依据是 v3 直接体判据；v4 一跳穿透 + 真实绑定校验后已有运行证据。"
     },
     "tween": {
       "observable": "VERIFIED",
@@ -455,6 +557,15 @@
       "reason": "t119 复核：模块委托 audio.voice_wait（CLOSED 链）→等待语音完成+点击跳过",
       "evidence": "scripts/kag.lua:297-299 → scripts/kag/commands/audio.lua voice_wait",
       "source": "t119 task output"
+    },
+    "xfadebgm": {
+      "observable": "?",
+      "platform_tested": "-",
+      "packaged": "-",
+      "reason": "U36 复核（C 类明确拒绝）：静态链真实——AudioCommands.xfadebgm （audio.lua:196-205）→ Backend.audio_xfade（backend.lua:456-468）。运行面按设计拒绝：能力目录 audio.crossfade native=unsupported/backend_route_not_wired（config/runtime-capabilities.json:49-52），capability_backend.lua:77 在调用原函数前拒绝（实测 applied=false、0 效果调用）。根因：backend_factory.lua:103-124 无 xfade 路由，原生音频引擎无交叉淡化 API；scripts/audio.lua:126-133 仅有顺序 stop→play 兜底，非真交叉。",
+      "evidence": "config/runtime-capabilities.json:49-52；scripts/capability_backend.lua:77；tests/fixtures/command_contracts/corpus.json:1584-1609（audio-crossfade-refusal，external_boundary 明示重评前不得沿用旧拒绝策略）；tests/scripts/test_audio_fade.lua、test_target_capabilities.lua:270、test_schema_types.lua:87；tests/scripts/test_capability_closure_residuals.lua（能力层拒绝精确 feature/reason、0 效果）",
+      "source": "U36 i9-u36-closure（2026-10-26）",
+      "note": "C 类：保持明确拒绝而非静默成功。B3 提案：音频引擎双流交叉淡化 + factory 路由，完成并取真实证据后再重评能力目录与 corpus 用例。"
     },
     "text": {
       "observable": "VERIFIED",
