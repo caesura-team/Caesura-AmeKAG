@@ -14,10 +14,10 @@
 
 **当前未闭合/需处理**
 
-- [ ] U30：随后续任何非 docs 提交重新同步矩阵锚点并重生成（本项已完成一次性修复，保留为维护规则）。2026-10-26 再次应用：U32 的 README 内容提交 `ae79a0fc` 使有效证据 HEAD 移动，已在 docs-only 提交 `ca537011` 同步 YAML 锚点并重生成。
+- [ ] U30：随后续任何非 docs 提交重新同步矩阵锚点并重生成（本项已完成一次性修复，保留为维护规则）。2026-10-26 再次应用：U32 的 README 内容提交 `ae79a0fc` 使有效证据 HEAD 移动，已在 docs-only 提交 `ca537011` 同步 YAML 锚点并重生成；U33 的 CHANGELOG 根路径提交 `e1a3d63c` 同样移动有效证据 HEAD，已在 docs-only 提交 `cdc19202` 同步并重生成（`--check` exit 0，平台矩阵单测 13 + 42 通过）。
 - [x] U31：冻结当前候选范围并写验收记录；明确 EAS、真实设备、Steam、物理音频、窗口化 Metal、hosted tag dry-run 的 NOT_RUN 条件；release_ready 保持 false。→ 2026-10-26 完成：[I8 候选范围验收记录](2026-10-26-002-i8-candidate-scope-acceptance.md) 绑定候选 `e4e40be2` 与 run 37195162558/attempt 1 的 12 个 job、30 个 artifact；run 证据 artifact 内文记录六配置 PASS（Windows C++ 1,626、Linux/macOS C++ 1,601；Lua 153/153 + 60/60；CTest 73 通过 + 1 项预声明 AI 跳过）与 `release_ready=false`；EAS、真实设备、Steam、物理音频、窗口化 Metal、hosted tag dry-run 按条件逐项列为 NOT_RUN。
 - [x] U32：同步公开平台/能力声明；评估关闭草稿 PR #25（仅余旧矩阵同步提交）。→ 2026-10-26 完成：`docs/design/platform-support-matrix.md` 与 README「平台支持」表已按 [U31 记录](2026-10-26-002-i8-candidate-scope-acceptance.md) 同步（Store 保持 ?；macOS 窗口化 Metal、iOS 设备/签名、Android 真机、Steam、物理音频保持 gated/NOT_RUN）；内容提交 `ae79a0fc`、docs-only 锚点提交 `ca537011`（`docs/status/platform-matrix.yaml` 证据 HEAD=`ae79a0fc`、重生成 `platform-status.md`，`--check` exit 0，平台矩阵单测 13 + 42 通过）。草稿 PR #25 已关闭（Lead 2026-10-26，gh pr close；理由：被当前 master 集成取代、仅剩旧矩阵同步），本任务未执行 GitHub 关闭动作。
-- [ ] U33：版本/CHANGELOG 与 release dry-run 准备；版本号（建议 1.1.0）与 tag 推送需用户决策，未授权前不执行。
+- [x] U33：版本/CHANGELOG 与 release dry-run 准备；版本号（建议 1.1.0）与 tag 推送需用户决策，未授权前不执行。→ 2026-10-26 完成：[U33 发布准备记录](2026-10-26-004-i8-release-1.1.0-prep.md)；CHANGELOG 增加 `[Unreleased]` 草案（建议 1.1.0、备选 1.0.2，由 `gen_changelog.py --from-tag v1.0.1 --tag 1.1.0 --dry-run` 预览人工归类，797 commits）；release-process §6.2 补充 tag 触发 Release input dry-run 的前提/命令/预期 artifact/失败回滚（G1/G2 未决，release.yml 从未运行=NOT_RUN）。未 bump CMake VERSION（仍 1.0.1）、未创建/推送 tag、未触发 release、未发布；CHANGELOG 根路径提交 `e1a3d63c` 后按 U30 规则在 docs-only 提交 `cdc19202` 重同步平台矩阵锚点（`--check` exit 0）。
 - [ ] U34–U36：Linux sanitizer strict、CPU 基线、能力闭包残余；保留原 FAIL/INCONCLUSIVE 与未测条件。
 - [ ] U37–U38：Android 实机、Apple/Steam/物理音频条件 lane；设备、账号、额度、签名未到位时保持 NOT_RUN。
 - [ ] U1–U29 其余未闭合项与历史失败原件继续保留，不能因 PR #27 的 CI 绿色改写为全平台、全设备或发布通过。
