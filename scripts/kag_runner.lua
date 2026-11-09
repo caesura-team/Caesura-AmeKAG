@@ -1179,10 +1179,10 @@ function kag_runner.on_click()
     local pending = pending_transaction(ctx)
     if pending then return false, pending end
     if ctx and ctx._choiceMode then return false, "choice-open" end
-    -- History/backlog overlay owns the pointer while open: ignore clicks so
-    -- the overlay coroutine is not batch-resumed underneath. (Checked first:
-    -- the guard must hold even when no coroutine is running yet.)
+    -- Modal panels are driven by frame updates, including clicks forwarded
+    -- by hosts that bypass native input routing.
     if ctx and ctx.input_focus == "history" then return false, "history-open" end
+    if ctx and ctx._settingsActive then return false, "settings-open" end
 
     -- Replay system (record mode): log the click with the current mouse
     -- position (choice coordinates included) before advancing.
@@ -1260,10 +1260,11 @@ function kag_runner.on_click()
 
     ctx._rollback_waiting = nil
     ctx.waiting_input = false
-    -- Batch resume only to the next input/audio wait. An existing voice_wait
-    -- consumes this click once; a newly entered audio wait needs real frames.
+    -- Batch resume only to the next input/audio wait or modal panel. An
+    -- existing voice_wait consumes this click once; a new wait needs real frames.
     local count = 0
     while kag_co and coroutine.status(kag_co) ~= "dead" and not ctx.waiting_input
+        and ctx.input_focus ~= "history" and not ctx._settingsActive
         and (not ctx._audio_wait or (count == 0 and ctx._voice_wait_poll))
         and not pending_transaction(ctx) and count < 200 do
         local resumed, resume_reason = resume_scheduler("click")

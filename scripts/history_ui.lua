@@ -44,8 +44,7 @@ local function key_consumed(name)
 end
 
 function HistoryUI.show(ctx)
-    -- Guard: nothing to show
-    if not ctx.backlog or #ctx.backlog == 0 then
+    if ctx.input_focus == "history" or ctx._settingsActive or not ctx.backlog or #ctx.backlog == 0 then
         return
     end
 

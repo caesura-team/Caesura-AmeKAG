@@ -226,18 +226,13 @@ do
         check(name .. " is registered on the kag dispatch table", type(kag[name]) == "function", type(kag[name]))
         check(name .. " handler is the quickmenu implementation", kag[name] == quickmenu[name])
     end
-    -- State-only handlers: the effect is the documented ctx write consumed by
-    -- the runner (auto_mode kag_runner.lua:960, skip_mode :888/:923). The other
-    -- five delegate to registered kag.save/load/jump handlers.
+    -- Auto and skip write flags consumed by the runner. test_quickmenu covers
+    -- the two modal commands through actual scheduler execution.
     local ctx = { auto_mode = false, skip_mode = false }
     quickmenu.quickmenu_auto(ctx, { mode = "on" })
     quickmenu.quickmenu_skip(ctx, { mode = "on" })
-    quickmenu.quickmenu_log(ctx, {})
-    quickmenu.quickmenu_config(ctx, {})
     check("quickmenu_auto writes the runner-consumed auto_mode flag", ctx.auto_mode == true)
     check("quickmenu_skip writes the runner-consumed skip_mode flag", ctx.skip_mode == true)
-    check("quickmenu_log records its state (no consumer yet; tracked as PARTIAL)", ctx.backlog_visible == true)
-    check("quickmenu_config records its state (no consumer yet; tracked as PARTIAL)", ctx.config_open == true)
 end
 
 -- ===========================================================================

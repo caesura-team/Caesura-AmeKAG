@@ -25,6 +25,13 @@ local function relocalize_after_switch(ctx)
     end)
 end
 
+local function apply_autosave_interval(seconds)
+    local engine = rawget(_G, "_CAESURA_ENGINE")
+    if engine and type(engine.setAutoSaveInterval) == "function" then
+        engine.setAutoSaveInterval(seconds)
+    end
+end
+
 -- ===========================================================================
 -- Settings state
 -- ===========================================================================
@@ -50,6 +57,10 @@ local function cleanup(ctx, owner)
     state.active = false
     state.ctx = nil
     state.scope = nil
+    if state.edits then
+        ctx.settingsValues = state.previousValues
+        state.edits, state.previousValues = nil, nil
+    end
     ctx._settingsActive = false
     for _, key in ipairs({"bgLayer", "borderLayer", "panelLayer", "cursorLayer"}) do
         local layer = state[key]
@@ -132,25 +143,28 @@ function Settings._adjust(ctx, dir)
         local v = (sv[item.key] or item.value or 0) + dir * 5
         sv[item.key] = math.max(item.min, math.min(item.max, v))
     elseif item.type == "toggle" then
-        sv[item.key] = not (sv[item.key] == true)
+        sv[item.key] = not sv[item.key]
     elseif item.type == "cycle" then
         local opts = item.options or {}
         local idx = 0
-        for i, o in ipairs(opts) do if o == sv[item.key] then idx = i break end end
+        local current = sv[item.key] or item.value
+        for i, o in ipairs(opts) do if o == current then idx = i break end end
         idx = ((idx + dir - 1) % #opts) + 1
         sv[item.key] = opts[idx]
-        if item.key == "language" and i18n and i18n.load then
+        if item.key == "language" and not state.edits and i18n and i18n.load then
             pcall(function() i18n.load(opts[idx]) end)
             relocalize_after_switch(ctx)
         end
     end
+    item.value = sv[item.key]
+    if state.edits then state.edits[item.key] = item.value end
 end
 
 -- ===========================================================================
 -- Settings.show(ctx) — open settings menu
 -- ===========================================================================
-function Settings.show(ctx)
-    if state.active then return end
+function Settings.show(ctx, edits_only)
+    if state.active or (edits_only and ctx.input_focus == "history") then return end
     local scope <close> = Operation.start(ctx)
     scope.token:register(function() cleanup(ctx, scope) end)
     state.scope = scope
@@ -162,6 +176,24 @@ function Settings.show(ctx)
     state.active = true
     ctx._settingsActive = true
     ctx.input_focus = "settings"
+    -- In a running scene, defaults are for display. Closing the panel only
+    -- applies deliberate edits and cancellation discards the draft.
+    if edits_only then
+        state.edits = {}
+        state.previousValues = ctx.settingsValues
+        local draft = {}
+        for key, value in pairs(ctx.settingsValues or {}) do draft[key] = value end
+        for _, key in ipairs({"text_speed", "auto_mode", "skip_mode", "skip_auto", "cc_mode"}) do
+            if ctx[key] ~= nil then draft[key] = ctx[key] end
+        end
+        for _, bus in ipairs({"bgm", "se", "voice"}) do
+            local volume = backend.audio_get_bus_volume(bus)
+            if type(volume) == "number" then
+                draft["volume_" .. bus] = math.floor(math.max(0, math.min(1, volume)) * 100 + 0.5)
+            end
+        end
+        ctx.settingsValues = draft
+    end
     state.items = Settings._buildMenu(ctx)
     state.cursor = 1
 
@@ -258,11 +290,18 @@ end
 -- Settings.hide(ctx) — close settings, restore KAG focus
 -- ===========================================================================
 function Settings.hide(ctx)
+    local edits = state.edits
     if not cleanup(ctx) then return end
-    -- Save settings values
-    if ctx.settingsValues then
-        Settings._applyAll(ctx)
+    if edits and next(edits) then
+        ctx.settingsValues = ctx.settingsValues or {}
+        for key, value in pairs(edits) do ctx.settingsValues[key] = value end
+        if edits.language then
+            i18n.load(edits.language)
+            relocalize_after_switch(ctx)
+        end
+        if edits.autosave_interval then apply_autosave_interval(edits.autosave_interval) end
     end
+    Settings._applyAll(ctx, edits)
     print("[Settings] Menu closed.")
 end
 
@@ -412,8 +451,8 @@ end
 -- ===========================================================================
 -- Settings._applyAll(ctx) — apply all settings values
 -- ===========================================================================
-function Settings._applyAll(ctx)
-    local sv = ctx.settingsValues
+function Settings._applyAll(ctx, edits)
+    local sv = edits or ctx.settingsValues
     if not sv then return end
     if sv.volume_bgm then audio.set_bgm_volume(sv.volume_bgm / 100) end
     if sv.volume_se then audio.set_se_volume(sv.volume_se / 100) end
@@ -470,9 +509,9 @@ function Settings.adjust(ctx, direction)
             item.value = math.min(item.max, item.value + step)
         end
         sv[item.key] = item.value
-        -- Live preview
-        if item.key == "volume_bgm" then audio.set_bgm_volume(item.value / 100)
-        elseif item.key == "volume_se" then audio.set_se_volume(item.value / 100)
+        if not state.edits then
+            if item.key == "volume_bgm" then audio.set_bgm_volume(item.value / 100)
+            elseif item.key == "volume_se" then audio.set_se_volume(item.value / 100) end
         end
 
     elseif item.type == "toggle" then
@@ -492,26 +531,19 @@ function Settings.adjust(ctx, direction)
             if item.key == "language" then
                 -- Update label for display
                 item.label = i18n.t("language") .. ": " .. item.value
-                -- Hot-switch language
-                i18n.load(item.value)
-                -- Full-page redraw: page/backlog/choices/cc re-localize
-                -- with the new language (see relocalize_page).
-                relocalize_after_switch(ctx)
-                -- Rebuild menu items with new translations
-                state.items = Settings._buildMenu(ctx)
+                if not state.edits then
+                    i18n.load(item.value)
+                    relocalize_after_switch(ctx)
+                    state.items = Settings._buildMenu(ctx)
+                end
             elseif item.key == "autosave_interval" then
                 item.label = i18n.t("autosave_interval") .. ": " ..
                     (item.value > 0 and item.value .. "s" or "Off")
-                -- Apply the interval to the engine timer
-                pcall(function()
-                    local engine = rawget(_G, "_CAESURA_ENGINE")
-                    if engine and engine.setAutoSaveInterval then
-                        engine:setAutoSaveInterval(item.value)
-                    end
-                end)
+                if not state.edits then pcall(apply_autosave_interval, item.value) end
             end
         end
     end
+    if state.edits and item.type ~= "action" then state.edits[item.key] = sv[item.key] end
     Settings._render(ctx)
 end
 

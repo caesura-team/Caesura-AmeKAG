@@ -1,15 +1,14 @@
 -- test_quickmenu.lua -- QuickMenu command binding tests
 --
--- Sandbox discipline: this test performs NO writes to _G (scripts/sandbox.lua
--- rejects new globals, and rawset() bypasses are forbidden). Collaborators are
--- stubbed by assigning FIELDS on the already-loaded kag command table, which is
--- exactly the seam quickmenu.lua uses (it resolves require("kag") lazily).
+-- Save/load/jump tests substitute handlers on the existing KAG table.
+-- Modal tests run real handlers and temporarily supply the sandbox-approved
+-- host bindings and input state, then restore those values.
 package.path = "scripts/?.lua;scripts/kag/?.lua;" .. package.path
 
 local results = {}
 local function check(name, cond, detail)
     if cond then print("PASS " .. name) else print("FAIL " .. name .. " -- " .. tostring(detail)) end
-    results[#results + 1] = cond
+    results[#results + 1] = not not cond
 end
 
 local ok_kag, kag = pcall(require, "kag")
@@ -86,18 +85,129 @@ if ok and ok_kag then
         check("quickmenu_skip mode=seen toggles off", ctx2.skip_mode == false, tostring(ctx2.skip_mode))
     end
 
-    -- ---- quickmenu_log --------------------------------------------------------
+    -- Dispatch each modal through the real scheduler. Only the host's render,
+    -- audio and input focus calls are recorded.
     do
-        local ctx = { backlog_visible = false }
-        qm.quickmenu_log(ctx, {})
-        check("quickmenu_log sets backlog_visible", ctx.backlog_visible == true, tostring(ctx.backlog_visible))
-    end
+        local tokenizer = require("tokenizer")
+        local compiler = require("kag.compiler")
+        local scheduler = require("scheduler")
+        local layers = require("layers")
+        require("history_ui")
+        require("settings")
+        local previous_backend = rawget(_G, "_CAESURA_BACKEND")
+        local previous_escape = rawget(_G, "_GAME_KEY_ESC")
+        local previous_right = rawget(_G, "_GAME_KEY_RIGHT")
+        local previous_kag = rawget(_G, "KAG")
+        local focus, rendered = "KAG", {}
+        local volume_changes = {}
+        rawset(_G, "KAG", setmetatable({
+            list_assets = function(dir, max_entries, max_bytes)
+                assert(dir == "assets/lang" and max_entries == 4096 and max_bytes == 1024 * 1024)
+                return {"en.lua", "ja.lua", "zh.lua"}
+            end,
+        }, {__index = previous_kag}))
+        rawset(_G, "_CAESURA_BACKEND", {
+            render = function(method, text)
+                if method == "render_text" then rendered[#rendered + 1] = text end
+                if method == "create_solid_texture" then return 1 end
+                return true
+            end,
+            platform = function(method, value)
+                if method == "get_resolution" then return 1280, 720 end
+                if method == "get_input_focus" then return focus end
+                if method == "set_input_focus" then focus = value end
+                return true
+            end,
+            audio = function(method, bus, value)
+                if method == "get_bus_volume" and bus == "bgm" then return 0.30 end
+                if method == "set_bus_volume" then volume_changes[#volume_changes + 1] = {bus, value} end
+                return true
+            end,
+        })
 
-    -- ---- quickmenu_config -----------------------------------------------------
-    do
-        local ctx = { config_open = false }
-        qm.quickmenu_config(ctx, {})
-        check("quickmenu_config sets config_open", ctx.config_open == true, tostring(ctx.config_open))
+        local function run_modal(command, lua_focus, host_focus, panel_name, expected_text, outcome)
+            rendered = {}
+            volume_changes = {}
+            rawset(_G, "_GAME_KEY_ESC", false)
+            rawset(_G, "_GAME_KEY_RIGHT", false)
+            local tokens = tokenizer.parse("[" .. command .. "][set f.resumed 1][end]")
+            compiler.compile(tokens)
+            local saved_settings = {volume_bgm = 80}
+            local ctx = {
+                f = {}, sf = {}, tf = {}, tokens = tokens, current_scene = "menu.ks",
+                input_focus = "kag", backlog = {{text = "Previous dialogue", scene = "menu.ks", token_index = 1}},
+                auto_mode = true, skip_mode = "seen", text_speed = 85, cc_mode = true,
+                settingsValues = saved_settings,
+            }
+            local co = coroutine.create(function() scheduler.run(ctx, tokens, 1) end)
+            local resumed, err = coroutine.resume(co, 16)
+            check(command .. " opens a modal with the expected input focus",
+                resumed and coroutine.status(co) == "suspended" and ctx.input_focus == lua_focus
+                    and focus == host_focus and not ctx._command_error, err or ctx.input_focus)
+            local panel = layers.get_layer(panel_name)
+            check(command .. " renders the panel",
+                panel and panel.visible and table.concat(rendered, "\n"):find(expected_text, 1, true),
+                panel_name)
+            if coroutine.status(co) == "suspended" then coroutine.resume(co, 16) end
+            check(command .. " holds the next command until dismissal", ctx.f.resumed == nil, ctx.f.resumed)
+
+            if lua_focus == "settings" and coroutine.status(co) == "suspended" then
+                local competing = coroutine.create(function() kag.history(ctx, {}) end)
+                local opened = coroutine.resume(competing)
+                check("history cannot take focus from settings",
+                    opened and coroutine.status(competing) == "dead" and ctx.input_focus == "settings", ctx.input_focus)
+                coroutine.close(competing)
+                if outcome ~= "dismiss" then
+                    rendered = {}
+                    rawset(_G, "_GAME_KEY_RIGHT", true)
+                    local adjusted, adjust_error = coroutine.resume(co, 16)
+                    check("settings displays the edited BGM volume",
+                        adjusted and table.concat(rendered, "\n"):find("35%", 1, true), adjust_error)
+                end
+            end
+            if outcome == "cancel" then
+                coroutine.close(co)
+                check(command .. " cancellation does not advance the script", ctx.f.resumed == nil, ctx.f.resumed)
+            elseif coroutine.status(co) == "suspended" then
+                rawset(_G, "_GAME_KEY_ESC", true)
+                local closed, close_error = coroutine.resume(co, 16)
+                check(command .. " consumes Esc", closed and not rawget(_G, "_GAME_KEY_ESC"), close_error)
+                for _ = 1, 3 do
+                    if coroutine.status(co) == "dead" then break end
+                    closed, close_error = coroutine.resume(co, 16)
+                    if not closed then break end
+                end
+                check(command .. " resumes the script",
+                    closed and coroutine.status(co) == "dead" and ctx.f.resumed == 1, close_error)
+                coroutine.close(co)
+            end
+            check(command .. " restores focus and hides its panel",
+                ctx.input_focus == "kag" and focus == "KAG" and panel and not panel.visible,
+                ctx.input_focus)
+            if lua_focus == "settings" then
+                check("settings preserves unrelated live dialogue settings",
+                    ctx.auto_mode == true and ctx.skip_mode == "seen" and ctx.text_speed == 85 and ctx.cc_mode == true,
+                    ctx.skip_mode)
+                if outcome == "adjust" then
+                    check("settings applies only the edited BGM volume",
+                        #volume_changes == 1 and volume_changes[1][1] == "bgm" and volume_changes[1][2] == 0.35,
+                        #volume_changes)
+                else
+                    check("settings without edits leaves volumes unchanged", #volume_changes == 0, #volume_changes)
+                    check("settings restores the original values after dismissal or cancellation",
+                        ctx.settingsValues == saved_settings and saved_settings.volume_bgm == 80, saved_settings.volume_bgm)
+                end
+            end
+        end
+
+        run_modal("quickmenu_log", "history", "KAG", "_history_bg", "Previous dialogue", "dismiss")
+        run_modal("quickmenu_config", "settings", "GAME", "_settings_panel", "Settings /", "cancel")
+        run_modal("quickmenu_config", "settings", "GAME", "_settings_panel", "Settings /", "dismiss")
+        run_modal("quickmenu_config", "settings", "GAME", "_settings_panel", "Settings /", "adjust")
+        rawset(_G, "_GAME_KEY_ESC", previous_escape)
+        rawset(_G, "_GAME_KEY_RIGHT", previous_right)
+        rawset(_G, "_CAESURA_BACKEND", previous_backend)
+        rawset(_G, "KAG", previous_kag)
     end
 
     -- ---- quickmenu_qsave: routes to the registered [save] handler -------------

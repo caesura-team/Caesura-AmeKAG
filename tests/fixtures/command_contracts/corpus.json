@@ -494,12 +494,10 @@
       "status": "READY_FOR_NATIVE_EXECUTION",
       "focus_commands": [
         "quickmenu_auto",
-        "quickmenu_skip",
-        "quickmenu_log",
-        "quickmenu_config"
+        "quickmenu_skip"
       ],
       "scene_path": "assets/script/contracts/quickmenu-flags.ks",
-      "source": "[quickmenu_auto mode=\"off\"]\n[quickmenu_skip mode=\"off\"]\n[quickmenu_log]\n[quickmenu_config]\n[set var=\"tf.contract_case\" value=\"quickmenu-flags\"]\n[end]\n",
+      "source": "[quickmenu_auto mode=\"off\"]\n[quickmenu_skip mode=\"off\"]\n[set var=\"tf.contract_case\" value=\"quickmenu-flags\"]\n[end]\n",
       "max_frames": 900,
       "advance_dialogue": true,
       "input_text": null,
@@ -507,12 +505,48 @@
       "required_assets": [],
       "require_runtime_trace": [
         "quickmenu_auto",
-        "quickmenu_skip",
-        "quickmenu_log",
-        "quickmenu_config"
+        "quickmenu_skip"
       ],
       "execution_evidence": null,
       "assertion_scope": "Real command entry, native binding marshalling, explicit state assertions and normal termination. GPU pixels/physical audio require separate measured evidence."
+    },
+    {
+      "id": "quickmenu-log-cancel",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": ["quickmenu_log"],
+      "scene_path": "assets/script/contracts/quickmenu-log-cancel.ks",
+      "source": "[ch name=\"History\" text=\"Recorded quickmenu line\"]\n[p]\n[quickmenu_log]\n[set var=\"tf.contract_case\" value=\"quickmenu-log-cancel\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {},
+      "required_assets": [],
+      "require_runtime_trace": ["quickmenu_log"],
+      "execution_evidence": null,
+      "escape_focus": "history",
+      "require_focus": "history",
+      "observe_overlay_command": "quickmenu_log",
+      "require_hidden_layers": ["_history_bg", "_history_title", "_history_sep", "_history_footer", "_history_hl1"],
+      "establish_explicit_focus": {"lua": "kag", "native": "KAG"}
+    },
+    {
+      "id": "quickmenu-config-cancel",
+      "status": "READY_FOR_NATIVE_EXECUTION",
+      "focus_commands": ["quickmenu_config"],
+      "scene_path": "assets/script/contracts/quickmenu-config-cancel.ks",
+      "source": "[ch text=\"Open settings after this page\"]\n[p]\n[quickmenu_config]\n[set var=\"tf.contract_case\" value=\"quickmenu-config-cancel\"]\n[end]\n",
+      "max_frames": 900,
+      "advance_dialogue": true,
+      "input_text": null,
+      "expect_f": {},
+      "required_assets": [],
+      "require_runtime_trace": ["quickmenu_config"],
+      "execution_evidence": null,
+      "escape_focus": "settings",
+      "require_focus": "settings",
+      "observe_overlay_command": "quickmenu_config",
+      "require_hidden_layers": ["_settings_bg", "_settings_border", "_settings_panel", "_settings_cursor"],
+      "establish_explicit_focus": {"lua": "kag", "native": "KAG"}
     },
     {
       "id": "unlock-ending",
@@ -2772,7 +2806,7 @@
       "command": "quickmenu_config",
       "schema_declared": true,
       "execution_class": "native_or_web_host_boundary",
-      "case_id": "quickmenu-flags",
+      "case_id": "quickmenu-config-cancel",
       "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
       "actual_evidence": [],
       "execution_evidence": []
@@ -2781,7 +2815,7 @@
       "command": "quickmenu_log",
       "schema_declared": true,
       "execution_class": "native_or_web_host_boundary",
-      "case_id": "quickmenu-flags",
+      "case_id": "quickmenu-log-cancel",
       "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
       "actual_evidence": [],
       "execution_evidence": []

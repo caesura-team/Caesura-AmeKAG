@@ -286,24 +286,24 @@
       "note": "静态派发表注册是运行期动态完成；若以后扫描器增加动态注册识别（B 提案），可将该条改回机器判级。"
     },
     "quickmenu_config": {
-      "observable": "?",
+      "observable": "VERIFIED",
       "platform_tested": "-",
       "packaged": "-",
-      "status": "PARTIAL",
-      "reason": "U36 人工裁决：ctx.config_open = true（quickmenu.lua:163-166），全仓无读取方——只写状态、未打开设置 UI（Settings.show 未接）。 运行面可派发但未以调用形触达效果面，不能按 CLOSED 取证；保持 PARTIAL，待产品决定是否接真实 UI（见 B 提案）。",
-      "evidence": "scripts/kag/quickmenu.lua:73-79/:159-166；grep backlog_visible/config_open 仅 quickmenu.lua + test_quickmenu.lua 命中；test_quickmenu 只断言状态写。",
-      "source": "U36 i9-u36-closure（2026-10-26）",
-      "note": "原机器判级 UNWIRED 来自扫描器不识别动态注册；PARTIAL 更准确（已派发、无效果面）。接 HistoryUI/Settings.show 会改变阻塞语义，需 Lead 产品决策，未擅自改行为。"
+      "status": "CLOSED",
+      "reason": "原生调度器调用 Settings.show 打开设置面板。面板独占输入，关闭后恢复剧情，仅提交本次编辑，取消时丢弃草稿。",
+      "evidence": "scripts/kag/quickmenu.lua → scripts/settings.lua；tests/scripts/test_quickmenu.lua 经真实 tokenizer、compiler、scheduler 验证显示、焦点、Esc、单项音量提交与取消。",
+      "source": "U36 后续原生快速菜单（2026-11-09）",
+      "note": "动态注册仍由人工证据覆盖。本项判级限原生运行路径。"
     },
     "quickmenu_log": {
-      "observable": "?",
+      "observable": "VERIFIED",
       "platform_tested": "-",
       "packaged": "-",
-      "status": "PARTIAL",
-      "reason": "U36 人工裁决：ctx.backlog_visible = true（quickmenu.lua:76-79），全仓无读取方——只写状态、未打开真实 backlog UI（HistoryUI.show/SystemCommands.history 未接）。 运行面可派发但未以调用形触达效果面，不能按 CLOSED 取证；保持 PARTIAL，待产品决定是否接真实 UI（见 B 提案）。",
-      "evidence": "scripts/kag/quickmenu.lua:73-79/:159-166；grep backlog_visible/config_open 仅 quickmenu.lua + test_quickmenu.lua 命中；test_quickmenu 只断言状态写。",
-      "source": "U36 i9-u36-closure（2026-10-26）",
-      "note": "原机器判级 UNWIRED 来自扫描器不识别动态注册；PARTIAL 更准确（已派发、无效果面）。接 HistoryUI/Settings.show 会改变阻塞语义，需 Lead 产品决策，未擅自改行为。"
+      "status": "CLOSED",
+      "reason": "原生调度器通过已注册的 [history] 处理器打开历史面板，复用历史跳转与 Esc 关闭行为。",
+      "evidence": "scripts/kag/quickmenu.lua → scripts/kag/commands/system.lua → scripts/history_ui.lua；tests/scripts/test_quickmenu.lua 验证记录文本、阻塞、关闭与焦点恢复。",
+      "source": "U36 后续原生快速菜单（2026-11-09）",
+      "note": "动态注册仍由人工证据覆盖。本项判级限原生运行路径。"
     },
     "quickmenu_qload": {
       "observable": "VERIFIED",

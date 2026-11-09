@@ -910,14 +910,14 @@ _Category: ui · Blocking: no (fire-and-forget) · Toggle auto-advance mode (Qui
 
 ### `[quickmenu_config]`
 
-_Category: ui · Blocking: no (fire-and-forget) · Open settings panel (QuickMenu)._
+_Category: ui · Blocking: yes (waits for completion) · Open the native settings panel until dismissal (QuickMenu)._
 
 | Param | Type | Default | Range / Choices | Required | Aliases |
 |---|---|---|---|---|---|
 
 ### `[quickmenu_log]`
 
-_Category: ui · Blocking: no (fire-and-forget) · Show dialogue backlog (QuickMenu)._
+_Category: ui · Blocking: yes (waits for completion) · Open the native dialogue backlog until dismissal or jump (QuickMenu)._
 
 | Param | Type | Default | Range / Choices | Required | Aliases |
 |---|---|---|---|---|---|

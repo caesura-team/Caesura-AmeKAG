@@ -2,9 +2,9 @@
 
 > 由 python scripts/capability_closure.py 生成；勿手动编辑。
 > **证据边界：CLOSED / Tested 仅为静态源码扫描与历史人工覆写；本生成器不运行引擎、不读取本轮执行终态，不代表本轮 runtime PASS，也不代表测试覆盖率。**
-> 生成时间（输入源最新 mtime）：2026-10-26T05:33:07Z
+> 生成时间（输入源最新 mtime）：2026-11-09T02:56:14Z
 > 生成命令：python scripts/capability_closure.py
-> 源指纹（输入内容 sha256 前 16 hex）：7f01bc4de1cf1769
+> 源指纹（输入内容 sha256 前 16 hex）：f577e2b515c7634c
 > 输出确定性：同源指纹同字节（generated_at 为输入源最新 mtime；跨机 checkout 的 mtime 差异属 by-design，确定性以指纹为准）
 
 ## 概述
@@ -13,13 +13,13 @@
 - 已注册（Dispatched）：**171**
 - 触达效果面（Consumed，调用形上下文+一跳穿透 v4）：**96**
 - 测试引用（Tested，启发式计数）：**156**
-- UNWIRED：0 · PARTIAL：2 · CLOSED：141 · EXTRA：33 · EXPERIMENTAL(人工)：2
-- **结构扫描与人工声明**：Structural Closed=141 · Test references=156 · Platform declarations=4 · Package declarations=0
+- UNWIRED：0 · PARTIAL：0 · CLOSED：143 · EXTRA：33 · EXPERIMENTAL(人工)：2
+- **结构扫描与人工声明**：Structural Closed=143 · Test references=156 · Platform declarations=4 · Package declarations=0
   - 列注记：测试引用只表示源码中发现引用；未读取运行日志，不代表执行、通过或覆盖率。Platform/Package/Observable 为人工声明，原始平台、包和设备证据未由本扫描器重验。
 - **幻影绑定（v5）**：**0** 处 backend.<name> 调用命中
   - 提取模式：union of: bindings/*.cpp luaL_Reg { name, lua_X }; backend.lua ^function Backend.X; backend_factory.lua cmd==X; kag.lua ^function KAG.X
   - 清单大小：208 个可解析名（cpp=162 · shim=78 · factory=67 · kag=20，绑定文件 18 个）
-- **恒等式：**145 = CLOSED(141) + PARTIAL(2) + UNWIRED(0) + EXPERIMENTAL(在册 2)；171 = 145(Declared) + EXTRA(33) + EXPERIMENTAL(合约外 0)**
+- **恒等式：**145 = CLOSED(143) + PARTIAL(0) + UNWIRED(0) + EXPERIMENTAL(在册 2)；171 = 145(Declared) + EXTRA(33) + EXPERIMENTAL(合约外 0)**
 
 **范围声明（t103 MUST-FIX 3）**：本矩阵的 145 = 声明式 KAG 命令合约闭包（docs/api/command-contracts.md 全量条目）。下列能力**不在 145 内**：
 - 原生手势链：SwipeDown / SwipeUp / LongPress / Pinch / TwoFingerTap / ThreeFingerHold（平台层）；
@@ -125,7 +125,7 @@
 | div | Y | Y | n | CLOSED ⚠ | 15 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/math.lua:124 |
 | edit | Y | Y | Y | CLOSED | 1 | - | - | ? | scripts/kag/commands/text.lua:2053 |
 | emb | Y | Y | n | CLOSED | 16 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/system.lua:103 |
-| end | n | Y | n | EXTRA | 359 | - | - | ? | scripts/kag.lua:86 |
+| end | n | Y | n | EXTRA | 360 | - | - | ? | scripts/kag.lua:86 |
 | endbutton | Y | Y | n | CLOSED | 32 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/text.lua:1428 |
 | endform | n | Y | n | EXTRA | 1 | - | - | ? | scripts/kag.lua:363 |
 | ending | Y | Y | n | CLOSED ⚠ | 25 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/system.lua:339 |
@@ -147,7 +147,7 @@
 | gallery | Y | Y | Y | CLOSED | 6 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/system.lua:307 |
 | get_texture | n | Y | Y | EXTRA | - | - | - | ? | scripts/kag/commands/resource.lua:233 |
 | has_pending_transition | n | Y | n | EXTRA | - | - | - | ? | scripts/kag/commands/resource.lua:315 |
-| history | Y | Y | Y | CLOSED ⚠ | 9 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/system.lua:205 |
+| history | Y | Y | Y | CLOSED ⚠ | 10 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/system.lua:205 |
 | hr | Y | Y | Y | CLOSED ⚠ | 6 | win ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag.lua:217 |
 | i18n | Y | Y | n | CLOSED ⚠ | 62 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/system.lua:648 |
 | image | Y | Y | Y | CLOSED | 7 | - | - | ? | scripts/kag/commands/layer.lua:219 |
@@ -203,8 +203,8 @@
 | push_backlog | n | Y | n | EXTRA | - | - | - | ? | scripts/kag/commands/text.lua:336 |
 | quake | Y | Y | n | CLOSED | 3 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag.lua:424 |
 | quickmenu_auto | Y | n | n | CLOSED ⚠ | 2 | - ⚠ | - ⚠ | VERIFIED ⚠ | - |
-| quickmenu_config | Y | n | n | PARTIAL ⚠ | 2 | - ⚠ | - ⚠ | ? ⚠ | - |
-| quickmenu_log | Y | n | n | PARTIAL ⚠ | 2 | - ⚠ | - ⚠ | ? ⚠ | - |
+| quickmenu_config | Y | n | n | CLOSED ⚠ | 2 | - ⚠ | - ⚠ | VERIFIED ⚠ | - |
+| quickmenu_log | Y | n | n | CLOSED ⚠ | 2 | - ⚠ | - ⚠ | VERIFIED ⚠ | - |
 | quickmenu_qload | Y | n | n | CLOSED ⚠ | 2 | - ⚠ | - ⚠ | VERIFIED ⚠ | - |
 | quickmenu_qsave | Y | n | n | CLOSED ⚠ | 2 | - ⚠ | - ⚠ | VERIFIED ⚠ | - |
 | quickmenu_skip | Y | n | n | CLOSED ⚠ | 2 | - ⚠ | - ⚠ | VERIFIED ⚠ | - |
@@ -220,14 +220,14 @@
 | rollback | Y | Y | n | CLOSED | 9 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/system.lua:363 |
 | ruby | Y | Y | Y | CLOSED | 8 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/text.lua:1086 |
 | s | Y | Y | n | CLOSED | 7 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag.lua:306 |
-| save | Y | Y | Y | CLOSED | 111 | - | - | ? | scripts/kag/commands/save.lua:274 |
+| save | Y | Y | Y | CLOSED | 110 | - | - | ? | scripts/kag/commands/save.lua:274 |
 | saveload | Y | Y | n | CLOSED | 12 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/save.lua:468 |
 | saveplace | Y | Y | n | CLOSED ⚠ | 7 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/save.lua:523 |
 | scroll | Y | Y | Y | CLOSED | 6 | - | - | ? | scripts/kag/commands/transition.lua:218 |
 | se | n | Y | Y | EXTRA | 6 | - | - | ? | scripts/kag.lua:446 |
 | sel | n | Y | n | EXTRA | 73 | - | - | ? | scripts/kag/commands/text.lua:1569 |
 | select | Y | Y | n | CLOSED ⚠ | 39 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/text.lua:1565 |
-| set | Y | Y | n | CLOSED | 241 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/system.lua:427 |
+| set | Y | Y | n | CLOSED | 242 | - ⚠ | - ⚠ | VERIFIED ⚠ | scripts/kag/commands/system.lua:427 |
 | setbgmvolume | Y | Y | Y | CLOSED | 6 | - | - | ? | scripts/kag/commands/audio.lua:377 |
 | setsevolume | Y | Y | Y | CLOSED | 6 | - | - | ? | scripts/kag/commands/audio.lua:382 |
 | setvoicevolume | Y | Y | Y | CLOSED | 5 | - | - | ? | scripts/kag/commands/audio.lua:387 |
@@ -407,12 +407,12 @@
 - quickmenu_auto — Observable=VERIFIED · PlatformTested=- · Packaged=- · Status=CLOSED (raw: UNWIRED)
   - reason：U36 人工裁决（扫描器 B2 未授权：不识别动态注册）：handler 由 scripts/kag/quickmenu.lua 实现，scripts/kag/init.lua:30 预载后 register_all()（quickmenu.lua:169-180）把 7 个 handler 写入 KAG 派发表；scheduler.lua:1467 经 schema.resolveHandler(cmd, kag) 真实派发。capability_closure.py 的 parse_kag_lua_mappings 只识别 function KAG.x/字面量注册，因此静态误判 UNWIRED；运行面已实测可派发。ctx.auto_mode 是真实运行面状态：kag_runner.lua:960 消费并自动前进；test_quickmenu 断言 toggle/on/off 与返回状态。
   - evidence：scripts/kag/init.lua:30 → scripts/kag/quickmenu.lua:169-180 → scripts/scheduler.lua:1467；运行证据 tests/scripts/test_quickmenu.lua（run_lua_tests.lua:187 注册：handler 语义 :56-181、KAG 注册 :184-190、schema :192-205）+ tests/scripts/test_capability_closure_residuals.lua（run_lua_tests.lua 注册：resolveHandler 派发解析 + kag 表注册 + 7 命令状态）
-- quickmenu_config — Observable=? · PlatformTested=- · Packaged=- · Status=PARTIAL (raw: UNWIRED)
-  - reason：U36 人工裁决：ctx.config_open = true（quickmenu.lua:163-166），全仓无读取方——只写状态、未打开设置 UI（Settings.show 未接）。 运行面可派发但未以调用形触达效果面，不能按 CLOSED 取证；保持 PARTIAL，待产品决定是否接真实 UI（见 B 提案）。
-  - evidence：scripts/kag/quickmenu.lua:73-79/:159-166；grep backlog_visible/config_open 仅 quickmenu.lua + test_quickmenu.lua 命中；test_quickmenu 只断言状态写。
-- quickmenu_log — Observable=? · PlatformTested=- · Packaged=- · Status=PARTIAL (raw: UNWIRED)
-  - reason：U36 人工裁决：ctx.backlog_visible = true（quickmenu.lua:76-79），全仓无读取方——只写状态、未打开真实 backlog UI（HistoryUI.show/SystemCommands.history 未接）。 运行面可派发但未以调用形触达效果面，不能按 CLOSED 取证；保持 PARTIAL，待产品决定是否接真实 UI（见 B 提案）。
-  - evidence：scripts/kag/quickmenu.lua:73-79/:159-166；grep backlog_visible/config_open 仅 quickmenu.lua + test_quickmenu.lua 命中；test_quickmenu 只断言状态写。
+- quickmenu_config — Observable=VERIFIED · PlatformTested=- · Packaged=- · Status=CLOSED (raw: UNWIRED)
+  - reason：原生调度器调用 Settings.show 打开设置面板。面板独占输入，关闭后恢复剧情，仅提交本次编辑，取消时丢弃草稿。
+  - evidence：scripts/kag/quickmenu.lua → scripts/settings.lua；tests/scripts/test_quickmenu.lua 经真实 tokenizer、compiler、scheduler 验证显示、焦点、Esc、单项音量提交与取消。
+- quickmenu_log — Observable=VERIFIED · PlatformTested=- · Packaged=- · Status=CLOSED (raw: UNWIRED)
+  - reason：原生调度器通过已注册的 [history] 处理器打开历史面板，复用历史跳转与 Esc 关闭行为。
+  - evidence：scripts/kag/quickmenu.lua → scripts/kag/commands/system.lua → scripts/history_ui.lua；tests/scripts/test_quickmenu.lua 验证记录文本、阻塞、关闭与焦点恢复。
 - quickmenu_qload — Observable=VERIFIED · PlatformTested=- · Packaged=- · Status=CLOSED (raw: UNWIRED)
   - reason：U36 人工裁决（扫描器 B2 未授权：不识别动态注册）：handler 由 scripts/kag/quickmenu.lua 实现，scripts/kag/init.lua:30 预载后 register_all()（quickmenu.lua:169-180）把 7 个 handler 写入 KAG 派发表；scheduler.lua:1467 经 schema.resolveHandler(cmd, kag) 真实派发。capability_closure.py 的 parse_kag_lua_mappings 只识别 function KAG.x/字面量注册，因此静态误判 UNWIRED；运行面已实测可派发。handler 经懒解析 kag_table() 调用真实 [load] handler（slot clamp、ctx.tf.load_result 结果约定）；test_quickmenu:151-170 用真实 kag 表断言。
   - evidence：scripts/kag/init.lua:30 → scripts/kag/quickmenu.lua:169-180 → scripts/scheduler.lua:1467；运行证据 tests/scripts/test_quickmenu.lua（run_lua_tests.lua:187 注册：handler 语义 :56-181、KAG 注册 :184-190、schema :192-205）+ tests/scripts/test_capability_closure_residuals.lua（run_lua_tests.lua 注册：resolveHandler 派发解析 + kag 表注册 + 7 命令状态）
@@ -580,8 +580,7 @@
 
 ## PARTIAL
 
-- quickmenu_config - None；处理器体未以调用形触达效果面（v4 一跳穿透下仍无命中；注释/字符串已剥离）
-- quickmenu_log - None；处理器体未以调用形触达效果面（v4 一跳穿透下仍无命中；注释/字符串已剥离）
+（无）
 
 ## EXTRA
 
