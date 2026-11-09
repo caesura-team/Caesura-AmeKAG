@@ -1,5 +1,6 @@
 // CARCWriter implementation
 #include "CARCWriter.h"
+#include "ArchivePath.h"
 #include <zstd.h>
 #include "CryptoEngine.h"
 #include <cstring>
@@ -11,6 +12,8 @@ bool CARCWriter::create(const std::string& outputPath,
                         const std::string& privateKeyPath,
                         const std::string& publicKeyPath)
 {
+    const auto nativePath = pathFromUtf8(outputPath);
+    if (nativePath.empty()) return false;
     m_outputPath = outputPath;
     m_publicKeyPath = publicKeyPath;
     m_pendingFiles.clear();
@@ -28,7 +31,7 @@ bool CARCWriter::create(const std::string& outputPath,
             return false;
     }
 
-    m_output.open(outputPath, std::ios::binary);
+    m_output.open(nativePath, std::ios::binary);
     return m_output.is_open();
 }
 
@@ -185,7 +188,8 @@ bool CARCWriter::finalize()
     m_output.close();
 
     // Read back for signing
-    std::ifstream inFile(m_outputPath, std::ios::binary);
+    const auto nativePath = pathFromUtf8(m_outputPath);
+    std::ifstream inFile(nativePath, std::ios::binary);
     if (!inFile.is_open()) return false;
 
     uint64_t signedSize = sizeof(CARCHeader) + m_contentBlock.size() + indexSize;
@@ -202,7 +206,7 @@ bool CARCWriter::finalize()
     }
 
     // Append signature + public key
-    m_output.open(m_outputPath, std::ios::binary | std::ios::app);
+    m_output.open(nativePath, std::ios::binary | std::ios::app);
     if (!m_output.is_open()) return false;
     m_output.write(reinterpret_cast<const char*>(signature), SIGNATURE_SIZE);
     m_output.write(reinterpret_cast<const char*>(m_publicKey), PUBLICKEY_SIZE);

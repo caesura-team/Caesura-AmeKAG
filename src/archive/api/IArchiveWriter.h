@@ -10,6 +10,7 @@ class IArchiveWriter {
 public:
     virtual ~IArchiveWriter() = default;
 
+    // Pass filesystem paths in UTF-8.
     virtual bool create(const std::string& outputPath,
                         const std::string& privateKeyPath = "",
                         const std::string& publicKeyPath = "") = 0;

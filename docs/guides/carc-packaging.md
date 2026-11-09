@@ -54,6 +54,10 @@ carc_pack.exe extract <archive.carc> <out_dir> [--path <rel>] [public.key]
   --path      — (extract) 仅提取指定相对路径到一个文件（保留原始文件名）
 ```
 
+`--path` 接受归档内的相对文件路径。按名和按哈希解包都会检查输出根目录及其内部路径，拒绝符号链接、Windows 联接和目标硬链接。覆盖普通文件时，工具先写完新文件并保留原有 Windows DACL 或 POSIX 读写执行权限，再替换目标。工具以调用者选定目录的实际位置为解包边界，输出目录需由调用者在运行期间控制。
+
+从 CARC 迁移 KAG3 场景时，`lua scripts/kag3_import.lua --carc <archive.carc> --path <relative.ks>` 会直接读取归档中的场景。添加 `-o <outdir>` 可写入转换结果。归档读取失败时，导入以非零状态退出。
+
 ### 密钥管理
 
 - **公钥** (32 字节): 归档尾部包含一份；固定发布者模式由宿主另行选择可信公钥，用于验证签名和派生索引解密密钥
@@ -165,4 +169,8 @@ A: 检查是否包含了不应打包的文件（如 `.git/`, `.DS_Store`）。�
 A: 公钥不匹配或归档文件被修改。确认使用的公钥与打包时的私钥配对。
 
 **Q: 能否增量更新 CARC？**
-A: 当前不支持增量更新。引擎侧 `DeltaCARC`（`src/archive/DeltaCARC.*`）差异更新实现已完成（文件级 diff，AES-256-GCM 加密整条 delta，按源/目标 SHA 绑定验证）——**截至 round-99 复核，仍仅作为库存在于 archive 模块（`src/entry/Engine_Assets.cpp` 组合根只注册 `CarcAssetProvider`，`carc_pack` 也未暴露 DeltaCARC 子命令）**，需额外集成方可在实际流程中使用。
+A: `carc_pack delta <old.carc> <new.carc> <delta.carc>` 生成差分，`carc_pack verify-delta <delta.carc>` 校验差分，`carc_pack apply <base.carc> <delta.carc> <output.carc>` 生成更新后的归档。运行时通过归档挂载使用生成的文件。
+
+**Q: Windows 上可以使用中文文件系统路径吗？**
+
+A: 归档、签名密钥、差分文件以及打包和解包目录可使用 Unicode 路径。C++ 归档接口优先按 UTF-8 解码；UTF-8 解码失败时，Windows 兼容能无损往返的旧代码页路径。归档内部的成员名继续使用原有哈希规则。

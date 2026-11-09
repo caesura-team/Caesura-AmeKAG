@@ -46,7 +46,7 @@ public:
     virtual void generateKeyPair(uint8_t* publicKey, size_t publicKeyLen,
                                  uint8_t* privateKey, size_t privateKeyLen) = 0;
 
-    // Key file I/O
+    // Key file I/O. Pass filesystem paths in UTF-8.
     virtual bool readPublicKey(const std::string& path, uint8_t* key, size_t keyLen) = 0;
     virtual bool readPrivateKey(const std::string& path, uint8_t* key, size_t keyLen) = 0;
     virtual bool writePublicKey(const std::string& path, const uint8_t* key, size_t keyLen) = 0;

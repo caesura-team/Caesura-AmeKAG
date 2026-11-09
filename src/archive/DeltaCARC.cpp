@@ -6,6 +6,7 @@
 // stable identifier. The whole delta body is AES-256-GCM encrypted;
 // source/target SHAs are stored in the header.
 #include "DeltaCARC.h"
+#include "ArchivePath.h"
 #include "CARCReader.h"
 #include "CARCWriter.h"
 #include "CryptoEngine.h"
@@ -23,7 +24,7 @@ namespace Caesura::carc {
 // ==========================================================================
 
 static bool computeSHA256(const std::string& path, uint8_t out[PATH_HASH_SIZE]) {
-    std::ifstream f(path, std::ios::binary | std::ios::ate);
+    std::ifstream f(pathFromUtf8(path), std::ios::binary | std::ios::ate);
     if (!f) return false;
     size_t size = f.tellg();
     f.seekg(0);
@@ -177,7 +178,7 @@ bool DeltaCARC::generate(const std::string& oldPath,
     }
 
     // Write delta file: [header][key][nonce][tag][encrypted_body]
-    std::ofstream out(deltaPath, std::ios::binary);
+    std::ofstream out(pathFromUtf8(deltaPath), std::ios::binary);
     if (!out) return false;
     out.write(reinterpret_cast<const char*>(&hdr), sizeof(DeltaHeader));
     out.write(reinterpret_cast<const char*>(key), AES_KEY_SIZE);
@@ -202,7 +203,7 @@ bool DeltaCARC::apply(const std::string& sourcePath,
                        const std::string& deltaPath,
                        const std::string& outputPath) {
     // Read delta
-    std::ifstream df(deltaPath, std::ios::binary | std::ios::ate);
+    std::ifstream df(pathFromUtf8(deltaPath), std::ios::binary | std::ios::ate);
     if (!df) return false;
     size_t dfSize = df.tellg(); df.seekg(0);
     if (dfSize < sizeof(DeltaHeader) + AES_KEY_SIZE + AES_NONCE_SIZE + AES_TAG_SIZE) {
@@ -381,7 +382,7 @@ bool DeltaCARC::apply(const std::string& sourcePath,
 // ==========================================================================
 
 bool DeltaCARC::verify(const std::string& deltaPath) {
-    std::ifstream df(deltaPath, std::ios::binary | std::ios::ate);
+    std::ifstream df(pathFromUtf8(deltaPath), std::ios::binary | std::ios::ate);
     if (!df) return false;
     size_t dfSize = df.tellg(); df.seekg(0);
     if (dfSize < sizeof(DeltaHeader) + AES_KEY_SIZE + AES_NONCE_SIZE + AES_TAG_SIZE) {

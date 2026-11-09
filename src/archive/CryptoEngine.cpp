@@ -3,6 +3,7 @@
 //   macOS/Linux: OpenSSL EVP
 // Ed25519 via orlp library (cross-platform).
 #include "CryptoEngine.h"
+#include "ArchivePath.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -410,7 +411,7 @@ void CryptoEngine::generateKeyPair(uint8_t* publicKey, size_t publicKeyLen,
 // ==========================================================================
 bool CryptoEngine::readPublicKey(const std::string& path, uint8_t* key, size_t keyLen)
 {
-    std::ifstream f(path, std::ios::binary);
+    std::ifstream f(pathFromUtf8(path), std::ios::binary);
     if (!f) return false;
     f.read(reinterpret_cast<char*>(key), (std::streamsize)keyLen);
     return (size_t)f.gcount() == keyLen;
@@ -418,7 +419,7 @@ bool CryptoEngine::readPublicKey(const std::string& path, uint8_t* key, size_t k
 
 bool CryptoEngine::readPrivateKey(const std::string& path, uint8_t* key, size_t keyLen)
 {
-    std::ifstream f(path, std::ios::binary);
+    std::ifstream f(pathFromUtf8(path), std::ios::binary);
     if (!f) return false;
     f.read(reinterpret_cast<char*>(key), (std::streamsize)keyLen);
     return (size_t)f.gcount() == keyLen;
@@ -426,7 +427,7 @@ bool CryptoEngine::readPrivateKey(const std::string& path, uint8_t* key, size_t 
 
 bool CryptoEngine::writePublicKey(const std::string& path, const uint8_t* key, size_t keyLen)
 {
-    std::ofstream f(path, std::ios::binary);
+    std::ofstream f(pathFromUtf8(path), std::ios::binary);
     if (!f) return false;
     f.write(reinterpret_cast<const char*>(key), (std::streamsize)keyLen);
     return f.good();
@@ -434,7 +435,7 @@ bool CryptoEngine::writePublicKey(const std::string& path, const uint8_t* key, s
 
 bool CryptoEngine::writePrivateKey(const std::string& path, const uint8_t* key, size_t keyLen)
 {
-    std::ofstream f(path, std::ios::binary);
+    std::ofstream f(pathFromUtf8(path), std::ios::binary);
     if (!f) return false;
     f.write(reinterpret_cast<const char*>(key), (std::streamsize)keyLen);
     return f.good();

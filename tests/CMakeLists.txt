@@ -401,6 +401,15 @@ if(Python3_EXECUTABLE)
         RUN_SERIAL TRUE
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
     )
+    add_executable(CaesuraCarcExtractFixture probes/carc_extract_fixture.cpp)
+    target_link_libraries(CaesuraCarcExtractFixture PRIVATE Caesura::Archive Caesura::BuildOptions)
+    add_test(
+        NAME CaesuraCarcExtractCli
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_carc_extract_cli.py
+                $<TARGET_FILE:carc_pack> $<TARGET_FILE:CaesuraCarcExtractFixture> $<TARGET_FILE:lua_cli>
+    )
+    set_tests_properties(CaesuraCarcExtractCli PROPERTIES LABELS "archive;security;cli" TIMEOUT 120)
     add_test(
         NAME CaesuraValidationEvidence
         COMMAND ${Python3_EXECUTABLE}

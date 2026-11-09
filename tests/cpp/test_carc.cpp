@@ -134,6 +134,64 @@ TEST_CASE("CARC container: write then read") {
     fs::remove("test_carc.carc");
 }
 
+TEST_CASE("CARC filesystem paths preserve UTF-8 archives and keys") {
+    namespace fs = std::filesystem;
+    Caesura::TestPaths::ScopedTempDir temp("carc_unicode");
+    const auto utf8Path = [&](const char8_t* name) {
+        const auto path = (temp.path() / fs::path(name)).u8string();
+        return std::string(reinterpret_cast<const char*>(path.data()), path.size());
+    };
+    const auto archive = utf8Path(u8"剧情 𠮷.carc");
+    const auto privateKey = utf8Path(u8"签名 𠮷.key");
+    const auto publicKey = utf8Path(u8"发布 𠮷.pub");
+    const std::vector<uint8_t> payload{0, 1, 42, 255};
+
+    CARCWriter writer;
+    REQUIRE(writer.create(archive, privateKey, publicKey));
+    REQUIRE(writer.addFile("story.bin", payload.data(), payload.size()));
+    REQUIRE(writer.finalize());
+    CHECK(fs::is_regular_file(temp.path() / fs::path(u8"剧情 𠮷.carc")));
+    CHECK(fs::is_regular_file(temp.path() / fs::path(u8"签名 𠮷.key")));
+    CHECK(fs::is_regular_file(temp.path() / fs::path(u8"发布 𠮷.pub")));
+
+    CARCReader reader;
+    REQUIRE(reader.open(archive, publicKey));
+    CHECK(reader.readFile("story.bin") == payload);
+
+    uint8_t key[64];
+    uint8_t signature[SIGNATURE_SIZE];
+    ArchivePublicKey publisher{};
+    REQUIRE(CryptoEngine::readPrivateKey(privateKey, key));
+    REQUIRE(CryptoEngine::readPublicKey(publicKey, publisher.data()));
+    REQUIRE(CryptoEngine::sign(payload.data(), payload.size(), key, signature));
+    CHECK(CryptoEngine::verify(payload.data(), payload.size(), publisher.data(), signature));
+
+    publisher[0] ^= 1;
+    CHECK_FALSE(reader.open(archive, publisher));
+    CHECK_FALSE(reader.isOpen());
+    REQUIRE(reader.open(archive, publicKey));
+    CHECK_FALSE(reader.open(archive + '\0' + ".ignored", publicKey));
+    CHECK_FALSE(reader.isOpen());
+
+#ifdef _WIN32
+    // The historical Windows narrow spelling still works when the active
+    // code page can represent the name losslessly.
+    const auto nativeName = temp.path() / fs::path(u8"résumé.carc");
+    std::string legacyName;
+    try {
+        const auto narrow = nativeName.string();
+        if (fs::path(narrow) == nativeName) legacyName = narrow;
+    } catch (const std::system_error&) {
+        // This code page cannot represent the filename.
+    }
+    if (!legacyName.empty()) {
+        fs::copy_file(temp.path() / fs::path(u8"剧情 𠮷.carc"), nativeName);
+        REQUIRE(reader.open(legacyName, publicKey));
+        CHECK(reader.readFile("story.bin") == payload);
+    }
+#endif
+}
+
 // =============================================================================
 // Expanded tests: edge cases & robustness
 // =============================================================================

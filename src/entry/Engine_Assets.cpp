@@ -26,6 +26,7 @@
 // loose resources, entry Lua, manifests, or a replaceable host executable.
 
 #include "EngineConfig.h"
+#include "../archive/ArchivePath.h"
 #include "../archive/CARCReader.h"
 #include "../archive/CarcAssetProvider.h"
 #include "../resource/AssetManager.h"
@@ -78,6 +79,7 @@ namespace {
 struct CarcMountCandidate {
     std::string path;   // path to open
     std::string name;   // file name (identity for dedup + logging)
+    std::string sortName;
     int         priority;
 };
 }  // namespace
@@ -111,11 +113,22 @@ static std::vector<CarcMountCandidate> collectCarcMounts(
             const auto& entry = *it;
             const bool regular = entry.is_regular_file(ec);
             if (ec) { scanOk = false; return; }
-            if (regular && entry.path().extension().string() == ".carc") {
-                const std::string filename = entry.path().filename().string();
+            if (regular && entry.path().extension() == ".carc") {
+                const auto leaf = entry.path().filename();
+                const std::string filename = carc::pathToUtf8(leaf);
                 const int priority = carcMountPriority(filename, inDlcDir);
                 if (priority != kCarcPriorityNone && seenNames.insert(filename).second) {
-                    candidates.push_back({entry.path().generic_string(), filename, priority});
+                    std::string sortName = filename;
+#ifdef _WIN32
+                    try {
+                        // Keep the old order for names the code page can spell.
+                        sortName = leaf.string();
+                    } catch (const std::system_error&) {
+                        // Use UTF-8 for a name that was not mountable before.
+                    }
+#endif
+                    candidates.push_back(
+                        {carc::pathToUtf8(entry.path()), filename, std::move(sortName), priority});
                 }
             }
             it.increment(ec);
@@ -130,6 +143,7 @@ static std::vector<CarcMountCandidate> collectCarcMounts(
     std::sort(candidates.begin(), candidates.end(),
               [](const CarcMountCandidate& a, const CarcMountCandidate& b) {
                   if (a.priority != b.priority) return a.priority > b.priority;
+                  if (a.sortName != b.sortName) return a.sortName < b.sortName;
                   return a.name < b.name;
               });
     return candidates;
@@ -141,7 +155,7 @@ static std::vector<CarcMountCandidate> collectCarcMounts(
 // Engine instance, or a process-wide chdir.
 std::vector<std::pair<std::string, int>> carcMountPlan(const std::string& root) {
     std::vector<std::pair<std::string, int>> plan;
-    for (const auto& cand : collectCarcMounts(fs::path(root))) {
+    for (const auto& cand : collectCarcMounts(carc::pathFromUtf8(root))) {
         plan.emplace_back(cand.name, cand.priority);
     }
     return plan;
@@ -160,7 +174,7 @@ bool registerDefaultAssetProviders(AssetManager& assetManager,
            pinned ? "host-pinned publisher" : "compatible self-signature (publisher unauthenticated)");
     std::vector<std::unique_ptr<IAssetProvider>> staged;
     bool scanSucceeded = false;
-    const auto candidates = collectCarcMounts(root, &scanSucceeded);
+    const auto candidates = collectCarcMounts(carc::pathFromUtf8(root), &scanSucceeded);
     if (pinned && !scanSucceeded) {
         fprintf(stderr, "[Engine] CARC mount discovery failed; strict initialization rejected.\n");
         return false;

@@ -1,6 +1,7 @@
 // CARCReader implementation
 // Phase 9: Added verifyChainTrust() for multi-CARC chain validation (spec [10.2.63])
 #include "CARCReader.h"
+#include "ArchivePath.h"
 #include "CryptoEngine.h"
 #include <zstd.h>
 #include <cstring>
@@ -64,7 +65,7 @@ try
 {
     close();
 
-    m_stream.open(path, std::ios::binary);
+    m_stream.open(pathFromUtf8(path), std::ios::binary);
     if (!m_stream.is_open()) return false;
 
     // 1. Read header
