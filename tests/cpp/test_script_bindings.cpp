@@ -1,5 +1,6 @@
 // test_script_bindings.cpp - script bindings unit tests (R4.1)
 #include "doctest.h"
+#include <algorithm>
 #include <map>
 #include "script/vm/LuaManager.h"
 #include "script/bindings/KAGBinding.h"
@@ -441,6 +442,8 @@ public:
     bool automatic = false;
     int next = 41, loads = 0;
     float mouth = 0, x = 0, y = 0, scale = 1;
+    float motionFadeIn = -1, motionFadeOut = -1;
+    float expressionWeight = -1;
     std::map<int, bool> models;
     std::vector<std::string> calls;
     std::string path, modelName;
@@ -453,10 +456,25 @@ public:
     }
     bool isLoaded(int handle) const override { return models.count(handle) != 0; }
     std::size_t loadedModelCount() const override { return models.size(); }
-    void clearModels() override { models.clear(); }
+    void clearModels(std::span<const int> keep) override {
+        std::erase_if(models, [keep](const auto& model) {
+            return std::find(keep.begin(), keep.end(), model.first) == keep.end();
+        });
+    }
     void unloadModel(int handle) override { calls.push_back("unload"); models.erase(handle); }
     void showModel(int, float a, float b, float c) override { calls.push_back("show"); x=a; y=b; scale=c; }
     void hideModel(int) override { calls.push_back("hide"); }
+    bool playMotion(int, const std::string& name, float fadeIn, float fadeOut) override {
+        calls.push_back(name);
+        motionFadeIn = fadeIn;
+        motionFadeOut = fadeOut;
+        return name == "TapBody/0";
+    }
+    bool setExpression(int, const std::string& name, float weight) override {
+        calls.push_back(name);
+        expressionWeight = weight;
+        return name == "F01";
+    }
     bool setVoiceLipSync(int, bool enabled) override {
         if (!mouthSupported) return false;
         calls.push_back(enabled ? "voice-on" : "voice-off");
@@ -483,6 +501,63 @@ void checkAnimationScript(LuaManager& lua, const char* source) {
     INFO("Lua: " << (result == LUA_OK ? "OK" : lua_tostring(lua.state(), -1)));
     REQUIRE(result == LUA_OK);
 }
+}
+
+TEST_CASE("Bindings: Live2D motion validates input and reports backend admission") {
+    BindingAnimation animation;
+    ScopedAnimationRegistration registration(&animation);
+    LuaManager lua;
+    REQUIRE(lua.init());
+    checkAnimationScript(lua, R"lua(
+        local handle = assert(Live2D.load('assets/live2d/Haru.model3.json', 'haru'))
+        assert(Live2D.play_motion(handle, 'missing') == false)
+        assert(Live2D.play_motion(handle, '', 0, 0) == false)
+        assert(Live2D.play_motion(handle, 'TapBody/0', math.huge, 0) == false)
+        assert(Live2D.play_motion(handle, 'TapBody/0', 0, -0.5) == false)
+        assert(Live2D.play_motion(handle + 1, 'TapBody/0') == false)
+        assert(Live2D.play_motion(handle, 'TapBody/0', 0, 0.75))
+    )lua");
+    REQUIRE(animation.calls.size() == 2);
+    CHECK(animation.calls[0] == "missing");
+    CHECK(animation.calls[1] == "TapBody/0");
+    CHECK(animation.motionFadeIn == 0);
+    CHECK(animation.motionFadeOut == doctest::Approx(0.75));
+}
+
+TEST_CASE("Bindings: retiring a scene preserves only prepared model handles") {
+    BindingAnimation animation;
+    ScopedAnimationRegistration registration(&animation);
+    LuaManager lua;
+    REQUIRE(lua.init());
+    checkAnimationScript(lua, R"lua(
+        local old = assert(Live2D.load('assets/live2d/Haru.model3.json', 'old'))
+        local prepared = assert(Live2D.load('assets/live2d/Haru.model3.json', 'prepared'))
+        assert(Restore.stop_transients({prepared}))
+        assert(Restore.capture_transients().models == 1)
+        assert(Live2D.show(old) == false)
+        assert(Live2D.show(prepared))
+        assert(Restore.stop_transients())
+        assert(Restore.capture_transients().models == 0)
+    )lua");
+}
+
+TEST_CASE("Bindings: Live2D expression validates weight and reports backend admission") {
+    BindingAnimation animation;
+    ScopedAnimationRegistration registration(&animation);
+    LuaManager lua;
+    REQUIRE(lua.init());
+    checkAnimationScript(lua, R"lua(
+        local handle = assert(Live2D.load('assets/live2d/Haru.model3.json', 'haru'))
+        assert(Live2D.set_expression(handle, 'F01', 0/0) == false)
+        assert(Live2D.set_expression(handle, 'F01', 1.5) == false)
+        assert(Live2D.set_expression(handle + 1, 'F01') == false)
+        assert(Live2D.set_expression(handle, 'unknown', 0) == false)
+        assert(Live2D.set_expression(handle, 'F01', 0.25))
+    )lua");
+    REQUIRE(animation.calls.size() == 2);
+    CHECK(animation.calls[0] == "unknown");
+    CHECK(animation.calls[1] == "F01");
+    CHECK(animation.expressionWeight == doctest::Approx(0.25));
 }
 
 TEST_CASE("Bindings U26: Live2D registration and Registry lifecycle calls") {

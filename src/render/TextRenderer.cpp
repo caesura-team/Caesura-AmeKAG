@@ -1295,16 +1295,56 @@ void TextRenderer::buildQuadVertices(const std::vector<LaidGlyph>& glyphs,
 // texture selection or buffer ranges.
 void TextRenderer::submitCachedSlot(MessageLayerCache& slot, uint16_t viewId,
                                     TextColor color, bgfx::ProgramHandle program) {
-    float fc[4] = { color.r/255.0f, color.g/255.0f, color.b/255.0f, color.a/255.0f };
-    bgfx::setUniform(m_u_color, fc);
-    // TD-13: a cached CJK-only line samples the CJK atlas -- binding the TTF
-    // texture for it would sample wrong glyphs.
-    const bool needCjk = slot.cacheIsCjk && bgfx::isValid(m_cjkAtlas);
-    bgfx::setTexture(0, m_texSampler, needCjk ? m_cjkAtlas : m_fontTexture);
     bgfx::setVertexBuffer(0, slot.vb, 0, slot.glyphCount * 6);
     bgfx::setIndexBuffer(slot.ib, 0, slot.glyphCount * 6);
+    submitTextBuffers(viewId, color, program, slot.cacheIsCjk);
+}
+
+void TextRenderer::submitTextBuffers(uint16_t viewId, TextColor color,
+                                     bgfx::ProgramHandle program, bool useCjk) {
+    float fc[4] = { color.r/255.0f, color.g/255.0f, color.b/255.0f, color.a/255.0f };
+    bgfx::setUniform(m_u_color, fc);
+    const bool needCjk = useCjk && bgfx::isValid(m_cjkAtlas);
+    bgfx::setTexture(0, m_texSampler, needCjk ? m_cjkAtlas : m_fontTexture);
     bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_BLEND_ALPHA);
     bgfx::submit(viewId, program);
+}
+
+TextRenderer::GlyphLayoutResult TextRenderer::layoutCachedText(
+    const std::string& text, float x, float y, size_t maxGlyphs, size_t byteBegin) {
+    const int texW = m_ttf ? m_ttf->atlasW : m_atlasCols * m_fontGlyphW;
+    const int texH = m_ttf ? m_ttf->atlasH : m_fontGlyphH * 3;
+    const float invW = 1.0f / float(texW);
+    const float invH = 1.0f / float(texH);
+    const bool hasCjk = bgfx::isValid(m_cjkAtlas);
+    const float cjkInvW = 1.0f / float(m_atlasW);
+    const float cjkInvH = 1.0f / float(m_atlasH);
+
+    return layoutGlyphs(text, x, y, &TextRenderer::glyphLookupForCache, this,
+                        hasCjk, invW, invH, cjkInvW, cjkInvH, m_ttf != nullptr,
+                        m_ttf ? (float)m_ttf->ascent : 8.0f, maxGlyphs, byteBegin);
+}
+
+float TextRenderer::renderTransientText(uint16_t viewId, const std::string& text,
+                                        float x, float y, TextColor color,
+                                        bgfx::ProgramHandle program) {
+    if (!prepareTextGlyphs(text)) return x;
+    const auto laid = layoutCachedText(text, x, y, m_cacheSlots[0].maxGlyphs);
+    if (laid.glyphs.empty()) return laid.penAdvance;
+
+    std::vector<float> verts;
+    std::vector<uint32_t> indices;
+    buildQuadVertices(laid.glyphs, (float)m_screenWidth, (float)m_screenHeight, verts, indices);
+    const auto count = static_cast<uint32_t>(indices.size());
+    bgfx::TransientVertexBuffer vb;
+    bgfx::TransientIndexBuffer ib;
+    if (!bgfx::allocTransientBuffers(&vb, m_posTexLayout, count, &ib, count, true)) return x;
+    std::memcpy(vb.data, verts.data(), verts.size() * sizeof(float));
+    std::memcpy(ib.data, indices.data(), indices.size() * sizeof(uint32_t));
+    bgfx::setVertexBuffer(0, &vb);
+    bgfx::setIndexBuffer(&ib);
+    submitTextBuffers(viewId, color, program, laid.allCjk);
+    return laid.penAdvance;
 }
 
 float TextRenderer::rebuildCache(MessageLayerCache& slot, uint16_t viewId,
@@ -1312,23 +1352,7 @@ float TextRenderer::rebuildCache(MessageLayerCache& slot, uint16_t viewId,
                                   float x, float y, TextColor color,
                                   bgfx::ProgramHandle program) {
     if (!ensureCacheBuffers(slot) || text.empty()) return x;
-
-    uint16_t texW = m_ttf ? (uint16_t)m_ttf->atlasW : (uint16_t)(m_atlasCols * m_fontGlyphW);
-    uint16_t texH = m_ttf ? (uint16_t)m_ttf->atlasH : (uint16_t)(m_fontGlyphH * 3);
-
-    const float invW = 1.0f / float(texW);
-    const float invH = 1.0f / float(texH);
-    const bool hasCjk = bgfx::isValid(m_cjkAtlas);
-    const float cjkInvW = 1.0f / float(m_atlasW);
-    const float cjkInvH = 1.0f / float(m_atlasH);
-
-    // Pure layout phase (GPU-free; extracted for unit testing).
-    GlyphLayoutResult laid = layoutGlyphs(text, x, y,
-                                          &TextRenderer::glyphLookupForCache, this,
-                                          hasCjk, invW, invH, cjkInvW, cjkInvH,
-                                          m_ttf != nullptr,
-                                          m_ttf ? (float)m_ttf->ascent : 8.0f,
-                                          slot.maxGlyphs);
+    const auto laid = layoutCachedText(text, x, y, slot.maxGlyphs);
 
     // Pure vertex phase.
     std::vector<float> verts;
@@ -1370,25 +1394,10 @@ float TextRenderer::appendToCache(MessageLayerCache& slot, uint16_t viewId,
                                   bgfx::ProgramHandle program) {
     if (!ensureCacheBuffers(slot)) return x;
 
-    uint16_t texW = m_ttf ? (uint16_t)m_ttf->atlasW : (uint16_t)(m_atlasCols * m_fontGlyphW);
-    uint16_t texH = m_ttf ? (uint16_t)m_ttf->atlasH : (uint16_t)(m_fontGlyphH * 3);
-
-    const float invW = 1.0f / float(texW);
-    const float invH = 1.0f / float(texH);
-    const bool hasCjk = bgfx::isValid(m_cjkAtlas);
-    const float cjkInvW = 1.0f / float(m_atlasW);
-    const float cjkInvH = 1.0f / float(m_atlasH);
-
     // Lay out ONLY the tail, resuming from the cached ABSOLUTE pen. Using the
     // stored float (not x + cachedPenAdvance) is what keeps the tail vertices
     // bit-identical to a full rebuild's.
-    GlyphLayoutResult tail = layoutGlyphs(text, slot.penEnd, y,
-                                          &TextRenderer::glyphLookupForCache, this,
-                                          hasCjk, invW, invH, cjkInvW, cjkInvH,
-                                          m_ttf != nullptr,
-                                          m_ttf ? (float)m_ttf->ascent : 8.0f,
-                                          (size_t)plan.glyphsToLayout,
-                                          plan.byteBegin);
+    const auto tail = layoutCachedText(text, slot.penEnd, y, plan.glyphsToLayout, plan.byteBegin);
 
     std::vector<float> verts;
     std::vector<uint32_t> indices;
@@ -1401,8 +1410,7 @@ float TextRenderer::appendToCache(MessageLayerCache& slot, uint16_t viewId,
     // WHOLE text, so the verdict must match what a full layout would compute.
     slot.anyGlyph  = slot.anyGlyph  || tail.anyGlyph;
     slot.anyNonCjk = slot.anyNonCjk || tail.anyNonCjk;
-    slot.cacheIsCjk = hasCjk && slot.anyGlyph && !slot.anyNonCjk
-                      && bgfx::isValid(m_cjkAtlas);
+    slot.cacheIsCjk = slot.anyGlyph && !slot.anyNonCjk && bgfx::isValid(m_cjkAtlas);
     slot.penEnd = tail.penAdvance;
     slot.cachedText = text;
     slot.geometryValid = true;
@@ -1491,32 +1499,35 @@ TextRenderer::CachePlan TextRenderer::planCacheUpdate(const MessageLayerCache& s
 
 size_t TextRenderer::selectCacheSlot(const MessageLayerCache* slots, size_t count,
                                      uint16_t viewId, const std::string& text,
-                                     float x, float y) {
-    if (!slots || count == 0) return 0;
+                                      float x, float y, uint64_t submittedThrough) {
+    if (!slots) return count;
     // 1. Exact key hit -- nothing to lay out or upload.
     for (size_t i = 0; i < count; ++i) {
         const MessageLayerCache& s = slots[i];
-        if (s.geometryValid && s.matches(viewId, text, x, y)) return i;
+        if (s.geometryValid && s.matches(viewId, text, x, y)
+            && (!s.isDirty() || s.lastUse <= submittedThrough)) return i;
     }
     // 2. Append-compatible slot: same view + position, cachedText is a strict
     //    prefix of text. This is the typewriter reveal's steady state.
     for (size_t i = 0; i < count; ++i) {
         const MessageLayerCache& s = slots[i];
-        if (!s.geometryValid) continue;
+        if (!s.geometryValid || s.lastUse > submittedThrough) continue;
         if (s.cachedViewId != viewId || s.cachedX != x || s.cachedY != y) continue;
         if (detectAppend(s.cachedText, text).isAppend) return i;
     }
     // 3. Least-recently-used slot (an unused slot has lastUse == 0 and wins).
-    size_t victim = 0;
-    for (size_t i = 1; i < count; ++i) {
-        if (slots[i].lastUse < slots[victim].lastUse) victim = i;
+    size_t victim = count;
+    for (size_t i = 0; i < count; ++i) {
+        if (slots[i].lastUse > submittedThrough) continue;
+        if (victim == count || slots[i].lastUse < slots[victim].lastUse) victim = i;
     }
     return victim;
 }
 
-MessageLayerCache& TextRenderer::acquireSlot(uint16_t viewId, const std::string& text,
+MessageLayerCache* TextRenderer::acquireSlot(uint16_t viewId, const std::string& text,
                                              float x, float y) {
-    const size_t idx = selectCacheSlot(m_cacheSlots, kCacheSlots, viewId, text, x, y);
+    const size_t idx = selectCacheSlot(m_cacheSlots, kCacheSlots, viewId, text, x, y, m_submittedThrough);
+    if (idx == kCacheSlots) return nullptr;
     MessageLayerCache& s = m_cacheSlots[idx];
     // An eviction is a LIVE slot being handed to a different key: that is the
     // event the old single-slot cache suffered on every alternating draw.
@@ -1526,7 +1537,7 @@ MessageLayerCache& TextRenderer::acquireSlot(uint16_t viewId, const std::string&
     }
     m_lastSlot = idx;
     s.lastUse = ++m_cacheClock;
-    return s;
+    return &s;
 }
 
 float TextRenderer::renderTextCached(uint16_t viewId, const std::string& text,
@@ -1539,7 +1550,13 @@ float TextRenderer::renderTextCached(uint16_t viewId, const std::string& text,
     // Slot selection (LRU): an exact key hit needs no work; an append-
     // compatible slot lets the typewriter reveal extend existing geometry;
     // otherwise the least-recently-used slot is re-keyed.
-    MessageLayerCache& slot = acquireSlot(viewId, text, x, y);
+    auto* selected = acquireSlot(viewId, text, x, y);
+    if (!selected) {
+        // bgfx has not consumed the cached buffer draws for this frame yet.
+        // The direct path gives this draw its own transient geometry.
+        return renderTransientText(viewId, text, x, y, color, prog);
+    }
+    auto& slot = *selected;
     const bool exactHit = slot.geometryValid && slot.matches(viewId, text, x, y);
 
     // planCacheUpdate() is the ONE policy function; the tests measure it, so the

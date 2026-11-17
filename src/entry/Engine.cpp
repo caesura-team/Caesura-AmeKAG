@@ -1744,7 +1744,7 @@ void Engine::render(float dt) {
     }
 
     if (m_renderDevice) {
-        m_renderDevice->drawDebugOverlay("Caesura (AmeKAG) v1.0.0");
+        m_renderDevice->drawDebugOverlay("Caesura (AmeKAG) v" CAESURA_VERSION);
     }
 
     // -- Reserved: 3D mini-game render hook (main thread, after KAG pass) --

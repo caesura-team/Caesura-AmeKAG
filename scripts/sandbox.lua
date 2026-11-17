@@ -558,6 +558,7 @@ local RENDER_WHITELIST = {
     clear_postfx        = true,
     is_postfx_supported = true,
     is_postfx_active    = true,
+    set_scene_blur      = true,
     -- Text rendering state (font face/size/color)
     text_set_font       = true,
     text_reset_state    = true,

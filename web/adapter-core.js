@@ -24,6 +24,7 @@ export class AdapterCore {
      *  Mirrors the desktop s_lutTex/u_paletteParams binding: handle is the
      *  registered LUT texture id (nil = no LUT), intensity 0..1, size 16/64. */
     this.palette = { handle: null, intensity: 0, size: 0 }
+    this.sceneBlur = 0
     this.sceneSnapshots = new Map()
     this.transitionOverlay = null
     this._scenePresenter = null
@@ -39,7 +40,7 @@ export class AdapterCore {
   }
 
   _presentationContent(list = this.renderList()) {
-    return JSON.stringify([list,this.draws,this.textBuffer,this.palette,this.font??null])
+    return JSON.stringify([list,this.draws,this.textBuffer,this.palette,this.font??null,this.sceneBlur])
   }
 
   async presentScene(completedTransition = null) {

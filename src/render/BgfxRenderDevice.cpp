@@ -15,6 +15,7 @@
 #include <cstring>
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <limits>
 
 
@@ -326,6 +327,8 @@ void BgfxRenderDevice::advanceFrame() {
         }
     }
     m_deviceCore->advanceFrame();
+    // bgfx has handed off the frame, so text slots may be rewritten again.
+    if (m_textRenderer) m_textRenderer->onFrameAdvanced();
     if (m_sceneSubmitted) { ++m_sceneFrameId; m_sceneReady = true; }
     m_sceneSubmitted = false;
     std::erase_if(m_sceneSnapshots, [this](const SnapshotLease& lease) {
@@ -753,6 +756,7 @@ bool BgfxRenderDevice::isPostFxSupported(PostFxKind kind) const {
 
 bool BgfxRenderDevice::isPostFxActive() const {
     if (!canRender()) return false;
+    if (m_sceneBlurRadius > 0.0f && isPostFxSupported(PostFxKind::SoftBlur)) return true;
     return std::any_of(m_postFxStages.begin(), m_postFxStages.end(), [this](const PostFxStage& stage) {
         return stage.enabled && isPostFxSupported(stage.kind)
             && (stage.kind != PostFxKind::Lut3D || (bgfx::isValid(stage.lutTex) && stage.lutSize >= 2));
@@ -802,6 +806,14 @@ void BgfxRenderDevice::destroyPostFx(PostFxHandle handle) {
 
 void BgfxRenderDevice::clearPostFx() {
     m_postFxStages.clear();
+    m_sceneBlurRadius = 0.0f;
+}
+
+bool BgfxRenderDevice::setSceneBlur(float radius) {
+    if (!std::isfinite(radius) || radius < 0.0f || radius > 255.0f) return false;
+    if (radius > 0.0f && !isPostFxSupported(PostFxKind::SoftBlur)) return false;
+    m_sceneBlurRadius = radius;
+    return true;
 }
 
 BgfxRenderDevice::PostFxRt BgfxRenderDevice::getScratchRt(int slot, int w, int h) {
@@ -971,7 +983,18 @@ bool BgfxRenderDevice::runPostFxChain() {
         outputSlot = 1 - outputSlot;
     }
     target(m_finalSceneRtt, w, h);
-    if (!submitFullscreenQuad(view, m_shaders->getFallbackProgram(), result, sampler)) return false;
+    auto finalProgram = m_shaders->getFallbackProgram();
+    if (m_sceneBlurRadius > 0.0f && isPostFxSupported(PostFxKind::SoftBlur)) {
+        if (!bgfx::isValid(uniform)) return false;
+        finalProgram = m_shaders->getPostFxProgram(static_cast<int>(PostFxKind::SoftBlur));
+        // SoftBlur uses its tint to normalize the center and eight axial taps.
+        constexpr float normalizedWhite = 1.0f / (0.1945946f + 4.0f * (0.1945946f + 0.1216216f));
+        const float values[16] = {1.0f, m_sceneBlurRadius, 1.0f, 0.0f,
+            normalizedWhite, normalizedWhite, normalizedWhite, 1.0f,
+            1.0f / float(w), 1.0f / float(h), 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+        bgfx::setUniform(uniform, values, 4);
+    }
+    if (!submitFullscreenQuad(view, finalProgram, result, sampler)) return false;
     m_deviceCore->clearPresentationSurface();
     m_deviceCore->configurePresentationView(BgfxDeviceCore::VIEW_PRESENT);
     float offsetX = 0, offsetY = 0;

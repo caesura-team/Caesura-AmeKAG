@@ -54,6 +54,23 @@ check("hover pt.speed has type+default+range",
       h2 and h2.text:find("type=number", 1, true)
       and h2.text:find("default=50", 1, true)
       and h2.text:find("min=8", 1, true) and h2.text:find("max=5000", 1, true))
+local blurDuration = lsp.hover("blur", "duration")
+check("blur duration alias has its numeric contract",
+      blurDuration and blurDuration.text:find("param `duration`", 1, true)
+      and blurDuration.text:find("alias of `time`", 1, true)
+      and blurDuration.text:find("type=number", 1, true))
+local blurAliases = lsp.completion("[blur dur")
+check("blur duration remains available in completion",
+      #blurAliases == 1 and blurAliases[1].insertText == "duration=")
+check("registered blur aliases are valid in author diagnostics",
+      #lsp.diagnostics('[blur duration=300 strength=4]') == 0)
+local aliasInterpolation = lsp.diagnostics('[ch message="${f.}"]')
+check("effective aliases receive interpolation diagnostics",
+      #aliasInterpolation == 1 and aliasInterpolation[1].message:find("message interpolation", 1, true))
+check("an explicit canonical parameter overrides alias interpolation",
+      #lsp.diagnostics('[ch text="ok" message="${f.}"]') == 0)
+check("the first supplied alias overrides later alias interpolation",
+      #lsp.diagnostics('[text message="ok" content="${f.}"]') == 0)
 check("hover unknown cmd nil", lsp.hover("definitely_not_a_cmd") == nil)
 
 -- ---------------------------------------------------------------------------

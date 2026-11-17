@@ -68,7 +68,7 @@ local handle, result = backend.set_postfx('lut3d', {
 if result then print(result.status, result.feature, result.reason) end
 ```
 
-标签和公开 `kag` 命令调用共用运行时检查；动态 Lua 不能通过直接调用 `kag.live2d_motion` 等未接线命令来制造已执行状态。清理已有资源仍可执行。请求不支持的 BGM 淡出时会停止现有播放，并单独报告淡出未应用；必需淡出的错误仍保留。
+标签和公开 `kag` 命令调用共用运行时检查。清理已有资源仍可执行。请求不支持的 BGM 淡出时会停止现有播放，并单独报告淡出未应用。必需淡出的错误仍保留。
 
 ## 当前差异
 
@@ -77,19 +77,21 @@ if result then print(result.status, result.feature, result.reason) end
 | `render.postfx.bloom/vignette/lut/softblur` | 运行时渲染后端必须就绪并支持对应阶段 | 未实现 |
 | `render.postfx.lut3d` | 实际 LUT 后处理，受后端及资源条件限制 | 固定 CSS 色调近似，不采样作者 LUT 像素 |
 | `render.particles` | 粒子与渲染会话均须就绪 | 未实现，不分配伪句柄 |
-| `render.blur` | 当前命令未接线 | 未实现 |
+| `render.blur` | `[blur amount=12 time=300]` 逐帧增加场景模糊，结束时恢复清晰。需要可用的 `postfx.softblur` | 同一命令通过浏览器 CSS 模糊整个场景。需要挂载场景渲染器、浏览器绘制帧和图片解码 |
 | `video.play` | 基础 MPEG 路径不依赖 FFmpeg | 未实现 |
 | `video.ffmpeg` | 需要实际编译 FFmpeg 且视频后端可用 | 未实现 |
 | `audio.play` | 需要实际音频会话 | 需要 AudioContext；本次加载/解码仍可能失败 |
 | `audio.fade` | 需要音频会话 | 支持 clip 淡入/淡出和 bus 音量渐变；需要 AudioContext，本次调度仍可能失败 |
-| `audio.crossfade` | 当前 Lua backend 路径未接线 | 未实现 |
+| `audio.crossfade` | 需要音频会话，新旧 BGM 同时淡化 | 需要 AudioContext，新旧 BGM 按同一音频时钟淡化 |
 | `live2d.cubism` | 需要实际编译 Cubism 且模型后端可用 | 未实现 |
-| `kag.live2d_motion/expression/lip_sync` | 三个 KAG 命令尚未接入实际模型操作 | 同样不支持 |
+| `kag.live2d_motion`、`kag.live2d_expression`、`kag.live2d_lip_sync` | 需要就绪的 Cubism 后端和当前剧情加载的模型 | 未实现 |
 | `steam.achievements/stats/cloud` | 需要实际编译 Steam 且会话可用 | 未实现 |
 
 Null、PNG 回退、SDK 文件夹存在、配置开关请求开启都不能证明相应后端可用。SoLoud ManualMix 的测试结果也不代表物理声卡输出。
 
 Web 的 `playbgm` 淡入和 `stopbgm`/`playbgmstop` 淡出只作用于当前声音的 clip 增益；`fadebgm`/`fadevol` 改变 bus 增益。停止不会将 bus 留在零音量。脚本渐变不写入用户持久音量设置，用户直接调节会覆盖已有 bus 渐变。
+
+`[xfadebgm storage="next.ogg" time=800]` 在新曲成功开始后让旧曲淡出、新曲淡入，保持 BGM 总线音量，并在指定的毫秒数后继续剧本。新曲加载或启动失败时保留旧曲，能力结果记录失败。没有可用音频后端时按项目的必需或可选能力策略处理。
 
 v1 音频存档记录保存瞬间的 BGM clip 增益和位置。恢复时将该增益作为静态值，清除旧声音及其淡出尾音，保留当前 bus 音量与用户设置；不恢复剩余渐变曲线。实际 Web Audio PCM、手势解锁与暂停恢复的复核入口为 `node scripts/web_audio_smoke.mjs --out artifacts/validation/web-audio-check`，输出目录必须未存在。该检查使用静音输出端分析 PCM，不证明扬声器或耳机的实际听感。
 

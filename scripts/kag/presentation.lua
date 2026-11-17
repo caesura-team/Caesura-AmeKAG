@@ -3,6 +3,7 @@ local Layers=require("kag.layer_state")
 local Audio=require("kag.audio_state")
 local Font=require("kag.font_state")
 local Transients=require("kag.transient_state")
+local Models=require("kag.live2d_state")
 local M={}
 local active_owner
 
@@ -24,6 +25,7 @@ function M.discard(prepared)
     if prepared.layers then cleanup(errors,Layers.discard,prepared.layers) end
     if prepared.audio then cleanup(errors,Audio.discard,prepared.audio) end
     if prepared.font then cleanup(errors,Font.discard,prepared.font) end
+    if prepared.models then cleanup(errors,Models.discard,prepared.models) end
     return #errors==0,table.concat(errors,"; ")
 end
 
@@ -33,6 +35,7 @@ function M.prepare(state)
         prepared.layers=Layers.prepare(state.layer_snapshot)
         prepared.audio=Audio.prepare(state.audio_snapshot)
         prepared.font=Font.prepare(state.font_snapshot)
+        prepared.models=Models.prepare(state.live2d_snapshot)
     end)
     if not ok then
         local discarded,reason=M.discard(prepared)
@@ -41,10 +44,10 @@ function M.prepare(state)
     return prepared
 end
 
-function M.stop(owner,clear_font)
+function M.stop(owner,clear_font,keep_models)
     if active_owner~=nil and active_owner~=owner then return true end
     local errors={}
-    cleanup(errors,Transients.stop,owner)
+    cleanup(errors,Transients.stop,owner,keep_models)
     cleanup(errors,Layers.stop,owner)
     cleanup(errors,Audio.stop)
     if clear_font then cleanup(errors,Font.clear) end
@@ -54,14 +57,16 @@ end
 function M.apply(prepared,owner)
     if prepared.used then error("Presentation candidate already consumed",0) end
     prepared.used=true
-    if active_owner and active_owner~=owner then assert(M.stop(active_owner)) end
-    active_owner=owner
+    local keep_models = prepared.models and prepared.models.handles
     local ok,err=pcall(function()
-        assert(Transients.stop(owner))
+        if active_owner and active_owner~=owner then assert(M.stop(active_owner,nil,keep_models)) end
+        active_owner=owner
+        assert(Transients.stop(owner,keep_models))
         assert(Audio.stop())
         Font.apply(prepared.font)
         Layers.apply(prepared.layers,owner)
         Audio.apply(prepared.audio)
+        Models.apply(prepared.models,owner)
     end)
     if not ok then
         local discarded,discard_error=M.discard(prepared)

@@ -1113,6 +1113,18 @@ def assemble(project: Path, entry_scene: Path, engine: Path, out: Path,
     say("[build] engine: %s (+%d runtime lib%s)"
         % (engine.name, len(libs), "" if len(libs) == 1 else "s"))
 
+    profile = capabilities["profile"] if capabilities is not None else {}
+    if profile.get("platform") == "windows" and profile.get("compiled", {}).get("live2d"):
+        shader_root = engine.parent / "FrameworkShaders"
+        shaders = [shader_root / name for name in ("CubismEffect.fx", "CubismBlendMode.fx")]
+        missing_shaders = [path.name for path in shaders if not path.is_file()]
+        if missing_shaders:
+            raise BuildError("Selected Cubism engine is missing FrameworkShaders files: " + ", ".join(missing_shaders))
+        (out / "FrameworkShaders").mkdir()
+        for shader in shaders:
+            shutil.copy2(shader, out / "FrameworkShaders" / shader.name)
+        say("[build] Live2D: copied D3D11 FrameworkShaders from the selected engine")
+
     # 2. engine Lua runtime
     _copy_tree(ROOT / "scripts", out / "scripts")
     if capabilities is not None and _runtime_capability_files(out / "scripts") != capabilities["inputs"]["runtime_lua"]:

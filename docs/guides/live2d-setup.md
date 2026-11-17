@@ -72,6 +72,8 @@ CMake 探测顺序：显式 `CUBISM_SDK_ROOT` → `thirdparty/CubismSdkForNative
 - 链接对应平台的 Cubism Core 库
 - 编译 `Live2DBackend` 替代 `NullAnimationBackend`
 
+Windows 使用 MSVC 和 Ninja 构建时，如果 `LNK1181` 中的 Cubism Core 库路径出现乱码，先确认对应架构和配置的 `.lib` 存在。将 SDK 放在纯 ASCII 路径下，重新配置 `CUBISM_SDK_ROOT` 后再构建。本机已在保留中文项目路径的情况下，用这个方法完成 `CAESURA_LIVE2D=ON` 的全量 Debug 构建。
+
 ### 4. 放置模型文件
 
 将 Live2D 模型文件放入 `assets/live2d/` 目录：
@@ -106,13 +108,21 @@ assets/live2d/
 }
 ```
 
-取得模型句柄只证明加载调用成功。纹理、实际图像、动作和释放行为仍需分别验证；本轮 Windows 真实模型、口型和设备证据见 [U26 语音口型执行记录](../plans/2026-09-28-001-u26-voice-lipsync-validation.md)，更早的边界见 [U26 历史记录](../plans/2026-09-20-016-optional-sdk-cloud-boundaries-execution.md)。C++ `playMotion`、`setExpression` 与 `setParameter` 是已有入口，但本轮没有因此宣称动作分组及表情所有权问题已闭环。
+Windows 的模型加载、口型和渲染证据见 [U26 语音口型执行记录](../plans/2026-09-28-001-u26-voice-lipsync-validation.md)。动作播放使用当前剧情加载的模型句柄。可以指定模型文件中的 `Group/Index`，也可以使用去掉 `.json` 后缀的文件名或能唯一确定动作的简称。`fadein` 和 `fadeout` 的单位为毫秒，设置动作级淡入淡出时长。Cubism 仍优先使用参数曲线自带的淡化时长。
 
-原生 KAG 现已接通 `[live2d_load]`、`[live2d_show]`、`[live2d_hide]`、`[live2d_unload]` 和 `[live2d_lip_sync]`。它们通过 Script 模块的 Lua `Live2D` 表调用实际 Cubism 后端；模型句柄属于当前场景上下文，不写入存档。带活动模型的保存会明确拒绝。`live2d_motion`、`live2d_expression` 仍只记录上下文，不能据此宣称真实动作或表情已播放；Web 不提供这些动态 Cubism 命令。
+原生 KAG 支持 `[live2d_load]`、`[live2d_show]`、`[live2d_motion]`、`[live2d_expression]`、`[live2d_hide]`、`[live2d_unload]` 和 `[live2d_lip_sync]`。模型句柄由当前剧情上下文持有。需要在 Web 或未编译 Cubism 的版本上继续剧情时，可将使用到的能力声明为可选，包括 `live2d.cubism`、`kag.live2d_motion` 和 `kag.live2d_expression`。
+
+存档和剧情回滚会重建最多八个由剧情加载的模型，保留位置、缩放、显隐、表情权重和口型设置。最后一次成功指定的动作会从头播放，即使保存前已经播完。表情也会按素材定义重新淡入。读档需要可用的 Cubism 后端和保存时引用的模型资源。
+
+表情名取自模型的 Expressions 列表。默认权重为 1，较低权重减弱表情，`weight=0` 清除表情。新表情替换旧表情，并按文件内的淡入时长叠加到当前动作。自动口型开启时，由语音控制嘴部开合，表情仍可控制其他参数。
+
+Windows 打包工具会从所选 Cubism 构建复制 `FrameworkShaders` 下的两份 D3D11 着色器。使用支持 Cubism 的构建目录中的 `CaesuraAmeKAG.exe` 作为 `--engine`，项目需提供模型及其引用资源。
 
 ```ks
 [live2d_load model=haru storage="assets/live2d/Haru/Haru.model3.json"]
 [live2d_show model=haru x=0 y=0 scale=0.5]
+[live2d_motion model=haru motion="TapBody/1" fadein=0 fadeout=300]
+[live2d_expression model=haru expression=F05 weight=0.5]
 [live2d_lip_sync model=haru source=voice]
 [playvoice storage="assets/voice/line.wav"]
 [live2d_lip_sync model=haru source=off]

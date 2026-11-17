@@ -60,6 +60,13 @@ function makeFetch() {
 }
 
 function uiAudioContext() {
+  let elapsedMs = 0
+  let observedAt = performance.now()
+  const tick = (running) => {
+    const now = performance.now()
+    if (running && !holdNaturalEnds) elapsedMs += now - observedAt
+    observedAt = now
+  }
   const parameter = () => ({
     value: 1,
     setValueAtTime(value) { this.value = value; return this },
@@ -68,7 +75,11 @@ function uiAudioContext() {
     cancelAndHoldAtTime() { return this },
   })
   const context = {
-    state: 'running', currentTime: 0, destination: {},
+    state: 'running', destination: {},
+    get currentTime() {
+      tick(this.state === 'running')
+      return elapsedMs / 1000
+    },
     createGain: () => ({ gain: parameter(), connect() {}, disconnect() {} }),
     async decodeAudioData(bytes) {
       if (!bytes.byteLength) throw new Error('empty audio fixture')
@@ -82,8 +93,16 @@ function uiAudioContext() {
         stop() { clearTimeout(timer); this.onended?.() },
       }
     },
-    async resume() { context.state = 'running' },
-    async suspend() { context.state = 'suspended' },
+    async resume() {
+      if (this.state !== 'suspended') return
+      tick(false)
+      this.state = 'running'
+    },
+    async suspend() {
+      if (this.state !== 'running') return
+      tick(true)
+      this.state = 'suspended'
+    },
     async close() { context.state = 'closed' },
   }
   return context

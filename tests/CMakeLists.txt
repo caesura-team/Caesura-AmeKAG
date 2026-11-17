@@ -851,6 +851,9 @@ add_custom_target(CaesuraTestAssets
     VERBATIM
 )
 add_dependencies(CaesuraTests CaesuraTestAssets)
+# Both targets write application runtime fixtures. Finish the executable's
+# post-build copies before the fixture target replaces those directories.
+add_dependencies(CaesuraTestAssets CaesuraAmeKAG)
 
 # CaesuraTests links production modules, including the SDL-backed platform
 # implementation. Keep the runtime beside the fresh test binary instead of

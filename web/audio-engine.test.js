@@ -604,6 +604,115 @@ describe('AudioEngine · U20 gain lifecycle', () => {
     expect(engine._busGains.get('voice').gain.linearRampToValueAtTime).not.toHaveBeenCalled()
   })
 
+  it('crossfades from the instantaneous gain of the previous BGM and owns only the new clip', async () => {
+    const { engine, ctx } = fixture()
+    engine.setBusVolume('bgm', 0.6)
+    await engine.play('bgm', 'old.wav', { volume: 0.8, fadein: 4, loop: true })
+    const old = engine._sources.get('bgm')
+    ctx.currentTime = 1
+    const receipt = await engine.playWithReceipt('bgm', 'new.wav', { fadein: 2, loop: true, crossfade: true })
+    const current = engine._sources.get('bgm')
+    expect(receipt.played).toBe(true)
+    expect(engine.isCurrentPlayback('bgm', receipt.owner)).toBe(true)
+    expect(current.clipGain.gain.setValueAtTime).toHaveBeenCalledWith(0, 1)
+    expect(current.clipGain.gain.linearRampToValueAtTime).toHaveBeenCalledWith(1, 3)
+    expect(old.clipGain.gain.setValueAtTime).toHaveBeenLastCalledWith(0.2, 1)
+    expect(old.clipGain.gain.linearRampToValueAtTime).toHaveBeenLastCalledWith(0, 3)
+    expect(old.source.stop).toHaveBeenCalledWith(3)
+    expect(old.source.disconnect).not.toHaveBeenCalled()
+    expect(engine._retiring.has(old)).toBe(true)
+    expect(engine.captureBgm()).toMatchObject({ path: 'new.wav', gain: 0, looping: true })
+    old.source.onended()
+    expect(engine.isCurrentPlayback('bgm', receipt.owner)).toBe(true)
+    expect(engine._retiring.size).toBe(0)
+    expect(old.source.disconnect).toHaveBeenCalledOnce()
+    expect(engine._busGains.get('bgm').gain.value).toBe(0.6)
+    expect(engine._busGains.get('bgm').gain.linearRampToValueAtTime).not.toHaveBeenCalled()
+  })
+
+  it.each(['decode', 'start'])('keeps the old BGM if the crossfade candidate fails to %s', async failure => {
+    const { engine, ctx, sources } = fixture()
+    await engine.play('bgm', 'old.wav', { volume: 0.4, loop: true })
+    const old = engine._sources.get('bgm')
+    if (failure === 'decode') ctx.decodeAudioData.mockRejectedValueOnce(new Error('decode failed'))
+    else {
+      const createSource = ctx.createBufferSource
+      ctx.createBufferSource = () => {
+        const source = createSource()
+        source.start.mockImplementation(() => { throw new Error('start failed') })
+        return source
+      }
+    }
+    expect(await engine.playWithReceipt('bgm', 'rejected.wav', { fadein: 2, loop: true, crossfade: true }))
+      .toEqual({ played: false, owner: null })
+    expect(engine._sources.get('bgm')).toBe(old)
+    expect(engine._retiring.size).toBe(0)
+    expect(old.source.stop).not.toHaveBeenCalled()
+    expect(old.clipGain.gain.linearRampToValueAtTime).not.toHaveBeenCalled()
+    if (failure === 'start') expect(sources[1].disconnect).toHaveBeenCalledOnce()
+  })
+
+  it.each(['stop', 'stopAll', 'destroy'])('%s clears crossfade tails and cancels pending replacements', async action => {
+    const { engine, ctx, sources } = fixture()
+    await engine.play('bgm', 'old.wav', { loop: true })
+    await engine.play('bgm', 'new.wav', { fadein: 2, loop: true, crossfade: true })
+    expect(sources[0].stop).toHaveBeenLastCalledWith(2)
+    const pending = defer(), entered = defer()
+    ctx.decodeAudioData.mockImplementationOnce(() => { entered.resolve(); return pending.promise })
+    const play = engine.play('bgm', 'late.wav', { fadein: 2, loop: true, crossfade: true })
+    await entered.promise
+    try { engine[action]('bgm') }
+    finally { pending.resolve({ duration: 5, length: 240000, sampleRate: 48000, numberOfChannels: 2 }) }
+    expect(await play).toBe(false)
+    expect(sources).toHaveLength(2)
+    expect(engine._sources.size).toBe(0)
+    expect(engine._pending.size).toBe(0)
+    expect(engine._retiring.size).toBe(0)
+    expect(sources[0].stop).toHaveBeenCalledTimes(2)
+    expect(sources[0].stop).toHaveBeenLastCalledWith()
+    for (const source of sources) {
+      source.onended()
+      expect(source.disconnect).toHaveBeenCalledOnce()
+    }
+  })
+
+  it('a timed BGM stop clears crossfade tails and fades only the current clip', async () => {
+    const { engine, ctx } = fixture()
+    await engine.play('bgm', 'old.wav', { loop: true })
+    const old = engine._sources.get('bgm')
+    await engine.play('bgm', 'new.wav', { fadein: 30, loop: true, crossfade: true })
+    const current = engine._sources.get('bgm')
+    expect(old.source.stop.mock.calls).toEqual([[30]])
+
+    ctx.currentTime = 1
+    expect(engine.stop('bgm', { fadeout: 0.25 })).toBe(true)
+    expect(engine.isPlaying('bgm')).toBe(false)
+    expect(old.source.stop.mock.calls).toEqual([[30], []])
+    expect(old.source.disconnect).toHaveBeenCalledOnce()
+    expect(engine._retiring).toEqual(new Set([current]))
+    expect(current.source.stop.mock.calls).toEqual([[1.25]])
+    expect(engine.stop('bgm', { fadeout: 2 })).toBe(false)
+    expect(current.source.stop.mock.calls).toEqual([[1.25]])
+  })
+
+  it('new playback supersedes a pending crossfade before it can admit its candidate', async () => {
+    const { engine, ctx, sources } = fixture()
+    await engine.play('bgm', 'old.wav', { loop: true })
+    const pending = defer(), entered = defer()
+    ctx.decodeAudioData.mockImplementationOnce(() => { entered.resolve(); return pending.promise })
+    const crossfade = engine.play('bgm', 'late.wav', { fadein: 2, loop: true, crossfade: true })
+    await entered.promise
+    let newer
+    try { newer = await engine.playWithReceipt('bgm', 'new.wav', { loop: true }) }
+    finally { pending.resolve({ duration: 5, length: 240000, sampleRate: 48000, numberOfChannels: 2 }) }
+    expect(await crossfade).toBe(false)
+    expect(engine.isCurrentPlayback('bgm', newer.owner)).toBe(true)
+    expect(engine.captureBgm().path).toBe('new.wav')
+    expect(sources).toHaveLength(2)
+    expect(sources[0].stop.mock.calls).toEqual([[]])
+    expect(engine._retiring.size).toBe(0)
+  })
+
   it('zero duration applies clip gain and stops immediately without a retiring owner', async () => {
     const { engine } = fixture()
     expect(await engine.play('bgm', 'immediate.wav', { volume: 0.4, fadein: 0 })).toBe(true)

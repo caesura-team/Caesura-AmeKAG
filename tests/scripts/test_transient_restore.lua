@@ -45,6 +45,7 @@ check('index cleanup still runs after backend failure',indexes==2)
 -- and effects whose coroutine never registered an Operation.
 local emitters,destroyed,next_emitter={}, {},0
 local submitted=0
+local scene_blur=0
 package.loaded.backend={
     particles_create_emitter=function()
         next_emitter=next_emitter+1;emitters[next_emitter]=true;return next_emitter
@@ -54,6 +55,7 @@ package.loaded.backend={
     clear_particles=function() emitters={};return true end,
     create_solid_texture=function() return 7 end,
     submit_vfx=function() submitted=submitted+1 end,
+    set_scene_blur=function(radius) scene_blur=radius;return true end,
 }
 package.loaded['kag.commands.vfx']=nil
 local commands=require('kag.commands.vfx')
@@ -101,7 +103,7 @@ local function begin_effect(ctx,run)
 end
 local function visible_state(ctx)
     local root=Layers.get_root()
-    local values={submitted,ctx._flashLayer and ctx._flashLayer.alpha or -1,
+    local values={submitted,scene_blur,ctx._flashLayer and ctx._flashLayer.alpha or -1,
         ctx.effect_layer.alpha,tostring(root.quake.active),root.quake.offset_x or 0,
         tostring(root.shake.active),root.shake.offset_x or 0}
     return table.concat(values,':')
@@ -114,6 +116,10 @@ for _,effect in ipairs(effect_cases) do
     check(name..' real capture rejects an unfinished effect',not captured
         and tostring(err):find('unfinished',1,true)~=nil)
     for _=1,3 do assert(coroutine.resume(co,50)) end
+    if name=='blur' then
+        check('blur renders the maximum radius before cleanup',scene_blur==4 and coroutine.status(co)=='suspended')
+        assert(coroutine.resume(co,50))
+    end
     check(name..' completion preserves duration and permits capture',coroutine.status(co)=='dead'
         and pcall(Save.capture_state,ctx))
     check(name..' completion releases temporary targets',next(targets)==nil)
@@ -136,7 +142,7 @@ for _,effect in ipairs(effect_cases) do
     _G._CAESURA_CTX=defaults
     local default_co=coroutine.create(function() run(defaults) end)
     local resumed=coroutine.resume(default_co)
-    for _=1,13 do
+    for _=1,(name=='blur' and 14 or 13) do
         if resumed and coroutine.status(default_co)~='dead' then resumed=coroutine.resume(default_co) end
     end
     check(name..' omitted frame delta retains the 16ms default',resumed
@@ -157,23 +163,27 @@ for _,index in ipairs({1,2,3,6}) do
 end
 
 do
-    local rtt=package.loaded.rtt
-    local alloc=rtt.alloc
-    local attempts=0
-    rtt.alloc=function(...)
-        attempts=attempts+1
-        if attempts==2 then error('injected second RTT allocation failure') end
-        return alloc(...)
+    local backend=package.loaded.backend
+    local set_scene_blur=backend.set_scene_blur
+    local calls,radius=0,0
+    backend.set_scene_blur=function(value)
+        calls=calls+1
+        if calls==2 then return false end
+        radius=value
+        return true
     end
     local ctx=context('blur')
     local co=coroutine.create(function() VFX.blur(ctx,{time=200}) end)
-    local resumed,err=coroutine.resume(co)
-    check('partial blur allocation propagates its error',not resumed
-        and tostring(err):find('injected second RTT allocation failure',1,true)~=nil)
+    assert(coroutine.resume(co))
+    assert(coroutine.resume(co,16))
+    check('active blur prevents a lossy save',radius>0 and not pcall(Save.capture_state,ctx))
+    local resumed,err=coroutine.resume(co,16)
+    check('scene blur propagates an application error',not resumed
+        and tostring(err):find('Scene blur could not be applied',1,true)~=nil)
     coroutine.close(co)
-    check('partial blur allocation releases the first target',next(targets)==nil
+    check('failed scene blur clears the already applied effect',radius==0 and next(targets)==nil
         and pcall(Save.capture_state,ctx))
-    rtt.alloc=alloc
+    backend.set_scene_blur=set_scene_blur
 end
 _G._CAESURA_CTX=nil
 print(string.format('TRANSIENT RESTORE: %d passed, %d failed',passed,failed))

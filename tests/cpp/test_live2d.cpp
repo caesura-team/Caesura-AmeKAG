@@ -191,6 +191,7 @@ public:
     void destroyPostFx(PostFxHandle) override {}
     void clearPostFx() override {}
     bool isPostFxActive() const override { return false; }
+    bool setSceneBlur(float) override { return false; }
     RenderUniformHandle getDefaultSampler() const override { return {}; }
     RenderProgramHandle getFallbackProgram() const override { return {}; }
     RenderProgramHandle getModulatedTextureProgram() const override { return {}; }
@@ -888,13 +889,13 @@ TEST_CASE("NullAnimationBackend degrades gracefully for motion/expression/params
     // Motion degrades to "not supported" (false); expression & parameter are
     // accepted as no-ops (must not crash, must not corrupt sprite state).
     CHECK_FALSE(fixture.animation.playMotion(h, "idle"));
-    fixture.animation.setExpression(h, "angry");
+    CHECK_FALSE(fixture.animation.setExpression(h, "angry"));
     fixture.animation.setParameter(h, "ParamAngleX", -32.0f);
     fixture.animation.setParameter(h, "ParamAngleY", 40.0f);
 
     // Unknown handles are no-ops too.
     CHECK_FALSE(fixture.animation.playMotion(999, "idle"));
-    fixture.animation.setExpression(999, "x");
+    CHECK_FALSE(fixture.animation.setExpression(999, "x"));
     fixture.animation.setParameter(999, "p", 1.0f);
 
     // The sprite still renders with its default state after all the above.

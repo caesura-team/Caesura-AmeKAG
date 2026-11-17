@@ -34,7 +34,7 @@ end
 
 function SaveCommands._safeScenePath(sp)
     if _type(sp) ~= "string" or #sp == 0 then return false end
-    if sp:find("..", 1, true) then return false end
+    if sp:find("..", 1, true) or sp:find("%z") then return false end
     if sp:find("^scripts/") == 1 or sp:find("^assets/script/") == 1
         or sp:find("^assets/scripts/") == 1 or sp:find("^demo/") == 1
         or sp:find("^tests/scripts/") == 1
@@ -52,7 +52,7 @@ end
 -- ═══════════════════════════════════════════════════════════════════════════
 
 local function capture_state(ctx)
-    Transients.assert_saveable(ctx)
+    local _, models = Transients.assert_saveable(ctx)
     local state = {}
 
     -- f-variables (global flags)
@@ -225,6 +225,8 @@ local function capture_state(ctx)
     local presentation = Presentation.capture()
     state.layer_snapshot, state.audio_snapshot = presentation.layers, presentation.audio
     state.font_snapshot = presentation.font
+    state.live2d_snapshot = models
+    if models then state.schema_version = SaveState.LIVE2D_VERSION end
     state.layers, state.characters = ctx.layers or {}, ctx.characters or {}
     state.loop_stacks = SaveState.capture_control(ctx)
     state.seen_scenes = SaveState.capture_seen(ctx.seen_scenes)
@@ -264,8 +266,7 @@ local function resolve_slot(params)
     -- NEGATIVE slots are SYSTEM slots (quicksave=-1, autosave=-2):
     -- do NOT clamp them to 0 -- that would make F5/autosave silently
     -- overwrite the player's manual slot 0 (security review warn).
-    -- They pass through; the C++ SaveManager 0..99 guard rejects them,
-    -- so system slots stay inert until a dedicated mapping lands.
+    -- Pass through system slots for the native binding to validate.
     if slot < 0 then return slot end
     if slot > 99 then return 99 end
     return math.floor(slot)
@@ -447,6 +448,7 @@ function SaveCommands.load(ctx, params)
     if not applied then
         ctx.stop_flag, ctx._session_active, ctx.waiting_input = true, false, false
         ctx.text_state = {draws={}}
+        Presentation.discard(candidate._presentation)
         Presentation.stop(ctx, true)
         return rejected(apply_error)
     end

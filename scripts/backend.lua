@@ -188,6 +188,12 @@ function Backend.live2d_load(path, name) return live2d_call("load", path, name) 
 function Backend.live2d_show(handle, x, y, scale) return live2d_call("show", handle, x, y, scale) end
 function Backend.live2d_hide(handle) return live2d_call("hide", handle) end
 function Backend.live2d_unload(handle) return live2d_call("unload", handle) end
+function Backend.live2d_play_motion(handle, name, fadein, fadeout)
+    return live2d_call("play_motion", handle, name, fadein, fadeout)
+end
+function Backend.live2d_set_expression(handle, name, weight)
+    return live2d_call("set_expression", handle, name, weight)
+end
 function Backend.live2d_set_mouth(handle, value) return live2d_call("set_mouth", handle, value) end
 function Backend.live2d_set_voice_lipsync(handle, enabled) return live2d_call("set_voice_lipsync", handle, enabled) end
 
@@ -299,6 +305,11 @@ function Backend.is_postfx_active()
     local be = get_backend()
     if be then return be.render("is_postfx_active")
     else return false end
+end
+
+function Backend.set_scene_blur(radius)
+    local be = get_backend()
+    return be and be.render("set_scene_blur", radius) or false
 end
 function Backend.submit_stretch_blt(dst_rt, dst_rect, src_rt, src_rect, filter_id)
     local be = get_backend()
@@ -454,17 +465,13 @@ end
 -- =========================================================================
 
 function Backend.audio_xfade(bus, new_file, fade_time)
+    if bus ~= "bgm" or type(new_file) ~= "string" or new_file == ""
+        or type(fade_time) ~= "number" or fade_time ~= fade_time
+        or fade_time < 0 or fade_time == math.huge then return false end
     local be = get_backend()
     if be then return be.audio("xfade", bus, new_file, fade_time)
-    else
-        -- package.loaded direct: require() is sandbox-wrapped in the
-        -- suite and 'audio' may not be preloaded -- audit
-        local Audio = package.loaded["audio"]
-        if Audio and Audio.crossfade_bgm then
-            return Audio.crossfade_bgm(new_file, fade_time / 1000)
-        end
-        return false
     end
+    return call_resolved("play_bgm", new_file, {loop = true, fadein = fade_time})
 end
 
 -- =========================================================================

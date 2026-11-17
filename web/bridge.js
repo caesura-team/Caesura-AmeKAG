@@ -4,6 +4,7 @@ import { luaLiteralValue } from './lua-value.js'
 // AdapterCore as the binding surface, and runs .ks scenes.
 import { Lua } from 'wasmoon'
 import { AdapterCore, LAYER_TYPE } from './adapter-core.js'
+import { DomRenderer } from './dom-renderer.js'
 import { AudioEngine } from './audio-engine.js'
 import { installLayerBridge } from './layer-bridge.js'
 import { installRunnerBridge } from './runner-bridge.js'
@@ -38,7 +39,7 @@ function makeDefaultStorage() {
 
 const BINDING_MODULES = new Set([
   'backend', 'layers', 'audio', 'transform',
-  'vfx', 'flow', 'replay', 'pool', 'config', 'system',
+  'flow', 'replay', 'pool', 'config', 'system',
   'settings', 'gallery', 'music_room', 'title_menu', 'saveload_menu',
   'chapter_select', 'dev_hud', 'history_ui', 'toast', 'ks_i18n',
   'fileutil', 'sandbox',
@@ -88,7 +89,7 @@ function syncRestoredHistory(lua, core) {
   lua.global.set('__RESTORED_WEB_BACKLOG', null)
 }
 
-export async function createPlayer({ scriptsBase, fetchImpl = fetch, wasmFile, audioContext, audioAssetUrl = defaultAudioAssetUrl, assetUrl = defaultAudioAssetUrl, decodeImage, storageBackend, capabilities, langBase = langBaseFromScripts(scriptsBase), langs = ['en', 'zh', 'ja'] }) {
+export async function createPlayer({ scriptsBase, sceneStage, fetchImpl = fetch, wasmFile, audioContext, audioAssetUrl = defaultAudioAssetUrl, assetUrl = defaultAudioAssetUrl, decodeImage, storageBackend, capabilities, langBase = langBaseFromScripts(scriptsBase), langs = ['en', 'zh', 'ja'] }) {
   if (capabilities !== undefined && (!capabilities || typeof capabilities !== 'object' || Array.isArray(capabilities))) {
     throw new TypeError('Project capabilities must be a JSON object')
   }
@@ -96,10 +97,11 @@ export async function createPlayer({ scriptsBase, fetchImpl = fetch, wasmFile, a
   const factory = await Lua.load(wasmFile ? { wasmFile } : undefined)
   const lua = factory.createState()
   const core = new AdapterCore()
+  const renderer = sceneStage ? new DomRenderer(core, sceneStage, {textureUrl: assetUrl}) : null
   const audio = new AudioEngine({ctx:audioContext,fetchImpl})
   lua.global.set('__CAESURA_CAPABILITY_PROFILE_JSON', () => JSON.stringify({
     schema: 1, target: 'web', platform: 'browser', scope: 'runtime', catalog_sha256: catalogSha256,
-    compiled: {}, available: { audio: audio.isPlaybackAvailable() },
+    compiled: {}, available: { audio: audio.isPlaybackAvailable(), scene_blur: core._scenePresenter?.supportsSceneBlur === true },
   }))
   const audioRestore = createAudioRestore({audio,fetchImpl,assetUrl:audioAssetUrl})
   const imageRestore = createAssetRestore({core, fetchImpl, assetUrl, decodeImage})
@@ -118,6 +120,35 @@ export async function createPlayer({ scriptsBase, fetchImpl = fetch, wasmFile, a
     if (!Number.isSafeInteger(id) || !core.textures.has(id) || !Number.isFinite(Number(intensity))) return false
     core.setPalette(id, Math.max(0, Math.min(1, Number(intensity))), Number(size) || 0)
     return true
+  }
+  function setSceneBlur(radius, peak) {
+    if (!Number.isFinite(radius) || radius < 0 || radius > 255) return false
+    const presenter = core._scenePresenter
+    if (radius > 0 && !presenter?.supportsSceneBlur) return false
+    if (radius === 0) {
+      core.sceneBlur = 0
+      presenter?.refreshSceneFilter()
+      return true
+    }
+    return presentSceneBlur(presenter, radius, peak === true)
+  }
+  async function presentSceneBlur(presenter, radius, peak) {
+    try {
+      if (core.sceneBlur === 0) await presenter.prepareSceneBlur()
+      if (core._scenePresenter !== presenter) return false
+      core.sceneBlur = radius
+      await core.presentScene()
+      // A rAF callback commits DOM before paint. Keep the final filter in
+      // place until the following rAF so coroutine cleanup cannot erase it first.
+      if (peak) await core.presentScene()
+      return true
+    } catch {
+      return false
+    }
+  }
+  function clearPostFx() {
+    setCssPalette(0, 0, 0)
+    return setSceneBlur(0)
   }
 
   // ---- lang dictionaries (round 91 i18n web parity) ------------------
@@ -267,6 +298,14 @@ export async function createPlayer({ scriptsBase, fetchImpl = fetch, wasmFile, a
     },
     capture_thumbnail: () => null,
   }
+  // Publish playback only after a real source starts. Failed or cancelled
+  // preparation must not replace the current source's UI identity.
+  async function playAudio(kind, file, opts) {
+    const receipt = await audio.playWithReceipt(kind, file, { ...opts, assetUrl: audioAssetUrl })
+    if (receipt.played && audio.isCurrentPlayback(kind, receipt.owner)) core.audioPlay(kind, file, opts.volume)
+    else if (!audio.isPlaying(kind) && core.audioBus[kind]?.playing) core.audioEnded(kind)
+    return receipt.played
+  }
   const jsBackend = {
     capture_scene: initial => core.captureScene(initial === true),
     destroy_viewport: id => core.destroySceneSnapshot(id),
@@ -321,15 +360,9 @@ export async function createPlayer({ scriptsBase, fetchImpl = fetch, wasmFile, a
       if (typeof window !== 'undefined') window.__caesuraLayoutRes = [1280, 720]
       return '1280x720'
     },
-    // Publish playback only after a real source starts. Failed or cancelled
-    // preparation must not replace the current source's UI identity.
-    audio_play: async (kind, file, opts) => {
-      const k = String(kind), f = String(file)
-      const receipt = await audio.playWithReceipt(k, f, {volume:opts && opts.volume,loop:opts?.loop ?? k==='bgm',
-        fadein:opts?.fadein ?? 0,assetUrl:audioAssetUrl})
-      if (receipt.played && audio.isCurrentPlayback(k, receipt.owner)) core.audioPlay(k, f, opts && opts.volume)
-      else if (!audio.isPlaying(k) && core.audioBus[k]?.playing) core.audioEnded(k)
-      return receipt.played
+    audio_play: (kind, file, opts) => {
+      const k = String(kind)
+      return playAudio(k, String(file), { volume: opts && opts.volume, loop: opts?.loop ?? k === 'bgm', fadein: opts?.fadein ?? 0 })
     },
     audio_stop: (kind, opts) => {
       const k = String(kind)
@@ -337,7 +370,10 @@ export async function createPlayer({ scriptsBase, fetchImpl = fetch, wasmFile, a
       if (!audio.isPlaying(k)) core.audioStop(k)
       return stopped
     },
-    audio_xfade: () => {},
+    audio_xfade: async (kind, file, seconds) => {
+      if (kind !== 'bgm' || !Number.isFinite(seconds) || seconds < 0) return false
+      return playAudio(kind, String(file), { loop: true, fadein: seconds, crossfade: true })
+    },
     audio_is_playing: (kind) => {
       const key=String(kind),playing=audio.isPlaying(key)
       if (!playing && core.audioBus[key]?.playing) core.audioEnded(key)
@@ -385,7 +421,8 @@ export async function createPlayer({ scriptsBase, fetchImpl = fetch, wasmFile, a
       return false
     },
     destroy_postfx: kind => kind === 'lut3d' ? setCssPalette(0, 0, 0) : false,
-    clear_postfx: () => setCssPalette(0, 0, 0),
+    clear_postfx: clearPostFx,
+    set_scene_blur: setSceneBlur,
     particles_create_emitter: () => -1, particles_emit: () => false, particles_destroy_emitter: () => false, clear_particles: () => {},
     video_stop: () => {}, video_play: () => 0, video_is_playing: () => false,
     ai_available: () => false, ai_query_async: () => {}, ai_cancel: () => {},
@@ -467,8 +504,9 @@ export async function createPlayer({ scriptsBase, fetchImpl = fetch, wasmFile, a
       -- stage size ((1280,720)) instead of falling back to the desktop
       -- 1920x1080 default.
       local _jsRes = t.get_resolution
-      local play_audio=t.audio_play
+      local play_audio,crossfade_audio=t.audio_play,t.audio_xfade
       t.audio_play=function(...) return play_audio(...):await() end
+      t.audio_xfade=function(...) return crossfade_audio(...):await() end
       local capture_scene,submit_transition=t.capture_scene,t.submit_transition
       local publish_draws=__PUBLISH_TRANSITION_DRAWS
       __PUBLISH_TRANSITION_DRAWS=nil
@@ -490,6 +528,13 @@ export async function createPlayer({ scriptsBase, fetchImpl = fetch, wasmFile, a
       t.submit_transition=function(...)
         present_text()
         return submit_transition(...):await()
+      end
+      local scene_blur=t.set_scene_blur
+      t.set_scene_blur=function(radius, peak)
+        if radius > 0 then present_text() end
+        local result=scene_blur(radius, peak)
+        if is_promise(result) then return result:await() end
+        return result
       end
       if _jsRes ~= nil then
         t.get_resolution = function()
@@ -532,9 +577,13 @@ export async function createPlayer({ scriptsBase, fetchImpl = fetch, wasmFile, a
       prepared_flow.load_scene = prepared_flow.prepare_scene
       _G.flow = prepared_flow
     end
-    for _, name in ipairs({'backend','layers','audio','transform','vfx','flow','replay','pool','config','system','settings','gallery','music_room','title_menu','saveload_menu','chapter_select','dev_hud','history_ui','toast','ks_i18n','fileutil','sandbox','mods'}) do
+    for _, name in ipairs({'backend','layers','audio','transform','flow','replay','pool','config','system','settings','gallery','music_room','title_menu','saveload_menu','chapter_select','dev_hud','history_ui','toast','ks_i18n','fileutil','sandbox','mods'}) do
       package.loaded[name] = _G[name]
     end
+    local web_vfx = {}
+    for name, binding in pairs(_G.vfx) do web_vfx[name] = binding end
+    web_vfx.blur = require('vfx').blur
+    _G.vfx, package.loaded.vfx = web_vfx, web_vfx
 
     -- Web parity (round 77): load the REAL pure-Lua i18n module (scripts/
     -- i18n.lua has set_language; a JS-object stub would report a non-table
@@ -556,7 +605,7 @@ export async function createPlayer({ scriptsBase, fetchImpl = fetch, wasmFile, a
       require('capability_backend').install(backend)
     `)
   } catch (error) {
-    for (const cleanup of [()=>imageRestore.dispose(),()=>fontRestore?.dispose(),()=>audioRestore.dispose(),()=>audio.destroy(),()=>lua.global.close()]) {
+    for (const cleanup of [()=>renderer?.destroy(),()=>imageRestore.dispose(),()=>fontRestore?.dispose(),()=>audioRestore.dispose(),()=>audio.destroy(),()=>lua.global.close()]) {
       try { cleanup() } catch { /* Preserve the original configuration error. */ }
     }
     throw error
@@ -565,8 +614,8 @@ export async function createPlayer({ scriptsBase, fetchImpl = fetch, wasmFile, a
   // ---- load the real kag command table ----
   await installLayerBridge(lua, core)
   lua.global.set('__TRANSIENT_RESTORE', {
-    capture:()=>({videos:0,models:0,particles:0,emitters:0,postfx:core.palette.handle==null?0:1}),
-    stop:()=>{if(core.palette.handle!=null) core.setPalette(null,0,0);return true},
+    capture:()=>({videos:0,models:0,particles:0,emitters:0,postfx:core.palette.handle!=null||core.sceneBlur>0?1:0}),
+    stop:()=>core.palette.handle!=null||core.sceneBlur>0 ? clearPostFx() : true,
   })
   lua.global.set('__IMAGE_RESTORE', imageRestore)
   await lua.doString(`
@@ -752,13 +801,14 @@ export async function createPlayer({ scriptsBase, fetchImpl = fetch, wasmFile, a
     lua,
     core,
     audio,
+    renderer,
     async dispose() {
       if (disposed) return true
       if (driving) return false
       disposed=true
       const errors=[]
       try {await lua.doString("local ok,err=require('kag_runner').stop(); if not ok then error(err) end")} catch(error) {errors.push(error)}
-      for (const cleanup of [()=>core.clearSceneSnapshots(),()=>imageRestore.dispose(),()=>fontRestore?.dispose(),()=>audioRestore.dispose(),()=>audio.destroy(),
+      for (const cleanup of [()=>renderer?.destroy(),()=>core.clearSceneSnapshots(),()=>imageRestore.dispose(),()=>fontRestore?.dispose(),()=>audioRestore.dispose(),()=>audio.destroy(),
         ...[...core.textures.keys()].map(id=>()=>core.destroyTexture(id)),()=>lua.global.close()]) {
         try {cleanup()} catch(error) {errors.push(error)}
       }

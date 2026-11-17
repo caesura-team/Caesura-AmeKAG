@@ -1592,54 +1592,43 @@
       "configuration_evidence": "AIBinding.cpp available(): !readConfig.endpoint.empty(); scripts/config.lua documents empty endpoint disables. ai_enabled was not consumed."
     },
     {
-      "id": "blur-refusal",
+      "id": "scene-blur",
       "status": "READY_FOR_NATIVE_EXECUTION",
       "focus_commands": [
         "blur"
       ],
-      "scene_path": "assets/script/contracts/blur-refusal.ks",
-      "source": "[blur amount=4 time=32]\n[set var=\"tf.contract_case\" value=\"blur-refusal\"]\n[end]\n",
+      "scene_path": "assets/script/contracts/scene-blur.ks",
+      "source": "[bg storage=\"assets/bg/classroom.png\"]\n[postprocess effect=\"vignette\" strength=0.5 radius=0.5 rgb=\"255,192,128\"]\n[wait time=96]\n[blur amount=12 time=96]\n[set var=\"f.blur_finished\" value=1]\n[wait time=96]\n[postprocess_off effect=\"vignette\"]\n[wait time=64]\n[set var=\"tf.contract_case\" value=\"scene-blur\"]\n[end]\n",
       "max_frames": 900,
       "advance_dialogue": true,
       "input_text": null,
-      "expect_f": {},
-      "required_assets": [],
+      "expect_f": { "blur_finished": 1 },
+      "required_assets": ["assets/bg/classroom.png"],
       "require_runtime_trace": [
-        "blur"
+        "blur", "postprocess", "postprocess_off"
       ],
-      "execution_evidence": null,
-      "expected_refusal": {
-        "feature": "render.blur",
-        "reason": "command_not_wired"
-      },
-      "external_boundary": "Current first-party unsupported capability, not a missing physical device; only honest rejection can pass this negative contract.",
-      "negative_scope": "Normal project capability optional declaration; exact actual unsupported reason required before scene, actual guard diagnostic mandatory; no error UI and no handler application claimed."
+      "execution_evidence": null
     },
     {
-      "id": "audio-crossfade-refusal",
+      "id": "audio-crossfade",
       "status": "READY_FOR_NATIVE_EXECUTION",
       "focus_commands": [
         "xfadebgm"
       ],
-      "scene_path": "assets/script/contracts/audio-crossfade-refusal.ks",
-      "source": "[xfadebgm file=\"assets/bgm/daily.wav\" time=64]\n[set var=\"tf.contract_case\" value=\"audio-crossfade-refusal\"]\n[end]\n",
+      "scene_path": "assets/script/contracts/audio-crossfade.ks",
+      "source": "[playbgm file=\"assets/bgm/daily.wav\" fadein=0]\n[wait time=64]\n[xfadebgm file=\"assets/bgm/daily.ogg\" time=64]\n[set var=\"f.crossfade_finished\" value=1]\n[set var=\"tf.contract_case\" value=\"audio-crossfade\"]\n[end]\n",
       "max_frames": 900,
       "advance_dialogue": true,
       "input_text": null,
-      "expect_f": {},
+      "expect_f": { "crossfade_finished": 1 },
       "required_assets": [
-        "assets/bgm/daily.wav"
+        "assets/bgm/daily.wav",
+        "assets/bgm/daily.ogg"
       ],
       "require_runtime_trace": [
         "xfadebgm"
       ],
-      "execution_evidence": null,
-      "expected_refusal": {
-        "feature": "audio.crossfade",
-        "reason": "backend_route_not_wired"
-      },
-      "external_boundary": "Re-evaluate actual current catalog after audio work. If now supported, this becomes a positive two-stream crossfade case; never force old rejection policy.",
-      "negative_scope": "Normal project capability optional declaration; exact actual unsupported reason required before scene, actual guard diagnostic mandatory; no error UI and no handler application claimed."
+      "execution_evidence": null
     },
     {
       "id": "live2d-lifecycle",
@@ -1695,9 +1684,9 @@
       "execution_evidence": null,
       "expected_refusal": {
         "feature": "kag.live2d_motion",
-        "reason": "command_not_wired"
+        "reason": "sdk_disabled"
       },
-      "external_boundary": "Explicit current first-party unsupported script bridge; SDK model availability does not make this handler applied.",
+      "external_boundary": "Run on a build with Cubism disabled. An SDK build uses a separate playback scene and locally supplied model assets.",
       "negative_scope": "Normal project capability optional declaration; exact actual unsupported reason required before scene, actual guard diagnostic mandatory; no error UI and no handler application claimed."
     },
     {
@@ -1719,9 +1708,9 @@
       "execution_evidence": null,
       "expected_refusal": {
         "feature": "kag.live2d_expression",
-        "reason": "command_not_wired"
+        "reason": "sdk_disabled"
       },
-      "external_boundary": "Explicit current first-party unsupported script bridge; SDK model availability does not make this handler applied.",
+      "external_boundary": "Run on a build with Cubism disabled. SDK-enabled expression playback is verified with a separate model scene.",
       "negative_scope": "Normal project capability optional declaration; exact actual unsupported reason required before scene, actual guard diagnostic mandatory; no error UI and no handler application claimed."
     },
     {
@@ -1834,7 +1823,7 @@
       "command": "blur",
       "schema_declared": true,
       "execution_class": "native_or_web_host_boundary",
-      "case_id": "blur-refusal",
+      "case_id": "scene-blur",
       "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
       "actual_evidence": [],
       "execution_evidence": []
@@ -3409,7 +3398,7 @@
       "command": "xfadebgm",
       "schema_declared": true,
       "execution_class": "native_or_web_host_boundary",
-      "case_id": "audio-crossfade-refusal",
+      "case_id": "audio-crossfade",
       "status": "SCENE_AUTHORED_READY_FOR_NATIVE_EXECUTION",
       "actual_evidence": [],
       "execution_evidence": []
@@ -3426,6 +3415,12 @@
       "path": "assets/bgm/daily.wav",
       "bytes": 12377330,
       "sha256": "296ec0d6223c024f6c9e34d069b7de05e779c79c6e5236c417e09bf790fba28a",
+      "origin": "current source asset; root must byte-copy to private runtime and bind final input lock"
+    },
+    {
+      "path": "assets/bgm/daily.ogg",
+      "bytes": 1660042,
+      "sha256": "5a3bee9a19bd1340d77ee82968bffa3122cd5169528c6f3bd3db0ea92b7aed9f",
       "origin": "current source asset; root must byte-copy to private runtime and bind final input lock"
     },
     {

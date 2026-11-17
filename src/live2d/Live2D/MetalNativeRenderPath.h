@@ -20,6 +20,7 @@ public:
     void shutdown() override;
     void beginFrame(CsmRendering::CubismRenderer* renderer) override;
     void endFrame(CsmRendering::CubismRenderer* renderer, bgfx::TextureHandle bgfxTex) override;
+    void releaseModelTarget(CsmRendering::CubismRenderer* renderer) override;
     void resize(int width, int height) override;
     const char* name() const override { return "MetalNative"; }
 

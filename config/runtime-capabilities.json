@@ -27,8 +27,8 @@
       "web": {"status": "unsupported", "reason": "backend_not_implemented"}
     },
     "render.blur": {
-      "native": {"status": "unsupported", "reason": "command_not_wired"},
-      "web": {"status": "unsupported", "reason": "backend_not_implemented"}
+      "native": {"status": "supported", "available": "postfx.softblur"},
+      "web": {"status": "supported", "available": "scene_blur"}
     },
     "video.play": {
       "native": {"status": "supported", "available": "video"},
@@ -47,19 +47,19 @@
       "web": {"status": "supported", "available": "audio"}
     },
     "audio.crossfade": {
-      "native": {"status": "unsupported", "reason": "backend_route_not_wired"},
-      "web": {"status": "unsupported", "reason": "backend_not_implemented"}
+      "native": {"status": "supported", "available": "audio"},
+      "web": {"status": "supported", "available": "audio"}
     },
     "live2d.cubism": {
       "native": {"status": "supported", "compiled": "live2d", "available": "cubism"},
       "web": {"status": "unsupported", "reason": "backend_not_implemented"}
     },
     "kag.live2d_motion": {
-      "native": {"status": "unsupported", "reason": "command_not_wired"},
+      "native": {"status": "supported", "compiled": "live2d", "available": "cubism"},
       "web": {"status": "unsupported", "reason": "command_not_wired"}
     },
     "kag.live2d_expression": {
-      "native": {"status": "unsupported", "reason": "command_not_wired"},
+      "native": {"status": "supported", "compiled": "live2d", "available": "cubism"},
       "web": {"status": "unsupported", "reason": "command_not_wired"}
     },
     "kag.live2d_lip_sync": {

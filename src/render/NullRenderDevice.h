@@ -90,6 +90,7 @@ class NullRenderDevice final : public IRenderDevice {public:
     void destroyPostFx(PostFxHandle handle) override {}
     void clearPostFx() override {}
     bool isPostFxActive() const override { return false; }
+    bool setSceneBlur(float radius) override { return radius == 0.0f; }
     void flushBatch() override;
     float textLineHeight() const override;
     RenderUniformHandle getDefaultSampler() const override;

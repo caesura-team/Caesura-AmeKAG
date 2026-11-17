@@ -23,6 +23,13 @@ function paletteFilter(palette) {
   return 'brightness(' + (1 - 0.18 * t).toFixed(3) + ') sepia(' + b + '%) hue-rotate(' + h + 'deg) saturate(' + sat.toFixed(3) + ')'
 }
 
+function supportsSceneBlur(stage) {
+  const view = stage?.ownerDocument?.defaultView
+  return view?.CSS?.supports?.('filter', 'blur(1px)') === true
+    && typeof view.requestAnimationFrame === 'function'
+    && typeof view.HTMLImageElement?.prototype.decode === 'function'
+}
+
 // Write a style property only when the DOM value actually differs (t12).
 //
 // Why compare against the ELEMENT and not a cached "last written" map: a cache
@@ -43,6 +50,7 @@ export class DomRenderer {
     this.width = opts.width ?? 1280
     this.height = opts.height ?? 720
     this.textureUrls = new Map() // id -> src string
+    this.textureUrl = opts.textureUrl ?? null
     this._els = new Map() // stable layer id (legacy fallback: name) -> element
     this._drawnPrepared = new WeakMap() // canvas -> immutable prepared resource
     this._textEl = null
@@ -84,6 +92,12 @@ export class DomRenderer {
       capture:()=>this._captureScene(),
       nextFrame:()=>this._nextSceneFrame(),
       clearOverlay:()=>this._clearTransition(),
+      get supportsSceneBlur() { return !this.renderer._destroyed && supportsSceneBlur(this.renderer.root) },
+      prepareSceneBlur:()=>this._prepareSceneBlur(),
+      refreshSceneFilter:()=>{
+        this._refreshSceneFilter()
+        this._presentedFilter=this._sceneFilter()
+      },
     }
     this.core.attachScenePresenter?.(this._presenter)
     this._subscribe()
@@ -111,8 +125,25 @@ export class DomRenderer {
   }
 
   _resolveTextureUrl(id) {
-    return id && (!this.core.textures || this.core.textures.get(id))
-      ? this.textureUrls.get(id) : null
+    if (!id) return null
+    const texture = this.core.textures?.get(id)
+    if (this.core.textures && !texture) return null
+    return this.textureUrls.get(id) ?? (texture?.path && this.textureUrl?.(texture.path)) ?? null
+  }
+
+  async _prepareSceneBlur() {
+    // The Lua command can immediately follow an image change in the same drive.
+    await this._nextSceneFrame()
+    const pending = [...this._els.values()].filter(el => el.tagName === 'IMG'
+      && el.hasAttribute('src') && (!el.complete || !el.naturalWidth))
+    if (pending.length === 0) return
+    let timer
+    try {
+      await Promise.race([
+        Promise.all(pending.map(image => image.decode())),
+        new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Scene image decode deadline exceeded')), 10000) }),
+      ])
+    } finally { clearTimeout(timer) }
   }
 
   _copySceneNode(source, budget = {pixels:0}) {
@@ -151,6 +182,16 @@ export class DomRenderer {
     return {frame,node,dispose(){for(const c of node.querySelectorAll('canvas')){c.width=0;c.height=0}node.replaceChildren()}}
   }
 
+  _sceneFilter() {
+    const grade = paletteFilter(this.core.palette)
+    const radius = this.core.sceneBlur
+    return radius > 0 ? `${grade ? grade + ' ' : ''}blur(${radius}px)` : grade
+  }
+
+  _refreshSceneFilter() {
+    setStyle(this.root, 'filter', this._transitionElement ? 'none' : this._sceneFilter())
+  }
+
   _clearTransition() {
     for(const canvas of this._transitionElement?.querySelectorAll('canvas')??[]){canvas.width=0;canvas.height=0}
     this._transitionElement?.remove()
@@ -158,7 +199,7 @@ export class DomRenderer {
     this._transitionIdentity=null
     for(const [element,visibility] of this._transitionHidden)element.style.visibility=visibility
     this._transitionHidden.clear()
-    setStyle(this.root,'filter',paletteFilter(this.core.palette))
+    this._refreshSceneFilter()
   }
 
   _renderTransition() {
@@ -286,7 +327,7 @@ export class DomRenderer {
     // DOM analog of the desktop s_lutTex/u_paletteParams binding. day/
     // neutral (handle null) applies nothing; night applies a blue-dark
     // grade scaled by intensity.
-    setStyle(this.root, 'filter', paletteFilter(this.core.palette))
+    this._refreshSceneFilter()
     // text layer rendered separately (overlay) if it has content
     for (const n of list) {
       const identity = n.id ?? n.name
@@ -424,7 +465,7 @@ export class DomRenderer {
     if (!hasText && this._textEl) { this._textEl.remove(); this._textEl = null }
     this._renderTransition()
     // This ID records an actual completed DOM scene pass, not a Lua tick.
-    this._presentedFilter=paletteFilter(this.core.palette)
+    this._presentedFilter=this._sceneFilter()
     // Bind completion to the model actually consumed in this synchronous pass,
     // before Promise continuations can mutate the core again.
     // Lightweight render models remain supported. Without a content witness
@@ -442,7 +483,12 @@ export class DomRenderer {
     this._destroyed=true
     for(const wait of this._frameWaits){clearTimeout(wait.timer);cancelAnimationFrame(wait.frame);wait.reject(new Error('Scene renderer closed'))}
     this._frameWaits.clear()
-    if(this.core._scenePresenter===this._presenter){this.core.clearSceneSnapshots();this.core._scenePresenter=null}
+    if(this.core._scenePresenter===this._presenter){
+      this.core.sceneBlur=0
+      this.core.clearSceneSnapshots()
+      this._refreshSceneFilter()
+      this.core._scenePresenter=null
+    }
     for (const el of this._els.values()) el.remove()
     this._els.clear()
     if (this._textEl) { this._textEl.remove(); this._textEl = null }

@@ -42,6 +42,7 @@
 #include <limits>
 #include <random>
 #include <sstream>
+#include <string_view>
 #include <system_error>
 
 namespace fs = std::filesystem;
@@ -588,10 +589,39 @@ void EditorServer::serverLoop(int port) {
         ctx, [this] { return m_archiveWriterFactory ? m_archiveWriterFactory() : nullptr; });
     rpc::service::AssetService assets(ctx);
 
+    fs::path servedRoot = m_webRoot;
+    bool overrideActive = false;
+    bool studioAssetsMounted = false;
+#ifdef _WIN32
+    const wchar_t* overrideEnv = _wgetenv(L"CAESURA_EDITOR_WEBROOT");
+#else
+    const char* overrideEnv = std::getenv("CAESURA_EDITOR_WEBROOT");
+#endif
+    if (overrideEnv && *overrideEnv) {
+        std::error_code ec;
+        const fs::path overrideRoot(overrideEnv);
+        const std::string overrideRootUtf8 = pathToUtf8(overrideRoot);
+        if (fs::is_regular_file(overrideRoot / "index.html", ec)) {
+            // Mount Vite's flat output first so its public files stay within assets/.
+            studioAssetsMounted = svr.set_mount_point("/assets/", pathToUtf8(overrideRoot / "assets"));
+            overrideActive = svr.set_mount_point("/", overrideRootUtf8);
+            if (overrideActive) {
+                servedRoot = overrideRoot;
+                printf("[EDITOR] webroot override active: %s\n", overrideRootUtf8.c_str());
+            } else {
+                if (studioAssetsMounted) svr.remove_mount_point("/assets/");
+                studioAssetsMounted = false;
+                printf("[EDITOR] webroot override mount FAILED: %s (single-file fallback)\n", overrideRootUtf8.c_str());
+            }
+        } else {
+            printf("[EDITOR] webroot override ignored (dir missing index.html): %s\n", overrideRootUtf8.c_str());
+        }
+    }
+
     // ---------------------------------------------------------------------
     // CORS middleware - allow web editor from any origin
     // ---------------------------------------------------------------------
-    svr.set_pre_routing_handler([this](const httplib::Request& req, httplib::Response& res) {
+    svr.set_pre_routing_handler([this, studioAssetsMounted](const httplib::Request& req, httplib::Response& res) {
         // Only allow same-origin / localhost web editor frontends. A bare "*"
         // would let any website drive the local editor over CORS.
         const std::string origin = req.get_header_value("Origin");
@@ -648,8 +678,18 @@ void EditorServer::serverLoop(int port) {
         // to turn security off. index.html carries no secret and no capability;
         // it reads ?token= (or localStorage) and sends the bearer on every
         // /api/* call it makes, each of which is still default-deny below.
-        const bool staticShell = (req.path == "/" || req.path == "/index.html");
-        if (req.method != "OPTIONS" && !staticShell) {
+        // The browser loads the compiled chunks and font before it can send a bearer.
+        constexpr std::string_view assetPrefix = "/assets/";
+        const std::string_view path = req.path;
+        const std::string_view asset = path.starts_with(assetPrefix)
+            ? path.substr(assetPrefix.size()) : std::string_view{};
+        constexpr std::string_view assetNameCharacters =
+            "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.";
+        const bool studioAsset = studioAssetsMounted && (req.method == "GET" || req.method == "HEAD")
+            && asset.find_first_not_of(assetNameCharacters) == std::string_view::npos
+            && (asset.ends_with(".js") || asset.ends_with(".css") || asset.ends_with(".ttf"));
+        const bool staticShell = (path == "/" || path == "/index.html");
+        if (req.method != "OPTIONS" && !staticShell && !studioAsset) {
             const std::string auth = req.get_header_value("Authorization");
             std::string token;
             {
@@ -1374,37 +1414,8 @@ void EditorServer::serverLoop(int port) {
     // re-encoded by the narrow-string CRT layer and silently 404. The
     // explicit handler keeps the path as-is end to end.
     //
-    // [M1-B] CAESURA_EDITOR_WEBROOT override: when set and <dir>/index.html
-    // exists, that directory becomes the static root -- the whole multi-file
-    // SPA (index.html + assets/*.js/*.css) is mounted with httplib
-    // set_mount_point so the assets are served with the correct Content-Type
-    // (built-in extension table). The explicit GET / and GET /index.html
-    // handlers stay registered with the resolved root so the documented route
-    // count (36) is unchanged in both modes; note that httplib dispatches the
-    // mount-point file handler BEFORE route handlers (routing()), so in
-    // override mode the mount serves "/" and "/index.html" itself -- same
-    // file, Content-Type without charset (modern browsers honor the SPA's
-    // <meta charset>). An unset or invalid value leaves the probe-derived
-    // webRoot untouched: fallback mode is byte-identical with the
-    // pre-override build (single-file ifstream panel).
-    std::string servedRoot   = m_webRoot;
-    bool        overrideActive = false;
-    if (const char* envRoot = std::getenv("CAESURA_EDITOR_WEBROOT")) {
-        if (envRoot[0] != '\0') {
-            std::error_code ec;
-            fs::path ep(envRoot);
-            if (fs::exists(ep / "index.html", ec)) {
-                servedRoot      = ep.string();
-                overrideActive  = true;
-            } else {
-                printf("[EDITOR] webroot override ignored (dir missing index.html): %s\n",
-                       envRoot);
-            }
-        }
-    }
-
     if (!servedRoot.empty() && fs::exists(servedRoot)) {
-        const auto indexFile = (fs::path(servedRoot) / "index.html").string();
+        const auto indexFile = servedRoot / "index.html";
         auto serveIndex = [indexFile](const httplib::Request&, httplib::Response& res) {
             std::ifstream f(indexFile, std::ios::binary);
             if (!f) {
@@ -1416,23 +1427,10 @@ void EditorServer::serverLoop(int port) {
                              std::istreambuf_iterator<char>());
             res.set_content(body, "text/html; charset=utf-8");
         };
-        if (overrideActive) {
-            // Loud contract: "webroot override active" is only printed when
-            // the mount actually registered, so a gate grep on that line
-            // cannot be satisfied by a silent set_mount_point failure.
-            const bool mounted = svr.set_mount_point("/", servedRoot);
-            if (mounted) {
-                printf("[EDITOR] webroot override active: %s\n", servedRoot.c_str());
-            } else {
-                printf("[EDITOR] webroot override mount FAILED: %s (single-file fallback)\n",
-                       servedRoot.c_str());
-                overrideActive = false;
-            }
-        }
         svr.Get("/", serveIndex);
         svr.Get("/index.html", serveIndex);
         if (!overrideActive) {
-            printf("[EditorServer] Serving web editor from: %s\n", servedRoot.c_str());
+            printf("[EditorServer] Serving web editor from: %s\n", pathToUtf8(servedRoot).c_str());
         }
     }
 

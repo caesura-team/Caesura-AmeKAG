@@ -133,6 +133,7 @@ public:
     void destroyPostFx(PostFxHandle handle) override;
     void clearPostFx() override;
     bool isPostFxActive() const override;
+    bool setSceneBlur(float radius) override;
 
     // -- Batch protocol (spec [0.3])
     void beginBatch() override;
@@ -174,6 +175,7 @@ private:
         uint8_t lutSize = 0;
     };
     std::vector<PostFxStage> m_postFxStages;        // ordered chain (stable handles = index+1)
+    float m_sceneBlurRadius = 0.0f;
 
     // Scratch render targets. Each entry tracks its size so the chain can
     // ping-pong between passes and rebuild on resize. The scene target is

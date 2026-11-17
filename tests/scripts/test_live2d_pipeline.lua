@@ -33,6 +33,16 @@ local native = {
         if reject_voice then return false, "fixture unsupported mouth" end
         return models[handle] ~= nil
     end,
+    play_motion = function(handle, name, fadein, fadeout)
+        record("motion", handle, name, fadein, fadeout)
+        if not models[handle] or name ~= "TapBody/0" then return false, "motion not found" end
+        return true
+    end,
+    set_expression = function(handle, name, weight)
+        record("expression", handle, name, weight)
+        if not models[handle] or name ~= "F01" then return false, "expression not found" end
+        return true
+    end,
 }
 _G.Live2D = native
 local tokenizer, scheduler = require("tokenizer"), require("scheduler")
@@ -71,8 +81,91 @@ check("typed show values reach native boundary", calls[2] and calls[2][1]=="show
 check("voice and off preserve boolean mode", calls[3] and calls[3][1]=="voice" and calls[3][3]==true
     and calls[4] and calls[4][1]=="voice" and calls[4][3]==false)
 check("legacy default source routes manual mouth", calls[5] and calls[5][1]=="mouth" and calls[5][3]==0.8)
-check("loaded models still reject save capture", not pcall(transients.assert_saveable, ctx))
+check("a fully declared Live2D model is saveable", pcall(transients.assert_saveable, ctx))
 local before = #calls
+ok = execute(ctx, '[live2d_motion model=haru motion="TapBody/0" fadein=250 fadeout=750]')
+local motion = calls[before + 1]
+check("motion reaches the context-owned model with second-based fades",
+    ok and motion and motion[1]=="motion" and motion[2]==handle and motion[3]=="TapBody/0"
+        and motion[4]==0.25 and motion[5]==0.75)
+check("motion metadata reflects actual admission", ctx.live2d.haru.current_motion=="TapBody/0")
+before = #calls
+ok = execute(context(), '[live2d_motion model=haru motion="TapBody/0"]')
+check("motion cannot borrow a handle from another context", not ok and #calls==before)
+ok = execute(ctx, '[live2d_motion model=haru motion=unknown]')
+check("rejected motion leaves the last admitted motion unchanged",
+    not ok and #calls==before+1 and ctx.live2d.haru.current_motion=="TapBody/0")
+before = #calls
+ok = execute(ctx, '[live2d_expression model=haru expression=F01 weight=0.25]')
+local expression = calls[before + 1]
+check("expression reaches the current model with its authored weight",
+    ok and expression and expression[1]=="expression" and expression[2]==handle
+        and expression[3]=="F01" and expression[4]==0.25)
+before = #calls
+ok = execute(context(), '[live2d_expression model=haru expression=F01]')
+check("expression cannot borrow another context's model", not ok and #calls==before)
+ok = execute(ctx, '[live2d_expression model=haru expression=unknown]')
+check("rejected expression preserves the last admitted state", not ok and #calls==before+1
+    and ctx.live2d.haru.expression=="F01" and ctx.live2d.haru.expression_weight==0.25)
+ok = execute(ctx, '[live2d_expression model=haru expression=F01 weight=0]')
+check("zero weight reaches the native boundary", ok and #calls==before+2 and calls[#calls][4]==0)
+local saved, snapshot = pcall(function()
+    return require("kag.live2d_state").capture(ctx)
+end)
+check("capture preserves hidden placement and excludes live handles", saved and snapshot.haru.visible==false
+    and snapshot.haru.x==12 and snapshot.haru.y==34 and snapshot.haru.scale==1.5
+    and snapshot.haru.handle==nil and snapshot.haru.expression_weight==0
+    and snapshot.haru.current_motion=="TapBody/0" and snapshot.haru.lip_sync==0.8)
+local model_state = require("kag.live2d_state")
+local invalid = require("kag.save_state").copy(snapshot)
+invalid.haru.expression = "unknown"
+local failed_handle = next_handle + 1
+check("failed model preparation releases the candidate and preserves the live model",
+    not pcall(model_state.prepare, invalid) and models[failed_handle]==nil and models[handle]~=nil)
+local prepared = model_state.prepare(snapshot)
+local prepared_handle = prepared.handles[1]
+check("prepared hidden model has a distinct handle", prepared_handle~=handle and models[prepared_handle]~=nil)
+_G.Restore = {stop_transients=function(keep)
+    for loaded in pairs(models) do
+        if not keep or loaded ~= keep[1] then models[loaded]=nil end
+    end
+    return true
+end}
+local retired = {_live2dHandles={haru=handle},live2d={haru={}}}
+check("retiring the previous scene preserves the prepared model",
+    transients.stop(retired, prepared.handles) and models[handle]==nil and models[prepared_handle]~=nil)
+model_state.apply(prepared, ctx)
+check("commit adopts the restored model and keeps it hidden",
+    ctx._live2dHandles.haru==prepared_handle and ctx.live2d.haru.visible==false
+    and next(prepared.handles)==nil and calls[#calls][1]=="mouth")
+handle = prepared_handle
+_G.Restore = nil
+do
+    local presentation = require("kag.presentation")
+    presentation.adopt(ctx)
+    local candidate = {models=model_state.prepare(snapshot)}
+    local candidate_handle = candidate.models.handles[1]
+    _G.Restore = {stop_transients=function() return false, "old cleanup failed" end}
+    check("failed owner retirement discards the prepared models",
+        not pcall(presentation.apply,candidate,{}) and models[candidate_handle]==nil and models[handle]~=nil)
+    presentation.adopt(nil)
+    _G.Restore = nil
+end
+do
+    local rollback = require("kag.snapshot")
+    local point = rollback.capture(ctx)
+    local backend = require("backend")
+    local audio_stop = backend.audio_stop
+    backend.audio_stop = function() return false, "fixture voice cleanup failed" end
+    local candidate_handle = next_handle + 1
+    check("direct rollback releases a model if a later commit step fails",
+        not pcall(rollback.restore,ctx,point) and models[candidate_handle]==nil
+        and models[handle]==nil and next(ctx._live2dHandles)==nil)
+    backend.audio_stop = audio_stop
+    model_state.apply(model_state.prepare(snapshot), ctx)
+    handle = ctx._live2dHandles.haru
+end
+before = #calls
 ok = execute(ctx, '[live2d_load model=haru storage="different.model3.json"]')
 check("duplicate name fails before calling native load", not ok and #calls==before
     and ctx._live2dHandles and ctx._live2dHandles.haru==handle)

@@ -244,7 +244,7 @@ export class EngineClient {
 
   constructor(
     private base = '/api',
-    private fetchImpl: typeof fetch = fetch,
+    private fetchImpl: typeof fetch = (input, init) => globalThis.fetch(input, init),
   ) {}
 
   setToken(token: string) {

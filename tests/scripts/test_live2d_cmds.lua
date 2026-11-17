@@ -1,6 +1,6 @@
 -- =============================================================================
 --  Caesura (AmeKAG) — test_live2d_cmds.lua
---  Schema/declaration tests; motion/expression ctx fields are not native proof.
+--  Schema/declaration tests; model admission is covered by the pipeline suite.
 -- =============================================================================
 
 local BS = string.char(92)
@@ -38,16 +38,14 @@ local val_motion = schema.coerce("live2d_motion", { model = "aoi", motion = "wav
 check(val_motion.fadein == 10000, "fadein clamped to max 10000")
 check(val_motion.fadeout == 0, "fadeout clamped to min 0")
 
-charCmds.live2d_motion(ctx, val_motion)
-check(ctx.live2d["aoi"].current_motion == "wave", "Motion state updated in ctx")
-check(ctx.live2d["aoi"].fadein == 10000, "Fadein stored in ctx")
+check(not pcall(charCmds.live2d_motion, ctx, val_motion), "Motion requires a loaded model")
+check(ctx.live2d == nil, "Rejected motion does not fabricate model state")
 
 -- 3. Expression
 local val_expr = schema.coerce("live2d_expression", { model = "aoi", expression = "smile", weight = 1.5 }, ctx, 2)
 check(val_expr.weight == 1.0, "Expression weight clamped to 1.0")
-charCmds.live2d_expression(ctx, val_expr)
-check(ctx.live2d["aoi"].expression == "smile", "Expression state updated")
-check(ctx.live2d["aoi"].expression_weight == 1.0, "Expression weight stored")
+check(not pcall(charCmds.live2d_expression, ctx, val_expr), "Expression requires a loaded model")
+check(ctx.live2d == nil, "Rejected expression does not fabricate model state")
 
 -- 4. Lip Sync schema/declaration compatibility. The proxy below is a fake:
 -- this retained ctx assertion proves metadata only, never a native model.

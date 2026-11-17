@@ -88,9 +88,10 @@ std::size_t NullAnimationBackend::loadedModelCount() const {
     return m_sprites.size();
 }
 
-void NullAnimationBackend::clearModels() {
-    while (!m_sprites.empty()) {
-        unloadModel(m_sprites.begin()->first);
+void NullAnimationBackend::clearModels(std::span<const int> keep) {
+    for (auto it = m_sprites.begin(); it != m_sprites.end();) {
+        const int handle = (it++)->first;
+        if (std::find(keep.begin(), keep.end(), handle) == keep.end()) unloadModel(handle);
     }
 }
 
@@ -141,12 +142,12 @@ void NullAnimationBackend::render(float /*dt*/) {
     }
 }
 
-bool NullAnimationBackend::playMotion(int /*handle*/, const std::string& /*name*/) {
+bool NullAnimationBackend::playMotion(int, const std::string&, float, float) {
     return false; // No animation in null backend
 }
 
-void NullAnimationBackend::setExpression(int /*handle*/, const std::string& /*name*/) {
-    // No-op in null backend
+bool NullAnimationBackend::setExpression(int, const std::string&, float) {
+    return false;
 }
 
 void NullAnimationBackend::setParameter(int /*handle*/, const std::string& /*param*/, float /*value*/) {

@@ -228,6 +228,7 @@ public:
     void destroyPostFx(PostFxHandle) override {}
     void clearPostFx() override {}
     bool isPostFxActive() const override { return false; }
+    bool setSceneBlur(float) override { return false; }
     RenderUniformHandle getDefaultSampler() const override { return {}; }
     RenderProgramHandle getFallbackProgram() const override { return {}; }
     RenderProgramHandle getModulatedTextureProgram() const override { return {}; }
@@ -354,7 +355,7 @@ public:
     void unloadModel(int) override {}
     bool isLoaded(int) const override { return false; }
     std::size_t loadedModelCount() const override { return 0; }
-    void clearModels() override {}
+    void clearModels(std::span<const int>) override {}
     void showModel(int, float, float, float) override {}
     void hideModel(int) override {}
     void setOpacity(int, float) override {}
@@ -362,8 +363,8 @@ public:
         ++m_probe.animationRenderCalls;
         m_probe.lastAnimationDt = dt;
     }
-    bool playMotion(int, const std::string&) override { return false; }
-    void setExpression(int, const std::string&) override {}
+    bool playMotion(int, const std::string&, float, float) override { return false; }
+    bool setExpression(int, const std::string&, float) override { return false; }
     void setParameter(int, const std::string&, float) override {}
     const char* name() const override { return "TestAnimation"; }
 

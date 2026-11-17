@@ -19,12 +19,12 @@
     },
     "blur": {
       "observable": "VERIFIED",
-      "platform_tested": "-",
-      "packaged": "-",
-      "reason": "t117 复核：模块委托链 VFX.blur→rtt.alloc GPU blur（headless 无 GPU 降级注记）；U36/B1：扫描器嵌套函数切片缺陷修复后机器判级自动 CLOSED（效果面 scripts/vfx.lua:267 backend.submit_vfx effect=2，位于嵌套 local function 之后）；运行面能力 render.blur 仍 unsupported/command_not_wired（C 类明确拒绝），静态 CLOSED 不代表运行支持。",
-      "evidence": "scripts/kag/commands/transition.lua:292 → scripts/vfx.lua:183 VFX.blur（rtt.alloc GPU blur）",
-      "source": "t117 task output",
-      "note": "U36/B1：扫描器嵌套函数切片缺陷修复后，机器判级自动 CLOSED（效果面 scripts/vfx.lua:267 backend.submit_vfx effect=2，位于嵌套 local function 之后）；运行面能力 render.blur 仍为 unsupported/command_not_wired（C 类明确拒绝），本条静态 CLOSED 不代表运行支持。"
+      "platform_tested": "web,win",
+      "packaged": "web",
+      "reason": "全屏模糊在正常的场景合成中逐帧生效，完成或取消时恢复清晰。",
+      "evidence": "D3D11 严格模式逐帧对照。Chrome 从 Web 包冷启动背景和模糊命令，验证图片解码后的实际像素及下一页恢复。",
+      "source": "2026-11-10 原生及 2026-11-12 Web 模糊命令场景",
+      "note": "原生需要 postfx.softblur。Web 需要带 CSS filter 和图片解码的场景渲染器。"
     },
     "br": {
       "observable": "VERIFIED（位置级）",
@@ -155,14 +155,14 @@
       "source": "t113 task output"
     },
     "live2d_expression": {
-      "observable": "?",
-      "platform_tested": "-",
-      "packaged": "-",
-      "status": "EXPERIMENTAL",
-      "reason": "t119 判级：写 ctx.live2d[model].expression 状态；LIVE2D=OFF 无消费+Tested=0——feature-gated；U36 复核：原生绑定 Live2DBinding.cpp:119-126 仅 load/show/hide/unload/set_mouth/set_voice_lipsync，无 expression API；能力目录 kag.live2d_expression native=unsupported/command_not_wired；审计列为明确拒绝（运行面拒绝实测：精确 feature/reason、0 效果）。",
-      "evidence": "scripts/kag/commands/character.lua:209-217；src/script/bindings/Live2DBinding.cpp:119-126；config/runtime-capabilities.json:61-64；tests/fixtures/command_contracts/corpus.json:1670-1691（live2d-expression-refusal）；tests/scripts/test_live2d_cmds.lua:32/:46-48；tests/scripts/test_capability_closure_residuals.lua（拒绝证据）",
-      "source": "t119 task output",
-      "note": "同 live2d_motion（M4 特性矩阵 Live2D 行）。C 类：保持 unsupported 明确拒绝。B4 提案：IAnimationBackend 增 expression/motion 播放 + Live2DBinding luaL_Reg + handler 改绑定调用，需 Cubism SDK 实机/资产证据后再重评。"
+      "observable": "VERIFIED",
+      "platform_tested": "win",
+      "packaged": "win",
+      "status": "CLOSED",
+      "reason": "原生 KAG 将命名表情和权重应用到当前剧情的 Cubism 模型。",
+      "evidence": "Windows D3D11 严格模式 Haru F05 的全权重、四分之一权重、零权重及首次显示前应用对照。解压的 SDK-on Debug 游戏包通过正式入口导出 110 帧。",
+      "source": "2026-11-13 Live2D 表情集成",
+      "note": "原生需要就绪的 Cubism 后端。Web 仍报告不支持。"
     },
     "live2d_lip_sync": {
       "observable": "VERIFIED",
@@ -175,14 +175,14 @@
       "note": "状态只闭合已选 Windows 原生口型路径；未打包、未测扬声器声压或非 Windows SDK，不能推广为全平台发布通过。"
     },
     "live2d_motion": {
-      "observable": "?",
-      "platform_tested": "-",
-      "packaged": "-",
-      "status": "EXPERIMENTAL",
-      "reason": "t119 判级：handler 仅写 ctx.live2d[model].current_motion 状态；本构建 CAESURA_LIVE2D=OFF（NullAnimation）无消费方+Tested=0——feature-gated；U36 复核：原生绑定 Live2DBinding.cpp:119-126 无 motion API；能力目录 kag.live2d_motion native=unsupported/command_not_wired；审计列为明确拒绝（运行面拒绝实测：精确 feature/reason、0 效果）。",
-      "evidence": "scripts/kag/commands/character.lua:197-206；src/script/bindings/Live2DBinding.cpp:119-126；config/runtime-capabilities.json:57-60；tests/fixtures/command_contracts/corpus.json:1645-1667（live2d-motion-refusal）；tests/scripts/test_live2d_cmds.lua:31/:37-41；tests/scripts/test_capability_closure_residuals.lua（拒绝证据）",
-      "source": "t119 task output",
-      "note": "C 类：保持 unsupported 明确拒绝（本构建 CAESURA_LIVE2D=OFF 无消费方，SDK-ON 也无绑定 API）。B4 提案：IAnimationBackend 扩展 motion 播放 + 绑定 + handler 接线，需 SDK 实机/资产证据。"
+      "observable": "VERIFIED",
+      "platform_tested": "win",
+      "packaged": "win",
+      "status": "CLOSED",
+      "reason": "原生 KAG 通过当前剧情模型句柄启动 Cubism 动作，并在启动成功后记录动作状态。",
+      "evidence": "Windows D3D11 严格模式 Haru TapBody/1 与无动作对照各 84 帧。两个有效文件同名时拒绝简称，精确组和索引仍可播放。SDK-on 游戏包从解压目录运行到动作场景完成标记。",
+      "source": "2026-11-12 Live2D 动作集成",
+      "note": "原生运行时要求编译并启用 Cubism。Web 仍报告不支持。"
     },
     "loadplace": {
       "observable": "VERIFIED",
@@ -559,13 +559,13 @@
       "source": "t119 task output"
     },
     "xfadebgm": {
-      "observable": "?",
-      "platform_tested": "-",
+      "observable": "VERIFIED",
+      "platform_tested": "web,win",
       "packaged": "-",
-      "reason": "U36 复核（C 类明确拒绝）：静态链真实——AudioCommands.xfadebgm （audio.lua:196-205）→ Backend.audio_xfade（backend.lua:456-468）。运行面按设计拒绝：能力目录 audio.crossfade native=unsupported/backend_route_not_wired（config/runtime-capabilities.json:49-52），capability_backend.lua:77 在调用原函数前拒绝（实测 applied=false、0 效果调用）。根因：backend_factory.lua:103-124 无 xfade 路由，原生音频引擎无交叉淡化 API；scripts/audio.lua:126-133 仅有顺序 stop→play 兜底，非真交叉。",
-      "evidence": "config/runtime-capabilities.json:49-52；scripts/capability_backend.lua:77；tests/fixtures/command_contracts/corpus.json:1584-1609（audio-crossfade-refusal，external_boundary 明示重评前不得沿用旧拒绝策略）；tests/scripts/test_audio_fade.lua、test_target_capabilities.lua:270、test_schema_types.lua:87；tests/scripts/test_capability_closure_residuals.lua（能力层拒绝精确 feature/reason、0 效果）",
-      "source": "U36 i9-u36-closure（2026-10-26）",
-      "note": "C 类：保持明确拒绝而非静默成功。B3 提案：音频引擎双流交叉淡化 + factory 路由，完成并取真实证据后再重评能力目录与 corpus 用例。"
+      "reason": "新曲启动成功后退场旧曲，两条轨道同时改变 clip 增益，保持总线音量。剧本等待过渡时长，失败时保留旧曲。没有音频后端时仍返回 backend_unavailable。",
+      "evidence": "tests/cpp/test_audio_native_contract.cpp；web/audio-fade.integration.test.js；web/test-support/audio-pcm-probe.js；tests/scripts/test_capability_closure_residuals.lua",
+      "source": "2026-11-10 原生解码混音与 Chrome WebAudio 复核",
+      "note": "原生和浏览器均采样两路 PCM 并验证退场，Web 场景替换验证清理。物理输出和打包候选独立验证。"
     },
     "text": {
       "observable": "VERIFIED",

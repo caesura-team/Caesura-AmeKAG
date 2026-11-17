@@ -28,6 +28,9 @@ public:
     // End a Cubism frame and transfer pixels to bgfx
     virtual void endFrame(CsmRendering::CubismRenderer* renderer, bgfx::TextureHandle bgfxTex) = 0;
 
+    // Shared render paths have no renderer-specific target.
+    virtual void releaseModelTarget(CsmRendering::CubismRenderer*) {}
+
     // Resize render target
     virtual void resize(int width, int height) = 0;
 

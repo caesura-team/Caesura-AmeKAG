@@ -1,4 +1,5 @@
 #include "doctest.h"
+#include "TestPaths.h"
 #include "audio/NullAudioBackend.h"
 #include "audio/SoLoudAudioEngine.h"
 #include "di/BackendRegistry.h"
@@ -8,6 +9,9 @@
 #include "script/bindings/KAGBinding.h"
 #include "script/bindings/RenderBinding.h"
 #include <filesystem>
+#include <fstream>
+#include <cmath>
+#include <cstring>
 #include <memory>
 #include <string>
 #include <array>
@@ -100,8 +104,8 @@ struct AudioNativeFixture {
     Caesura::IAudioBackend* previous = registry.getAudioBackend();
     std::unique_ptr<lua_State, decltype(&lua_close)> lua{luaL_newstate(), lua_close};
     std::string error;
-    AudioNativeFixture() {
-        registry.setAudioBackend(&audio);
+    explicit AudioNativeFixture(Caesura::IAudioBackend* backend = nullptr) {
+        registry.setAudioBackend(backend ? backend : &audio);
         if (!lua) return;
         luaL_openlibs(lua.get());
         Caesura::engine_binding::registerEngineBindings(lua.get());
@@ -153,6 +157,99 @@ struct AudioNativeFixture {
         )lua");
     }
 };
+
+std::string writeCrossfadeTrack(const std::filesystem::path& path, size_t channel) {
+    constexpr size_t frames = 4800;
+    std::vector<uint8_t> bytes(44 + frames * 4, 0);
+    const auto word = [&](size_t offset, uint32_t value, size_t count) {
+        for (size_t i = 0; i < count; ++i) {
+            bytes[offset + i] = static_cast<uint8_t>(value >> (8 * i));
+        }
+    };
+    std::memcpy(bytes.data(), "RIFF", 4);
+    std::memcpy(bytes.data() + 8, "WAVEfmt ", 8);
+    std::memcpy(bytes.data() + 36, "data", 4);
+    word(4, static_cast<uint32_t>(bytes.size() - 8), 4);
+    word(16, 16, 4); word(20, 1, 2); word(22, 2, 2);
+    word(24, 48000, 4); word(28, 48000 * 4, 4);
+    word(32, 4, 2); word(34, 16, 2); word(40, frames * 4, 4);
+    for (size_t frame = 0; frame < frames; ++frame) {
+        word(44 + frame * 4 + channel * 2, 8000, 2);
+    }
+    std::ofstream out(path, std::ios::binary);
+    out.write(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+    out.close();
+    REQUIRE(out.good());
+    const auto utf8 = path.generic_u8string();
+    return {reinterpret_cast<const char*>(utf8.data()), utf8.size()};
+}
+}
+
+TEST_CASE("Audio native contract: xfadebgm overlaps two decoded tracks and waits") {
+    Caesura::TestPaths::ScopedTempDir dir("audio-crossfade");
+    const auto oldTrack = writeCrossfadeTrack(dir.path() / "old.wav", 0);
+    const auto newTrack = writeCrossfadeTrack(dir.path() / "new.wav", 1);
+    Caesura::SoLoudAudioEngine audio{Caesura::SoLoudAudioEngine::OutputMode::ManualMix};
+    REQUIRE(audio.init());
+    AudioNativeFixture f(&audio);
+    REQUIRE(f.lua != nullptr);
+    REQUIRE_MESSAGE(f.boot(), f.error);
+    lua_pushlstring(f.lua.get(), newTrack.data(), newTrack.size());
+    lua_setglobal(f.lua.get(), "NEXT_BGM");
+
+    constexpr unsigned blockFrames = 512;
+    std::array<float, blockFrames * 2> pcm{};
+    const auto mix = [&] {
+        audio.soloud().mix(pcm.data(), blockFrames);
+        audio.update(0);
+    };
+    const auto meanAmplitude = [&](size_t channel) {
+        float total = 0;
+        for (size_t frame = 0; frame < blockFrames; ++frame) {
+            total += std::abs(pcm[frame * 2 + channel]);
+        }
+        return total / blockFrames;
+    };
+    audio.setBusVolume("bgm", 0.65f);
+    REQUIRE(audio.playBGM(oldTrack, Caesura::AudioPlaybackOptions{1.0f, true, 0.0f}) > 0);
+    for (int i = 0; i < 4; ++i) mix();
+    const float original = meanAmplitude(0);
+    REQUIRE(original > 0.05f);
+    CHECK(meanAmplitude(1) < 0.001f);
+
+    REQUIRE_MESSAGE(f.run(R"lua(
+        local tokens = require('tokenizer').parse(
+            '[xfadebgm storage="' .. NEXT_BGM .. '" time=200][eval exp="f.done = true"][end]')
+        fade_ctx = {f={},sf={},tf={},lf={},mp={},call_stack={},tokens=tokens,
+            current_scene='crossfade.ks',token_index=1,stop_flag=false}
+        fade_ctx.handle_error = function(_, message) error(message) end
+        fade_co = coroutine.create(function() require('scheduler').run(fade_ctx,tokens,1) end)
+        assert(coroutine.resume(fade_co, 0))
+        assert(fade_ctx._audio_wait and not fade_ctx.f.done, 'crossfade must wait')
+    )lua"), f.error);
+    for (int i = 0; i < 8; ++i) mix();
+    CHECK(meanAmplitude(0) > original * 0.15f);
+    CHECK(meanAmplitude(0) < original * 0.9f);
+    CHECK(meanAmplitude(1) > original * 0.15f);
+    REQUIRE_MESSAGE(f.run("assert(coroutine.resume(fade_co, 85)); assert(not fade_ctx.f.done)"), f.error);
+
+    for (int i = 0; i < 16; ++i) mix();
+    CHECK(meanAmplitude(0) < 0.001f);
+    CHECK(meanAmplitude(1) == doctest::Approx(original).epsilon(0.05));
+    CHECK(audio.getBusVolume("bgm") == doctest::Approx(0.65));
+    REQUIRE_MESSAGE(f.run(R"lua(
+        assert(coroutine.resume(fade_co, 171))
+        assert(not fade_ctx._audio_wait and #fade_ctx.active_operations == 0)
+        assert(coroutine.resume(fade_co, 0))
+        assert(fade_ctx.f.done and not fade_ctx._audio_wait and #fade_ctx.active_operations == 0)
+        local value, outcome = require('backend').audio_xfade('bgm', NEXT_BGM .. '.missing', 0.2)
+        assert((not value or value == 0) and outcome.status == 'failed' and outcome.reason == 'resource_failed')
+    )lua"), f.error);
+    for (int i = 0; i < 24; ++i) mix();
+    CHECK(meanAmplitude(1) == doctest::Approx(original).epsilon(0.05));
+    audio.stopBGM(0);
+    for (int i = 0; i < 4; ++i) mix();
+    CHECK(meanAmplitude(1) < 0.001f);
 }
 
 TEST_CASE("Audio native contract: canonical BGM and explicit bus setters remain positive controls") {

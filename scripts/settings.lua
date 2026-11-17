@@ -12,6 +12,10 @@ local audio   = require("audio")
 local i18n    = require("i18n")
 local Operation = require("kag.operation")
 local layout_math = require("kag.layout_math")  -- [R107-A] declarative vbox/hbox/grid math
+local draw_text = layers.queue_overlay_text or backend.render_text
+local clear_text = layers.clear_overlay_text or function() end
+local create_layer = layers.create_menu_layer or layers.ensure
+local remove_layer = layers.remove_menu_layer or layers.remove_layer
 
 -- Language hot-switch full-page redraw: after i18n.load the already
 -- displayed page, backlog, choice labels and closed captions re-localize
@@ -54,6 +58,7 @@ end
 local function cleanup(ctx, owner)
     if not state.active or state.ctx ~= ctx then return false end
     if owner and state.scope ~= owner then return false end
+    clear_text()
     state.active = false
     state.ctx = nil
     state.scope = nil
@@ -68,6 +73,7 @@ local function cleanup(ctx, owner)
         if layer then
             local texture = layer.texture
             layer.visible, layer.texture = false, nil
+            pcall(remove_layer, layer)
             if texture then pcall(backend.destroy_texture, texture) end
         end
     end
@@ -212,36 +218,36 @@ function Settings.show(ctx, edits_only)
     local panelY = (h - panelH) / 2
 
     -- Layer 1: Dark semi-transparent full-screen background
-    local bg = layers.ensure(ctx, "_settings_bg", 94)
+    local bg = create_layer(ctx, "_settings_bg", 94)
+    state.bgLayer = bg
     bg.visible = true
     bg.x, bg.y = 0, 0
     bg.w, bg.h = w, h
     bg.texture = solid(0, 0, 0, 160)
-    state.bgLayer = bg
 
     -- Layer 2: Panel border (2px visible border around the panel)
-    local border = layers.ensure(ctx, "_settings_border", 95)
+    local border = create_layer(ctx, "_settings_border", 95)
+    state.borderLayer = border
     border.visible = true
     border.x, border.y = panelX - 2, panelY - 2
     border.w, border.h = panelW + 4, panelH + 4
     border.texture = solid(80, 80, 180, 255)
-    state.borderLayer = border
 
     -- Layer 3: Panel background (slightly dark blue-ish panel)
-    local panel = layers.ensure(ctx, "_settings_panel", 96)
+    local panel = create_layer(ctx, "_settings_panel", 96)
+    state.panelLayer = panel
     panel.visible = true
     panel.x, panel.y = panelX, panelY
     panel.w, panel.h = panelW, panelH
     panel.texture = solid(15, 15, 40, 235)
-    state.panelLayer = panel
 
     -- Layer 4: Cursor highlight layer (colored rectangle behind selected row)
-    local cursor = layers.ensure(ctx, "_settings_cursor", 97)
+    local cursor = create_layer(ctx, "_settings_cursor", 97)
+    state.cursorLayer = cursor
     cursor.visible = true
     cursor.texture = solid(60, 100, 200, 100)
     cursor.w = panelW - 80
     cursor.h = 28
-    state.cursorLayer = cursor
 
     -- Store panel geometry for rendering
     state.panelX = panelX
@@ -384,6 +390,7 @@ end
 -- ===========================================================================
 function Settings._render(ctx)
     if not state.active then return end
+    clear_text()
     local w, h = backend.get_resolution()
     local vw, vh = require("viewport").wh()  -- viewported from 1280x720
     w = w or vw
@@ -400,10 +407,10 @@ function Settings._render(ctx)
     -- Title: "Settings / 設置" at top of panel
     local titleStr = "Settings / 設置"
     local titleX = px + (pw - #titleStr * 9) / 2  -- rough centering
-    backend.render_text(titleStr, titleX, py + 12, 255, 200, 60, 255)
+    draw_text(titleStr, titleX, py + 12, 255, 200, 60, 255)
 
     -- Title separator line
-    backend.render_text(string.rep("-", math.floor(pw / 9)), px + 20, py + 28, 80, 80, 140, 200)
+    draw_text(string.rep("-", math.floor(pw / 9)), px + 20, py + 28, 80, 80, 140, 200)
 
     -- Menu items
     -- R107-A PILOT: row x/y for the 3 volume-slider rows come from the
@@ -434,7 +441,7 @@ function Settings._render(ctx)
         elseif item.type == "toggle" and item.value then
             r, g, b = 100, 255, 100  -- green for ON toggles
         end
-        backend.render_text(line, lineX, lineY, r, g, b, 255)
+        draw_text(line, lineX, lineY, r, g, b, 255)
     end
 
     -- Cursor highlight position (position behind the selected row)
@@ -443,9 +450,10 @@ function Settings._render(ctx)
         state.cursorLayer.y = geo.rowY(state.cursor) - 2
     end
 
-    -- Footer inside panel
-    local footerY = py + ph - 24
-    backend.render_text("Arrow Keys: Navigate | Left/Right: Adjust | Enter: Confirm | ESC: Back", px + 20, footerY, 150, 150, 200, 255)
+    -- Keep the controls below the last selectable row.
+    local footerY = py + ph + 10
+    draw_text("Up/Down: Select   Left/Right: Adjust   Enter: Confirm   Esc: Back",
+        px + 20, footerY, 150, 150, 200, 255)
 end
 
 -- ===========================================================================

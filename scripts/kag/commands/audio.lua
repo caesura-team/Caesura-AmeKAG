@@ -7,6 +7,7 @@
 -- =============================================================================
 
 local backend = require("backend")
+local Operation = require("kag.operation")
 
 local AudioCommands = {}
 
@@ -182,7 +183,7 @@ end
 
 -- =============================================================================
 --  [xfadebgm storage="file.ogg" time=2000]
---  Cross-fade: fade out current BGM, then start new BGM with fade-in.
+--  Fade out the current BGM as the next BGM fades in. Wait after admission.
 -- =============================================================================
 
 -- Neo-Genesis contract: typed crossfade (time clamped).
@@ -196,12 +197,24 @@ schema.define("xfadebgm", {
 function AudioCommands.xfadebgm(ctx, params)
     local file  = resolve_file(params)
     local time  = params.time  -- schema-typed
-    if not file then
+    if type(file) ~= "string" or file == "" then
         print("[AudioCmd] xfadebgm: no file specified")
         return
     end
 
-    backend.audio_xfade("bgm", file, time / 1000.0)
+    local can_wait = ctx and coroutine.isyieldable()
+    if can_wait and (ctx._session_active == false or ctx.stop_flag or ctx._next_index) then return end
+    local audio_wait <close> = can_wait and audio_wait_scope(ctx, "bgm") or nil
+    local operation <close> = can_wait and Operation.start(ctx) or nil
+    local started, result = backend.audio_xfade("bgm", file, time / 1000.0)
+    if operation and started and started ~= 0 then
+        local remaining = time
+        while remaining > 0 and not operation.token.cancelled and not ctx.stop_flag and not ctx._next_index do
+            remaining = remaining - (tonumber(coroutine.yield()) or 16)
+        end
+    end
+    if operation then operation:complete() end
+    return started, result
 end
 
 -- =============================================================================

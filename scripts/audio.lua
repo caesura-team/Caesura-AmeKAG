@@ -124,11 +124,11 @@ end
 -- =========================================================================
 
 function Audio.crossfade_bgm(new_file, fade_time)
+    if new_file then
+        return backend.audio_xfade("bgm", new_file, tonumber(fade_time) or 1.0)
+    end
     if Audio.is_bgm_playing() then
         Audio.stop_bgm(fade_time)
-    end
-    if new_file then
-        return Audio.play_bgm(new_file, { fadein = fade_time })
     end
 end
 

@@ -127,6 +127,7 @@ public:
     void destroyPostFx(PostFxHandle) override {}
     void clearPostFx() override {}
     bool isPostFxActive() const override { return false; }
+    bool setSceneBlur(float) override { return false; }
 
     // -- shaders / sampler --
     RenderUniformHandle getDefaultSampler() const override { return {}; }

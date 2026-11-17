@@ -613,6 +613,13 @@ static int lua_Render_is_postfx_active(lua_State* L) {
     return 1;
 }
 
+static int lua_Render_set_scene_blur(lua_State* L) {
+    const auto radius = static_cast<float>(luaL_checknumber(L, 1));
+    auto* dev = getRender(L);
+    lua_pushboolean(L, dev && dev->setSceneBlur(radius));
+    return 1;
+}
+
 // -- Render.stretch_blt(dstTexId, dx,dy,dw,dh, srcTexId, sx,sy,sw,sh, filter) --
 
 static int lua_Render_stretch_blt(lua_State* L) {
@@ -1061,6 +1068,7 @@ static const luaL_Reg render_functions[] = {
     { "clear_postfx",         lua_Render_clear_postfx         },
     { "is_postfx_supported",  lua_Render_is_postfx_supported  },
     { "is_postfx_active",     lua_Render_is_postfx_active     },
+    { "set_scene_blur",       lua_Render_set_scene_blur       },
     { "stretch_blt",        lua_Render_stretch_blt        },
     { "affine_blt",         lua_Render_affine_blt         },
     { "fill_viewport",      lua_Render_fill_viewport      },

@@ -4,7 +4,6 @@
 -- Headless test for the [vfx postfx=...] contract. Uses the SAME mock
 -- kag/backend pattern as test_vfx_clamp.lua:
 --   * backend  : recorder with a no-op __index fallback
---   * rtt      : headless stub (blur guards on missing rtt.alloc)
 --   * layers   : stub
 --
 -- The round-102 [vfx] schema is VALIDATION-ONLY: postfx is an enum
@@ -17,7 +16,7 @@
 --   (1) postfx=none closes safely (clear_postfx, still returns cleanly);
 --   (2) invalid postfx value rejected by schema (pcall false);
 --   (3) missing-param defaults (strength 1.0, radius 0, amount 0, lutMix 0);
---   (4) compatibility: fade/blur unchanged with NO postfx parameter.
+--   (4) fade and timed scene blur route to their own effects without postfx=.
 --
 -- =============================================================================
 
@@ -36,6 +35,10 @@ local backendMock = setmetatable({
     submit_vfx = function(...)
         calls[#calls + 1] = { 'submit_vfx', ... }
     end,
+    set_scene_blur = function(radius)
+        calls[#calls + 1] = { 'set_scene_blur', radius }
+        return true
+    end,
     clear_postfx = function()
         calls[#calls + 1] = { 'clear_postfx' }
     end,
@@ -48,18 +51,11 @@ local backendMock = setmetatable({
     end,
 }, { __index = function() return function() end end })
 
--- rtt stub: blur's array-of-two alloc + free is the only surface exercised.
-local rttMock = {
-    alloc = function(w, h) return 1000 end,
-    free = function(h) end,
-}
-
 local savedBackend = package.loaded['backend']
 local savedLayers = package.loaded['layers']
 package.loaded['backend'] = backendMock
 _G.backend = backendMock
 package.loaded['layers'] = { forEach = function() end, get_layer = function() return nil end, find = function() return nil end }
-package.loaded['rtt'] = rttMock
 
 local schemaMod = require('kag.schema')
 local VFXCommands = require('kag.commands.vfx')
@@ -69,7 +65,7 @@ local vfxSpec = schemaMod.specs('vfx') or {}
 check('[vfx] schema declares postfx enum', type(vfxSpec.postfx) == 'table' and vfxSpec.postfx.type == 'enum')
 
 -- -----------------------------------------------------------------------------
--- (4) compatibility: no postfx param = behaviour unchanged (fade/blur).
+-- (4) no postfx parameter: direct fade and temporary full-screen blur.
 -- -----------------------------------------------------------------------------
 do
     calls = {}
@@ -86,12 +82,18 @@ end
 
 do
     calls = {}
-    local ctx = { _bgTexture = 9 }
+    local ctx = {}
     local p = schemaMod.coerce('vfx', { type = 'blur', time = '10', strength = '4' }, ctx)
-    VFXCommands.vfx(ctx, p)
-    local ef = nil
-    for _, c in ipairs(calls) do if c[1] == 'submit_vfx' then ef = c[3] end end
-    check('blur (no postfx) routes to submit_vfx effect 2', ef == 2)
+    local co = coroutine.create(function() VFXCommands.vfx(ctx, p) end)
+    assert(coroutine.resume(co))
+    assert(coroutine.resume(co, 16))
+    check('blur (no postfx) applies the requested radius through a render epoch',
+        calls[1] and calls[1][1] == 'set_scene_blur' and calls[1][2] == 4
+        and coroutine.status(co) == 'suspended')
+    assert(coroutine.resume(co, 16))
+    check('blur clears only the temporary scene effect', #calls == 2
+        and calls[2][1] == 'set_scene_blur' and calls[2][2] == 0
+        and coroutine.status(co) == 'dead')
 end
 
 -- -----------------------------------------------------------------------------

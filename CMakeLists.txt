@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(CaesuraAmeKAG VERSION 1.0.1 LANGUAGES C CXX)
+project(CaesuraAmeKAG VERSION 1.1.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -569,8 +569,19 @@ install(DIRECTORY scripts/ DESTINATION scripts
     PATTERN "*.pyo" EXCLUDE)
 install(DIRECTORY demo/ DESTINATION demo)
 install(DIRECTORY assets/ DESTINATION assets)
-install(DIRECTORY projects/ DESTINATION projects)
-install(DIRECTORY shaders/ DESTINATION shaders OPTIONAL)
+install(FILES projects/.gitkeep DESTINATION projects)
+install(DIRECTORY shaders/ DESTINATION shaders OPTIONAL
+    PATTERN "compiled" EXCLUDE)
+if(WIN32 AND CAESURA_CAPABILITY_LIVE2D)
+    file(TO_CMAKE_PATH "${CUBISM_SHADER_SRC_DIR}" cubism_shader_install_dir)
+    install(FILES "${cubism_shader_install_dir}/CubismEffect.fx"
+                  "${cubism_shader_install_dir}/CubismBlendMode.fx"
+            DESTINATION FrameworkShaders)
+    file(TO_CMAKE_PATH "${CUBISM_FRAMEWORK_DIR}" cubism_framework_install_dir)
+    install(FILES "${cubism_framework_install_dir}/LICENSE.md"
+                  "${cubism_framework_install_dir}/NOTICE.md"
+            DESTINATION licenses/Live2D)
+endif()
 # Project Manager templates are part of the release contract: the stranger
 # path is "unzip -> caesura.py create" and the editor Project Manager, both of
 # which resolve tools/project_templates/ next to the executable
@@ -603,7 +614,10 @@ install(DIRECTORY web-editor/dist/ DESTINATION web-editor/dist)
 # scripts/verify_release_package.sh (editor/dist/index.html + assets/*.js), and
 # the release/ci packaging jobs run `npm run build` in editor/ before cpack.
 install(DIRECTORY editor/dist/ DESTINATION editor/dist OPTIONAL)
-install(FILES README.md LICENSE DESTINATION . OPTIONAL)
+install(FILES README.md CHANGELOG.md LICENSE DESTINATION . OPTIONAL)
+if(WIN32 AND CAESURA_FFMPEG_FOUND AND FFMPEG_BIN_DIR)
+    install(FILES "${CMAKE_SOURCE_DIR}/external/ffmpeg/LICENSE.txt" DESTINATION licenses/FFmpeg OPTIONAL)
+endif()
 
 set(CPACK_PACKAGE_NAME "CaesuraAmeKAG")
 set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
@@ -678,6 +692,15 @@ if(CAESURA_FFMPEG_FOUND AND WIN32)
         ${FFMPEG_BIN_DIR}/swscale-9.dll
         ${FFMPEG_BIN_DIR}/swresample-6.dll
         DESTINATION . OPTIONAL)
+endif()
+
+if(WIN32 AND MSVC)
+    set(CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS_SKIP TRUE)
+    include(InstallRequiredSystemLibraries)
+    if(CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS)
+        install(PROGRAMS ${CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS} DESTINATION .
+                CONFIGURATIONS Release RelWithDebInfo MinSizeRel)
+    endif()
 endif()
 
 include(cmake/CaesuraPackageRequirements.cmake)

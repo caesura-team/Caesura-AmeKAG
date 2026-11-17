@@ -15,7 +15,6 @@
 #include <Motion/CubismMotionManager.hpp>
 #include <Motion/CubismMotionQueueManager.hpp>
 #include <Motion/CubismExpressionMotion.hpp>
-#include <Motion/CubismExpressionMotionManager.hpp>
 #include <Rendering/CubismRenderer.hpp>
 #ifdef _WIN32
 #include <Rendering/D3D11/CubismRenderer_D3D11.hpp>
@@ -443,14 +442,9 @@ bool Live2DBackend::loadModelInternal(Live2DModel& model) {
                 std::string motionPath = joinPath(dir, fileName);
                 auto motionData = readFile(motionPath);
                 if (motionData.empty()) continue;
-                // Key the clip by its file stem and by "group/index" so
-                // playMotion(name) and playMotion("group/index") both hit.
-                const std::string stem = std::filesystem::path(fileName).stem().string();
-                CachedMotion cachedMotion{std::move(motionData), group, j};
-                if (model.motionCache.find(stem) == model.motionCache.end()) {
-                    model.motionCache[stem] = cachedMotion;
-                }
-                model.motionCache[group + "/" + std::to_string(j)] = std::move(cachedMotion);
+                // Keep one entry per group/index so same-named files remain distinguishable.
+                model.motionCache[group + "/" + std::to_string(j)] = {
+                    std::move(motionData), group, std::filesystem::path(fileName).stem().string(), j};
             }
         }
     }
@@ -519,9 +513,18 @@ void Live2DBackend::render(float dt) {
         // Apply pose after motions/expressions, before recomputing drawables.
         auto* userModel = static_cast<Live2DUserModel*>(model->userModel.get());
         userModel->motionManager()->UpdateMotion(cubismModel, dt);
-        userModel->expressionManager()->UpdateMotion(cubismModel, dt);
-        if (auto* pose = userModel->pose()) {
+        auto* pose = userModel->pose();
+        const bool hasExpression = !userModel->weightedExpression.IsFinished();
+        if (hasExpression) {
+            // Cubism pose initializes selection parameters on its first update.
+            // Capture that base before applying an expression on the first frame.
+            if (pose && !model->poseInitialized) pose->UpdateParameters(cubismModel, 0.0f);
+            cubismModel->SaveParameters();
+            userModel->weightedExpression.UpdateMotion(cubismModel, dt);
+        }
+        if (pose) {
             pose->UpdateParameters(cubismModel, dt);
+            model->poseInitialized = true;
         }
         if (model->voiceLipSync.enabled()) {
             auto* rawModel = cubismModel->GetModel();
@@ -539,6 +542,9 @@ void Live2DBackend::render(float dt) {
         // Cubism render to bgfx (via pluggable render path)
         m_renderPath->beginFrame(static_cast<CubismRenderer*>(model->renderer));
         m_renderPath->endFrame(static_cast<CubismRenderer*>(model->renderer), model->bgfxTex);
+        // Keep the motion/manual pose as the base for the next frame. An
+        // additive expression must never accumulate on its own output.
+        if (hasExpression) cubismModel->LoadParameters();
 
         // Blit bgfx texture to screen
         if (m_renderDevice && model->bgfxTexValid) {
@@ -554,36 +560,54 @@ void Live2DBackend::render(float dt) {
 // ============================================================
 // Motion playback (Cubism 5 API)
 // ============================================================
-bool Live2DBackend::playMotion(int handle, const std::string& name) {
+bool Live2DBackend::playMotion(int handle, const std::string& name,
+                               float fadeInSeconds, float fadeOutSeconds) {
+    const auto validFade = [](float seconds) {
+        return seconds == -1 || (std::isfinite(seconds) && seconds >= 0 && seconds <= 10);
+    };
+    if (name.empty() || !validFade(fadeInSeconds) || !validFade(fadeOutSeconds)) return false;
     auto it = m_models.find(handle);
     if (it == m_models.end() || !it->second->userModel || !it->second->setting) return false;
 
     auto& model = *it->second;
 
-    auto mit = model.motionCache.find(name);
-    if (mit == model.motionCache.end()) {
-        // Fallback: substring match over cached keys (e.g. "wave" -> "wave/0").
-        for (auto it = model.motionCache.begin(); it != model.motionCache.end(); ++it) {
-            if (it->first.find(name) != std::string::npos) { mit = it; break; }
+    const CachedMotion* clip = nullptr;
+    if (const auto exact = model.motionCache.find(name); exact != model.motionCache.end()) {
+        clip = &exact->second;
+    } else if (name.find('/') == std::string::npos) {
+        // Prefer an exact file stem. A shorthand is allowed only for one clip.
+        for (const bool exactStem : {true, false}) {
+            for (const auto& [key, candidate] : model.motionCache) {
+                const bool matches = exactStem ? candidate.stem == name
+                    : candidate.stem.find(name) != std::string::npos || key.find(name) != std::string::npos;
+                if (!matches) continue;
+                if (clip) {
+                    DEBUG_WARN(SubSys::Live2D, ErrCode::Ok, "[Live2D] Ambiguous motion name: %s", name.c_str());
+                    return false;
+                }
+                clip = &candidate;
+            }
+            if (clip) break;
         }
     }
-    if (mit == model.motionCache.end()) {
+    if (!clip) {
         DEBUG_WARN(SubSys::Live2D, ErrCode::Ok, "[Live2D] Motion not found: %s", name.c_str());
         return false;
     }
 
-    auto& cachedMotion = mit->second;
     // Model-setting fade overrides require the clip's original group/index,
     // even when it was selected by a file-stem alias or substring match.
     auto* motion = model.userModel->LoadMotion(
-        reinterpret_cast<const csmByte*>(cachedMotion.data.data()),
-        static_cast<csmSizeInt>(cachedMotion.data.size()),
+        reinterpret_cast<const csmByte*>(clip->data.data()),
+        static_cast<csmSizeInt>(clip->data.size()),
         name.c_str(),
         nullptr, nullptr,
-        model.setting, cachedMotion.group.c_str(), cachedMotion.index
+        model.setting, clip->group.c_str(), clip->index, true
     );
     if (!motion) return false;
 
+    if (fadeInSeconds >= 0) motion->SetFadeInTime(fadeInSeconds);
+    if (fadeOutSeconds >= 0) motion->SetFadeOutTime(fadeOutSeconds);
     // Each load creates a fresh motion; the queue owns it through completion or unload.
     static_cast<Live2DUserModel*>(model.userModel.get())->motionManager()->StartMotion(motion, true);
     return true;
@@ -592,24 +616,30 @@ bool Live2DBackend::playMotion(int handle, const std::string& name) {
 // ============================================================
 // Expression
 // ============================================================
-void Live2DBackend::setExpression(int handle, const std::string& name) {
+bool Live2DBackend::setExpression(int handle, const std::string& name, float weight) {
+    if (!std::isfinite(weight) || weight < 0.0f || weight > 1.0f) return false;
     auto it = m_models.find(handle);
-    if (it == m_models.end() || !it->second->userModel) return;
+    if (it == m_models.end() || !it->second->userModel) return false;
 
     auto& model = *it->second;
     auto eit = model.expressionCache.find(name);
-    if (eit == model.expressionCache.end()) return;
+    if (eit == model.expressionCache.end()) return false;
 
     auto& data = eit->second;
-    auto* expression = model.userModel->LoadExpression(
-        reinterpret_cast<const csmByte*>(data.data()),
-        static_cast<csmSizeInt>(data.size()),
-        name.c_str()
-    );
-    if (!expression) return;
+    std::unique_ptr<CubismExpressionMotion, decltype(&ACubismMotion::Delete)> expression(
+        CubismExpressionMotion::Create(
+            reinterpret_cast<const csmByte*>(data.data()),
+            static_cast<csmSizeInt>(data.size())), &ACubismMotion::Delete);
+    if (!expression || expression->GetExpressionParameters().GetSize() == 0) return false;
 
-    // Each load creates a fresh expression; the queue owns it through replacement or unload.
-    static_cast<Live2DUserModel*>(model.userModel.get())->expressionManager()->StartMotion(expression, true);
+    auto& queue = static_cast<Live2DUserModel*>(model.userModel.get())->weightedExpression;
+    queue.StopAllMotions();
+    if (weight > 0.0f) {
+        expression->SetWeight(weight);
+        queue.StartMotion(expression.get(), true);
+        expression.release();
+    }
+    return true;
 }
 
 // ============================================================
@@ -685,9 +715,7 @@ int Live2DBackend::loadModel(const std::string& path, const std::string& name) {
     model->dir = confined;
     model->name = name;
     if (!loadModelInternal(*model)) {
-#ifdef _WIN32
         releaseModelTarget(*model);
-#endif
         return -1;
     }
     m_models[handle] = std::move(model);
@@ -697,29 +725,25 @@ int Live2DBackend::loadModel(const std::string& path, const std::string& name) {
 void Live2DBackend::unloadModel(int handle) {
     auto it = m_models.find(handle);
     if (it == m_models.end()) return;
-#ifdef _WIN32
     releaseModelTarget(*it->second);
-#endif
     m_models.erase(handle);
 }
 
-#ifdef _WIN32
 void Live2DBackend::releaseModelTarget(Live2DModel& model) {
     if (m_renderPath && model.renderer) {
-        static_cast<D3D11NativeRenderPath*>(m_renderPath)->releaseModelTarget(
-            static_cast<CubismRenderer*>(model.renderer));
+        m_renderPath->releaseModelTarget(static_cast<CubismRenderer*>(model.renderer));
     }
 }
-#endif
 bool Live2DBackend::isLoaded(int handle) const { return m_models.count(handle) > 0; }
 
 std::size_t Live2DBackend::loadedModelCount() const {
     return m_models.size();
 }
 
-void Live2DBackend::clearModels() {
-    while (!m_models.empty()) {
-        unloadModel(m_models.begin()->first);
+void Live2DBackend::clearModels(std::span<const int> keep) {
+    for (auto it = m_models.begin(); it != m_models.end();) {
+        const int handle = (it++)->first;
+        if (std::find(keep.begin(), keep.end(), handle) == keep.end()) unloadModel(handle);
     }
 }
 

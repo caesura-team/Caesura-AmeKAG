@@ -123,6 +123,10 @@ void MetalNativeRenderPath::endFrame(CsmRendering::CubismRenderer* renderer,
     bgfx::updateTexture2D(bgfxTex, 0, 0, 0, 0, w, h, mem);
 }
 
+void MetalNativeRenderPath::releaseModelTarget(CsmRendering::CubismRenderer* renderer) {
+    m_targets.erase(renderer);
+}
+
 void MetalNativeRenderPath::resize(int width, int height) {
     if (width == m_width && height == m_height) return;
     m_width = width;

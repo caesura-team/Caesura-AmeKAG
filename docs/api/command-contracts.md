@@ -69,13 +69,12 @@ _Category: audio · Blocking: no (fire-and-forget) · play BGM (KAG3 alternate f
 
 ### `[blur]`
 
-_Category: transition · Blocking: yes (waits for completion) · gaussian blur the whole frame_
+_Category: transition · Blocking: yes (waits for completion) · Temporarily blur the composed scene, then restore the sharp image_
 
 | Param | Type | Default | Range / Choices | Required | Aliases |
 |---|---|---|---|---|---|
-| `amount` | number | 0 | 0..100 | - | - |
-| `duration` | number | 300 | 0..30000 | - | - |
-| `time` | number | 300 | 0..30000 | - | - |
+| `amount` | number | 4 | 0..100 | - | strength |
+| `time` | number | 300 | 0..30000 | - | duration |
 
 ### `[br]`
 
@@ -540,7 +539,7 @@ _Category: save · Blocking: no (fire-and-forget) · KAG3-compatible listsaves c
 
 ### `[live2d_expression]`
 
-_Category: character · Blocking: no (fire-and-forget) · Set a Live2D facial expression on a model_
+_Category: character · Blocking: no (fire-and-forget) · Apply a weighted Live2D expression to the current model, or clear it with weight 0_
 
 | Param | Type | Default | Range / Choices | Required | Aliases |
 |---|---|---|---|---|---|

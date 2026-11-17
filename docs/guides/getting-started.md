@@ -43,9 +43,8 @@ Lua工具脚本由真正的Lua解释器运行：源码构建使用`build/lua/Deb
    （从包内 `tools/project_templates/basic` 复制，产出 `story.ks` 两场景双分支 +
    `caesura.project.json` + `entry.lua`；模板按 CLI 脚本自身位置解析，任意 CWD 成立）。
 3. **编辑**：任意文本编辑器改 `my_vn/story.ks`（`[bg]`/`[ch]`/`[sel]` 语法见
-   [KAG 语言教程](kag-language-tour.md)）。**Monaco 编辑器 + Project Manager +
-   Build Manager 面板属于 `editor/` 这个 React IDE（源码树内，发布包不含）**；
-   发布包内可用引擎自带 `--editor` 单文件调试面板（见下）。
+   [KAG 语言教程](kag-language-tour.md)）。带 `editor/dist/` 的发布包也提供 React/Monaco IDE，
+   包括 Project Manager 和 Build Manager。默认 `--editor` 启动单文件调试面板（见下）。
 4. **运行**：`python scripts/caesura.py build my_vn -o dist/my_vn-game` →
    `cd dist/my_vn-game` 运行 `CaesuraAmeKAG.exe`（冒烟：`./CaesuraAmeKAG.exe --frames 60`
    退出码 0）。
@@ -93,6 +92,10 @@ Lua工具脚本由真正的Lua解释器运行：源码构建使用`build/lua/Deb
 （脚本 / 调试 / 帧捕获 / 日志四个页签），**没有** Project Manager、没有 Monaco。
 它默认要求 bearer 令牌：启动时令牌打印在 stderr 并写入启动目录的
 `.caesura-editor-token`。
+
+在 Windows 解压目录的 PowerShell 中，先设置 `$env:CAESURA_EDITOR_WEBROOT = 'editor/dist'`，
+再运行 `./CaesuraAmeKAG.exe --editor` 即可启动 React/Monaco IDE。打开终端给出的本机地址，
+在连接面板粘贴启动令牌并选择 **Connect**。保留整个 `editor/dist/`，浏览器需要其中的 `assets/`。
 
 > **令牌与浏览器（两种版本行为不同，先认版本）**：
 > - **Sprint 4 之后**（判据：启动日志出现
@@ -335,6 +338,15 @@ cmake --build build --parallel
 
 你会看到一个窗口渲染 KAG 默认 demo（`demo/galgame_demo.ks`），日志打印
 `[Engine]` 各子系统注册行。按 **Esc** 或关闭窗口退出。
+
+要让原生游戏从标题页开始，在游戏的 `scripts/config.lua` 中设置入口和开场场景。
+
+```lua
+config.entry_script = "title_demo_entry.lua"
+config.title_story = "demo/galgame_demo.ks"
+```
+
+标题页可开始新游戏、读取已有手动存档和打开设置。自动存档存在时会显示「继续」。剧情结束后会回到标题页，可浏览本次会话已解锁的结局并重玩对应场景。
 
 **命令行参数**（`--help` / `-h` 在初始化前打印帮助并退出；源码见
 `src/main.cpp` 参数解析段）：

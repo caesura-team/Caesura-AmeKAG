@@ -65,7 +65,7 @@ public:
     void unloadModel(int) override {}
     bool isLoaded(int) const override { return false; }
     size_t loadedModelCount() const override { return models; }
-    void clearModels() override {
+    void clearModels(std::span<const int>) override {
         ++clears;
         if (failClear) throw std::runtime_error("injected model clear failure");
         models = 0;
@@ -74,8 +74,8 @@ public:
     void hideModel(int) override {}
     void setOpacity(int, float) override {}
     void render(float) override {}
-    bool playMotion(int, const std::string&) override { return false; }
-    void setExpression(int, const std::string&) override {}
+    bool playMotion(int, const std::string&, float, float) override { return false; }
+    bool setExpression(int, const std::string&, float) override { return false; }
     void setParameter(int, const std::string&, float) override {}
     const char* name() const override { return "TransientAnimation"; }
     size_t models = 3;
@@ -157,6 +157,7 @@ public:
     void destroyPostFx(PostFxHandle) override {}
     void clearPostFx() override { ++clears; active = false; }
     bool isPostFxActive() const override { return active; }
+    bool setSceneBlur(float) override { return false; }
     RenderUniformHandle getDefaultSampler() const override { return {}; }
     RenderProgramHandle getFallbackProgram() const override { return {}; }
     RenderProgramHandle getModulatedTextureProgram() const override { return {}; }

@@ -15,6 +15,7 @@
 --   * restore marks the whole line revealed (no typewriter replay)
 
 local snapshot = {}
+local Models = require("kag.live2d_state")
 
 -- Field whitelist. emb/eval in strict mode replace the f/sf/tf/mp/variables
 -- tables by reference, so restore MUST swap the whole table, never merge.
@@ -230,6 +231,9 @@ function snapshot.capture(ctx)
         layers = layers,
         font = font,
     }
+    if ctx._live2dHandles and next(ctx._live2dHandles) or ctx.live2d and next(ctx.live2d) then
+        snap.live2d_snapshot = Models.capture(ctx)
+    end
     if not snap._seen_blocks then snap.seen_scenes = deep_copy(ctx.seen_scenes) end
     for _, k in ipairs(DEEP_COPY_KEYS) do
         snap[k] = deep_copy(ctx[k])
@@ -299,7 +303,7 @@ function snapshot.prepare(ctx, snap)
         if text.reveal then text.state.reveal_chars=text.reveal.total end
     end
     local prepared={owner=ctx,values=values,text=text,used=false}
-    prepared.presentation=require("kag.rollback_presentation").prepare(snap.layers,snap.font)
+    prepared.presentation=require("kag.rollback_presentation").prepare(snap.layers,snap.font,snap.live2d_snapshot)
     return prepared
 end
 
@@ -374,7 +378,15 @@ end
 --- Direct callers retain restore(ctx,snap); runner can supply a prepared candidate.
 function snapshot.restore(ctx,snap,prepared)
     if type(ctx)~="table" or type(snap)~="table" then return false end
-    return snapshot.apply(ctx,prepared or snapshot.prepare(ctx,snap))
+    prepared = prepared or snapshot.prepare(ctx,snap)
+    local had_models = prepared.presentation and prepared.presentation.models ~= nil
+    local ok, result = pcall(snapshot.apply,ctx,prepared)
+    if ok then return result end
+    if had_models and prepared.presentation.models.declarations == ctx.live2d then
+        local retired, reason = pcall(Models.retire,ctx)
+        if not retired then result = tostring(result).."; model cleanup: "..tostring(reason) end
+    end
+    error(result,0)
 end
 
 return snapshot

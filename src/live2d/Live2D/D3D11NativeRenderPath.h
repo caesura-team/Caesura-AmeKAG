@@ -30,7 +30,7 @@ public:
     ID3D11ShaderResourceView* createModelTexture(int width, int height,
                                                  const unsigned char* pixels);
     // Release the per-model render target when the model is unloaded.
-    void releaseModelTarget(CsmRendering::CubismRenderer* renderer);
+    void releaseModelTarget(CsmRendering::CubismRenderer* renderer) override;
     void beginFrame(CsmRendering::CubismRenderer* renderer) override;
     void endFrame(CsmRendering::CubismRenderer* renderer, bgfx::TextureHandle bgfxTex) override;
     void resize(int width, int height) override;

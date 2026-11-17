@@ -863,6 +863,7 @@ public:
     void destroyPostFx(PostFxHandle) override { ++calls.mutations; }
     void clearPostFx() override { ++calls.mutations; }
     bool isPostFxActive() const override { ++otherReads; return false; }
+    bool setSceneBlur(float) override { ++calls.mutations; return false; }
     RenderUniformHandle getDefaultSampler() const override { ++otherReads; return {}; }
     RenderProgramHandle getFallbackProgram() const override { ++otherReads; return {}; }
     RenderProgramHandle getModulatedTextureProgram() const override { ++otherReads; return {}; }

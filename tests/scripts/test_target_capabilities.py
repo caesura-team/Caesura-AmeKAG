@@ -176,7 +176,8 @@ class AuthorCapabilityEntrypoints(unittest.TestCase):
         self.assertTrue(data["warnings"])
 
     def test_build_and_package_cannot_skip_required_capabilities_or_touch_existing_output(self):
-        self.story.write_text('[vfx type="blur" time=10]\n[p]\n', encoding="utf-8")
+        (self.project / "caesura.project.json").write_text(
+            '{"capabilities":{"required":["video.play"],"optional":["video.play"]}}', encoding="utf-8")
         output = self.directory / "previous-output"
         output.mkdir()
         sentinel = output / "user-kept.txt"
@@ -188,9 +189,30 @@ class AuthorCapabilityEntrypoints(unittest.TestCase):
                     if skip: args.append("--skip-check")
                     result = self.creator(*args)
                     self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-                    self.assertIn("render.blur", result.stdout + result.stderr)
+                    self.assertIn("required_optional_overlap", result.stdout + result.stderr)
                     self.assertEqual(list(output.iterdir()), [sentinel])
                     self.assertEqual(sentinel.read_bytes(), b"retain existing output")
+
+    def test_scene_blur_preflight_accepts_native_and_web_builds(self):
+        self.story.write_text('[blur amount=12 time=96]\n[end]\n', encoding="utf-8")
+        native = self.creator("check", self.story, "--target", "native", "--engine", self.engine)
+        self.assertEqual(native.returncode, 0, native.stdout + native.stderr)
+        web = self.creator("check", self.story, "--target", "web")
+        self.assertEqual(web.returncode, 0, web.stdout + web.stderr)
+
+    def test_game_only_build_ships_shader_files_for_selected_windows_cubism_engine(self):
+        profile = caesura_build.native_capability_profile(self.engine)
+        out = self.directory / "assembled-game"
+        result = self.creator("build", self.project, "--out", out, "--engine", self.engine)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        shaders = out / "FrameworkShaders"
+        if profile["platform"] == "windows" and profile["compiled"]["live2d"]:
+            for name in ("CubismEffect.fx", "CubismBlendMode.fx"):
+                self.assertTrue((shaders / name).is_file(), name)
+                self.assertEqual((shaders / name).read_bytes(),
+                                 (self.engine.parent / "FrameworkShaders" / name).read_bytes())
+        else:
+            self.assertFalse(shaders.exists())
 
     def test_changed_checked_inputs_are_rejected_before_assembly_acquires_output(self):
         metadata = self.project / "caesura.project.json"
@@ -261,7 +283,7 @@ class AuthorCapabilityEntrypoints(unittest.TestCase):
             ignored = self.project / directory
             ignored.mkdir()
             (ignored / "helper.lua").write_text('-- development dependency\n', encoding="utf-8")
-            (ignored / "unshipped.ks").write_text('[vfx type="blur"]\n', encoding="utf-8")
+            (ignored / "unshipped.ks").write_text('[live2d_expression model="haru" expression="smile"]\n', encoding="utf-8")
         scenes = caesura_build.collect_scenes(self.project)
         self.assertEqual(scenes, [self.story])
         report = caesura_build.run_capability_check(self.project, scenes, "native", engine=self.engine)

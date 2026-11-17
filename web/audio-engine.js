@@ -163,7 +163,7 @@ export class AudioEngine {
     this._release(record, true)
   }
 
-  _start(kind, packet, { path, position = 0, gain = 1, looping = false, fadein = 0 }) {
+  _start(kind, packet, { path, position = 0, gain = 1, looping = false, fadein = 0, fadeout = 0 }) {
     this._validatePrepared(packet, position, gain)
     const context = this._ctx
     if (!validDuration(fadein) || !validTime(context.currentTime)) throw new Error('Invalid audio envelope time')
@@ -182,9 +182,15 @@ export class AudioEngine {
         if (this._sources.get(kind) === record) this._sources.delete(kind)
         this._release(record, false)
       }
-      this._stopSource(kind)
-      this._sources.set(kind, record)
       source.start(0, position)
+      const previous = this._sources.get(kind)
+      this._sources.set(kind, record)
+      if (previous) {
+        if (fadeout > 0) {
+          previous.crossfadeTail = true
+          this._retire(previous, fadeout, record.started)
+        } else this._release(previous, true)
+      }
       return record
     } catch (error) {
       if (this._sources.get(kind) === record) this._sources.delete(kind)
@@ -203,7 +209,7 @@ export class AudioEngine {
     let generation
     try {
       const fadein = opts.fadein ?? 0
-      if (!validDuration(fadein)) return failed
+      if (!validDuration(fadein) || (opts.crossfade && kind !== 'bgm')) return failed
       generation = this._nextGeneration(kind)
       const context = this.ensureContext()
       if (!context) return failed
@@ -211,7 +217,8 @@ export class AudioEngine {
       const packet = await this._load(path, opts.assetUrl, context)
       if (!packet || this._generations.get(kind) !== generation || context !== this._ctx) return failed
       const record = this._start(kind, packet, { path, position: opts.position ?? 0,
-        gain: opts.volume == null ? 1 : Number(opts.volume), looping: !!opts.loop, fadein })
+        gain: opts.volume == null ? 1 : Number(opts.volume), looping: !!opts.loop, fadein,
+        fadeout: opts.crossfade ? fadein : 0 })
       return {played: true, owner: record.identity}
     } catch { return failed }
     finally { if (generation !== undefined && this._pending.get(kind) === generation) this._pending.delete(kind) }
@@ -231,21 +238,25 @@ export class AudioEngine {
     if (!validDuration(fadeout)) return false
     this._nextGeneration(kind)
     this._pending.delete(kind)
-    if (fadeout === 0) {
-      this._stopSource(kind)
-      for (const record of this._retiring) if (record.kind === kind) this._release(record, true)
-      return true
+    if (fadeout === 0) this._stopSource(kind)
+    for (const tail of this._retiring) {
+      if (tail.kind === kind && (fadeout === 0 || tail.crossfadeTail)) this._release(tail, true)
     }
+    if (fadeout === 0) return true
     const record = this._sources.get(kind)
     if (!record) return false // Pending work is cancelled, but no fade ran.
     this._sources.delete(kind)
+    return this._retire(record, fadeout)
+  }
+
+  _retire(record, fadeout, startTime) {
     this._retiring.add(record)
     try {
       const context = this._ctx
       if (!context || context !== record.context || context.state === 'closed' || !this.ready) {
         throw new Error('Audio fade-out context is unavailable')
       }
-      const now = context.currentTime
+      const now = startTime ?? context.currentTime
       const from = gainAt(record.envelope, record.clipGain.gain.value, now)
       record.envelope = rampGain(record.clipGain.gain, from, 0, now, fadeout)
       record.source.stop(record.envelope.end)

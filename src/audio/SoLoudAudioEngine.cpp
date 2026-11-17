@@ -681,13 +681,6 @@ unsigned int SoLoudAudioEngine::playBGM(const std::string& file, const AudioPlay
         return 0;
     }
 
-    // Retire the previous BGM only after replacement creation succeeds. Its
-    // quota remains held until the physical SoLoud voice actually stops.
-    if (m_currentBGM != 0) {
-        retireHandle(m_currentBGM, fadeTime, m_retiringBGM);
-        m_currentBGM = 0;
-    }
-
     // Configure this paused instance only. Cached sources and persistent bus
     // gains must not inherit a previous clip's options.
     m_soloud.setLooping(h, options.loop);
@@ -696,6 +689,11 @@ unsigned int SoLoudAudioEngine::playBGM(const std::string& file, const AudioPlay
         m_soloud.stop(h);
         registry.release("audio_handles");
         return 0;
+    }
+    // Keep the old voice until the replacement has actually started. Its
+    // quota remains held until the fading voice stops.
+    if (m_currentBGM != 0) {
+        retireHandle(m_currentBGM, fadeTime, m_retiringBGM);
     }
     m_currentBGM = h;
     m_currentBGMPath.swap(playingPath);

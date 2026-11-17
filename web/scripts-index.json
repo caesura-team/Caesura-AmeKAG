@@ -45,6 +45,7 @@
  "kag.init": true,
  "kag.layer_state": true,
  "kag.layout_math": true,
+ "kag.live2d_state": true,
  "kag.lsp": true,
  "kag.operation": true,
  "kag.presentation": true,

@@ -141,6 +141,7 @@ if ok and ok_kag then
             }
             local co = coroutine.create(function() scheduler.run(ctx, tokens, 1) end)
             local resumed, err = coroutine.resume(co, 16)
+            layers.render_overlay_text()
             check(command .. " opens a modal with the expected input focus",
                 resumed and coroutine.status(co) == "suspended" and ctx.input_focus == lua_focus
                     and focus == host_focus and not ctx._command_error, err or ctx.input_focus)
@@ -161,6 +162,7 @@ if ok and ok_kag then
                     rendered = {}
                     rawset(_G, "_GAME_KEY_RIGHT", true)
                     local adjusted, adjust_error = coroutine.resume(co, 16)
+                    layers.render_overlay_text()
                     check("settings displays the edited BGM volume",
                         adjusted and table.concat(rendered, "\n"):find("35%", 1, true), adjust_error)
                 end
@@ -204,6 +206,14 @@ if ok and ok_kag then
         run_modal("quickmenu_config", "settings", "GAME", "_settings_panel", "Settings /", "cancel")
         run_modal("quickmenu_config", "settings", "GAME", "_settings_panel", "Settings /", "dismiss")
         run_modal("quickmenu_config", "settings", "GAME", "_settings_panel", "Settings /", "adjust")
+        local authored = layers.add_layer(nil, { id = "_settings_panel", z = 8 })
+        authored.texture = 901
+        run_modal("quickmenu_config", "settings", "GAME", "_settings_panel_", "Settings /", "dismiss")
+        check("settings removes only its own layer when a scene uses the same name",
+            layers.get_layer("_settings_panel") == authored and authored.texture == 901
+                and authored.visible and authored.z == 8 and not layers.get_layer("_settings_panel_"),
+            authored.texture)
+        layers.remove_layer(authored)
         rawset(_G, "_GAME_KEY_ESC", previous_escape)
         rawset(_G, "_GAME_KEY_RIGHT", previous_right)
         rawset(_G, "_CAESURA_BACKEND", previous_backend)

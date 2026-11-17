@@ -13,6 +13,7 @@ if not chunk then
 -- Exercise the actual adapter; the effect sink records whether a denial leaked.
 do
     local facts=profile("native")
+    facts.available["postfx.softblur"]=false
     local runtime=instance("native",function()return facts end)
     local calls=0
     local sink=function()calls=calls+1;return true end
@@ -20,7 +21,7 @@ do
     local owner={current_scene="blur.ks",token_index=1}
     local applied,result=runtime.invoke_command(sink,owner,{amount=4,time=32},"blur")
     check("standalone blur optional refusal has exact diagnostic and no effect",applied==false and calls==0
-        and result.status=="unsupported" and result.feature=="render.blur" and result.reason=="command_not_wired"
+        and result.status=="unsupported" and result.feature=="render.blur" and result.reason=="backend_unavailable"
         and #owner.capability_diagnostics==1 and owner.capability_diagnostics[1].location.command=="blur")
     check("standalone blur ordinary policy commits",runtime.configure_project_json('{}')==true)
     owner={current_scene="blur.ks",token_index=2}
@@ -265,7 +266,8 @@ rawset(_G,"Live2D",{
 })
 local function lip_context(command)
     return {current_scene="capability-live2d.ks",token_index=1,f={},sf={},tf={},
-        _live2dHandles=command=="live2d_load" and {} or {haru=41},live2d={}}
+        _live2dHandles=command=="live2d_load" and {} or {haru=41},
+        live2d=command=="live2d_load" and {} or {haru={storage="Haru.model3.json",visible=false,x=0,y=0,scale=1}}}
 end
 local function dispatch_live2d(command,raw,public_wrapper)
     local ctx=lip_context(command)
