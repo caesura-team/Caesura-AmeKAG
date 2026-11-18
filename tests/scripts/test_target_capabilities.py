@@ -214,6 +214,36 @@ class AuthorCapabilityEntrypoints(unittest.TestCase):
         else:
             self.assertFalse(shaders.exists())
 
+    def test_game_only_build_preserves_flat_linux_cubism_shaders(self):
+        engine = self.directory / self.engine.name
+        shutil.copy2(self.engine, engine)
+        shader_dir = self.directory / "FrameworkShaders"
+        shader_dir.mkdir()
+        contract = ROOT / "scripts" / "cubism_opengl_shaders.txt"
+        shader_files = {name: name.encode("ascii")
+                        for name in contract.read_text(encoding="utf-8").splitlines()}
+        for name, content in shader_files.items():
+            (shader_dir / name).write_bytes(content)
+        (shader_dir / "compile.log").write_text("local log", encoding="utf-8")
+
+        profile = caesura_build.native_capability_profile(self.engine)
+        profile["platform"] = "linux"
+        profile["compiled"]["live2d"] = True
+        out = self.directory / "linux-game"
+        with mock.patch.object(caesura_build, "native_capability_profile", return_value=profile):
+            report = caesura_build.run_capability_check(self.project, [self.story], "native", engine=engine)
+        self.assertTrue(report["passed"])
+        caesura_build._assemble_clean(self.project, self.story, engine, out, False, False,
+                                      quiet=True, capabilities=report)
+        exported = out / "FrameworkShaders"
+        self.assertEqual({path.name: path.read_bytes() for path in exported.iterdir()}, shader_files)
+
+        (shader_dir / "FragShaderSrcSetupMask.frag").unlink()
+        with self.assertRaisesRegex(caesura_build.BuildError, "FragShaderSrcSetupMask.frag"):
+            caesura_build._assemble_clean(self.project, self.story, engine, out, False, False,
+                                          quiet=True, capabilities=report)
+        self.assertEqual({path.name: path.read_bytes() for path in exported.iterdir()}, shader_files)
+
     def test_changed_checked_inputs_are_rejected_before_assembly_acquires_output(self):
         metadata = self.project / "caesura.project.json"
         metadata.write_text('{}', encoding="utf-8")

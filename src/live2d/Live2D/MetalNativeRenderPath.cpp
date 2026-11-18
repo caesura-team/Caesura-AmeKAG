@@ -1,139 +1,231 @@
-// MetalNativeRenderPath.cpp — complete macOS Metal render path for Live2D
-// (C1/R1 closure). Renders each model to a Cubism offscreen target, reads
-// the MTLTexture back synchronously, and uploads it into the bgfx texture
-// the engine composites (same contract as OpenGLReadbackRenderPath).
-// Compiles only with CAESURA_LIVE2D + __APPLE__ (Objective-C++).
 #if defined(CAESURA_LIVE2D) && defined(__APPLE__)
 
 #include "MetalNativeRenderPath.h"
-#include <SDL3/SDL.h>
 #include "debug/api/DebugLog.h"
 
-#include <bgfx/bgfx.h>
 #include <bgfx/platform.h>
-
-#include <Rendering/CubismRenderer.hpp>
+#include <Model/CubismUserModel.hpp>
+#include <Rendering/Metal/CubismDeviceInfo_Metal.hpp>
 #include <Rendering/Metal/CubismRenderer_Metal.hpp>
-#include <Rendering/Metal/CubismOffscreenRenderTarget_Metal.hpp>
+#include <cstring>
+#include <unordered_map>
+#include <vector>
 
+#import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
 
 namespace Caesura {
 
-using namespace Csm;
-using namespace Csm::Rendering;
+using CsmRendering::CubismDeviceInfo_Metal;
+using CsmRendering::CubismRenderer;
+using CsmRendering::CubismRenderer_Metal;
 
-static id<MTLDevice> getBgfxMetalDevice() {
-    const bgfx::InternalData* internal = bgfx::getInternalData();
-    if (!internal) return nil;
-    return (__bridge id<MTLDevice>)internal->context;
-}
+struct MetalNativeRenderPath::State {
+    struct ModelResources {
+        // The SDK stores non-owning Metal texture handles for the model.
+        std::vector<id<MTLTexture>> textures;
+        id<MTLTexture> color = nil;
+        id<MTLTexture> depth = nil;
+        id<MTLBuffer> readback = nil;
+        size_t rowPitch = 0;
+    };
+
+    bool ensureTarget(ModelResources& model) const {
+        if (model.color && model.color.width == width && model.color.height == height) {
+            return true;
+        }
+        auto* colorDescriptor = [MTLTextureDescriptor
+            texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
+            width:width height:height mipmapped:NO];
+        colorDescriptor.usage = MTLTextureUsageRenderTarget;
+        colorDescriptor.storageMode = MTLStorageModePrivate;
+        id<MTLTexture> color = [device newTextureWithDescriptor:colorDescriptor];
+
+        auto* depthDescriptor = [MTLTextureDescriptor
+            texture2DDescriptorWithPixelFormat:MTLPixelFormatDepth32Float
+            width:width height:height mipmapped:NO];
+        depthDescriptor.usage = MTLTextureUsageRenderTarget;
+        depthDescriptor.storageMode = MTLStorageModePrivate;
+        id<MTLTexture> depth = [device newTextureWithDescriptor:depthDescriptor];
+
+        // Align the GPU-to-CPU copy independently of bgfx's packed rows.
+        const size_t rowPitch = (width * 4 + 255) & ~size_t(255);
+        id<MTLBuffer> readback = [device newBufferWithLength:rowPitch * height
+                                      options:MTLResourceStorageModeShared];
+        if (!color || !depth || !readback) return false;
+        model.color = color;
+        model.depth = depth;
+        model.readback = readback;
+        model.rowPitch = rowPitch;
+        return true;
+    }
+
+    id<MTLDevice> device = nil;
+    id<MTLCommandQueue> queue = nil;
+    id<MTLCommandBuffer> command = nil;
+    CubismRenderer* activeRenderer = nullptr;
+    size_t width = 0;
+    size_t height = 0;
+    bool reportedCommandFailure = false;
+    std::unordered_map<CubismRenderer*, ModelResources> models;
+};
+
+MetalNativeRenderPath::MetalNativeRenderPath() : m_state(std::make_unique<State>()) {}
+MetalNativeRenderPath::~MetalNativeRenderPath() = default;
 
 bool MetalNativeRenderPath::init(int width, int height) {
-    m_device = getBgfxMetalDevice();
-    if (!m_device) {
-        DEBUG_WARN(SubSys::Live2D, ErrCode::Ok,
-            "[Live2D/Metal] bgfx MTLDevice not available, falling back");
-        return false;
+    @autoreleasepool {
+        const auto* internal = bgfx::getInternalData();
+        if (!internal || !internal->context) {
+            DEBUG_ERR(SubSys::Live2D, ErrCode::Ok, "[Live2D/Metal] bgfx Metal device is unavailable");
+            return false;
+        }
+        NSBundle* bundle = [NSBundle mainBundle];
+        for (NSString* name in @[@"MetalShaders", @"VertShaderSrcBlend", @"VertShaderSrcMaskedBlend"]) {
+            if (![bundle URLForResource:name withExtension:@"metallib" subdirectory:@"FrameworkMetallibs"]) {
+                DEBUG_ERR(SubSys::Live2D, ErrCode::Ok,
+                    "[Live2D/Metal] Missing Cubism shader: FrameworkMetallibs/%s.metallib", name.UTF8String);
+                return false;
+            }
+        }
+        id<MTLDevice> device = (__bridge id<MTLDevice>)internal->context;
+        id<MTLCommandQueue> queue = [device newCommandQueue];
+        if (!queue) {
+            DEBUG_ERR(SubSys::Live2D, ErrCode::Ok, "[Live2D/Metal] Could not create a command queue");
+            return false;
+        }
+        m_state->device = device;
+        m_state->queue = queue;
+        resize(width, height);
+        CubismRenderer_Metal::SetConstantSettings(device, 1);
+        return true;
     }
-    m_width = width;
-    m_height = height;
-
-    // Required before any CubismRenderer_Metal::CreateRenderer() (model load).
-    CubismRenderer_Metal::SetConstantSettings(m_device, 1);
-
-    m_commandQueue = [m_device newCommandQueue];
-    if (!m_commandQueue) {
-        DEBUG_WARN(SubSys::Live2D, ErrCode::Ok,
-            "[Live2D/Metal] newCommandQueue failed, falling back");
-        return false;
-    }
-
-    DEBUG_INFO(SubSys::Live2D, ErrCode::Ok, "[Live2D/Metal] Render path ready — shared device (bgfx Metal)");
-    return true;
 }
 
 void MetalNativeRenderPath::shutdown() {
-    m_targets.clear();  // offscreen targets are owned by their renderer pair
-    m_commandQueue = nil;
-    m_device = nil;
+    auto& state = *m_state;
+    state.command = nil;
+    state.activeRenderer = nullptr;
+    state.models.clear();
+    if (state.device) CubismDeviceInfo_Metal::ReleaseDeviceInfo(state.device);
+    state.queue = nil;
+    state.device = nil;
 }
 
-// Per-model offscreen target (Cubism renders here; endFrame reads it back).
-bool MetalNativeRenderPath::ensureTarget(CsmRendering::CubismRenderer* renderer) {
-    auto it = m_targets.find(renderer);
-    if (it != m_targets.end() && it->second.target.GetColorBuffer() != nil) {
+CubismRenderer* MetalNativeRenderPath::createModelRenderer(
+    Live2D::Cubism::Framework::CubismUserModel& model, int width, int height) {
+    @autoreleasepool {
+        model.CreateRenderer(width, height);
+        return model.GetRenderer<CubismRenderer_Metal>();
+    }
+}
+
+bool MetalNativeRenderPath::bindModelTexture(CubismRenderer* renderer, std::uint32_t index,
+                                            int width, int height, const unsigned char* pixels) {
+    @autoreleasepool {
+        auto* descriptor = [MTLTextureDescriptor
+            texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
+            width:width height:height mipmapped:NO];
+        descriptor.usage = MTLTextureUsageShaderRead;
+        descriptor.storageMode = MTLStorageModeManaged;
+        if (@available(macOS 10.15, *)) {
+            if (m_state->device.hasUnifiedMemory) descriptor.storageMode = MTLStorageModeShared;
+        }
+        id<MTLTexture> texture = [m_state->device newTextureWithDescriptor:descriptor];
+        if (!texture) return false;
+        [texture replaceRegion:MTLRegionMake2D(0, 0, width, height)
+                    mipmapLevel:0 withBytes:pixels bytesPerRow:size_t(width) * 4];
+        auto& textures = m_state->models[renderer].textures;
+        if (textures.size() <= index) textures.resize(size_t(index) + 1);
+        textures[index] = texture;
+        static_cast<CubismRenderer_Metal*>(renderer)->BindTexture(index, texture);
         return true;
     }
-    OffscreenEntry entry;
-    entry.target.SetOffscreenRenderTarget(m_device, nullptr, m_width, m_height);
-    m_targets[renderer] = std::move(entry);
-    return true;
 }
 
-void MetalNativeRenderPath::beginFrame(CsmRendering::CubismRenderer* renderer) {
-    if (!renderer) return;
-    ensureTarget(renderer);
-    auto it = m_targets.find(renderer);
-    if (it == m_targets.end()) return;
+void MetalNativeRenderPath::beginFrame(CubismRenderer* renderer) {
+    @autoreleasepool {
+        auto& state = *m_state;
+        state.command = nil;
+        state.activeRenderer = nullptr;
+        if (!renderer || !state.queue || !state.width || !state.height) return;
+        auto& model = state.models[renderer];
+        if (!state.ensureTarget(model)) return;
+        id<MTLCommandBuffer> command = [state.queue commandBuffer];
+        if (!command) return;
 
-    id<MTLTexture> color = it->second.target.GetColorBuffer();
-    MTLRenderPassDescriptor* descriptor = [MTLRenderPassDescriptor renderPassDescriptor];
-    descriptor.colorAttachments[0].texture = color;
-    descriptor.colorAttachments[0].loadAction = MTLLoadActionClear;
-    descriptor.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 0);
-    descriptor.colorAttachments[0].storeAction = MTLStoreActionStore;
+        auto* pass = [MTLRenderPassDescriptor renderPassDescriptor];
+        pass.colorAttachments[0].texture = model.color;
+        pass.colorAttachments[0].loadAction = MTLLoadActionClear;
+        pass.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 0);
+        pass.colorAttachments[0].storeAction = MTLStoreActionStore;
+        pass.depthAttachment.texture = model.depth;
+        pass.depthAttachment.loadAction = MTLLoadActionClear;
+        pass.depthAttachment.clearDepth = 1.0;
+        pass.depthAttachment.storeAction = MTLStoreActionDontCare;
 
-    id<MTLCommandBuffer> cmd = [m_commandQueue commandBuffer];
-    if (cmd) {
         auto* metal = static_cast<CubismRenderer_Metal*>(renderer);
-        metal->StartFrame(cmd, descriptor);
-        m_activeCommand = cmd;
+        metal->StartFrame(command, pass);
+        metal->DrawModel();
+        state.command = command;
+        state.activeRenderer = renderer;
     }
 }
 
-void MetalNativeRenderPath::endFrame(CsmRendering::CubismRenderer* renderer,
-                                     bgfx::TextureHandle bgfxTex) {
-    if (!renderer) return;
-    auto it = m_targets.find(renderer);
-    if (it == m_targets.end()) return;
+void MetalNativeRenderPath::endFrame(CubismRenderer* renderer, bgfx::TextureHandle bgfxTex) {
+    @autoreleasepool {
+        auto& state = *m_state;
+        if (state.activeRenderer != renderer || !state.command) return;
+        id<MTLCommandBuffer> command = state.command;
+        state.command = nil;
+        state.activeRenderer = nullptr;
+        if (!bgfx::isValid(bgfxTex)) return;
 
-    // Commit the command buffer and wait: the readback below needs the
-    // render to be complete (synchronous path, same as the GL readback).
-    id<MTLCommandBuffer> cmd = m_activeCommand;
-    m_activeCommand = nil;
-    if (cmd) {
-        [cmd commit];
-        [cmd waitUntilCompleted];
+        const auto& model = state.models.at(renderer);
+        const size_t rows = state.height;
+        const size_t bytesPerRow = state.width * 4;
+        id<MTLBlitCommandEncoder> blit = [command blitCommandEncoder];
+        if (!blit) return;
+        [blit copyFromTexture:model.color sourceSlice:0 sourceLevel:0
+                 sourceOrigin:MTLOriginMake(0, 0, 0) sourceSize:MTLSizeMake(state.width, rows, 1)
+                     toBuffer:model.readback destinationOffset:0
+        destinationBytesPerRow:model.rowPitch destinationBytesPerImage:model.rowPitch * rows];
+        [blit endEncoding];
+        [command commit];
+        [command waitUntilCompleted];
+        if (command.status != MTLCommandBufferStatusCompleted) {
+            if (!state.reportedCommandFailure) {
+                const char* reason = command.error.localizedDescription.UTF8String;
+                DEBUG_ERR(SubSys::Live2D, ErrCode::Ok, "[Live2D/Metal] Drawing failed: %s",
+                    reason ? reason : "no Metal error description");
+                state.reportedCommandFailure = true;
+            }
+            return;
+        }
+        state.reportedCommandFailure = false;
+
+        const auto* memory = bgfx::alloc(static_cast<std::uint32_t>(bytesPerRow * rows));
+        const auto* source = static_cast<const unsigned char*>(model.readback.contents);
+        for (size_t row = 0; row < rows; ++row) {
+            std::memcpy(memory->data + row * bytesPerRow, source + row * model.rowPitch, bytesPerRow);
+        }
+        bgfx::updateTexture2D(bgfxTex, 0, 0, 0, 0, static_cast<std::uint16_t>(state.width),
+                              static_cast<std::uint16_t>(rows), memory);
     }
-
-    id<MTLTexture> color = it->second.target.GetColorBuffer();
-    if (!color || !bgfx::isValid(bgfxTex)) return;
-
-    const uint32_t w = m_width;
-    const uint32_t h = m_height;
-    std::vector<uint8_t>& pixels = it->second.pixels;
-    if (pixels.size() < size_t(w) * h * 4) pixels.resize(size_t(w) * h * 4);
-    [color getBytes:pixels.data()
-          bytesPerRow:w * 4
-           fromRegion:MTLRegionMake2D(0, 0, w, h)
-          mipmapLevel:0];
-
-    const bgfx::Memory* mem = bgfx::copy(pixels.data(), w * h * 4);
-    bgfx::updateTexture2D(bgfxTex, 0, 0, 0, 0, w, h, mem);
 }
 
-void MetalNativeRenderPath::releaseModelTarget(CsmRendering::CubismRenderer* renderer) {
-    m_targets.erase(renderer);
+void MetalNativeRenderPath::releaseModelTarget(CubismRenderer* renderer) {
+    m_state->models.erase(renderer);
 }
 
 void MetalNativeRenderPath::resize(int width, int height) {
-    if (width == m_width && height == m_height) return;
-    m_width = width;
-    m_height = height;
-    m_targets.clear();  // recreated on next beginFrame at the new size
+    // Keep the resource sizes representable in both Metal and bgfx's API.
+    constexpr int maxTextureDimension = 16384;
+    if (width <= 0 || height <= 0 || width > maxTextureDimension || height > maxTextureDimension) return;
+    m_state->width = static_cast<size_t>(width);
+    m_state->height = static_cast<size_t>(height);
 }
 
 } // namespace Caesura
 
-#endif // CAESURA_LIVE2D && __APPLE__
+#endif

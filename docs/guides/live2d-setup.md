@@ -7,8 +7,8 @@
   - 需要同意 Live2D 专有许可协议
 - 支持的平台:
   - Windows (D3D11 渲染路径，需 **MSVC (VS2022 v143 工具集)**；MinGW/Clang-cl 不支持)
-  - macOS (OpenGL 路径；Metal 路径尚未完成生产验证)
-  - Linux (OpenGL 渲染路径)
+  - macOS 桌面使用 Metal。需要 Xcode 的 Metal 工具链，当前候选仍待 Mac 实机验证。
+  - Linux 使用 OpenGL 3.3 兼容上下文。构建需 OpenGL 和 GLEW 开发库。
 
 ## 无 SDK 环境
 
@@ -118,6 +118,8 @@ Windows 的模型加载、口型和渲染证据见 [U26 语音口型执行记录
 
 Windows 打包工具会从所选 Cubism 构建复制 `FrameworkShaders` 下的两份 D3D11 着色器。使用支持 Cubism 的构建目录中的 `CaesuraAmeKAG.exe` 作为 `--engine`，项目需提供模型及其引用资源。
 
+Linux 构建将 Cubism 的标准 OpenGL 着色器直接放在 `FrameworkShaders/` 下。macOS 构建将基础和混合模式 `.metallib` 放在可执行文件旁的 `FrameworkMetallibs/` 下。CPack 和游戏目录都会收录对应清单里的文件，验包会检查 SDK 已启用的发行包是否包含完整清单。
+
 ```ks
 [live2d_load model=haru storage="assets/live2d/Haru/Haru.model3.json"]
 [live2d_show model=haru x=0 y=0 scale=0.5]
@@ -144,13 +146,13 @@ Windows 打包工具会从所选 Cubism 构建复制 `FrameworkShaders` 下的�
 | 平台 | 首选 | 回退 |
 |------|------|------|
 | Windows | D3D11（bgfx 渲染器必须为 D3D11，否则初始化失败） | — |
-| macOS | 取决于 bgfx 渲染器：OpenGL/GLES → OpenGLShared；Metal → MetalNative（已实现·待 macOS 实机验证） | OpenGL/GLES 分支：OpenGLReadback；Metal 分支：引擎层回退 NullAnimation |
-| Linux | OpenGL | OpenGLReadback |
+| macOS | MetalNative（实例化对应的 Cubism Metal renderer） | 初始化失败时回退到 NullAnimation |
+| Linux | OpenGLReadback（独立 OpenGL 兼容上下文，渲染后上传至 bgfx） | 初始化失败时回退到 NullAnimation |
 
 渲染路径实现在 `src/live2d/Live2D/` 下：
 - `D3D11NativeRenderPath.cpp`
 - `MetalNativeRenderPath.cpp`
-- `OpenGLSharedRenderPath.cpp` / `OpenGLReadbackRenderPath.cpp`
+- `OpenGLReadbackRenderPath.cpp`
 
 ## 历史验证记录（2026-07/08）
 
@@ -181,7 +183,7 @@ Windows 打包工具会从所选 Cubism 构建复制 `FrameworkShaders` 下的�
 1. 下载 Cubism SDK for Native（R5），放到项目根目录（默认查找 `CubismSdkForNative-5-r.5`）或通过 `CUBISM_SDK_ROOT` 指定位置。
 2. 执行 `cmake -B build -DCAESURA_LIVE2D=ON`，确认实际编译包含 `CAESURA_LIVE2D`、`Live2DBackend` 编译通过（2026-08-01 的编译结果仅是历史记录；当前候选需对应的新证据）。
 3. Windows 上以 D3D11 渲染器运行，加载 `.moc3` 模型并渲染，验证 D3D11Native 路径（✓ 2026-08-01 完成：HTTP RPC 加载 `Samples/Resources/Haru/Haru.model3.json`，渲染多帧无崩溃、无设备丢失）。
-4. 逐路径验证其余平台（Linux/macOS 的 OpenGLShared → OpenGLReadback → MetalNative），修复发现的问题后，同步更新能力矩阵（`docs/design/engine-capability-matrix.md` 的 C1 行）与本文档的状态表。
+4. 在 Linux 和 macOS 分别从最终解包目录加载模型并渲染，验证 OpenGLReadback 和 MetalNative。确认纹理可见并检查动作、表情和冷启动恢复。
 
 ### 2026-08-01 验证记录（Windows D3D11）
 
@@ -209,7 +211,7 @@ A: 确认 `CUBISM_SDK_ROOT/Core/include/Live2DCubismCore.h` 存在。
 A: 确认 `.moc3` 和 `.model3.json` 文件路径正确。检查模型文件版本是否与 SDK 版本兼容。
 
 **Q: macOS 上 Metal 渲染不工作**
-A: Metal 路径已实现（2026-08-07 由 stub 完成），但尚未在真实 macOS 硬件上验证，因此暂不建议作为发布能力启用；请使用 OpenGL renderer，或保持默认 NullAnimation 降级。
+A: 确认引擎使用 Metal，并检查可执行文件旁的 `FrameworkMetallibs/`。SDK 会通过系统资源查找加载这些库。当前候选的 Metal 画面仍需在真实 macOS 上验收。
 
 **Q: 能否在 Release 构建中去掉 Live2D？**
 A: 可以。不设置 `-DCAESURA_LIVE2D=ON`，引擎将使用 `NullAnimationBackend`（仅支持静态 PNG 立绘）。

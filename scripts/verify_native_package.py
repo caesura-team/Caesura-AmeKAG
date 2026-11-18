@@ -23,6 +23,7 @@ from urllib.parse import unquote, urlsplit
 
 from package_verification import inspect_inventory, PackageVerificationError
 from macho_dependencies import inspect_package_closure
+from cubism_assets import shader_paths
 
 SOURCE = Path(__file__).resolve().parents[1]
 TEMPLATES = ("basic", "blank", "kag3", "live2d", "showcase")
@@ -167,7 +168,8 @@ def _trusted_paths() -> list[str]:
     # the actual Python author CLI are mandatory here, not validation utilities.
     paths = [path.relative_to(SOURCE).as_posix() for path in (SOURCE / "scripts").rglob("*.lua")
              if "validation" not in path.relative_to(SOURCE / "scripts").parts]
-    paths += ["scripts/caesura.py", "scripts/caesura_build.py", "demo/entry.lua",
+    paths += ["scripts/caesura.py", "scripts/caesura_build.py", "scripts/cubism_assets.py",
+              "scripts/cubism_opengl_shaders.txt", "scripts/cubism_metal_shaders.txt", "demo/entry.lua",
               "demo/cjk_smoke.ks", "assets/fonts/NotoSansCJKsc-Regular.otf",
               "web-editor/dist/index.html", "tools/project_templates/manifest.json"]
     for template in TEMPLATES:
@@ -246,6 +248,11 @@ def inspect_native_package(package_root: str | Path, platform: str, required: di
             identity = file(relative, binary=True)
             if identity:
                 report["runtime_libraries"].append(identity)
+        if required["live2d"]:
+            for shader in shader_paths(platform):
+                identity = file(shader.as_posix())
+                if identity:
+                    report["required_files"].append(identity)
         if platform == "macos":
             try:
                 report["macho_dependency_closure"] = inspect_package_closure(

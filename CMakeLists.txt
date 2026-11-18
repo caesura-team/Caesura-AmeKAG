@@ -370,17 +370,12 @@ if(CAESURA_LIVE2D)
     if(NOT EXISTS "${CUBISM_SDK_ROOT}/Core/include/Live2DCubismCore.h")
         message(WARNING "Cubism SDK not found at ${CUBISM_SDK_ROOT}. Download from live2d.com")
     else()
+        file(TO_CMAKE_PATH "${CUBISM_SDK_ROOT}" CUBISM_SDK_ROOT)
         set(CUBISM_CORE_DIR "${CUBISM_SDK_ROOT}/Core")
         set(CUBISM_FRAMEWORK_DIR "${CUBISM_SDK_ROOT}/Framework")
         set(CAESURA_CUBISM_ARCH "${CMAKE_SYSTEM_PROCESSOR}" CACHE STRING
             "Cubism Core architecture directory (for example x86_64 or arm64)")
         set(CUBISM_ENGINE_RENDER_PATH_SRCS)
-        set(CUBISM_OPENGL_RENDER_PATH_SRCS
-            src/live2d/Live2D/OpenGLReadbackRenderPath.h
-            src/live2d/Live2D/OpenGLReadbackRenderPath.cpp
-            src/live2d/Live2D/OpenGLSharedRenderPath.h
-            src/live2d/Live2D/OpenGLSharedRenderPath.cpp
-        )
         set(CUBISM_PLATFORM_DEFINITION)
         set(CUBISM_PLATFORM_LIBRARIES)
 
@@ -396,25 +391,29 @@ if(CAESURA_LIVE2D)
                 src/live2d/Live2D/D3D11NativeRenderPath.h
                 src/live2d/Live2D/D3D11NativeRenderPath.cpp
             )
-        elseif(APPLE)
+        elseif(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+            enable_language(OBJCXX)
             add_library(Live2DCubismCore STATIC IMPORTED)
             set_target_properties(Live2DCubismCore PROPERTIES
                 IMPORTED_LOCATION "${CUBISM_CORE_DIR}/lib/macos/${CAESURA_CUBISM_ARCH}/libLive2DCubismCore.a"
                 INTERFACE_INCLUDE_DIRECTORIES "${CUBISM_CORE_DIR}/include"
             )
-            set(CUBISM_FRAMEWORK_RENDERER OpenGL)
-            set(CUBISM_PLATFORM_DEFINITION CSM_TARGET_MAC_GL)
+            set(CUBISM_FRAMEWORK_RENDERER Metal)
+            foreach(framework IN ITEMS Foundation Metal MetalKit)
+                find_library(CUBISM_${framework}_FRAMEWORK ${framework} REQUIRED)
+                list(APPEND CUBISM_PLATFORM_LIBRARIES "${CUBISM_${framework}_FRAMEWORK}")
+            endforeach()
             list(APPEND CUBISM_ENGINE_RENDER_PATH_SRCS
-                ${CUBISM_OPENGL_RENDER_PATH_SRCS}
                 src/live2d/Live2D/MetalNativeRenderPath.h
                 src/live2d/Live2D/MetalNativeRenderPath.cpp
             )
-            # Metal render path uses Objective-C++ (id<MTLDevice> etc.).
             set_source_files_properties(
-                ${CMAKE_SOURCE_DIR}/src/live2d/Live2D/MetalNativeRenderPath.cpp
-                PROPERTIES LANGUAGE OBJCXX
+                src/live2d/Live2D/MetalNativeRenderPath.cpp
+                PROPERTIES LANGUAGE OBJCXX COMPILE_OPTIONS "-fobjc-arc"
             )
-        elseif(UNIX)
+            set_target_properties(CaesuraLive2D PROPERTIES
+                OBJCXX_STANDARD 20 OBJCXX_STANDARD_REQUIRED YES OBJCXX_EXTENSIONS NO)
+        elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
             add_library(Live2DCubismCore STATIC IMPORTED)
             set_target_properties(Live2DCubismCore PROPERTIES
                 IMPORTED_LOCATION "${CUBISM_CORE_DIR}/lib/linux/${CAESURA_CUBISM_ARCH}/libLive2DCubismCore.a"
@@ -423,16 +422,18 @@ if(CAESURA_LIVE2D)
             set(CUBISM_FRAMEWORK_RENDERER OpenGL)
             set(CUBISM_PLATFORM_DEFINITION CSM_TARGET_LINUX_GL)
             list(APPEND CUBISM_ENGINE_RENDER_PATH_SRCS
-                ${CUBISM_OPENGL_RENDER_PATH_SRCS}
+                src/live2d/Live2D/OpenGLReadbackRenderPath.h
+                src/live2d/Live2D/OpenGLReadbackRenderPath.cpp
             )
         else()
             message(FATAL_ERROR "Live2D is not configured for ${CMAKE_SYSTEM_NAME}")
         endif()
 
-        if(NOT WIN32)
-            find_package(OpenGL REQUIRED)
+        if(CUBISM_FRAMEWORK_RENDERER STREQUAL "OpenGL")
+            find_package(OpenGL REQUIRED COMPONENTS OpenGL GLX EGL)
+            set(GLEW_USE_STATIC_LIBS TRUE)
             find_package(GLEW REQUIRED)
-            list(APPEND CUBISM_PLATFORM_LIBRARIES OpenGL::GL GLEW::GLEW)
+            list(APPEND CUBISM_PLATFORM_LIBRARIES GLEW::GLEW OpenGL::GL OpenGL::GLX OpenGL::EGL)
         endif()
 
         # --- Cubism Framework + one platform renderer ---
@@ -455,6 +456,15 @@ if(CAESURA_LIVE2D)
         )
 
         add_library(CubismFramework STATIC ${CUBISM_FRAMEWORK_SRCS})
+        if(CUBISM_FRAMEWORK_RENDERER STREQUAL "Metal")
+            set(CUBISM_METAL_RENDERING "${CUBISM_FRAMEWORK_DIR}/src/Rendering/Metal")
+            file(GLOB cubism_metal_sources "${CUBISM_METAL_RENDERING}/*.mm")
+            target_sources(CubismFramework PRIVATE ${cubism_metal_sources})
+            target_compile_options(CubismFramework PRIVATE
+                $<$<COMPILE_LANGUAGE:OBJCXX>:-fno-objc-arc>)
+            set_target_properties(CubismFramework PROPERTIES
+                OBJCXX_STANDARD 20 OBJCXX_STANDARD_REQUIRED YES OBJCXX_EXTENSIONS NO)
+        endif()
         if(WIN32)
             caesura_add_windows_cubism_core(
                 Live2DCubismCore "${CUBISM_CORE_DIR}" CubismFramework)
@@ -502,22 +512,36 @@ if(CAESURA_LIVE2D)
         set(CAESURA_CAPABILITY_LIVE2D 1)
         message(STATUS "Live2D: ${CUBISM_FRAMEWORK_RENDERER} renderer for ${CMAKE_SYSTEM_NAME}/${CAESURA_CUBISM_ARCH}")
 
-        # Cubism renderers load FrameworkShaders/* at runtime (relative to
-        # the working directory); copy the shaders for the ACTIVE renderer:
-        # D3D11 loads .fx, OpenGL loads .vert/.frag (C1: the GL copy was
-        # missing -- models would render white/nothing on Linux/macOS).
-        # The engine chdir()s to the source root at startup, so the shaders
-        # must ALSO live there (not just next to the executable).
-        set(CUBISM_SHADER_SRC_DIR "${CUBISM_FRAMEWORK_DIR}/src/Rendering/${CUBISM_FRAMEWORK_RENDERER}/Shaders")
-        if(EXISTS "${CUBISM_SHADER_SRC_DIR}")
+        if(CUBISM_FRAMEWORK_RENDERER STREQUAL "Metal")
+            include(cmake/CaesuraCubismMetalShaders.cmake)
+            caesura_build_cubism_metallibs(${PROJECT_NAME} "${CUBISM_METAL_RENDERING}/Shaders")
+        else()
+            # The SDK opens these files directly under FrameworkShaders/.
+            set(cubism_shader_dir "${CUBISM_FRAMEWORK_DIR}/src/Rendering/${CUBISM_FRAMEWORK_RENDERER}/Shaders")
+            if(CUBISM_FRAMEWORK_RENDERER STREQUAL "OpenGL")
+                set(cubism_shader_contract "${CMAKE_CURRENT_SOURCE_DIR}/scripts/cubism_opengl_shaders.txt")
+                set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${cubism_shader_contract}")
+                file(STRINGS "${cubism_shader_contract}" cubism_shader_names)
+                set(cubism_shader_dir "${cubism_shader_dir}/Standard")
+            else()
+                set(cubism_shader_names CubismEffect.fx CubismBlendMode.fx)
+            endif()
+            set(CUBISM_SHADER_FILES)
+            foreach(shader IN LISTS cubism_shader_names)
+                set(shader_path "${cubism_shader_dir}/${shader}")
+                if(NOT EXISTS "${shader_path}")
+                    message(FATAL_ERROR "Cubism SDK is missing shader: ${shader_path}")
+                endif()
+                list(APPEND CUBISM_SHADER_FILES "${shader_path}")
+            endforeach()
             add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy_directory
-                    "${CUBISM_SHADER_SRC_DIR}"
-                    "$<TARGET_FILE_DIR:${PROJECT_NAME}>/FrameworkShaders"
-                COMMAND ${CMAKE_COMMAND} -E copy_directory
-                    "${CUBISM_SHADER_SRC_DIR}"
+                COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${PROJECT_NAME}>/FrameworkShaders"
                     "${CMAKE_SOURCE_DIR}/FrameworkShaders"
-                COMMENT "Copying Cubism FrameworkShaders (${CUBISM_FRAMEWORK_RENDERER}) to output + source root...")
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    ${CUBISM_SHADER_FILES} "$<TARGET_FILE_DIR:${PROJECT_NAME}>/FrameworkShaders"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    ${CUBISM_SHADER_FILES} "${CMAKE_SOURCE_DIR}/FrameworkShaders"
+                VERBATIM)
         endif()
     endif()
 endif()
@@ -546,8 +570,12 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
 file(READ "${CMAKE_SOURCE_DIR}/config/runtime-capabilities.json" _capability_catalog)
 string(REPLACE "\r\n" "\n" _capability_catalog "${_capability_catalog}")
 string(SHA256 CAESURA_CAPABILITY_CATALOG_SHA256 "${_capability_catalog}")
-configure_file(cmake/CaesuraCapabilityBuild.h.in
-    "${CMAKE_BINARY_DIR}/generated/CaesuraCapabilityBuild.h" @ONLY)
+set(capability_build_header "${CMAKE_BINARY_DIR}/generated/CaesuraCapabilityBuild.h")
+configure_file(cmake/CaesuraCapabilityBuild.h.in "${capability_build_header}" @ONLY)
+# Keep capability reports in sync with reconfiguration even when the compiler's
+# localized include trace cannot be consumed by the build tool.
+set_property(SOURCE src/main.cpp src/script/bindings/EngineBinding.cpp
+    APPEND PROPERTY OBJECT_DEPENDS "${capability_build_header}")
 target_include_directories(${PROJECT_NAME} PRIVATE "${CMAKE_BINARY_DIR}/generated")
 target_include_directories(CaesuraScript PRIVATE "${CMAKE_BINARY_DIR}/generated")
 
@@ -572,14 +600,14 @@ install(DIRECTORY assets/ DESTINATION assets)
 install(FILES projects/.gitkeep DESTINATION projects)
 install(DIRECTORY shaders/ DESTINATION shaders OPTIONAL
     PATTERN "compiled" EXCLUDE)
-if(WIN32 AND CAESURA_CAPABILITY_LIVE2D)
-    file(TO_CMAKE_PATH "${CUBISM_SHADER_SRC_DIR}" cubism_shader_install_dir)
-    install(FILES "${cubism_shader_install_dir}/CubismEffect.fx"
-                  "${cubism_shader_install_dir}/CubismBlendMode.fx"
-            DESTINATION FrameworkShaders)
-    file(TO_CMAKE_PATH "${CUBISM_FRAMEWORK_DIR}" cubism_framework_install_dir)
-    install(FILES "${cubism_framework_install_dir}/LICENSE.md"
-                  "${cubism_framework_install_dir}/NOTICE.md"
+if(CAESURA_CAPABILITY_LIVE2D)
+    if(CUBISM_FRAMEWORK_RENDERER STREQUAL "Metal")
+        install(FILES ${CUBISM_METALLIB_FILES} DESTINATION FrameworkMetallibs)
+    else()
+        install(FILES ${CUBISM_SHADER_FILES} DESTINATION FrameworkShaders)
+    endif()
+    install(FILES "${CUBISM_FRAMEWORK_DIR}/LICENSE.md"
+                  "${CUBISM_FRAMEWORK_DIR}/NOTICE.md"
             DESTINATION licenses/Live2D)
 endif()
 # Project Manager templates are part of the release contract: the stranger

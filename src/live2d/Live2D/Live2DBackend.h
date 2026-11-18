@@ -13,6 +13,7 @@
 namespace Live2D { namespace Cubism { namespace Framework {
     class CubismUserModel;
     class CubismModelSettingJson;
+    namespace Rendering { class CubismRenderer; }
 } } }
 namespace Csm = Live2D::Cubism::Framework;
 
@@ -72,14 +73,13 @@ private:
 
         // Cubism
         std::unique_ptr<Csm::CubismUserModel> userModel;
-        void* renderer = nullptr;       // CubismRenderer_OpenGLES2*
+        Csm::Rendering::CubismRenderer* renderer = nullptr; // owned by userModel
         int renderWidth = 1280;
         int renderHeight = 720;
 
         // bgfx texture
         bgfx::TextureHandle bgfxTex = BGFX_INVALID_HANDLE;
         bool bgfxTexValid = false;
-        std::vector<bgfx::TextureHandle> textures; // model textures (RGBA8)
 
         // Cached raw asset data (owned)
         std::vector<char> mocData;     // .moc3 raw bytes (aligned)
