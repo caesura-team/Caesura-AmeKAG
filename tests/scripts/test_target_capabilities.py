@@ -14,6 +14,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 import caesura_build
+from cubism_assets import shader_paths
 
 
 class NativeCapabilityQuery(unittest.TestCase):
@@ -200,19 +201,18 @@ class AuthorCapabilityEntrypoints(unittest.TestCase):
         web = self.creator("check", self.story, "--target", "web")
         self.assertEqual(web.returncode, 0, web.stdout + web.stderr)
 
-    def test_game_only_build_ships_shader_files_for_selected_windows_cubism_engine(self):
+    def test_game_only_build_ships_shader_files_for_selected_cubism_engine(self):
         profile = caesura_build.native_capability_profile(self.engine)
         out = self.directory / "assembled-game"
         result = self.creator("build", self.project, "--out", out, "--engine", self.engine)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        shaders = out / "FrameworkShaders"
-        if profile["platform"] == "windows" and profile["compiled"]["live2d"]:
-            for name in ("CubismEffect.fx", "CubismBlendMode.fx"):
-                self.assertTrue((shaders / name).is_file(), name)
-                self.assertEqual((shaders / name).read_bytes(),
-                                 (self.engine.parent / "FrameworkShaders" / name).read_bytes())
+        if profile["compiled"]["live2d"]:
+            for path in shader_paths(profile["platform"]):
+                self.assertTrue((out / path).is_file(), path)
+                self.assertEqual((out / path).read_bytes(), (self.engine.parent / path).read_bytes())
         else:
-            self.assertFalse(shaders.exists())
+            self.assertFalse((out / "FrameworkShaders").exists())
+            self.assertFalse((out / "FrameworkMetallibs").exists())
 
     def test_game_only_build_preserves_flat_linux_cubism_shaders(self):
         engine = self.directory / self.engine.name

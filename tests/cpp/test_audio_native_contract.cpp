@@ -186,7 +186,7 @@ std::string writeCrossfadeTrack(const std::filesystem::path& path, size_t channe
 }
 
 TEST_CASE("Audio native contract: xfadebgm overlaps two decoded tracks and waits") {
-    Caesura::TestPaths::ScopedTempDir dir("audio-crossfade");
+    Caesura::TestPaths::ScopedTempDir dir("audio-crossfade", "tests/audio");
     const auto oldTrack = writeCrossfadeTrack(dir.path() / "old.wav", 0);
     const auto newTrack = writeCrossfadeTrack(dir.path() / "new.wav", 1);
     Caesura::SoLoudAudioEngine audio{Caesura::SoLoudAudioEngine::OutputMode::ManualMix};
