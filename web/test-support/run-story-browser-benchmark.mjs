@@ -5,6 +5,7 @@ import {dirname, join, resolve, relative, isAbsolute, posix} from 'node:path'
 import {fileURLToPath, pathToFileURL} from 'node:url'
 import {tmpdir} from 'node:os'
 import {createHash} from 'node:crypto'
+import {once} from 'node:events'
 
 const here = dirname(fileURLToPath(import.meta.url)), web = resolve(here, '..'), root = resolve(web, '..')
 const sleep = ms => new Promise(yes => setTimeout(yes, ms))
@@ -142,6 +143,32 @@ class Cdp {
   close(){for(const call of this.pending.values()){clearTimeout(call.timer);call.reject(Error('CDP closed'))}this.pending.clear();this.socket.close()}
 }
 
+export async function waitForBrowserPort({readPort, deadline, getChildState,
+    now = Date.now, pause = sleep}) {
+  while (true) {
+    const state = getChildState()
+    if (state.launchError) throw state.launchError
+    ensure(!state.exited, 'Owned browser exited before port publication')
+    ensure(now() < deadline, 'Browser startup deadline exceeded before port publication')
+    let content = ''
+    try {
+      content = readPort()
+    } catch (error) {
+      // Chrome creates the file before its writer has released it on Windows.
+      if (!['ENOENT', 'EBUSY'].includes(error.code)) throw error
+    }
+    const end = content.indexOf('\n')
+    if (end !== -1) {
+      const value = content.slice(0, end).trim()
+      const port = Number(value)
+      ensure(/^\d+$/.test(value) && Number.isInteger(port) && port > 0 && port < 65536,
+        'Invalid owned browser port')
+      return port
+    }
+    await pause(Math.min(50, Math.max(1, deadline - now())))
+  }
+}
+
 // DevToolsActivePort precedes HTTP/target readiness. Poll only this owned
 // browser's startup protocol; never retry a measured workload or relaunch it.
 export async function waitForBrowserStartup({endpoint,deadline,fetchImpl=fetch,
@@ -270,20 +297,22 @@ async function run() {
         }catch(error){diagnostic('http-source-error',{path:request.url,error:String(error)});response.statusCode=404;response.end('Unavailable source')}
       })}
     }]})
-    await server.listen()
+    // Vite's listen() substitutes its default port for zero. Let Node bind
+    // an ephemeral loopback port on the same Vite-owned HTTP server.
+    const listening = once(server.httpServer, 'listening')
+    server.httpServer.listen(0, '127.0.0.1')
+    await listening
     const address=server.httpServer.address();ensure(address&&typeof address!=='string','Missing Vite listener')
     const browserArgs=['--headless=new','--no-first-run','--no-default-browser-check','--disable-extensions','--mute-audio','--remote-debugging-address=127.0.0.1','--remote-debugging-port=0','--user-data-dir='+profile,'--window-size=1280,720']
     if(process.env.CI)browserArgs.push('--no-sandbox','--disable-dev-shm-usage')
     child=spawn(browser,[...browserArgs,'about:blank'],{windowsHide:true,stdio:'ignore'})
     child.on('error',error=>{launchError=error})
     const deadline=Date.now()+60000, portFile=join(profile,'DevToolsActivePort')
-    while(!existsSync(portFile)){if(launchError)throw launchError
-      ensure(child.exitCode===null && child.signalCode===null,'Owned browser exited before port publication')
-      ensure(Date.now()<deadline,'Browser startup deadline');await sleep(50)}
-    const port=Number(readFileSync(portFile,'utf8').split(/\r?\n/)[0]);ensure(Number.isInteger(port)&&port>0&&port<65536,'Invalid owned browser port')
+    const getChildState=()=>({exited:child.exitCode!==null||child.signalCode!==null,launchError})
+    const port=await waitForBrowserPort({readPort:()=>readFileSync(portFile,'utf8'),deadline,getChildState})
     endpoint='http://127.0.0.1:'+port
     const {version,targets}=await waitForBrowserStartup({endpoint,deadline,startup,diagnostic,
-      getChildState:()=>({exited:child.exitCode!==null||child.signalCode!==null,launchError})})
+      getChildState})
     browserCdp=await Cdp.connect(version.webSocketDebuggerUrl)
     const processes=await browserCdp.send('SystemInfo.getProcessInfo')
     browserPid=processes.processInfo.find(item=>item.type==='browser')?.id

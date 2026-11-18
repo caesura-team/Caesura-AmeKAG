@@ -7,13 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [1.1.0] — local release candidate
+## [1.1.0]
 
 ### Added
 
 - **Native visual novel flow**: title, new game, continue, settings, save selection and ending screens, with a playable First VN example.
 - **Scripted effects**: BGM crossfade and timed scene blur on native and Web targets, with capability checks at runtime.
 - **Cubism projects on Windows**: scripted motion and weighted expressions, plus save and rollback support for model declarations. Restored motions restart and expressions fade in again. Builds with Cubism include the D3D11 framework shaders.
+- **Cubism on Linux and macOS**: SDK-enabled builds bind model textures to the OpenGL or Metal renderer and include its shaders in both engine and game-only packages.
 
 - **Runnable validation evidence**: real-execution collectors, strict receipts/seed/source binding, and rejection of failed or missing runs (`54c537a6`), later extended into run/attempt-bound release dry-run input gates (`c9ab5858`).
 - **Save, restore and rollback**: explicit save-state contracts, real cold-start restore, rollback safety points and side-effect cancellation (`b176a741`, `a5ba8c49`, `cd730f32`); rejected packages roll back to the previous known-good package.

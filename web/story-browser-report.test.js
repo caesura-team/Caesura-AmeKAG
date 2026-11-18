@@ -1,10 +1,40 @@
 import {describe,it,expect} from 'vitest'
-import {validateStoryBrowserReport,requiredSources,allowFreshViteDependency,viteFsPath,browserFailureSummary,waitForBrowserStartup} from './test-support/run-story-browser-benchmark.mjs'
+import {validateStoryBrowserReport,requiredSources,allowFreshViteDependency,viteFsPath,browserFailureSummary,waitForBrowserPort,waitForBrowserStartup} from './test-support/run-story-browser-benchmark.mjs'
 import {mkdtempSync,mkdirSync,writeFileSync,symlinkSync,rmSync} from 'node:fs'
 import {tmpdir} from 'node:os'
 import {join,posix} from 'node:path'
 import {createHash} from 'node:crypto'
 import {createServer} from 'node:http'
+
+describe('owned browser port publication', () => {
+  const unavailable = code => Object.assign(new Error(code), {code})
+
+  it('allows an absent, locked, and partially written port file to become ready', async () => {
+    const reads = [unavailable('ENOENT'), unavailable('EBUSY'), '583', '58321\n/devtools/browser/owned']
+    let time = 0
+    const port = await waitForBrowserPort({
+      readPort: () => {
+        const value = reads.shift()
+        if (value instanceof Error) throw value
+        return value
+      },
+      deadline: 200, now: () => time, pause: async ms => { time += ms },
+      getChildState: () => ({exited: false}),
+    })
+    expect(port).toBe(58321)
+    expect(time).toBe(150)
+  })
+
+  it('stops at the deadline if the file remains locked', async () => {
+    let time = 0
+    await expect(waitForBrowserPort({
+      readPort: () => { throw unavailable('EBUSY') },
+      deadline: 75, now: () => time, pause: async ms => { time += ms },
+      getChildState: () => ({exited: false}),
+    })).rejects.toThrow(/startup deadline/)
+    expect(time).toBe(75)
+  })
+})
 
 function report() {
   const sample={out:'DONE:339:193',wallMs:3000,frames:4000,framesPerMs:4000/3000,
