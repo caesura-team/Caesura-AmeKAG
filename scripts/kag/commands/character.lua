@@ -66,7 +66,7 @@ schema.define("live2d_motion", {
 })
 schema.define("live2d_expression", {
     _meta = { category = "character", blocking = false,
-        desc = "Set a Live2D facial expression on a model" },
+        desc = "Apply a weighted Live2D expression to the current model, or clear it with weight 0" },
     model      = { type = "string", required = true, positional_index = 1 },
     expression = { type = "string", required = true, positional_index = 2 },
     weight     = { type = "number", default = 1.0, min = 0.0, max = 1.0 },
@@ -193,29 +193,6 @@ function CharacterCommands.csl(ctx, params)
     layers.move_layer(node, params.x or 0, params.y or 0)
 end
 
--- [live2d_motion model=name motion=tap_body fadein=500 fadeout=500]
-function CharacterCommands.live2d_motion(ctx, params)
-    local model = params.model or params[1]
-    local motion = params.motion or params[2]
-    if not model or not motion then return end
-    ctx.live2d = ctx.live2d or {}
-    ctx.live2d[model] = ctx.live2d[model] or {}
-    ctx.live2d[model].current_motion = motion
-    ctx.live2d[model].fadein = params.fadein or 500
-    ctx.live2d[model].fadeout = params.fadeout or 500
-end
-
--- [live2d_expression model=name expression=smile weight=1.0]
-function CharacterCommands.live2d_expression(ctx, params)
-    local model = params.model or params[1]
-    local expr = params.expression or params[2]
-    if not model or not expr then return end
-    ctx.live2d = ctx.live2d or {}
-    ctx.live2d[model] = ctx.live2d[model] or {}
-    ctx.live2d[model].expression = expr
-    ctx.live2d[model].expression_weight = params.weight or 1.0
-end
-
 -- Native handles are private transient ownership, never persistent scene values.
 local function model_name(params)
     local name = params.model or params[1]
@@ -234,6 +211,27 @@ local function applied(ok, reason)
     if ok ~= true then error("Live2D operation failed: " .. tostring(reason or "unsupported model or backend"), 0) end
 end
 
+function CharacterCommands.live2d_expression(ctx, params)
+    local handle, name = model_handle(ctx, params)
+    local expression = params.expression or params[2]
+    local weight = params.weight or 1.0
+    applied(backend.live2d_set_expression(handle, expression, weight))
+    local model = ctx.live2d[name]
+    model.expression, model.expression_weight = expression, weight
+end
+
+-- Motion paths are clip names or model-defined group/index pairs.
+function CharacterCommands.live2d_motion(ctx, params)
+    local handle, name = model_handle(ctx, params)
+    local motion = params.motion or params[2]
+    local fadein, fadeout = params.fadein or 500, params.fadeout or 500
+    applied(backend.live2d_play_motion(handle, motion, fadein / 1000, fadeout / 1000))
+    ctx.live2d = ctx.live2d or {}
+    ctx.live2d[name] = ctx.live2d[name] or {}
+    local model = ctx.live2d[name]
+    model.current_motion, model.fadein, model.fadeout = motion, fadein, fadeout
+end
+
 function CharacterCommands.live2d_load(ctx, params)
     local name = model_name(params)
     if ctx._live2dHandles and ctx._live2dHandles[name] then
@@ -246,17 +244,21 @@ function CharacterCommands.live2d_load(ctx, params)
     ctx._live2dHandles = ctx._live2dHandles or {}
     ctx._live2dHandles[name] = handle
     ctx.live2d = ctx.live2d or {}
-    ctx.live2d[name] = {storage = params.storage or params[2]}
+    ctx.live2d[name] = {storage = params.storage or params[2], visible=false, x=0, y=0, scale=1}
 end
 
 function CharacterCommands.live2d_show(ctx, params)
-    local handle = model_handle(ctx, params)
-    applied(backend.live2d_show(handle, params.x or 0, params.y or 0, params.scale or 1))
+    local handle, name = model_handle(ctx, params)
+    local x, y, scale = params.x or 0, params.y or 0, params.scale or 1
+    applied(backend.live2d_show(handle, x, y, scale))
+    local model = ctx.live2d[name]
+    model.visible, model.x, model.y, model.scale = true, x, y, scale
 end
 
 function CharacterCommands.live2d_hide(ctx, params)
-    local handle = model_handle(ctx, params)
+    local handle, name = model_handle(ctx, params)
     applied(backend.live2d_hide(handle))
+    ctx.live2d[name].visible = false
 end
 
 function CharacterCommands.live2d_unload(ctx, params)

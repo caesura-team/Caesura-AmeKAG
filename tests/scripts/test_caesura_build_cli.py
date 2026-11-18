@@ -275,8 +275,9 @@ class TestCreateCommand(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             pkg = Path(td) / "pkg"
             (pkg / "scripts").mkdir(parents=True)
-            shutil.copy2(ROOT / "scripts" / "caesura.py", pkg / "scripts" / "caesura.py")
-            shutil.copy2(ROOT / "scripts" / "caesura_build.py", pkg / "scripts" / "caesura_build.py")
+            for name in ("caesura.py", "caesura_build.py", "cubism_assets.py",
+                         "cubism_metal_shaders.txt", "cubism_opengl_shaders.txt"):
+                shutil.copy2(ROOT / "scripts" / name, pkg / "scripts" / name)
             shutil.copytree(ROOT / "demo" / "example_game", pkg / "demo" / "example_game")
             workdir = Path(td) / "somewhere-else"
             workdir.mkdir()

@@ -10,13 +10,13 @@
 |--------|-------|
 | Module libraries (src/) | 16 |
 | API interface headers (src/*/api/I*.h) | 41 |
-| Pure-virtual interface methods | 469 |
-| Lua binding functions (luaL_Reg entries) | 196 |
+| Pure-virtual interface methods | 470 |
+| Lua binding functions (luaL_Reg entries) | 199 |
 | KAG command handler files | 13 |
 | KAG contract commands (command-contracts.md) | 145 |
 | RPC HTTP endpoints (EditorServer) | 36 |
 | RPC stdin JSON-RPC methods | 29 |
-| Lua runtime scripts (scripts/, excl. demo/check) | 93 |
+| Lua runtime scripts (scripts/, excl. demo/check) | 94 |
 
 ## 2. C++ interfaces by module
 
@@ -45,7 +45,7 @@
 | render | ILayerManager.h | 21 |
 | render | IMeshRenderer.h | 8 |
 | render | IParticleSystem.h | 10 |
-| render | IRenderDevice.h | 66 |
+| render | IRenderDevice.h | 67 |
 | render | ITextureManager.h | 18 |
 | render | IVideoPlayer.h | 20 |
 | resource | IAssetProvider.h | 6 |
@@ -77,9 +77,9 @@
 | EngineBinding.cpp | 7 | Engine |
 | FontRestoreBinding.cpp | 6 | — |
 | KAGBinding.cpp | 36 | KAG |
-| Live2DBinding.cpp | 6 | Live2D |
+| Live2DBinding.cpp | 8 | Live2D |
 | MiniGameBinding.cpp | 5 | mini_game |
-| RenderBinding.cpp | 41 | _ASYNC_CALLBACKS, Render |
+| RenderBinding.cpp | 42 | _ASYNC_CALLBACKS, Render |
 | RestoreBinding.cpp | 6 | Restore |
 | SaveBinding.cpp | 12 | KAG |
 | SmaBinding.cpp | 8 | sma |

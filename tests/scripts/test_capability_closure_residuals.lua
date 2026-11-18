@@ -99,30 +99,47 @@ local saved_backend = rawget(_G, "_CAESURA_BACKEND")
 local stub, calls = recording_backend()
 rawset(_G, "_CAESURA_BACKEND", stub)
 
--- 1a. [blur] handler -> VFX.blur -> rtt.alloc/free + backend.submit_vfx(effect 2)
+-- 1a. A timed scene blur survives render epochs and relinquishes its owner.
 do
     local saved_rtt = package.loaded["rtt"]
-    local alloc_count, free_count = 0, 0
+    local alloc_count = 0
     package.loaded["rtt"] = {
         alloc = function() alloc_count = alloc_count + 1; return 500 + alloc_count end,
-        free = function() free_count = free_count + 1 end,
-        destroy = function() free_count = free_count + 1 end,
+        free = function() end,
     }
     local saved_vfx = package.loaded["vfx"]
     package.loaded["vfx"] = VFX
     local TransCommands = load_registered("kag.commands.transition", "scripts/kag/commands/transition.lua")
-    local ctx = { f = {}, sf = {}, tf = {}, mp = {}, variables = {}, _bgTexture = 42 }
-    local ok, err = pcall(TransCommands.blur, ctx, { time = 32, strength = 3 })
+    local ctx = { f = {}, sf = {}, tf = {}, mp = {}, variables = {} }
+    local co = coroutine.create(function() TransCommands.blur(ctx, {time=32, amount=8}) end)
+    local function radius()
+        for i = #calls, 1, -1 do
+            if calls[i].cmd == "set_scene_blur" then return calls[i].args[1] end
+        end
+    end
+    assert(coroutine.resume(co))
+    assert(coroutine.resume(co,16))
+    check("blur reaches the scene pass at half duration", radius() == 4)
+    assert(coroutine.resume(co,16))
+    check("maximum radius remains active for a rendered frame", radius() == 8 and coroutine.status(co) == "suspended")
+    assert(coroutine.resume(co,16))
+    check("natural completion clears scene blur and releases its operation", radius() == 0
+        and coroutine.status(co) == "dead" and #ctx.active_operations == 0)
+
+    local old = coroutine.create(function() TransCommands.blur(ctx, {time=32, amount=8}) end)
+    local new = coroutine.create(function() TransCommands.blur(ctx, {time=32, amount=16}) end)
+    assert(coroutine.resume(old))
+    assert(coroutine.resume(old,16))
+    assert(coroutine.resume(new))
+    assert(coroutine.resume(new,16))
+    assert(coroutine.close(old))
+    check("stale blur cleanup preserves the active scene effect", radius() == 8)
+    require("kag.operation").cancel_all(ctx)
+    check("cancelling the scene clears its blur", radius() == 0)
+    assert(coroutine.resume(new,16))
+    check("cancelled blur cannot repaint and uses no layer RTTs", radius() == 0 and alloc_count == 0)
     package.loaded["vfx"] = saved_vfx
     package.loaded["rtt"] = saved_rtt
-    local submit = first_call(calls, "submit_vfx")
-    check("blur handler executes without raising", ok, err)
-    check("blur allocates both RTT temporaries", alloc_count == 2, tostring(alloc_count))
-    check("blur frees both RTT temporaries", free_count == 2, tostring(free_count))
-    check("blur submits effect 2 to backend.submit_vfx", submit ~= nil
-        and submit.args[2] == 2 and submit.args[1] == 42, submit and tostring(submit.args[1]) .. "/" .. tostring(submit.args[2]))
-    check("blur submits a positive radius", submit ~= nil and tonumber(submit.args[7]) ~= nil
-        and tonumber(submit.args[7]) > 0, submit and tostring(submit.args[7]))
 end
 
 -- 1b. [flash] handler -> VFX.flash -> backend.create_solid_texture (clamped)
@@ -226,18 +243,13 @@ do
         check(name .. " is registered on the kag dispatch table", type(kag[name]) == "function", type(kag[name]))
         check(name .. " handler is the quickmenu implementation", kag[name] == quickmenu[name])
     end
-    -- State-only handlers: the effect is the documented ctx write consumed by
-    -- the runner (auto_mode kag_runner.lua:960, skip_mode :888/:923). The other
-    -- five delegate to registered kag.save/load/jump handlers.
+    -- Auto and skip write flags consumed by the runner. test_quickmenu covers
+    -- the two modal commands through actual scheduler execution.
     local ctx = { auto_mode = false, skip_mode = false }
     quickmenu.quickmenu_auto(ctx, { mode = "on" })
     quickmenu.quickmenu_skip(ctx, { mode = "on" })
-    quickmenu.quickmenu_log(ctx, {})
-    quickmenu.quickmenu_config(ctx, {})
     check("quickmenu_auto writes the runner-consumed auto_mode flag", ctx.auto_mode == true)
     check("quickmenu_skip writes the runner-consumed skip_mode flag", ctx.skip_mode == true)
-    check("quickmenu_log records its state (no consumer yet; tracked as PARTIAL)", ctx.backlog_visible == true)
-    check("quickmenu_config records its state (no consumer yet; tracked as PARTIAL)", ctx.config_open == true)
 end
 
 -- ===========================================================================
@@ -264,12 +276,14 @@ do
     local runtime = load_fresh("scripts/capability_runtime.lua")
     rawset(_G, "Engine", saved_engine)
     check("capability runtime captures the native host", runtime.has_host() == true)
+    facts.available.audio = false
+    facts.available["postfx.softblur"] = false
 
     local expected = {
-        { command = "blur", feature = "render.blur", reason = "command_not_wired" },
-        { command = "xfadebgm", feature = "audio.crossfade", reason = "backend_route_not_wired" },
-        { command = "live2d_motion", feature = "kag.live2d_motion", reason = "command_not_wired" },
-        { command = "live2d_expression", feature = "kag.live2d_expression", reason = "command_not_wired" },
+        { command = "blur", feature = "render.blur", reason = "backend_unavailable" },
+        { command = "xfadebgm", feature = "audio.crossfade", reason = "backend_unavailable" },
+        { command = "live2d_motion", feature = "kag.live2d_motion", reason = "sdk_disabled" },
+        { command = "live2d_expression", feature = "kag.live2d_expression", reason = "sdk_disabled" },
         { command = "steam_achievement", feature = "steam.achievements", reason = "sdk_disabled" },
     }
     local policy_text = '{"capabilities":{"optional":["render.blur",'

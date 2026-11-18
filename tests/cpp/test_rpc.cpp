@@ -1,5 +1,6 @@
 // test_rpc.cpp - RPC module tests (RpcServer, EditorServer)
 #include "doctest.h"
+#include "TestPaths.h"
 #include "rpc/RpcServer.h"
 #include "rpc/EditorServer.h"
 #include "rpc/api/IRpcServer.h"
@@ -29,6 +30,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstdlib>
 #include <deque>
 #include <filesystem>
 #include <fstream>
@@ -1140,6 +1142,83 @@ TEST_CASE("EditorServer enforces a configured bearer token (401)") {
     CHECK(dispatcher->requestCount() >= 1);
 
     es.stop();
+}
+
+TEST_CASE("EditorServer serves mounted Studio assets without opening RPC") {
+    TestPaths::ScopedTempDir webRoot("studio_webroot");
+    const auto studioRoot = webRoot.path() / std::filesystem::path(u8"作品-é-🙂");
+    const auto assets = studioRoot / "assets";
+    REQUIRE(std::filesystem::create_directories(assets));
+    const auto writeText = [](const std::filesystem::path& path, const char* text) {
+        std::ofstream output(path, std::ios::binary);
+        output << text;
+        output.close();
+        return static_cast<bool>(output);
+    };
+    REQUIRE(writeText(studioRoot / "index.html", "<!doctype html>"));
+    REQUIRE(writeText(assets / "index-main.js", "export {};\n"));
+    REQUIRE(writeText(assets / "index-main.css", "body {}\n"));
+    REQUIRE(writeText(assets / "codicon.ttf", "font bytes"));
+    REQUIRE(writeText(studioRoot / "private.txt", "outside assets\n"));
+
+    struct WebRootEnvironment {
+#ifdef _WIN32
+        const wchar_t* name = L"CAESURA_EDITOR_WEBROOT";
+        const wchar_t* previousValue = _wgetenv(name);
+        std::wstring previous = previousValue ? previousValue : L"";
+        int set(const wchar_t* value) const { return _wputenv_s(name, value); }
+#else
+        const char* name = "CAESURA_EDITOR_WEBROOT";
+        const char* previousValue = std::getenv(name);
+        std::string previous = previousValue ? previousValue : "";
+        int set(const char* value) const {
+            return *value ? setenv(name, value, 1) : unsetenv(name);
+        }
+#endif
+        ~WebRootEnvironment() { set(previous.c_str()); }
+    } environment;
+    REQUIRE(environment.set(studioRoot.c_str()) == 0);
+    EditorServer editor;
+    editor.setAuthToken("studio-test-token");
+    REQUIRE(editor.start(0));
+    httplib::Client browser("127.0.0.1", editor.port());
+
+    const auto script = browser.Get("/assets/index-main.js");
+    REQUIRE(script);
+    CHECK(script->status == 200);
+    CHECK(script->body == "export {};\n");
+    const auto assetHead = browser.Head("/assets/index-main.js");
+    REQUIRE(assetHead);
+    CHECK(assetHead->status == 200);
+    const auto stylesheet = browser.Get("/assets/index-main.css");
+    REQUIRE(stylesheet);
+    CHECK(stylesheet->status == 200);
+    CHECK(stylesheet->get_header_value("Content-Type") == "text/css");
+    const auto font = browser.Get("/assets/codicon.ttf");
+    REQUIRE(font);
+    CHECK(font->status == 200);
+    CHECK(font->get_header_value("Content-Type") == "font/ttf");
+    const httplib::Headers externalOrigin{{"Origin", "https://example.test"}};
+    const auto nonLocalAsset = browser.Get("/assets/index-main.js", externalOrigin);
+    REQUIRE(nonLocalAsset);
+    CHECK(nonLocalAsset->status == 403);
+    const auto missing = browser.Get("/assets/absent.js");
+    REQUIRE(missing);
+    CHECK(missing->status == 404);
+    const auto outsideAssets = browser.Get("/private.txt");
+    REQUIRE(outsideAssets);
+    CHECK(outsideAssets->status == 401);
+    const auto assetPost = browser.Post("/assets/index-main.js", "", "text/plain");
+    REQUIRE(assetPost);
+    CHECK(assetPost->status == 401);
+
+    const auto anonymous = browser.Get("/api/ping");
+    REQUIRE(anonymous);
+    CHECK(anonymous->status == 401);
+    const httplib::Headers bearer{{"Authorization", "Bearer studio-test-token"}};
+    const auto authorized = browser.Get("/api/ping", bearer);
+    REQUIRE(authorized);
+    CHECK(authorized->status == 200);
 }
 
 TEST_CASE("EditorServer rejects non-local CORS origins with 403") {

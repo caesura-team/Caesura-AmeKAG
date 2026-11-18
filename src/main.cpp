@@ -1503,7 +1503,7 @@ extern "C" int main(int argc, char* argv[]) {
     }
 
     printf("============================================\n");
-    printf("  Caesura (AmeKAG) v1.0.0\n");
+    printf("  Caesura (AmeKAG) v%s\n", CAESURA_VERSION);
     printf("  Cross-platform Visual Novel Engine\n");
     printf("  SDL3 + bgfx + SoLoud + Lua\n");
     if (headless) printf("  [HEADLESS MODE]\n");

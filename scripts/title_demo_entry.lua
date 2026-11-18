@@ -1,111 +1,109 @@
--- =============================================================================
---  Caesura (AmeKAG) — title_demo_entry.lua
---  Title-screen demo entry: shows the title menu first, then routes the
---  chosen action (New Game / Load Game / Settings / Exit) into the engine.
---  Pure Lua (no C++ rebuild); activate via config.entry_script.
--- =============================================================================
-
-local kag_runner = require("kag_runner")
+-- Native title entry for a configurable KAG scene.
+local runner = require("kag_runner")
 local layers = require("layers")
+local title = require("title_menu")
+local settings = require("settings")
+local saveload = require("saveload_menu")
+local saves = require("kag.commands.save")
+local presentation = require("kag.presentation")
+local flow = require("flow")
+local autosaveSlot = require("system").AUTOSAVE_SLOT
+local safe_replay_scene = flow.is_restore_scene or saves._safeScenePath
 
--- Title-menu coroutine: TitleMenu.show yields per frame; resume it every
--- frame until it returns an action (same pattern as the history overlay).
-local title_co = nil
-local settings_co = nil
-local started = false
+local okToast, toast = pcall(require, "toast")
+if not okToast then toast = nil end
+local quit = type(DevCore) == "table" and DevCore.quit
+local story = type(config) == "table" and config.title_story or "demo/galgame_demo.ks"
+local menu = { input_focus = "kag", continue_slot = autosaveSlot, seen_endings = {} }
+local playing = false
 
+local function show_error(message, reason)
+    print("[Title] " .. message .. ": " .. tostring(reason))
+    if toast then toast.show(message) end
+end
 
-local _toast = pcall(require, "toast") and require("toast") or nil
-local _devHud = pcall(require, "dev_hud") and require("dev_hud") or nil
+local function restore_slot(slot)
+    local candidate, reason = saves.prepare_load({ slot = slot })
+    if not candidate then
+        show_error("Load failed", reason)
+        return false
+    end
+
+    local restored, restore_error = runner.restore_candidate(nil, candidate)
+    if not restored then
+        presentation.discard(candidate._presentation)
+        show_error("Load failed", restore_error)
+    end
+    return restored
+end
+
+local function start_story(path)
+    local started, reason = runner.start(path, { playback_settings = menu.settingsValues })
+    if not started then show_error("Could not start story", reason) end
+    return started
+end
+
+local function choose_game()
+    while true do
+        local action, replay = title.show(menu)
+        if action == nil or action == "exit" then
+            if type(quit) == "function" then quit() end
+            return false
+        elseif action == "new" then
+            if start_story(story) then return true end
+        elseif action == "replay" then
+            if not safe_replay_scene(replay) then
+                show_error("Replay unavailable", replay)
+            elseif start_story(replay) then return true end
+        elseif action == "continue" then
+            if restore_slot(autosaveSlot) then return true end
+        elseif action == "load" then
+            local selected = saveload.show(menu, "load", true)
+            if selected and restore_slot(selected.slot) then return true end
+        elseif action == "settings" then
+            settings.show(menu, true)
+        end
+    end
+end
+
+local menu_co = coroutine.create(choose_game)
 
 function engine_update(dt)
-    if _devHud then pcall(function() _devHud.update(dt * 1000) end) end
-    if _toast then pcall(function() _toast.update(dt) end) end
-
-    -- Drive the title menu until an action is chosen
-    if settings_co then
-        local okS, errS = coroutine.resume(settings_co)
-        if not okS then
-            print("[TitleDemo] settings error: " .. tostring(errS))
+    if toast then toast.update(dt) end
+    if menu_co then
+        local resumed, result = coroutine.resume(menu_co)
+        if not resumed then
+            coroutine.close(menu_co)
+            menu_co = nil
+            show_error("Title menu failed", result)
+        elseif coroutine.status(menu_co) == "dead" then
+            menu_co = nil
+            playing = result == true
         end
-        if not okS or coroutine.status(settings_co) == "dead" then
-            settings_co = nil
-            -- settings closed: now start the demo
-            if not started then
-                kag_runner.start("scripts/demo_story.ks")
-                started = true
-            end
-        end
-    end
-    if title_co then
-        local ok, action = coroutine.resume(title_co)
-        if not ok then
-            print("[TitleMenu] error: " .. tostring(action))
-            title_co = nil
-            -- fall back to starting the demo directly
-            kag_runner.start("scripts/demo_story.ks")
-            started = true
-        elseif coroutine.status(title_co) == "dead" then
-            title_co = nil
-            if action == "new" then
-                kag_runner.start("scripts/demo_story.ks")
-                started = true
-            elseif action == "load" or action == "continue" then
-                -- continue = load the autosave (slot 0); plain load picks
-                -- the default slot via the saveload menu.
-                local ok_load, err = pcall(function()
-                    if action == "continue" then
-                        require("kag.commands.save").load(_G._CAESURA_CTX, { slot = 0 })
-                    else
-                        require("kag.commands.save").load(_G._CAESURA_CTX, {})
-                    end
-                end)
-                if not ok_load then
-                    print("[TitleMenu] load failed: " .. tostring(err))
-                    kag_runner.start("scripts/demo_story.ks")
-                end
-                started = true
-            elseif action == "settings" then
-                -- Open the settings overlay from the title screen (modal;
-                -- Settings.show yields per frame -- drive it every frame
-                -- like title_co; the demo starts only AFTER it closes
-                -- (review blocking: single resume left it hanging).
-                local ctx = _G._CAESURA_CTX
-                if ctx then
-                    settings_co = coroutine.create(function()
-                        require("settings").show(ctx)
-                    end)
-                    local ok0, err0 = coroutine.resume(settings_co)
-                    if not ok0 then
-                        print("[TitleDemo] settings setup error: " .. tostring(err0))
-                        settings_co = nil
-                    end
-                end
-            elseif action == "exit" then
-                local engine = rawget(_G, "_CAESURA_ENGINE")
-                if engine and engine.quit then engine:quit() end
-            end
-        end
+        return
     end
 
-    -- Once the game has started, hand over to the KAG runner
-    if started then
-        kag_runner.update(dt)
+    if playing then
+        local _, reason = runner.update(dt)
+        if reason == "ended" then
+            local owner = runner.get_ctx()
+            for id, ending in pairs(owner and owner.seen_endings or {}) do
+                menu.seen_endings[id] = ending
+            end
+            playing = false
+            local stopped, stop_error = runner.stop()
+            if stopped then menu_co = coroutine.create(choose_game)
+            else show_error("Could not return to title", stop_error) end
+        end
     end
 end
 
 function engine_render()
     layers.render()
+    if playing then runner.render()
+    elseif layers.render_overlay_text then layers.render_overlay_text() end
 end
 
 function _KAG_onClick()
-    if started then kag_runner.on_click() end
+    if playing then runner.on_click() end
 end
-
--- Begin: show the title menu
-local ctx = _G._CAESURA_CTX
-if ctx then
-    title_co = coroutine.create(function() return require("title_menu").show(ctx) end)
-end
-
-print("[TitleDemo] Title screen entry loaded")

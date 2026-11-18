@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 // U19: actual Wasmoon/backend/runner/DOM; no copied capability resolver.
-import { afterEach, expect, it } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -14,11 +14,13 @@ let player
 afterEach(async () => {
   if (player) expect(await player.dispose()).toBe(true)
   player = null
+  vi.unstubAllGlobals()
 })
 
-async function boot(capabilities) {
+async function boot(capabilities, sceneStage) {
   player = await createPlayer({
     capabilities,
+    sceneStage,
     scriptsBase: 'http://local/scripts/',
     langBase: 'http://local/assets/lang/',
     wasmFile: join(here, 'node_modules/wasmoon/dist/glue.wasm'),
@@ -34,6 +36,45 @@ async function boot(capabilities) {
   })
   return player
 }
+
+it.each(['[blur amount=8 time=16]', '[vfx type="blur" strength=8 time=16]'])(
+  'presents %s on a newly loaded image and clears it before the next page', async command => {
+  vi.stubGlobal('CSS', { supports: (name, value) => name === 'filter' && value === 'blur(1px)' })
+  const prototype = HTMLImageElement.prototype
+  const originalDecode = Object.getOwnPropertyDescriptor(prototype, 'decode')
+  const decode = vi.fn(function () {
+    expect(this.getAttribute('src')).toMatch(/\/assets\/bg\/classroom\.png$/)
+    return Promise.resolve()
+  })
+  Object.defineProperty(prototype, 'decode', {configurable: true, value: decode})
+  const stage = document.createElement('div')
+  try {
+    await boot({required: ['render.blur'], accept_approximate: ['render.postfx.lut3d']}, stage)
+    const renderer = player.renderer
+    const observed = []
+    const render = renderer._renderWithList.bind(renderer)
+    renderer._renderWithList = (...args) => {
+      render(...args)
+      observed.push({filter:stage.style.filter, frame:renderer._sceneFrame})
+    }
+    const result = await player.runScene('[bg file="assets/bg/classroom.png"]\n[palette effect="apply" id="night" path="assets/lut/night.png" intensity=0.8]\n' + command + '\n[set var="f.after_blur" value=1]\n[p]',
+      'web-scene-blur.ks', {autoClick: false})
+    expect(result).toMatch(/^WAIT:/)
+    expect(decode).toHaveBeenCalledTimes(1)
+    const peak = observed.filter(item => item.filter === `${stage.style.filter} blur(8px)`)
+    expect(new Set(peak.map(item => item.frame)).size).toBeGreaterThanOrEqual(2)
+    expect(stage.style.filter).toContain('brightness')
+    expect(stage.style.filter).not.toContain('blur(')
+    expect(await player.lua.doString('return require("kag_runner").get_ctx().f.after_blur')).toBe(1)
+  } finally {
+    if (originalDecode) Object.defineProperty(prototype, 'decode', originalDecode)
+    else delete prototype.decode
+  }
+})
+
+it('requires an active Web presenter with filter support', async () => {
+  await expect(boot({required: ['render.blur']})).rejects.toThrow('backend_unavailable')
+})
 
 it.each(['bloom', 'vignette', 'softblur', 'not-a-postfx'])(
   'Web never reports an unimplemented %s postfx as supported', async kind => {

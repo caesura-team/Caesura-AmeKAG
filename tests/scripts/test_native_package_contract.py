@@ -27,6 +27,7 @@ ROOT = Path(__file__).resolve().parents[2]
 MODULE = ROOT / "scripts/verify_native_package.py"
 sys.path.insert(0, str(ROOT / "scripts"))
 import package_runtime as process_runtime
+from cubism_assets import shader_paths
 if MODULE.is_file():
     spec = importlib.util.spec_from_file_location("native_package_contract", MODULE)
     native = importlib.util.module_from_spec(spec)
@@ -239,9 +240,28 @@ class NativePackageContract(unittest.TestCase):
         self.assertEqual(path.read_bytes(), binary_header("windows"))
 
     def test_cubism_static_core_does_not_invent_a_runtime_dll(self):
+        shaders = self.package / "FrameworkShaders"
+        shaders.mkdir()
+        for name in ("CubismEffect.fx", "CubismBlendMode.fx"):
+            (shaders / name).write_bytes(b"static contract fixture")
         report = self.check_package(required=config(live2d=True))
         self.assertTrue(report["passed"], report)
         self.assertFalse(any("CubismCore" in item["relative_path"] for item in report["runtime_libraries"]))
+
+    def test_enabled_linux_cubism_requires_flat_runtime_shaders(self):
+        self.install_binaries("linux")
+        names = (ROOT / "scripts/cubism_opengl_shaders.txt").read_text(encoding="utf-8").splitlines()
+        shaders = self.package / "FrameworkShaders"
+        shaders.mkdir()
+        for name in names:
+            (shaders / name).write_bytes(name.encode("ascii"))
+        required = config("linux", live2d=True)
+        complete = self.check_package("linux", required)
+        self.assertTrue(complete["passed"], complete)
+        missing = shaders / "FragShaderSrcSetupMask.frag"
+        missing.rename(shaders / "not-at-the-runtime-path.frag")
+        self.assert_failed(self.check_package("linux", required), missing.name)
+        self.assertTrue(self.check_package("linux")["passed"])
 
     def test_linux_soname_relative_link_chain_is_resolved_inside_package(self):
         self.install_binaries("linux")
@@ -354,6 +374,19 @@ class NativePackageContract(unittest.TestCase):
         # Apple shared-cache dependencies need not be ordinary package files.
         self.assertFalse((self.package / "usr/lib/libSystem.B.dylib").exists())
         self.assertFalse((self.package / "System/Library/Frameworks/Metal.framework").exists())
+
+    def test_enabled_macos_cubism_rejects_a_missing_blend_shader(self):
+        self.install_macos_dependency_fixture()
+        shaders = shader_paths("macos")
+        self.assertEqual(len(set(shaders)), 477)
+        (self.package / "FrameworkMetallibs").mkdir()
+        for relative in shaders:
+            (self.package / relative).write_bytes(relative.name.encode("ascii"))
+        required = config("macos", live2d=True)
+        self.assertTrue(self.check_package("macos", required)["passed"])
+        variant = "FrameworkMetallibs/FragShaderSrcMaskBlendMultiplyAtop.metallib"
+        (self.package / variant).unlink()
+        self.assert_failed(self.check_package("macos", required), variant)
 
     def test_macos_dependency_closure_rejects_system_prefix_lookalikes(self):
         self.install_macos_dependency_fixture()

@@ -58,6 +58,7 @@ import sys
 import tempfile
 import zipfile
 from pathlib import Path
+from cubism_assets import shader_paths
 
 # The repo path itself can contain non-ASCII (this checkout does), and the
 # Windows console default code page mangles it. Match the convention already
@@ -1112,6 +1113,19 @@ def assemble(project: Path, entry_scene: Path, engine: Path, out: Path,
         shutil.copy2(lib, out / lib.name)
     say("[build] engine: %s (+%d runtime lib%s)"
         % (engine.name, len(libs), "" if len(libs) == 1 else "s"))
+
+    profile = capabilities["profile"] if capabilities is not None else {}
+    if profile.get("compiled", {}).get("live2d"):
+        shaders = shader_paths(profile.get("platform", ""))
+        missing_shaders = [shader.as_posix() for shader in shaders if not (engine.parent / shader).is_file()]
+        if missing_shaders:
+            raise BuildError("Selected Cubism engine is missing shader files: " + ", ".join(missing_shaders))
+        for shader in shaders:
+            destination = out / shader
+            destination.parent.mkdir(exist_ok=True)
+            shutil.copy2(engine.parent / shader, destination)
+        if shaders:
+            say("[build] Live2D: copied %d shader files from the selected engine" % len(shaders))
 
     # 2. engine Lua runtime
     _copy_tree(ROOT / "scripts", out / "scripts")

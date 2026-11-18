@@ -5,6 +5,7 @@
 #include "../../render/api/IRenderDevice.h"
 #include "../../render/api/IVideoPlayer.h"
 #include <cstdio>
+#include <array>
 #include <limits>
 #include <stdexcept>
 
@@ -119,14 +120,30 @@ void stopParticles(lua_State* state, char (&error)[256]) {
 
 int stopTransients(lua_State* state) {
     if (!lua_checkstack(state, 4)) return failure(state, "Cannot grow transient cleanup stack", true);
+    std::array<int, 8> keptModels{};
+    std::size_t count = 0;
+    if (!lua_isnoneornil(state, 1)) {
+        if (!lua_istable(state, 1) || lua_rawlen(state, 1) > keptModels.size())
+            return failure(state, "Invalid model restore handles", true);
+        count = lua_rawlen(state, 1);
+        for (std::size_t i = 0; i < count; ++i) {
+            lua_rawgeti(state, 1, static_cast<lua_Integer>(i + 1));
+            const auto handle = lua_tointeger(state, -1);
+            const bool valid = lua_isinteger(state, -1) && handle > 0 && handle <= std::numeric_limits<int>::max();
+            lua_pop(state, 1);
+            if (!valid) return failure(state, "Invalid model restore handle", true);
+            keptModels[i] = static_cast<int>(handle);
+        }
+    }
     char error[256] = {};
     attempt("Video cleanup", error, [] {
         if (auto* video = BackendRegistry::instance().getVideoPlayer()) video->closeAll();
     });
     stopParticles(state, error);
-    attempt("Model cleanup", error, [] {
+    attempt("Model cleanup", error, [&] {
         auto* animation = BackendRegistry::instance().getAnimationBackend();
-        if (animation && animation->loadedModelCount() > 0) animation->clearModels();
+        if (animation && animation->loadedModelCount() > 0)
+            animation->clearModels(std::span<const int>(keptModels.data(), count));
     });
     attempt("Postfx cleanup", error, [] {
         auto* renderer = BackendRegistry::instance().getRenderDevice();

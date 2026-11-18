@@ -206,7 +206,7 @@ local function clear_pending_transitions(owner)
     return #errors == 0, table.concat(errors, "; ")
 end
 
-local function finish_session(retain_context)
+local function finish_session(retain_context, keep_models)
     if changing_session then return false, "session-changing" end
     if scheduler_running() then return false, "scheduler-running" end
     if not ctx then return close_scheduler_coroutine() end
@@ -225,7 +225,7 @@ local function finish_session(retain_context)
     local presentation = package.loaded["kag.presentation"]
     local cleaned, cleanup_error = clear_pending_transitions(owner)
     if presentation and not retain_context then
-        local called, stopped, stop_error = pcall(presentation.stop, owner)
+        local called, stopped, stop_error = pcall(presentation.stop, owner, nil, keep_models)
         if not called or stopped == false then
             cleaned, cleanup_error = false, called and stop_error or stopped
         end
@@ -591,6 +591,12 @@ function kag_runner.start(scene_path, options)
     end
 
     local candidate = make_context()
+    local playback_settings = type(options) == "table" and options.playback_settings
+    if type(playback_settings) == "table" then
+        for _, key in ipairs({"text_speed", "auto_mode", "skip_mode", "skip_auto", "cc_mode"}) do
+            if playback_settings[key] ~= nil then candidate[key] = playback_settings[key] end
+        end
+    end
     local presentation = require("kag.presentation")
     local ready, start_font = pcall(presentation.prepare_start)
     if not ready then return false, start_font end
@@ -712,7 +718,8 @@ local function commit_rollback(owner, request)
             or not cancelled and cancel_error or clear_error)
     end
     local applied, apply_error = pcall(function()
-        assert(require("kag.transient_state").stop(owner))
+        local models = request.prepared.presentation.models
+        assert(require("kag.transient_state").stop(owner, models and models.handles))
         assert(require("kag.snapshot").apply(owner, request.prepared))
         owner._restoredWait = nil
         owner._rollback_capture_reason = nil
@@ -751,7 +758,8 @@ local function commit_restore(owner, prepared)
     -- Everything above is preparation. Closing the old scopes starts commit;
     -- after this point an application error leaves the new session stopped.
     if owner then owner._pendingRestore = nil end -- candidate transfers into commit below
-    local stopped, reason = finish_session(false)
+    local models = prepared._presentation.models
+    local stopped, reason = finish_session(false, models and models.handles)
     if not stopped then return discard_failed_restore(prepared, reason) end
     changing_session = true
     local applied, apply_error = pcall(function()
@@ -1116,6 +1124,8 @@ function kag_runner.render()
         pcall(backend.render_text, text, x, y, 255, 255, 255, 255)
     end
 
+    local layers = package.loaded["layers"]
+    if layers and layers.render_overlay_text then layers.render_overlay_text() end
     if ok and ctx == owner then owner._render_epoch = (owner._render_epoch or 0) + 1 end
     return ok, n
 end
@@ -1179,10 +1189,10 @@ function kag_runner.on_click()
     local pending = pending_transaction(ctx)
     if pending then return false, pending end
     if ctx and ctx._choiceMode then return false, "choice-open" end
-    -- History/backlog overlay owns the pointer while open: ignore clicks so
-    -- the overlay coroutine is not batch-resumed underneath. (Checked first:
-    -- the guard must hold even when no coroutine is running yet.)
+    -- Modal panels are driven by frame updates, including clicks forwarded
+    -- by hosts that bypass native input routing.
     if ctx and ctx.input_focus == "history" then return false, "history-open" end
+    if ctx and ctx._settingsActive then return false, "settings-open" end
 
     -- Replay system (record mode): log the click with the current mouse
     -- position (choice coordinates included) before advancing.
@@ -1260,10 +1270,11 @@ function kag_runner.on_click()
 
     ctx._rollback_waiting = nil
     ctx.waiting_input = false
-    -- Batch resume only to the next input/audio wait. An existing voice_wait
-    -- consumes this click once; a newly entered audio wait needs real frames.
+    -- Batch resume only to the next input/audio wait or modal panel. An
+    -- existing voice_wait consumes this click once; a new wait needs real frames.
     local count = 0
     while kag_co and coroutine.status(kag_co) ~= "dead" and not ctx.waiting_input
+        and ctx.input_focus ~= "history" and not ctx._settingsActive
         and (not ctx._audio_wait or (count == 0 and ctx._voice_wait_poll))
         and not pending_transaction(ctx) and count < 200 do
         local resumed, resume_reason = resume_scheduler("click")

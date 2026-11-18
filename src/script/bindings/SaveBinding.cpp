@@ -202,6 +202,10 @@ static int pushLoadedSave(lua_State* L) {
     return 2;
 }
 
+static bool validSaveSlot(lua_Integer slot) {
+    return slot >= -2 && slot <= 99;
+}
+
 static int lua_Save_game(lua_State* L) {
     const auto slotValue = luaL_checkinteger(L, 1);
     luaL_checktype(L, 2, LUA_TTABLE);
@@ -213,7 +217,7 @@ static int lua_Save_game(lua_State* L) {
     char error[256] = {};
     bool saved = false;
     try {
-        if (slotValue < 0 || slotValue > 99 || tokenValue < (std::numeric_limits<int>::min)()
+        if (!validSaveSlot(slotValue) || tokenValue < (std::numeric_limits<int>::min)()
             || tokenValue > (std::numeric_limits<int>::max)())
             throw std::runtime_error("Save slot or token index is outside its range");
         const std::string sceneName(sceneBytes, sceneLength);
@@ -243,7 +247,7 @@ static int lua_Load_game(lua_State* L) {
     const int top = lua_gettop(L);
     char error[256] = {};
     try {
-        if (slotValue < 0 || slotValue > 99) throw std::runtime_error("Invalid load slot");
+        if (!validSaveSlot(slotValue)) throw std::runtime_error("Invalid load slot");
         auto* manager = getSaveManager();
         if (!manager) throw std::runtime_error("Save manager is not available");
         SaveMeta meta;
@@ -316,9 +320,9 @@ static int lua_List_saves(lua_State* L) {
 // -- lua_Delete_save ---------------------------------------------------------
 // KAG.delete_save(slot) -> bool
 static int lua_Delete_save(lua_State* L) {
-    int slot = (int)luaL_checkinteger(L, 1);
+    const auto slot = luaL_checkinteger(L, 1);
     auto* manager = getSaveManager();
-    bool ok = manager && manager->deleteSlot(slot);
+    const bool ok = validSaveSlot(slot) && manager && manager->deleteSlot(static_cast<int>(slot));
     lua_pushboolean(L, ok ? 1 : 0);
     return 1;
 }
@@ -326,9 +330,9 @@ static int lua_Delete_save(lua_State* L) {
 // -- lua_Save_exists ---------------------------------------------------------
 // KAG.save_exists(slot) -> bool
 static int lua_Save_exists(lua_State* L) {
-    int slot = (int)luaL_checkinteger(L, 1);
+    const auto slot = luaL_checkinteger(L, 1);
     auto* manager = getSaveManager();
-    bool ok = manager && manager->slotExists(slot);
+    const bool ok = validSaveSlot(slot) && manager && manager->slotExists(static_cast<int>(slot));
     lua_pushboolean(L, ok ? 1 : 0);
     return 1;
 }

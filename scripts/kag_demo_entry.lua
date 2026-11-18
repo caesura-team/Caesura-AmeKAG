@@ -194,8 +194,9 @@ function engine_update(dt)
         print("[KAG] Script ended -- returning to title")
         local ctx = _G._CAESURA_CTX
         if ctx then
+            local menu = { seen_endings = ctx.seen_endings }
             title_co = coroutine.create(function()
-                return require("title_menu").show(ctx)
+                return require("title_menu").show(menu)
             end)
         end
     end
@@ -203,7 +204,7 @@ function engine_update(dt)
         -- Resume the title overlay once per frame; the show() return
         -- value (the chosen action) arrives on the resume that makes it
         -- dead -- resume()'s second result carries it.
-        local ok2, action = coroutine.resume(title_co)
+        local ok2, action, replay = coroutine.resume(title_co)
         if not ok2 then
             print("[Title] overlay error: " .. tostring(action))
             title_co = nil
@@ -212,6 +213,9 @@ function engine_update(dt)
             if action == "new" then
                 local ctx = _G._CAESURA_CTX
                 if ctx then kag_runner.start("scripts/demo_story.ks") end
+            elseif action == "replay" then
+                local ctx = _G._CAESURA_CTX
+                if ctx then ctx._pendingJump = { scene = replay } end
             end
         end
     end
@@ -231,7 +235,8 @@ end
 
 function engine_render()
     layers.render()
-    kag_runner.render()
+    if title_co then layers.render_overlay_text()
+    else kag_runner.render() end
     -- SMA skeletal-mesh actors: draw after the layer tree (inert when
     -- no actors / no sma module / no GPU binding).
     local ctxS = _G._CAESURA_CTX

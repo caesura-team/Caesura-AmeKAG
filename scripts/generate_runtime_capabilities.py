@@ -12,7 +12,7 @@ SOURCE = ROOT / "config" / "runtime-capabilities.json"
 STATES = {"supported", "approximate", "unsupported"}
 COMPILED = {"ffmpeg", "live2d", "steam"}
 AVAILABLE = {
-    "postfx.bloom", "postfx.vignette", "postfx.lut", "postfx.softblur",
+    "postfx.bloom", "postfx.vignette", "postfx.lut", "postfx.softblur", "scene_blur",
     "postfx.lut3d", "particles", "video", "audio", "cubism", "steam",
 }
 

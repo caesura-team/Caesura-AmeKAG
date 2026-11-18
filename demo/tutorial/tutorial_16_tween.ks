@@ -105,21 +105,21 @@
 ; 先用 [set] 定义起点/位移变量，再让 [tween] 用 ${...} 引用它们计算终点。
 [set f.base_x = 400]
 [set f.step = 250]
-[tween target="t0" attr=x from=${f.base_x} to=${f.base_x + f.step * 2} dur=700]
+[tween target="t0" attr=x from="${f.base_x}" to="${f.base_x + f.step * 2}" dur=700]
 [ch name="Narrator" text="表达式补间：from=${f.base_x}，to=${f.base_x + f.step * 2}。图层移动的起点/终点由变量计算而来。"]
 [p]
 
 ; 表达式也支持三元等完整语法 —— 这里用三元决定终点：flag 为真就走 1200，
 ; 否则 200。
 [set f.far = true]
-[tween target="t0" attr=x from=${f.base_x + f.step * 2} to=${f.far ? 1200 : 200} dur=600]
+[tween target="t0" attr=x from="${f.base_x + f.step * 2}" to="${f.far ? 1200 : 200}" dur=600]
 [ch name="Narrator" text="to 用三元表达式 f.far ? 1200 : 200（当前为真，故终点 1200）。表达式让补间终点完全由剧本逻辑决定。"]
 [p]
 
 ; ---- 7. delay 延迟启动 -----------------------------------------------------
 ; delay=400：命令先空等 400ms 再开始补间。适合需要「先听到一句台词、
 ; 半秒后再动」的时序。
-[tween target="t0" attr=x from=${f.far ? 1200 : 200} to=80 dur=700 delay=400]
+[tween target="t0" attr=x from="${f.far ? 1200 : 200}" to=80 dur=700 delay=400]
 [ch name="Narrator" text="这句台词先显示，随后 [tween] 因 delay=400 再等半秒才把图层移回左侧。"]
 [p]
 

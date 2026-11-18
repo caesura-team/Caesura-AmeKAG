@@ -483,8 +483,8 @@ struct PointerEvent {
 | `hideModel(handle)` | 隐藏模型 |
 | `setOpacity(handle, opacity)` | 设置透明度 (0.0–1.0) |
 | `render(dt)` | 渲染所有可见模型 |
-| `playMotion(handle, name)` | 播放指定动作 |
-| `setExpression(handle, name)` | 设置表情 |
+| `playMotion(handle, name, fadeInSeconds, fadeOutSeconds)` | 播放当前模型的动作。淡化参数按秒计，默认 `-1` 使用模型原设定 |
+| `setExpression(handle, name, weight)` | 设置命名表情，权重默认为 1，权重 0 清除表情。返回是否应用 |
 | `setParameter(handle, param, value)` | 设置模型参数 |
 | `setVoiceLipSync(handle, enabled)` | 为含 `ParamMouthOpenY` 的真实 Cubism 模型开启/关闭 VOICE 驱动；默认关闭，不支持时返回 false |
 | `name` | 返回后端名称 |
@@ -663,6 +663,7 @@ Script 模块经 `IMiniGameBackend` 接口实现，不能在具体 Bgfx 后端�
 | **特效** | `submitBlend(viewId, baseTex, blendTex, mode, baseAlpha, blendAlpha, globalAlpha)` | 混合特效 |
 | | `submitTransition(viewId, fromTex, toTex, ruleTex, method, progress)` | 转场特效 |
 | | `submitVFX(viewId, srcTex, effect, ...)` | 视觉特效 |
+| | `setSceneBlur(radius)` | 设置最终场景的临时模糊半径，单位为逻辑像素。返回 `bool`，半径 `0` 清除该效果 |
 | | `setColorFilter(preset)` | 设置无障碍色彩滤镜（None/Deuteranopia/Protanopia/Tritanopia/Grayscale/HighContrast），返回 `bool` |
 | **调试** | `setDebugName(viewId, name)` | 设置视图调试名称 |
 | | `drawDebugOverlay(title)` | 绘制调试覆盖层 |

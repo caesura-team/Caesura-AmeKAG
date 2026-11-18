@@ -31,13 +31,14 @@ inline std::string sanitize(const std::string& value) {
     return out.empty() ? "case" : out;
 }
 
-inline std::filesystem::path uniqueTempDir(const std::string& name) {
+inline std::filesystem::path uniqueTempDir(const std::string& name,
+        const std::filesystem::path& parent = std::filesystem::temp_directory_path()) {
     static std::atomic<unsigned long> counter{0};
     std::ostringstream dirName;
     dirName << "caesura_test_" << sanitize(name)
             << "_p" << currentProcessId()
             << "_" << counter.fetch_add(1);
-    return std::filesystem::temp_directory_path() / dirName.str();
+    return parent / dirName.str();
 }
 
 inline std::string withTrailingSeparator(const std::filesystem::path& path) {
@@ -50,8 +51,9 @@ inline std::string withTrailingSeparator(const std::filesystem::path& path) {
 
 class ScopedTempDir {
 public:
-    explicit ScopedTempDir(const std::string& name)
-        : m_path(uniqueTempDir(name)) {
+    explicit ScopedTempDir(const std::string& name,
+            const std::filesystem::path& parent = std::filesystem::temp_directory_path())
+        : m_path(uniqueTempDir(name, parent)) {
         std::filesystem::remove_all(m_path);
         std::filesystem::create_directories(m_path);
     }

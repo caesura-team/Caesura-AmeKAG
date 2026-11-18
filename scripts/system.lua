@@ -568,6 +568,7 @@ end
 
 local QUICKSAVE_SLOT = -1
 local AUTOSAVE_SLOT  = -2
+System.AUTOSAVE_SLOT = AUTOSAVE_SLOT
 
 --- quicksave() — F5 hotkey handler
 function quicksave()

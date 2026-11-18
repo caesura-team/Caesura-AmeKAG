@@ -20,15 +20,16 @@ public:
     void unloadModel(int handle) override;
     bool isLoaded(int handle) const override;
     std::size_t loadedModelCount() const override;
-    void clearModels() override;
+    void clearModels(std::span<const int> keep = {}) override;
 
     void showModel(int handle, float x, float y, float scale) override;
     void hideModel(int handle) override;
     void setOpacity(int handle, float opacity) override;
     void render(float dt) override;
 
-    bool playMotion(int handle, const std::string& name) override;
-    void setExpression(int handle, const std::string& name) override;
+    bool playMotion(int handle, const std::string& name,
+                    float fadeInSeconds = -1, float fadeOutSeconds = -1) override;
+    bool setExpression(int handle, const std::string& name, float weight = 1.0f) override;
     void setParameter(int handle, const std::string& param, float value) override;
     bool setVoiceLipSync(int modelHandle, bool enabled) override;
 

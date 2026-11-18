@@ -221,20 +221,7 @@ function M.convertCommand(cmd, params)
     return cmd, notes
 end
 
---- M.processScene(path, opts) -> report table
---  opts: { strict = bool }
---  report: { path, tokens, texts, labels, iscripts, converted_embeds,
---            converted_exprs, renames, unsupported = {line, cmd, note}[],
---            iscript_blocks = {line}[] }
-function M.processScene(path, opts)
-    opts = opts or {}
-    local f = io.open(path, "r")
-    if not f then
-        return nil, "cannot open file: " .. tostring(path)
-    end
-    local raw = f:read("*a")
-    f:close()
-
+local function processSceneText(path, raw)
     -- BOM: tokenizer.parse_with_offsets strips a leading UTF-8 BOM before
     -- computing byte offsets; rebuild must use the same stripped text.
     local bom = ""
@@ -373,6 +360,17 @@ function M.processScene(path, opts)
     return report
 end
 
+--- M.processScene(path, opts) -> report table
+function M.processScene(path, _opts)
+    local f <close> = io.open(path, "r")
+    if not f then
+        return nil, "cannot open file: " .. tostring(path)
+    end
+    local raw, err = f:read("*a")
+    if not raw then return nil, err end
+    return processSceneText(path, raw)
+end
+
 --- M.printReport(report, out) -> void
 function M.printReport(report, out)
     out = out or io.stdout
@@ -423,6 +421,31 @@ local function base_name(p)
 end
 local is_script = arg and arg[0] and base_name(arg[0]) == "kag3_import.lua"
 
+local function readCarcScene(archive, member)
+    local sep = package.config:sub(1, 1)
+    local suffix = sep == BS and ".exe" or ""
+    local exe
+    for _, directory in ipairs({"bin/Debug/", "bin/Release/", "bin/"}) do
+        local path = directory .. "carc_pack" .. suffix
+        local file <close> = io.open(path, "rb")
+        if file then
+            exe = path:gsub("/", sep)
+            break
+        end
+    end
+    if not exe then return nil, "carc_pack executable not found" end
+
+    local function hex(value)
+        return (value:gsub(".", function(byte) return ("%02x"):format(byte:byte()) end))
+    end
+    local pipe, openError = io.popen(exe .. " read-member-hex " .. hex(archive) .. " " .. hex(member), "r")
+    if not pipe then return nil, openError end
+    local raw, readError = pipe:read("*a")
+    local ok = pipe:close()
+    if not ok then return nil, "carc_pack could not read the archive member" end
+    return raw, readError
+end
+
 if is_script then
     local outdir, strict, inputs = nil, false, {}
     local carcPath, carcScene = nil, nil
@@ -454,31 +477,19 @@ if is_script then
         i = i + 1
     end
 
-    -- CARC mode: extract <rel.ks> from the archive into a temp dir and
-    -- treat the extracted scene as the single input (the CARC stores only
-    -- path hashes, so the caller must know the scene's relative path).
+    local carcText
     if carcPath and carcScene then
-        local tmpDir = "kag3_import_carc_tmp"
-        local exe = "bin/Debug/carc_pack.exe"
-        local f = io.open(exe, "r")
-        if not f then exe = "bin/Release/carc_pack.exe" end
-        if f then f:close() end
-        local sep = package.config:sub(1, 1)
-        -- CARC hashes the exact relative path string: the scene path must
-        -- keep forward slashes (as packed); only the exe/archive paths are
-        -- cmd-safe backslashes.
-        local cmd = string.format('%s extract "%s" "%s" --path "%s"',
-            exe:gsub("/", sep), carcPath:gsub("/", sep),
-            tmpDir, carcScene)
-        local ok = pcall(os.execute, cmd)
-        local sep2 = package.config:sub(1, 1)
-        local tmp = tmpDir .. sep2 .. carcScene:gsub("/", sep2)
-        local exists = io.open(tmp, "r") ~= nil
-        if not (ok and exists) then
-            print("error: carc extract failed (carc_pack available?): " .. carcPath)
+        local err
+        if carcPath == "" or carcScene == "" then
+            err = "--carc and --path require nonempty arguments"
+        else
+            carcText, err = readCarcScene(carcPath, carcScene)
+        end
+        if not carcText then
+            print("error: " .. tostring(err))
             os.exit(1)
         end
-        inputs = { tmp }
+        inputs = { carcScene }
     elseif carcPath or carcScene then
         print("error: --carc and --path must be used together")
         os.exit(1)
@@ -492,7 +503,12 @@ if is_script then
 
     local errs, blocking = 0, false
     for _, path in ipairs(inputs) do
-        local report, err = M.processScene(path, { strict = strict })
+        local report, err
+        if carcText then
+            report, err = processSceneText(path, carcText)
+        else
+            report, err = M.processScene(path)
+        end
         if not report then
             print("error: " .. tostring(err))
             errs = errs + 1
@@ -513,10 +529,6 @@ if is_script then
                 end
             end
         end
-    end
-    -- cleanup the CARC extraction temp dir (best-effort)
-    if carcPath and carcScene then
-        os.execute('rmdir /s /q "kag3_import_carc_tmp" 2>nul')
     end
     if errs > 0 then os.exit(1) end
     if blocking then os.exit(2) end

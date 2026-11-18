@@ -213,63 +213,38 @@ function VFX.fade_layer(ctx, layer, params)
 end
 
 -- ===========================================================================
--- VFX.blur(ctx, params) -- BLOCKING GPU blur (two-pass separable Gaussian)
--- Spec [2.5]: Pass 1 horizontal, Pass 2 vertical, RTTManager 3 temp textures
--- params: { time=500, strength=4, layer="" }
+-- VFX.blur(ctx, params) -- blocking blur of the composed scene
+-- params: { time=300, amount=4 } (milliseconds, pixels)
 -- ===========================================================================
+local blur_owner
 function VFX.blur(ctx, params)
+    local duration = tonumber(params.time or params.duration) or 300
+    local radius = tonumber(params.amount or params.strength or params.intensity or params.blurlevel) or 4
+    if duration <= 0 or radius <= 0 or not coroutine.isyieldable() then return end
+
     local operation <close> = Operation.start(ctx)
     local ct = operation.token
-    local isCoroutine = coroutine.isyieldable()
-    local dur_ms   = tonumber(params.time) or 500
-    local strength = tonumber(params.strength or params.intensity or params.blurlevel) or 4
-    local targetLayer = params.layer or ""
-    local elapsed_ms = 0
-    local rtt = require("rtt")
-
-    -- Find layer texture
-    local texId = ctx._bgTexture or 0
-    if targetLayer ~= "" then
-        local layer = ctx.layers and ctx.layers[targetLayer]
-        if layer and layer.texture then
-            texId = layer.texture
+    blur_owner = ct
+    local function cleanup()
+        if blur_owner == ct then
+            blur_owner = nil
+            backend.set_scene_blur(0)
         end
     end
+    ct:register(cleanup)
 
-    -- Allocate temp RTTs for two-pass blur. Guard the alloc entry point:
-    -- headless/editor environments may expose a stub rtt without alloc
-    -- (round 52 audit: blur crashed with "attempt to call a nil value").
-    if type(rtt) ~= "table" or type(rtt.alloc) ~= "function" then
-        print("[VFX] blur: RTT alloc unavailable (headless) — skipping")
-        return
-    end
-    local tmpA, tmpB = 0, 0
-    local function free_a()
-        local id = tmpA; tmpA = 0
-        if id and id > 0 then rtt.free(id) end
-    end
-    local function free_b()
-        local id = tmpB; tmpB = 0
-        if id and id > 0 then rtt.free(id) end
-    end
-    ct:register(free_a); ct:register(free_b)
-    tmpA = rtt.alloc(ctx._width or 1280, ctx._height or 720)
-    tmpB = rtt.alloc(ctx._width or 1280, ctx._height or 720)
-
-    while elapsed_ms < dur_ms do
-        elapsed_ms = elapsed_ms + next_frame_ms(isCoroutine)
-        if ct.cancelled then return end
-        local t = elapsed_ms / dur_ms
-        if t > 1 then t = 1 end
-
-        local radius = strength * t
-        if texId > 0 then
-            backend.submit_vfx(texId, 2, 0, 0, 0, 0, radius, 0, 0)
+    local elapsed = 0
+    local frame_ms = next_frame_ms(true)
+    repeat
+        if ct.cancelled or blur_owner ~= ct then return end
+        elapsed = elapsed + math.max(frame_ms, 0)
+        if not backend.set_scene_blur(radius * math.min(elapsed / duration, 1), elapsed >= duration) then
+            error("Scene blur could not be applied", 0)
         end
-    end
-
-    -- Clean up temp textures
-    free_a(); free_b()
+        -- Leave even the last radius set through the render that follows this update.
+        frame_ms = next_frame_ms(true)
+    until elapsed >= duration
+    cleanup()
     operation:complete()
 end
 
@@ -430,6 +405,7 @@ end
 function VFX.stop_all()
     VFX.stop_quake()
     VFX.stop_shake()
+    if blur_owner then blur_owner:cancel() end
 end
 
 return VFX

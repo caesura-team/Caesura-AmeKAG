@@ -7,13 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased]
-
-> Draft pending **G1** version decision: proposed **1.1.0** (new capabilities, behaviour changes and fixes since `v1.0.1`); fallback **1.0.2** only if the release is judged fix-only. Curated from the preview of `python scripts/gen_changelog.py --from-tag v1.0.1 --tag 1.1.0 --dry-run` (v1.0.1..HEAD, 797 commits); every entry is traceable to that preview and to the dated records under `docs/plans/`. The commit-level list is not copied verbatim here.
->
-> Note: `v1.0.1` never received its own changelog section (release notes live in GitHub Releases); this draft is based on the `v1.0.1` tag (2026-08-21). Nothing below is tagged, published or release-approved; `release_ready=false` until the G1/G2/G3 gates are decided.
+## [1.1.0]
 
 ### Added
+
+- **Native visual novel flow**: title, new game, continue, settings, save selection and ending screens, with a playable First VN example.
+- **Scripted effects**: BGM crossfade and timed scene blur on native and Web targets, with capability checks at runtime.
+- **Cubism projects on Windows**: scripted motion and weighted expressions, plus save and rollback support for model declarations. Restored motions restart and expressions fade in again. Builds with Cubism include the D3D11 framework shaders.
+- **Cubism on Linux and macOS**: SDK-enabled builds bind model textures to the OpenGL or Metal renderer and include its shaders in both engine and game-only packages.
 
 - **Runnable validation evidence**: real-execution collectors, strict receipts/seed/source binding, and rejection of failed or missing runs (`54c537a6`), later extended into run/attempt-bound release dry-run input gates (`c9ab5858`).
 - **Save, restore and rollback**: explicit save-state contracts, real cold-start restore, rollback safety points and side-effect cancellation (`b176a741`, `a5ba8c49`, `cd730f32`); rejected packages roll back to the previous known-good package.
@@ -41,6 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Packaged Studio** loads its browser assets through the engine's webroot override, including from non-ASCII Windows paths. The Connect button uses the browser's fetch receiver and RPC continues to require a bearer token.
 - **KAG command contracts**: transition interruption, `[load]` restore lost after replay clicks, called-scene choices, `blt` fields/alias precedence, playback fade lifecycle, SE saturation, video entry, cache transactions and story recovery (`4e095830`, `5b9cc419`, `a4fdaab9`, `7ae0ace5`).
 - **Live2D and SMA**: DLL unload access violation after device loss, explicit rejection of missing/corrupt SDK shaders, MAIN-view presentation, Cubism motion ownership transfer, voice-PCM mouth drive, and SMA default-view/opacity/skeleton-domain/tail-thread fixes (`5cbf2e8e`, `cce16914`, `91fbb0ac`, `7c23b22a`).
 - **Runtime and saves**: coherent cold-start sessions, rollback presentation cleanup, cloud-chunk staging, correct-key encrypted load, and rollback to the previous package after a rejected package (`b176a741`, `cd730f32`, `766407a5`, `bef1a30b`).

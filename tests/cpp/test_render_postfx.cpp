@@ -187,6 +187,7 @@ public:
     }
     void clearPostFx() override { live.clear(); }
     bool isPostFxActive() const override { return !live.empty(); }
+    bool setSceneBlur(float) override { return false; }
 
     mutable unsigned supportQueries = 0;
     unsigned creates = 0, updates = 0, destroys = 0;

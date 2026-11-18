@@ -2,7 +2,6 @@
 // wasmoon. Prefers the pre-baked story bundle (ks_bake --web) for
 // zero-parse scene starts; falls back to raw .ks sources.
 import { createPlayer } from './bridge.js'
-import { DomRenderer } from './dom-renderer.js'
 import { buildSceneOptions } from './scene-options.js'
 import { createPlayerSettings, VOLUME_BUSSES } from './player-settings.js'
 import { TouchGestureDetector } from './touch-gestures.js'
@@ -34,7 +33,7 @@ const wasmFile = (typeof self !== 'undefined' && self.__CAESURA_WASM_FILE__)
   ? self.__CAESURA_WASM_FILE__
   : undefined
 const projectCapabilities = typeof self !== 'undefined' ? self.__CAESURA_PROJECT_CAPABILITIES__ : undefined
-const player = await createPlayer({ scriptsBase: SCRIPTS_BASE, capabilities: projectCapabilities,
+const player = await createPlayer({ scriptsBase: SCRIPTS_BASE, capabilities: projectCapabilities, sceneStage: stage,
   ...(wasmFile ? { wasmFile } : {}) })
 log('engine loaded; kag table ready')
 
@@ -77,7 +76,7 @@ window.addEventListener('unhandledrejection', (e) => {
   window.__caesuraErrors.push('rejection: ' + String(r && r.message || r).slice(0, 160) + (stack ? ' @ ' + stack.split(String.fromCharCode(10)).slice(0, 3).join(' | ') : ''))
 })
 
-const renderer = new DomRenderer(player.core, stage)
+const renderer = player.renderer
 let storyBundle = null
 // Non-null when the story bundle failed to load: the reason string. Read by
 // the boot guard below (and by any host inspecting the failure) so a broken

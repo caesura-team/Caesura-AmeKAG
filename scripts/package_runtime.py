@@ -790,6 +790,9 @@ def run_runtime_command(argv: Sequence[str], cwd: str | Path, env: Mapping[str, 
 if __name__ == "__main__":
     if len(sys.argv) != 3 or sys.argv[1] != "--runtime-launcher":
         raise SystemExit("Import this module from the package validation controller")
+    # The isolated launcher can otherwise emit Windows code-page bytes into
+    # the controller's UTF-8 diagnostics.
+    sys.stderr.reconfigure(encoding="utf-8", errors="backslashreplace")
     # The owned launcher is isolated with -I -S. Only its maintained sibling
     # hash helper is added, never an inherited Python import path.
     sys.path.insert(0, str(Path(__file__).resolve().parent))

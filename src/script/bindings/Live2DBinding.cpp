@@ -17,7 +17,7 @@ extern "C" {
 
 namespace Caesura {
 namespace {
-enum class Operation { Load, Show, Hide, Unload, Mouth, Voice };
+enum class Operation { Load, Show, Hide, Unload, Motion, Expression, Mouth, Voice };
 
 int failure(lua_State* state, bool loading, const char* reason) {
     if (loading) lua_pushnil(state);
@@ -49,6 +49,7 @@ int invoke(lua_State* state, Operation operation) {
     size_t pathSize = 0, nameSize = 0;
     int handle = 0;
     float x = 0, y = 0, scale = 1, mouth = 0;
+    float fadeIn = 0.5f, fadeOut = 0.5f, weight = 1.0f;
     bool enabled = false;
     if (loading) {
         if (!text(state, 1, path, pathSize) || !text(state, 2, name, nameSize))
@@ -64,6 +65,13 @@ int invoke(lua_State* state, Operation operation) {
     if (operation == Operation::Show && (!number(state, 2, x, true)
         || !number(state, 3, y, true) || !number(state, 4, scale, true) || scale <= 0))
         return failure(state, false, "Live2D show requires finite coordinates and positive scale");
+    if (operation == Operation::Motion && (!text(state, 2, name, nameSize)
+        || !number(state, 3, fadeIn, true) || !number(state, 4, fadeOut, true)
+        || fadeIn < 0 || fadeIn > 10 || fadeOut < 0 || fadeOut > 10))
+        return failure(state, false, "Live2D motion requires a name and fade durations within 0..10 seconds");
+    if (operation == Operation::Expression && (!text(state, 2, name, nameSize)
+        || !number(state, 3, weight, true) || weight < 0 || weight > 1))
+        return failure(state, false, "Live2D expression requires a name and weight within 0..1");
     if (operation == Operation::Mouth && (!number(state, 2, mouth) || mouth < 0 || mouth > 1))
         return failure(state, false, "Live2D mouth value must be finite and within 0..1");
     if (operation == Operation::Voice) {
@@ -87,6 +95,14 @@ int invoke(lua_State* state, Operation operation) {
         case Operation::Show: animation->showModel(handle, x, y, scale); break;
         case Operation::Hide: animation->hideModel(handle); break;
         case Operation::Unload: animation->unloadModel(handle); break;
+        case Operation::Motion:
+            if (!animation->playMotion(handle, std::string(name, nameSize), fadeIn, fadeOut))
+                throw std::runtime_error("Live2D motion could not start");
+            break;
+        case Operation::Expression:
+            if (!animation->setExpression(handle, std::string(name, nameSize), weight))
+                throw std::runtime_error("Live2D expression could not be applied");
+            break;
         case Operation::Mouth:
             if (!animation->setVoiceLipSync(handle, false))
                 throw std::runtime_error("Live2D model has no supported mouth parameter");
@@ -112,6 +128,8 @@ int load(lua_State* state) { return invoke(state, Operation::Load); }
 int show(lua_State* state) { return invoke(state, Operation::Show); }
 int hide(lua_State* state) { return invoke(state, Operation::Hide); }
 int unload(lua_State* state) { return invoke(state, Operation::Unload); }
+int motion(lua_State* state) { return invoke(state, Operation::Motion); }
+int expression(lua_State* state) { return invoke(state, Operation::Expression); }
 int mouth(lua_State* state) { return invoke(state, Operation::Mouth); }
 int voice(lua_State* state) { return invoke(state, Operation::Voice); }
 }
@@ -119,6 +137,7 @@ int voice(lua_State* state) { return invoke(state, Operation::Voice); }
 void registerLive2DBinding(lua_State* state) {
     static const luaL_Reg methods[] = {
         {"load", load}, {"show", show}, {"hide", hide}, {"unload", unload},
+        {"play_motion", motion}, {"set_expression", expression},
         {"set_mouth", mouth}, {"set_voice_lipsync", voice}, {nullptr, nullptr}
     };
     luaL_newlib(state, methods);

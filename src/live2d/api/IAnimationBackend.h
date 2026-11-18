@@ -2,6 +2,7 @@
 #include <cstddef>
 #include <string>
 #include <cstdint>
+#include <span>
 
 namespace Caesura {
 
@@ -26,10 +27,10 @@ public:
     virtual int  loadModel(const std::string& path, const std::string& name) = 0;
     virtual void unloadModel(int handle) = 0;
     virtual bool isLoaded(int handle) const = 0;
-    // Includes hidden models; clearing releases all models without changing
-    // backend initialization or reusing their handles. Safe when already empty.
+    // Includes hidden models. Clear releases models except the specified
+    // prepared handles, without reinitializing the backend or reusing handles.
     virtual std::size_t loadedModelCount() const = 0;
-    virtual void clearModels() = 0;
+    virtual void clearModels(std::span<const int> keep = {}) = 0;
 
     // Rendering
     virtual void showModel(int handle, float x, float y, float scale) = 0;
@@ -38,8 +39,11 @@ public:
     virtual void render(float dt) = 0;
 
     // Animation control
-    virtual bool playMotion(int handle, const std::string& name) = 0;
-    virtual void setExpression(int handle, const std::string& name) = 0;
+    // A fade value of -1 leaves the model's authored duration in place.
+    virtual bool playMotion(int handle, const std::string& name,
+                            float fadeInSeconds = -1, float fadeOutSeconds = -1) = 0;
+    // Weight zero removes the active expression. Success requires a named expression.
+    virtual bool setExpression(int handle, const std::string& name, float weight = 1.0f) = 0;
     virtual void setParameter(int handle, const std::string& param, float value) = 0;
 
     // Opt a loaded Cubism model into the shared VOICE bus mouth drive.

@@ -71,11 +71,13 @@ end
 
 -- [quickmenu_log]
 schema.define("quickmenu_log", {
-    _meta = { category = "ui", blocking = false, desc = "Show dialogue backlog (QuickMenu)." },
+    _meta = { category = "ui", blocking = true, desc = "Open the native dialogue backlog until dismissal or jump (QuickMenu)." },
 })
-function QuickMenu.quickmenu_log(ctx, _params)
-    ctx.backlog_visible = true
-    return true
+function QuickMenu.quickmenu_log(ctx, params)
+    if not coroutine.isyieldable() then return false end
+    local kag = kag_table()
+    if not kag or type(kag.history) ~= "function" then return false end
+    return kag.history(ctx, params)
 end
 
 -- [quickmenu_qsave slot=0]
@@ -158,11 +160,13 @@ end
 
 -- [quickmenu_config]
 schema.define("quickmenu_config", {
-    _meta = { category = "ui", blocking = false, desc = "Open settings panel (QuickMenu)." },
+    _meta = { category = "ui", blocking = true, desc = "Open the native settings panel until dismissal (QuickMenu)." },
 })
 function QuickMenu.quickmenu_config(ctx, _params)
-    ctx.config_open = true
-    return true
+    if not coroutine.isyieldable() then return false end
+    local ok, settings = pcall(require, "settings")
+    if not ok or type(settings) ~= "table" or type(settings.show) ~= "function" then return false end
+    return settings.show(ctx, true)
 end
 
 -- Register all into the KAG command table

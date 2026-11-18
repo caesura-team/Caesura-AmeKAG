@@ -4,8 +4,8 @@
 # Caesura (AmeKAG) — Unified Platform Status Matrix
 
 > **Single Source of Truth**: [`docs/status/platform-matrix.yaml`](platform-matrix.yaml)<br>
-> **Documentation Synchronization Commit**: `e46363af5ccedfd20ae8fcf9cf82a053ccfe5c30`<br>
-> **Generated At**: `2026-10-26T07:44:45.046272+00:00`<br>
+> **Documentation Synchronization Commit**: `f230982cc65d025aa6198b83d41132b72202681e`<br>
+> **Generated At**: `2026-11-18T07:44:52.913341+00:00`<br>
 > **Recorded Evidence Validation**: `NOT_REVERIFIED` — schema and document references checked; original logs, packages and devices are not revalidated by this table.
 > Capability statuses below preserve their recorded commits and dates. The synchronization commit is not an execution identity or release approval.
 

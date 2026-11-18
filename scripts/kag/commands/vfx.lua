@@ -361,7 +361,8 @@ function VFXCommands.vfx(ctx, params)
 
     -- ── Blur ────────────────────────────────────────────────────────────
     elseif vtype == "blur" then
-        VFX.blur(ctx, params)
+        if params.layer and params.layer ~= "" then error("VFX blur requires the whole scene", 0) end
+        return VFX.blur(ctx, { time=params.time, amount=params.strength or params.intensity or params.blurlevel or params.radius })
 
     -- ── Stop all ────────────────────────────────────────────────────────
     elseif vtype == "stop" then

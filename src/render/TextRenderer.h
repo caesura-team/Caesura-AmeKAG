@@ -286,10 +286,13 @@ public:
     //   1. exact-key hit (reuse as-is),
     //   2. append-compatible slot (same view/pos, cachedText is a prefix),
     //   3. least-recently-used slot (an unused slot has lastUse == 0 and wins).
-    // Pure: reads the slots, writes nothing. The caller stamps lastUse.
+    // Slots used after submittedThrough are read-only until frame advance.
+    // Returns count when every candidate would overwrite queued geometry.
     static size_t selectCacheSlot(const MessageLayerCache* slots, size_t count,
                                   uint16_t viewId, const std::string& text,
-                                  float x, float y);
+                                  float x, float y, uint64_t submittedThrough = UINT64_MAX);
+
+    void onFrameAdvanced() { m_submittedThrough = m_cacheClock; }
 
     // -- Instrumentation (test-only observability) -------------------------
     // Counters for the batch cache. They are plain uint64 increments on the
@@ -411,6 +414,10 @@ private:
     // -- Batch cache internals (Track 2) --
     struct GlyphDraw { float gx, gy, w, h, u0, v0, u1, v1; };
     void updateDirtyRange(MessageLayerCache& slot, const std::string& newText);
+    GlyphLayoutResult layoutCachedText(const std::string& text, float x, float y,
+                                      size_t maxGlyphs, size_t byteBegin = 0);
+    float renderTransientText(uint16_t viewId, const std::string& text,
+                              float x, float y, TextColor color, bgfx::ProgramHandle program);
     // Full rebuild: lay out every codepoint, upload the whole VB/IB.
     float rebuildCache(MessageLayerCache& slot, uint16_t viewId,
                        const std::string& text,
@@ -425,10 +432,12 @@ private:
     // Bind + submit a slot's resident geometry (shared by every path).
     void submitCachedSlot(MessageLayerCache& slot, uint16_t viewId,
                           TextColor color, bgfx::ProgramHandle program);
+    void submitTextBuffers(uint16_t viewId, TextColor color,
+                           bgfx::ProgramHandle program, bool useCjk);
     bool ensureCacheBuffers(MessageLayerCache& slot);
     // Pick the slot for this key via selectCacheSlot(), then stamp its LRU
     // clock and count an eviction when a live slot is re-keyed.
-    MessageLayerCache& acquireSlot(uint16_t viewId, const std::string& text,
+    MessageLayerCache* acquireSlot(uint16_t viewId, const std::string& text,
                                    float x, float y);
 
     // -- Track 2 state --
@@ -444,6 +453,7 @@ private:
     MessageLayerCache m_cacheSlots[kCacheSlots];
     size_t   m_lastSlot = 0;     // most recently used slot (cache() target)
     uint64_t m_cacheClock = 0;   // monotonic LRU stamp source
+    uint64_t m_submittedThrough = 0;
     CacheStats m_cacheStats;
 
     IRenderDevice* m_savedDevice = nullptr;

@@ -336,6 +336,8 @@ public:
     virtual void destroyPostFx(PostFxHandle handle) = 0; // 0/unknown safe no-op
     virtual void clearPostFx() = 0;
     virtual bool isPostFxActive() const = 0;
+    // Temporary full-frame blur in logical pixels. Zero clears this effect.
+    virtual bool setSceneBlur(float radius) = 0;
 
     // -- Shader / Sampler access (for ParticleSystem and other GPU systems) --
     virtual RenderUniformHandle getDefaultSampler() const = 0;

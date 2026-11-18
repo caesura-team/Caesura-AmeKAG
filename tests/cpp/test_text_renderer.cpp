@@ -1152,6 +1152,24 @@ TEST_CASE("Batch cache: LRU evicts the least-recently-used slot") {
                                         1, "ninth", 0.0f, 99.0f) == 1);
 }
 
+TEST_CASE("Batch cache: queued geometry cannot be overwritten within a frame") {
+    MessageLayerCache slots[2];
+    slots[0].cachedText = "Caption";
+    slots[0].cachedViewId = 1;
+    slots[0].cachedX = 10;
+    slots[0].cachedY = 20;
+    slots[0].geometryValid = true;
+    slots[0].clearDirty();
+    slots[0].lastUse = 2;
+    slots[1].lastUse = 1;
+    CHECK(TextRenderer::selectCacheSlot(slots, 2, 1, "Caption", 10, 20, 1) == 0);
+    CHECK(TextRenderer::selectCacheSlot(slots, 2, 1, "Caption more", 10, 20, 1) == 1);
+    slots[0].markAllDirty();
+    CHECK(TextRenderer::selectCacheSlot(slots, 2, 1, "Caption", 10, 20, 1) == 1);
+    CHECK(TextRenderer::selectCacheSlot(slots, 2, 1, "Other", 10, 20, 0) == 2);
+    CHECK(TextRenderer::selectCacheSlot(slots, 2, 1, "Other", 10, 20, 2) == 1);
+}
+
 TEST_CASE("Kinsoku wrap: no line starts with forbidden punctuation") {
     // "中文，中文。" at a width where the naive greedy break lands right before
     // the fullwidth comma -- which kinsoku forbids.

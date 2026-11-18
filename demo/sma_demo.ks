@@ -18,8 +18,8 @@
 [wait time=2500]
 
 ; --- crossfade to wave ---
-[sma_anim name="hero" anim="wave" blend_time=400 loop=true]
-[ch name="System" text="wave: crossfade (blend_time=400ms) then right-arm oscillation."]
+[sma_anim name="hero" anim="wave" blend_time=0.4 loop=true]
+[ch name="System" text="wave: crossfade for 0.4 seconds, then right-arm oscillation."]
 [wait time=3500]
 
 ; --- part variant: happy eyes ---

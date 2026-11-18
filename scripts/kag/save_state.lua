@@ -1,5 +1,5 @@
 -- Persistent values and control frames. No live context or backend mutations.
-local M = { VERSION = 3 }
+local M = { VERSION = 3, LIVE2D_VERSION = 4 }
 local WaitState=require('kag.wait_state')
 local MAX_DEPTH, MAX_NODES = 64, 100000
 
@@ -210,7 +210,10 @@ end
 function M.prepare(state, safe_path, loader)
     if type(state) ~= "table" then error("Invalid saved state", 0) end
     local version = integer(state.schema_version == nil and 1 or state.schema_version, 1, "data schema")
-    if version > M.VERSION then error("Unsupported saved data schema", 0) end
+    if version > M.LIVE2D_VERSION then error("Unsupported saved data schema", 0) end
+    if state.live2d_snapshot ~= nil and version < M.LIVE2D_VERSION then
+        error("Invalid saved Live2D data schema", 0)
+    end
     local candidate = {}
     local scenes = {}
     local function prepared_scene(path)

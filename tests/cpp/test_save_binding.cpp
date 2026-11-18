@@ -269,6 +269,33 @@ TEST_CASE("U11 SaveBinding: shared acyclic tables are copied as independent JSON
     )lua");
 }
 
+TEST_CASE("SaveBinding keeps quicksave and autosave separate from manual slot zero") {
+    SaveBindingFixture fixture;
+    fixture.run(R"lua(
+        for _, slot in ipairs({-2, -1, 0}) do
+            assert(KAG.save_game(slot, {marker=slot}, 'binding.ks', 7))
+            assert(KAG.save_exists(slot))
+        end
+        for _, slot in ipairs({-2, -1, 0}) do
+            local state, meta = KAG.load_game(slot)
+            assert(state and state.marker == slot and meta.slot == slot)
+        end
+        for _, invalid in ipairs({-3, 100, 4294967296}) do
+            local saved, reason = KAG.save_game(invalid, {marker='wrong'}, 'binding.ks', 8)
+            assert(saved == false and type(reason) == 'string')
+            local state, load_error = KAG.load_game(invalid)
+            assert(state == nil and type(load_error) == 'string')
+            assert(not KAG.save_exists(invalid) and not KAG.delete_save(invalid))
+        end
+        local manual = KAG.list_saves()
+        assert(#manual == 1 and manual[1].slot == 0)
+        assert(KAG.load_game(0).marker == 0)
+    )lua");
+    CHECK(std::filesystem::is_regular_file(fixture.directory.path() / "save_auto.json"));
+    CHECK(std::filesystem::is_regular_file(fixture.directory.path() / "save_quick.json"));
+    CHECK(std::filesystem::is_regular_file(fixture.directory.path() / "save_0.json"));
+}
+
 TEST_CASE("U11 SaveBinding: invalid table keys cannot overwrite an existing slot") {
     SaveBindingFixture fixture;
     fixture.seed();

@@ -37,6 +37,41 @@ def publisher(packer: Path, launch: Path, name: str) -> tuple[bytes, bytes]:
     return archive.read_bytes(), key_bytes
 
 
+def check_unicode_packer(packer: Path, launch: Path) -> None:
+    source = launch / "资源 𠮷"
+    source.mkdir()
+    original = launch / "初版 𠮷.carc"
+    updated = launch / "新版 𠮷.carc"
+    patch = launch / "差分 𠮷.carc"
+    applied = launch / "更新后 𠮷.carc"
+    public = launch / "公钥 𠮷.pub"
+    private = launch / "私钥 𠮷.key"
+    extracted = launch / "解包 𠮷"
+
+    def run(*arguments: Path | str) -> str:
+        result = execute([str(packer), *(str(value) for value in arguments)], launch)
+        if result.returncode != 0:
+            raise RuntimeError(f"Unicode CARC command failed ({arguments[0]}):\n"
+                               + result.stdout + result.stderr)
+        return result.stdout
+
+    payload = source / "story.bin"
+    payload.write_bytes(b"original")
+    run("pack", source, original, public, private)
+    if public.stat().st_size != 32 or private.stat().st_size != 64:
+        raise RuntimeError("Unicode key files have unexpected lengths")
+    if len(run("list", original, public).splitlines()) != 1:
+        raise RuntimeError("Unicode archive listing has an unexpected entry count")
+    payload.write_bytes(b"updated")
+    run("pack", source, updated)
+    run("delta", original, updated, patch)
+    run("verify-delta", patch)
+    run("apply", original, patch, applied)
+    run("extract", applied, extracted, "--path", "story.bin")
+    if (extracted / "story.bin").read_bytes() != b"updated":
+        raise RuntimeError("Unicode archive round-trip changed the payload")
+
+
 def main() -> int:
     if len(sys.argv) != 3:
         print(__doc__, file=sys.stderr)
@@ -48,6 +83,7 @@ def main() -> int:
         base = Path(temporary)
         launch = base / "launch"
         launch.mkdir()
+        check_unicode_packer(packer, launch)
         archive_a, key_a = publisher(packer, launch, "publisher_a")
         archive_b, key_b = publisher(packer, launch, "publisher_b")
         if key_a == key_b:
@@ -70,6 +106,7 @@ def main() -> int:
         def check(
             name: str, options: list[str], archive: bytes | None = archive_a,
             *, accepted: bool, lua_verify: bool = False, error: str = "",
+            archive_name: str = "game.carc",
         ) -> None:
             nonlocal case_count
             case_count += 1
@@ -86,7 +123,7 @@ def main() -> int:
                 "-- Isolated startup fixture.\n", encoding="utf-8",
             )
             if archive is not None:
-                (resource / "game.carc").write_bytes(archive)
+                (resource / archive_name).write_bytes(archive)
             # Both untrusted same-name paths advertise B; only launch/host.pub is A.
             (resource / "host.pub").write_bytes(key_b)
             (resource / "game.carc.pub").write_bytes(key_b)
@@ -145,6 +182,11 @@ def main() -> int:
               str(launch / "host.pub")], accepted=True)
         check("host-selected non-ASCII key filename", ["--carc-trust", "pinned",
               "--carc-public-key", "发行者公钥.pub"], accepted=True)
+        check("pinned engine mounts a Unicode archive filename", pinned, accepted=True,
+              archive_name="dlc_剧情𠮷.carc")
+        check("pinned engine rejects the wrong signer for a Unicode archive filename",
+              pinned, archive_b, accepted=False, error="initialization rejected",
+              archive_name="dlc_剧情𠮷.carc")
         check("Unicode key and spaces preserve argument mapping", ["--carc-trust", "pinned",
               "--export-dir", "unrelated quoted argument", "--carc-public-key", str(spaced_key)],
               accepted=True)

@@ -148,8 +148,37 @@ end
 p=profile("native","runtime");p.compiled.ffmpeg=true;p.available.video=false
 check("runtime unavailable cannot inherit build support",caps.query("video.ffmpeg",p).reason=="backend_unavailable")
 p=profile("native");p.compiled.ffmpeg=true;p.compiled.live2d=true;p.compiled.steam=true
-for _,feature in ipairs({"audio.crossfade","render.blur","kag.live2d_motion","kag.live2d_expression"}) do
-    check("fixed unsupported cannot be upgraded "..feature,caps.query(feature,p).status=="unsupported")
+check("motion is eligible with Cubism compiled",caps.query("kag.live2d_motion",p).status=="supported")
+check("expression is eligible with Cubism compiled",caps.query("kag.live2d_expression",p).status=="supported")
+local motion_runtime=profile("native","runtime")
+check("motion requires the SDK",caps.query("kag.live2d_motion",motion_runtime).reason=="sdk_disabled")
+check("expression requires the SDK",caps.query("kag.live2d_expression",motion_runtime).reason=="sdk_disabled")
+motion_runtime.compiled.live2d=true
+motion_runtime.available.cubism=false
+check("motion requires a ready Cubism backend",caps.query("kag.live2d_motion",motion_runtime).reason=="backend_unavailable")
+check("expression requires a ready Cubism backend",caps.query("kag.live2d_expression",motion_runtime).reason=="backend_unavailable")
+motion_runtime.available.cubism=true
+check("motion is available on a ready Cubism backend",caps.query("kag.live2d_motion",motion_runtime).status=="supported")
+check("expression is available on a ready Cubism backend",caps.query("kag.live2d_expression",motion_runtime).status=="supported")
+local blur_runtime=profile("native","runtime")
+check("native blur is build-eligible",caps.query("render.blur",profile("native")).status=="supported")
+blur_runtime.available["postfx.softblur"]=true
+check("native blur uses the live softblur capability",caps.query("render.blur",blur_runtime).status=="supported")
+blur_runtime.available["postfx.softblur"]=false
+check("native blur rejects a missing shader",caps.query("render.blur",blur_runtime).reason=="backend_unavailable")
+local web_blur=profile("web","runtime")
+check("Web blur is build-eligible",caps.query("render.blur",profile("web")).status=="supported")
+web_blur.available.scene_blur=true
+check("Web blur supports a usable presenter",caps.query("render.blur",web_blur).status=="supported")
+web_blur.available.scene_blur=false
+check("Web blur requires a usable presenter",caps.query("render.blur",web_blur).reason=="backend_unavailable")
+for _,target in ipairs({"native","web"}) do
+    check(target.." crossfade is build-eligible",caps.query("audio.crossfade",profile(target)).status=="supported")
+    local runtime=profile(target,"runtime")
+    runtime.available.audio=true
+    check(target.." crossfade uses the runtime audio fact",caps.query("audio.crossfade",runtime).status=="supported")
+    runtime.available.audio=false
+    check(target.." crossfade requires a usable audio backend",caps.query("audio.crossfade",runtime).reason=="backend_unavailable")
 end
 -- U26 native bridge catalog eligibility: runtime facts remain necessary.
 local lip_build=profile("native");lip_build.compiled.live2d=true

@@ -47,6 +47,11 @@ function copyRuntimeDirs() {
       const localWasm = resolve(process.cwd(), 'node_modules', 'wasmoon', 'dist', 'glue.wasm')
       if (existsSync(localWasm)) {
         copyFileSync(localWasm, resolve(process.cwd(), 'dist', 'web-assets', 'glue.wasm'))
+        const notices = resolve(process.cwd(), 'dist', 'web-assets', 'licenses')
+        mkdirSync(notices, { recursive: true })
+        copyFileSync(resolve(process.cwd(), 'node_modules', 'wasmoon', 'LICENSE'), resolve(notices, 'Wasmoon.txt'))
+        copyFileSync(resolve(process.cwd(), 'licenses', 'Lua.txt'), resolve(notices, 'Lua.txt'))
+        copyFileSync(resolve(REPO_ROOT, 'LICENSE'), resolve(notices, 'Caesura.txt'))
       } else {
         console.warn('[vite] WARN: wasmoon glue.wasm not found under node_modules — packaged player would fetch it from unpkg.')
       }

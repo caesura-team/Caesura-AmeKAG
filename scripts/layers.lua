@@ -52,6 +52,25 @@ local nextView  = 1    -- bgfx View ID allocator
 local freeViews = {}  -- recycled view IDs (returned on remove)
 local maxView   = 256  -- bgfx View limit (bgfx caps at 256)
 
+local overlayText = {}
+
+function Layers.clear_overlay_text()
+    for i = #overlayText, 1, -1 do overlayText[i] = nil end
+end
+
+function Layers.queue_overlay_text(...)
+    overlayText[#overlayText + 1] = table.pack(...)
+end
+
+-- Menu coroutines run in update. Submit their text after scene and panel
+-- composition so an opaque panel cannot cover its own labels.
+function Layers.render_overlay_text()
+    for _, draw in ipairs(overlayText) do
+        backend.render_text(table.unpack(draw, 1, draw.n))
+    end
+    Layers.clear_overlay_text()
+end
+
 -- ═══════════════════════════════════════════════════════════════════════════
 --  Node constructor
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -121,6 +140,7 @@ end
 -- ═══════════════════════════════════════════════════════════════════════════
 
 function Layers.init()
+    Layers.clear_overlay_text()
     layerMap = {}
     rootNode = nil
     nextView = 1
@@ -226,6 +246,17 @@ function Layers.ensure(ctx, name, z)
     -- hide(); without it the settings/gallery/music_room overlays could
     -- never be found, hidden, or destroyed (and reopen would leak view ids).
     return Layers.add_layer(Layers.get_root(), { name = name, id = name, tag = name, z = z or 0 })
+end
+
+function Layers.create_menu_layer(_, name, z)
+    local id = name
+    while layerMap[id] do id = id .. "_" end
+    return Layers.add_layer(Layers.get_root(), { id = id, name = id, tag = id, z = z })
+end
+
+function Layers.remove_menu_layer(node)
+    if node and layerMap[node.id] == node then return Layers.remove_layer(node) end
+    return false
 end
 
 function Layers.get(layer_name)

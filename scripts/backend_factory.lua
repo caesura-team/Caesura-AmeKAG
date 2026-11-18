@@ -61,6 +61,7 @@ function BackendFactory.create(opts)
         elseif cmd == "clear_postfx" then return Render.clear_postfx()
         elseif cmd == "is_postfx_supported" then return Render.is_postfx_supported(...)
         elseif cmd == "is_postfx_active" then return Render.is_postfx_active()
+        elseif cmd == "set_scene_blur" then return Render.set_scene_blur(...)
         elseif cmd == "create_viewport" then return Render.create_viewport(...)
         elseif cmd == "destroy_viewport" then return Render.destroy_viewport(...)
         elseif cmd == "draw_viewport" then return Render.draw_viewport(...)
@@ -104,6 +105,10 @@ function BackendFactory.create(opts)
         if cmd == "ping" then return true
         elseif cmd == "name" then return actual_audio_name
         elseif cmd == "play_bgm" then return KAG.play_bgm(...)
+        elseif cmd == "xfade" then
+            local bus, file, seconds = ...
+            if bus ~= "bgm" then return false end
+            return KAG.play_bgm(file, {loop = true, fadein = seconds})
         elseif cmd == "stop_bgm" then return KAG.stop_bgm(...)
         elseif cmd == "play_voice" then return KAG.play_voice(...)
         elseif cmd == "stop_voice" then return KAG.stop_voice(...)

@@ -168,6 +168,7 @@ do
     check("guard rejects traversal ../ nested", not safe("tests/scripts/../../y.ks"))
         check("guard rejects nested traversal", not safe("demo/../sub/x.ks"))
     check("guard rejects non-ks", not safe("scripts/x.txt"))
+    check("guard rejects a NUL-truncated scene", not safe("scripts/x" .. string.char(0) .. ".ks"))
     check("guard rejects absolute", not safe("/etc/passwd"))
     check("guard rejects empty", not safe(""))
     check("guard rejects non-string", not safe(42))
@@ -400,7 +401,7 @@ do
     else failed = failed + 1 end
 end
 
--- title continue item (autosave slot 0)
+-- Title Continue reads the system autosave rather than a manual slot.
 do
     local tm = nil
     local f = io.open("scripts/title_menu.lua", "r")
@@ -408,12 +409,7 @@ do
     if tm and tm:find("continue", 1, true) and tm:find("KAG.save_exists", 1, true) then
         passed = passed + 1 print("  [PASS] title continue item present")
     else failed = failed + 1 end
-    local te = nil
-    f = io.open("scripts/title_demo_entry.lua", "r")
-    if f then te = f:read("*a") f:close() end
-    if te and te:find("action == \"continue\"", 1, true) and te:find("slot = 0", 1, true) then
-        passed = passed + 1 print("  [PASS] continue loads autosave")
-    else failed = failed + 1 end
+    check("autosave uses reserved slot -2", require("system").AUTOSAVE_SLOT == -2)
 end
 
 -- skip_auto force-skip (runner + settings + i18n)
@@ -490,7 +486,7 @@ do
     else failed = failed + 1 end
 end
 
--- ending replay (scene recorded + title Enter jump)
+-- Ending replay uses the authored scene recorded by the command.
 do
     local src = nil
     local f = io.open("scripts/kag/commands/system.lua", "r")
@@ -498,11 +494,11 @@ do
     if src and src:find("scene = ctx.current_scene", 1, true) then
         passed = passed + 1 print("  [PASS] ending records scene")
     else failed = failed + 1 end
-    f = io.open("scripts/title_menu.lua", "r")
-    if f then src = f:read("*a") f:close() end
-    if src and src:find("_pendingJump", 1, true) and src:find("Replay", 1, true) then
-        passed = passed + 1 print("  [PASS] endings replay via jump")
-    else failed = failed + 1 end
+    local owner = { current_scene = "demo/galgame_demo.ks" }
+    require("kag.commands.system").ending(owner, { id = "route_a", name = "Route A" })
+    local record = owner.seen_endings and owner.seen_endings.route_a
+    check("ending records a valid replay scene", record and record.scene == owner.current_scene
+        and require("kag.commands.save")._safeScenePath(record.scene))
 end
 
 -- Ctrl hold-to-skip wiring

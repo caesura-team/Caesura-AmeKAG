@@ -74,7 +74,7 @@ function M.install(backend)
         return features
     end,"handle",false)
     wrap("audio_fade_volume","audio.fade","void",false)
-    wrap("audio_xfade","audio.crossfade","void",false)
+    wrap("audio_xfade","audio.crossfade","handle",false)
     local stop=backend.audio_stop
     if stop then
         backend.audio_stop=function(bus,options,...)

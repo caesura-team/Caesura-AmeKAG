@@ -29,6 +29,18 @@ function mockFetch(status: number, body: unknown, _headers?: Record<string, stri
 }
 
 describe('EngineClient', () => {
+  it('calls the browser fetch with its global receiver when no transport is supplied', async () => {
+    vi.stubGlobal('fetch', async function (this: unknown) {
+      if (this !== globalThis) throw new TypeError('Illegal invocation')
+      return new Response(JSON.stringify({ status: 'ok' }))
+    })
+    try {
+      await expect(new EngineClient().ping()).resolves.toEqual({ status: 'ok' })
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
   it.each(['evalRaw', 'run', 'reload', 'stop'] as const)(
     '%s preserves an unknown outcome and never automatically resubmits the mutation',
     async method => {

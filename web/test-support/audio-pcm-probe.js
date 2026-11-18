@@ -58,6 +58,13 @@ async function runOffline() {
     check('fadeout onended releases owner', audio._retiring.size === 0)
     closeTo('fadeout preserves bus target', audio._busVolumes.get('bgm'), 0.6)
   })
+  await offline('BGM crossfade', audio => play(audio), (buffer, audio) => {
+    closeTo('crossfade PCM before replacement', sample(buffer, 0.1), 0.12)
+    closeTo('crossfade PCM from both clips halfway through', sample(buffer, 0.45), 0.09)
+    closeTo('crossfade PCM from only the new clip after deadline', sample(buffer, 0.8), 0.06)
+    check('crossfade onended releases old clip', audio._retiring.size === 0)
+    closeTo('crossfade preserves bus target', audio._busVolumes.get('bgm'), 0.6)
+  }, audio => play(audio, {volume: 0.4, fadein: 0.4, crossfade: true}))
   await offline('bus fade', async audio => {
     await play(audio)
     check('bus fade scheduled', audio.fadeVolume('bgm', 0.3, 0.4))

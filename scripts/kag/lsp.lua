@@ -80,6 +80,15 @@ local function kag3_alias_target(cmd, pname)
     return target
 end
 
+local function parameter_contract(specs, pname)
+    if specs[pname] then return specs[pname], pname end
+    for name, spec in pairs(specs) do
+        for _, alias in ipairs(spec.aliases or {}) do
+            if alias == pname then return spec, name end
+        end
+    end
+end
+
 --- Build the command index once (contracts + flow commands + kag table).
 local commands = nil
 local function ensure_index()
@@ -153,19 +162,22 @@ function lsp.completion(lineText, cursorCol)
     -- prefix after the command name (leading space consumed)
     local prefix = (afterName or ""):match("^%s*([%w_]*)")
     if specs then
-        for pname, spec in pairs(specs) do
-        if pname ~= "_meta" and (prefix == "" or pname:find(prefix, 1, true) == 1) then
+        local function add_param(pname, spec, alias_of)
+            if prefix ~= "" and pname:find(prefix, 1, true) ~= 1 then return end
             local detail = (spec.type or "string")
                 .. (spec.required and " (required)" or "")
                 .. (spec.default ~= nil and (" = " .. tostring(spec.default)) or "")
-            items[#items + 1] = {
-                label = pname,
-                kind = KIND.Field,
-                detail = detail,
-                insertText = pname .. "=",
-            }
+                .. (alias_of and (" (alias of " .. alias_of .. ")") or "")
+            items[#items + 1] = {label=pname, kind=KIND.Field, detail=detail, insertText=pname .. "="}
         end
-    end
+        for pname, spec in pairs(specs) do
+            if pname ~= "_meta" then
+                add_param(pname, spec)
+                for _, alias in ipairs(spec.aliases or {}) do
+                    if not specs[alias] then add_param(alias, spec, pname) end
+                end
+            end
+        end
     end
     -- Inside an expression-language context (exp= value or ${...} span) also
     -- suggest the variable table prefixes (f./sf./tf./mp./lf.), filtered by
@@ -215,9 +227,11 @@ function lsp.hover(cmd, param)
     if meta and meta.desc and meta.desc ~= "" then
         lines[#lines + 1] = meta.desc
     end
-    if param and specs and specs[param] then
-        local spec = specs[param]
+    local spec, canonical
+    if param and specs then spec, canonical = parameter_contract(specs, param) end
+    if spec then
         local parts = { "param `" .. param .. "`" }
+        if canonical ~= param then parts[#parts + 1] = "alias of `" .. canonical .. "`" end
         if spec.type then parts[#parts + 1] = "type=" .. tostring(spec.type) end
         if spec.required then parts[#parts + 1] = "required" end
         if spec.default ~= nil then parts[#parts + 1] = "default=" .. tostring(spec.default) end
@@ -350,12 +364,28 @@ function lsp.diagnostics(text)
             -- rendering the verbatim ${...} at run time. Reported at the
             -- command's offset/col 1, matching the exp= check above.
             if specs then
+                local supplied = {}
+                for _, pair in ipairs(tok.params or {}) do
+                    if type(pair) == "table" and type(pair[1]) == "string" then
+                        supplied[pair[1]] = true
+                    end
+                end
                 for _, pair in ipairs(tok.params or {}) do
                     if type(pair) == "table" and type(pair[1]) == "string" then
                         local pname = pair[1]
                         local pval = pair[2]
-                        local pspec = specs[pname]
-                        if type(pspec) == "table" and pspec.interpolate
+                        local pspec, canonical = parameter_contract(specs, pname)
+                        local selected = canonical
+                        -- The runtime takes the canonical spelling first, then the first supplied alias.
+                        if pspec and pspec.interpolate and not supplied[canonical] then
+                            for _, alias in ipairs(pspec.aliases or {}) do
+                                if supplied[alias] then
+                                    selected = alias
+                                    break
+                                end
+                            end
+                        end
+                        if selected == pname and pspec.interpolate
                             and type(pval) == "string"
                             and pval:find("${", 1, true) then
                             local problems = schemaModule.checkInterp(pval)
@@ -373,7 +403,8 @@ function lsp.diagnostics(text)
                 local present = {}
                 for _, pair in ipairs(tok.params or {}) do
                     if type(pair) == "table" and type(pair[1]) == "string" then
-                        present[pair[1]] = true
+                        local _, canonical = parameter_contract(specs, pair[1])
+                        present[canonical or pair[1]] = true
                     end
                 end
                 -- required params
@@ -416,7 +447,7 @@ function lsp.diagnostics(text)
                         if not pname:match("^%d+$")
                             and not pname:find(".", 1, true)
                             and pname:sub(1, 1) ~= "_"
-                            and specs[pname] == nil then
+                            and not parameter_contract(specs, pname) then
                             unknown[#unknown + 1] = pname
                         end
                     end

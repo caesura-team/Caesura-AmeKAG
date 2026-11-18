@@ -6,7 +6,7 @@ local json = require("capability_json")
 local target = require("target_capabilities")
 local profile = {
     schema = 1, target = "web", platform = "browser", scope = "runtime",
-    catalog_sha256 = target.catalog_sha256, compiled = {}, available = { audio = false },
+    catalog_sha256 = target.catalog_sha256, compiled = {}, available = { audio = false, scene_blur = false },
 }
 _G.__CAESURA_CAPABILITY_PROFILE_JSON = function() return assert(json.encode(profile)) end
 

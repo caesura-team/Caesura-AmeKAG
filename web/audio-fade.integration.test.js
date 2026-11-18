@@ -192,6 +192,99 @@ describe('U20 actual Lua gain fade routes', () => {
     expect(player.audio.isPlaying('bgm')).toBe(true)
   })
 
+  it('the Lua crossfade bridge awaits the new track and overlaps its clip ramp with the retiring track', async () => {
+    const h = await boot()
+    h.add(asset('xfade-old'))
+    const replacement = h.add(asset('xfade-new'), 'defer-decode')
+    expect(await playConfirmed(asset('xfade-old'))).toBe(true)
+    const old = h.sources[0]
+    const request = player.lua.doString(`
+      local value,result=backend.audio_xfade('bgm',${JSON.stringify(asset('xfade-new'))},1.25)
+      return value==true and result.status=='applied' and result.feature=='audio.crossfade'
+    `)
+    pendingLua.push(request)
+    // Detect early settlement as well as a host call that actually awaited decoding.
+    expect(await Promise.race([replacement.entered.promise.then(() => 'decoding'), request]))
+      .toBe('decoding')
+    expect(old.stop).not.toHaveBeenCalled()
+    expect(player.core.audioBus.bgm.path).toBe(asset('xfade-old'))
+    h.advance(11)
+    replacement.release.resolve()
+    expect(await request).toBe(true)
+    const current = h.sources[1]
+    expect(current.startedAt).toBe(11)
+    expect(current.loop).toBe(true)
+    expect(old.stop).toHaveBeenCalledOnce()
+    expect(old.stop).toHaveBeenCalledWith(12.25)
+    expect(ramps(clipGain(old))).toEqual([expect.objectContaining({ value: 0, time: 12.25 })])
+    expect(ramps(clipGain(current))).toEqual([expect.objectContaining({ value: 1, time: 12.25 })])
+    h.advance(11.625)
+    expect(clipGain(old).value).toBeCloseTo(0.2)
+    expect(clipGain(current).value).toBeCloseTo(0.5)
+    h.advance(12.25)
+    expect(old.disconnect).toHaveBeenCalledOnce()
+    expect(current.disconnect).not.toHaveBeenCalled()
+    expect(player.audio.captureBgm().path).toBe(asset('xfade-new'))
+    expect(player.core.audioBus.bgm).toMatchObject({ path: asset('xfade-new'), playing: true })
+    unchangedBuses()
+  })
+
+  it('the Lua crossfade bridge reports failed decoding and preserves the confirmed BGM', async () => {
+    const h = await boot()
+    h.add(asset('xfade-kept'))
+    h.add(asset('xfade-rejected'), 'decode-failure')
+    expect(await playConfirmed(asset('xfade-kept'))).toBe(true)
+    expect(await player.lua.doString(`
+      local value,result=backend.audio_xfade('bgm',${JSON.stringify(asset('xfade-rejected'))},1.25)
+      return value==false and result.status=='failed' and result.feature=='audio.crossfade'
+    `)).toBe(true)
+    expect(h.sources).toHaveLength(1)
+    expect(h.sources[0].stop).not.toHaveBeenCalled()
+    expect(player.audio.captureBgm().path).toBe(asset('xfade-kept'))
+    expect(player.core.audioBus.bgm.path).toBe(asset('xfade-kept'))
+    unchangedBuses()
+  })
+
+  it('xfadebgm parks the scene until the shared audio-clock deadline', async () => {
+    const h = await boot()
+    h.add(asset('scene-xfade-old')); h.add(asset('scene-xfade-new'))
+    const scene = `[playbgm file="${asset('scene-xfade-old')}"]
+[xfadebgm file="${asset('scene-xfade-new')}" time=1000]
+[end]`
+    expect(await player.runScene(scene, 'u20-crossfade.ks')).toMatch(/^WAIT_AUDIO:/)
+    expect(player.isWaitingForAudio).toBe(true)
+    expect(h.sources[0].stop).toHaveBeenCalledWith(11)
+    expect(ramps(clipGain(h.sources[1]))).toEqual([expect.objectContaining({ value: 1, time: 11 })])
+    expect(await player.tickAudio()).toMatch(/^WAIT_AUDIO:/)
+    h.advance(10.75)
+    expect(await player.tickAudio()).toMatch(/^WAIT_AUDIO:/)
+    expect(h.sources[0].disconnect).not.toHaveBeenCalled()
+    h.advance(11)
+    expect(await player.tickAudio()).toMatch(/^DONE:/)
+    expect(player.isWaitingForAudio).toBe(false)
+    expect(h.sources[0].disconnect).toHaveBeenCalledOnce()
+    expect(player.audio.captureBgm().path).toBe(asset('scene-xfade-new'))
+  })
+
+  it('replacing a scene parked on xfadebgm releases both sources and its stale audio wait', async () => {
+    const h = await boot()
+    h.add(asset('replace-xfade-old')); h.add(asset('replace-xfade-new'))
+    const scene = `[playbgm file="${asset('replace-xfade-old')}"]
+[xfadebgm file="${asset('replace-xfade-new')}" time=1000]
+[end]`
+    expect(await player.runScene(scene, 'u20-crossfade-retired.ks')).toMatch(/^WAIT_AUDIO:/)
+    expect(await player.runScene('[p]\n[end]', 'u20-crossfade-replacement.ks')).toMatch(/^WAIT:/)
+    for (const source of h.sources) {
+      expect(source.stop).toHaveBeenLastCalledWith()
+      expect(source.disconnect).toHaveBeenCalledOnce()
+    }
+    h.advance(11)
+    expect(await player.tickAudio()).toBeNull()
+    expect(player.audio.isPlaying('bgm')).toBe(false)
+    expect(player.audio._retiring.size).toBe(0)
+    expect(player.isWaitingForAudio).toBe(false)
+  })
+
   it.each(['fadebgm', 'fadevol'])('%s fades only the bus and direct fade returns typed applied', async command => {
     const h = await boot(); h.add(asset('bus-fade'))
     expect(await player.runScene(`[playbgm file="${asset('bus-fade')}" volume=0.4]\n[${command} volume=0.3 time=1250]\n[end]`, 'u20-bus-fade.ks')).toMatch(/^DONE:/)

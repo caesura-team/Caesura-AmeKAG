@@ -113,10 +113,9 @@ end
 -- Round 51 contracts: [blur]/[fade] (audit: handlers lacked schemas).
 local _schema2 = require("kag.schema")
 _schema2.define("blur", {
-    _meta = { category = "transition", blocking = true, desc = "gaussian blur the whole frame" },
-    amount = { type = "number", default = 0, min = 0, max = 100 },
-    time = { type = "number", default = 300, min = 0, max = 30000 },
-    duration = { type = "number", default = 300, min = 0, max = 30000 },
+    _meta = { category = "transition", blocking = true, desc = "Temporarily blur the composed scene, then restore the sharp image" },
+    amount = { type = "number", default = 4, min = 0, max = 100, aliases = {"strength"} },
+    time = { type = "number", default = 300, min = 0, max = 30000, aliases = {"duration"} },
 })
 _schema2.define("fade", {
     _meta = { category = "transition", blocking = true, desc = "fade a layer between from/to opacity" },
@@ -290,8 +289,7 @@ function TransCommands.flash(ctx, params)
     end
 end
 
--- [blur time=500 strength=2.0] — full-screen blur effect
--- (KAG3-adjacent visual effect; VFX.blur existed but had no command).
+-- [blur time=500 amount=4] — temporary full-screen blur.
 function TransCommands.blur(ctx, params)
     local VFX = require("vfx")
     if VFX.blur then

@@ -15,7 +15,8 @@ class IArchiveReader {
 public:
     virtual ~IArchiveReader() = default;
 
-    // Validation, I/O and allocation failure return false with closed state.
+    // Pass filesystem paths in UTF-8. Validation, I/O and allocation failure
+    // return false with closed state.
     virtual bool open(const std::string& path, const std::string& pubKeyPath = "") = 0;
     virtual bool open(const std::string& path, const ArchivePublicKey& expectedKey) = 0;
     virtual void close() = 0;

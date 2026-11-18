@@ -20,6 +20,8 @@ function M.start(request)
         local fn = item[1] and item[1][item[2]]
         assert(type(fn) == "function" and getinfo(fn, "S").what == "C", "real native binding required: " .. item[2])
     end
+    -- The trusted driver owns process termination even when the story runs in strict mode.
+    local quit = DevCore.quit
     require("kag.init")
     local runner = require("kag_runner")
     local layers = require("layers")
@@ -172,7 +174,7 @@ function M.start(request)
             for key, value in pairs(receipt) do publication[key] = value end
             publication.complete = true
         end
-        DevCore.quit()
+        quit()
     end
     local function check_result(ctx)
         if not ctx or ctx._command_error or ctx.error_handler_error then

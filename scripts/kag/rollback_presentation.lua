@@ -1,6 +1,7 @@
 -- Rollback reuses save/load resource ownership, without rewinding BGM or SE.
 local Layers=require("kag.layer_state")
 local Font=require("kag.font_state")
+local Models=require("kag.live2d_state")
 local M={}
 
 local function cleanup(errors,fn,...)
@@ -18,14 +19,16 @@ function M.discard(prepared)
     local errors={}
     if prepared.layers then cleanup(errors,Layers.discard,prepared.layers) end
     if prepared.font then cleanup(errors,Font.discard,prepared.font) end
+    if prepared.models then cleanup(errors,Models.discard,prepared.models) end
     return #errors==0,table.concat(errors,"; ")
 end
 
-function M.prepare(layers,font)
+function M.prepare(layers,font,models)
     local prepared={used=false}
     local ok,err=pcall(function()
         prepared.layers=Layers.prepare(layers)
         prepared.font=Font.prepare(font)
+        prepared.models=Models.prepare(models)
     end)
     if not ok then
         local discarded,reason=M.discard(prepared)
@@ -38,12 +41,15 @@ function M.apply(prepared,owner)
     if prepared.used then error("Rollback presentation candidate already consumed",0) end
     prepared.used=true
     local ok,err=pcall(function()
+        Models.retire(owner)
         assert(Layers.apply(prepared.layers,owner))
         assert(Font.apply(prepared.font))
+        Models.apply(prepared.models,owner)
     end)
     if not ok then
         local discarded,discard_error=M.discard(prepared)
         local errors={}
+        cleanup(errors,Models.retire,owner)
         cleanup(errors,Layers.stop,owner)
         cleanup(errors,Font.clear)
         error(tostring(err)..(discarded and "" or "; discard: "..discard_error)

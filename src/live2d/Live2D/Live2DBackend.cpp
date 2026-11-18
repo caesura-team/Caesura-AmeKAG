@@ -15,14 +15,11 @@
 #include <Motion/CubismMotionManager.hpp>
 #include <Motion/CubismMotionQueueManager.hpp>
 #include <Motion/CubismExpressionMotion.hpp>
-#include <Motion/CubismExpressionMotionManager.hpp>
 #include <Rendering/CubismRenderer.hpp>
 #ifdef _WIN32
 #include <Rendering/D3D11/CubismRenderer_D3D11.hpp>
 #include <Rendering/D3D11/CubismDeviceInfo_D3D11.hpp>
 #include <d3d11.h>
-#else
-#include <Rendering/OpenGL/CubismRenderer_OpenGLES2.hpp>
 #endif
 
 // Engine
@@ -35,12 +32,10 @@
 #include "debug/api/DebugLog.h"
 #ifdef _WIN32
 #include "D3D11NativeRenderPath.h"
+#elif defined(__APPLE__)
+#include "MetalNativeRenderPath.h"
 #else
 #include "OpenGLReadbackRenderPath.h"
-#include "OpenGLSharedRenderPath.h"
-#ifdef __APPLE__
-#include "MetalNativeRenderPath.h"
-#endif
 #endif
 
 #include <fstream>
@@ -140,22 +135,6 @@ namespace {
         SDL_free(buffer);
     }
 
-    // Create an RGBA8 bgfx texture from decoded pixels (model texture).
-    static bgfx::TextureHandle createBgfxTexture(int width, int height,
-                                                 const unsigned char* pixels) {
-        if (width <= 0 || height <= 0 || !pixels) return BGFX_INVALID_HANDLE;
-        // stb dimensions come from an untrusted texture header: validate before
-        // narrowing to uint16 / computing the block size (no wrap, no truncation).
-        constexpr int kMaxTextureDim = 0x7FFF;  // createTexture2D takes uint16
-        constexpr uint64_t kMaxTextureBytes = 256ull * 1024ull * 1024ull;
-        if (width > kMaxTextureDim || height > kMaxTextureDim) return BGFX_INVALID_HANDLE;
-        const uint64_t total = static_cast<uint64_t>(width) * static_cast<uint64_t>(height) * 4u;
-        if (total == 0 || total > kMaxTextureBytes) return BGFX_INVALID_HANDLE;
-        const bgfx::Memory* mem = bgfx::copy(pixels, static_cast<uint32_t>(total));
-        return bgfx::createTexture2D(static_cast<uint16_t>(width),
-            static_cast<uint16_t>(height), false, 1, bgfx::TextureFormat::RGBA8,
-            BGFX_TEXTURE_NONE | BGFX_SAMPLER_POINT, mem);
-    }
 }
 
 // ============================================================
@@ -173,10 +152,6 @@ Live2DBackend::Live2DModel::~Live2DModel() {
         bgfx::destroy(bgfxTex);
         bgfxTexValid = false;
     }
-    for (bgfx::TextureHandle tex : textures) {
-        if (bgfx::isValid(tex)) bgfx::destroy(tex);
-    }
-    textures.clear();
 #ifdef _WIN32
     for (ID3D11ShaderResourceView* srv : textureSrvs) {
         if (srv) srv->Release();
@@ -197,12 +172,9 @@ bool Live2DBackend::init() {
         return false;
     }
 #elif defined(__APPLE__)
-    if (rendererType != bgfx::RendererType::OpenGL &&
-        rendererType != bgfx::RendererType::OpenGLES &&
-        rendererType != bgfx::RendererType::Metal) {
+    if (rendererType != bgfx::RendererType::Metal) {
         DEBUG_ERR(SubSys::Live2D, ErrCode::Ok,
-            "[Live2D] Unsupported macOS bgfx renderer: %s",
-            bgfx::getRendererName(rendererType));
+            "[Live2D] macOS build requires the bgfx Metal renderer");
         return false;
     }
 #else
@@ -210,6 +182,11 @@ bool Live2DBackend::init() {
         rendererType != bgfx::RendererType::OpenGLES) {
         DEBUG_ERR(SubSys::Live2D, ErrCode::Ok,
             "[Live2D] Linux build requires the bgfx OpenGL renderer");
+        return false;
+    }
+    if (CubismFramework::IsInitialized()) {
+        DEBUG_ERR(SubSys::Live2D, ErrCode::Ok,
+            "[Live2D/GL] A previous Cubism context did not finish cleanup");
         return false;
     }
 #endif
@@ -237,34 +214,22 @@ bool Live2DBackend::init() {
     }
     delete m_renderPath;
     m_renderPath = d3dPath;
-#else
-#ifdef __APPLE__
-    if (rendererType == bgfx::RendererType::Metal) {
-        auto* metalPath = new MetalNativeRenderPath();
-        if (!metalPath->init(1280, 720)) {
-            delete metalPath;
-            shutdown();
-            return false;
-        }
-        delete m_renderPath;
-        m_renderPath = metalPath;
-    } else
-#endif
-    {
-        ILive2DRenderPath* glPath = new OpenGLSharedRenderPath();
-        if (!glPath->init(1280, 720)) {
-            delete glPath;
-            auto* readbackPath = new OpenGLReadbackRenderPath();
-            if (!readbackPath->init(1280, 720)) {
-                delete readbackPath;
-                shutdown();
-                return false;
-            }
-            glPath = readbackPath;
-        }
-        delete m_renderPath;
-        m_renderPath = glPath;
+#elif defined(__APPLE__)
+    auto metalPath = std::make_unique<MetalNativeRenderPath>();
+    if (!metalPath->init(1280, 720)) {
+        shutdown();
+        return false;
     }
+    delete m_renderPath;
+    m_renderPath = metalPath.release();
+#else
+    auto glPath = std::make_unique<OpenGLReadbackRenderPath>();
+    if (!glPath->init(1280, 720)) {
+        shutdown();
+        return false;
+    }
+    delete m_renderPath;
+    m_renderPath = glPath.release();
 #endif
 
     DEBUG_INFO(SubSys::Live2D, ErrCode::Ok, "[Live2D] CubismFramework 5 initialized (render path: %s)", m_renderPath->name());
@@ -282,7 +247,7 @@ void Live2DBackend::shutdown() {
             m_renderPath = nullptr;
         }
     };
-#ifndef _WIN32
+#ifdef __APPLE__
     releaseRenderPath();
 #endif
     if (m_initialized) {
@@ -292,10 +257,21 @@ void Live2DBackend::shutdown() {
         // while the render path still retains the context and D3D11 DLL.
         CubismDeviceInfo_D3D11::ReleaseAllDeviceInfo();
 #endif
+#if defined(__linux__) && !defined(__ANDROID__)
+        if (m_renderPath) {
+            if (!static_cast<OpenGLReadbackRenderPath*>(m_renderPath)->disposeFramework()) {
+                DEBUG_ERR(SubSys::Live2D, ErrCode::Ok, "[Live2D/GL] Lost Cubism context during shutdown");
+            }
+        } else {
+            // Initialization failed before allocating any Cubism GL resources.
+            CubismFramework::Dispose();
+        }
+#else
         CubismFramework::Dispose();
+#endif
         m_initialized = false;
     }
-#ifdef _WIN32
+#ifndef __APPLE__
     // Last: release target/context COM owners, then the counted runtime DLL
     // reference. bgfx may already have destroyed its renderer after loss.
     releaseRenderPath();
@@ -365,8 +341,11 @@ bool Live2DBackend::loadModelInternal(Live2DModel& model) {
     if (!createRenderer(model)) return false;
 
     // 5. Load textures
-    model.textures.resize(static_cast<size_t>(model.setting->GetTextureCount()),
-                          BGFX_INVALID_HANDLE);
+#ifdef _WIN32
+    constexpr bool requiresModelTextures = false;
+#else
+    constexpr bool requiresModelTextures = true;
+#endif
     for (csmInt32 i = 0; i < model.setting->GetTextureCount(); ++i) {
         std::string texPath = joinPath(dir, model.setting->GetTextureFileName(i));
         auto texData = readFile(texPath);
@@ -378,6 +357,7 @@ bool Live2DBackend::loadModelInternal(Live2DModel& model) {
                     reinterpret_cast<const stbi_uc*>(texData.data()),
                     static_cast<int>(texData.size()), &iw, &ih, &ic)) {
                 DEBUG_INFO(SubSys::Live2D, ErrCode::Ok, "[Live2D] Texture %d: invalid image header: %s", i, texPath.c_str());
+                if constexpr (requiresModelTextures) return false;
                 continue;
             }
             constexpr int kMaxTextureDim = 16384;
@@ -385,6 +365,7 @@ bool Live2DBackend::loadModelInternal(Live2DModel& model) {
             if (iw <= 0 || ih <= 0 || iw > kMaxTextureDim || ih > kMaxTextureDim ||
                 static_cast<uint64_t>(iw) * static_cast<uint64_t>(ih) * 4u > kMaxTextureBytes) {
                 DEBUG_INFO(SubSys::Live2D, ErrCode::Ok, "[Live2D] Texture %d: dimensions out of range: %dx%d", i, iw, ih);
+                if constexpr (requiresModelTextures) return false;
                 continue;
             }
             // Create Cubism texture from loaded PNG data
@@ -405,14 +386,32 @@ bool Live2DBackend::loadModelInternal(Live2DModel& model) {
                         }
                     }
                 }
+#elif defined(__APPLE__)
+                if (!static_cast<MetalNativeRenderPath*>(m_renderPath)->bindModelTexture(
+                        model.renderer, static_cast<std::uint32_t>(i), w, h, pixels)) {
+                    stbi_image_free(pixels);
+                    DEBUG_ERR(SubSys::Live2D, ErrCode::Ok, "[Live2D/Metal] Could not bind texture: %s",
+                        texPath.c_str());
+                    return false;
+                }
 #else
-                model.textures[i] = createBgfxTexture(w, h, pixels);
+                if (!static_cast<OpenGLReadbackRenderPath*>(m_renderPath)->bindModelTexture(
+                        model.renderer, static_cast<std::uint32_t>(i), w, h, pixels)) {
+                    stbi_image_free(pixels);
+                    DEBUG_ERR(SubSys::Live2D, ErrCode::Ok, "[Live2D/GL] Could not bind texture: %s",
+                        texPath.c_str());
+                    return false;
+                }
 #endif
                 stbi_image_free(pixels);
                 DEBUG_INFO(SubSys::Live2D, ErrCode::Ok, "[Live2D] Texture %d loaded: %dx%d", i, w, h);
             } else {
                 DEBUG_INFO(SubSys::Live2D, ErrCode::Ok, "[Live2D] Texture %d failed to decode: %s", i, texPath.c_str());
+                if constexpr (requiresModelTextures) return false;
             }
+        } else if constexpr (requiresModelTextures) {
+            DEBUG_ERR(SubSys::Live2D, ErrCode::Ok, "[Live2D] Missing model texture: %s", texPath.c_str());
+            return false;
         }
     }
 
@@ -443,14 +442,9 @@ bool Live2DBackend::loadModelInternal(Live2DModel& model) {
                 std::string motionPath = joinPath(dir, fileName);
                 auto motionData = readFile(motionPath);
                 if (motionData.empty()) continue;
-                // Key the clip by its file stem and by "group/index" so
-                // playMotion(name) and playMotion("group/index") both hit.
-                const std::string stem = std::filesystem::path(fileName).stem().string();
-                CachedMotion cachedMotion{std::move(motionData), group, j};
-                if (model.motionCache.find(stem) == model.motionCache.end()) {
-                    model.motionCache[stem] = cachedMotion;
-                }
-                model.motionCache[group + "/" + std::to_string(j)] = std::move(cachedMotion);
+                // Keep one entry per group/index so same-named files remain distinguishable.
+                model.motionCache[group + "/" + std::to_string(j)] = {
+                    std::move(motionData), group, std::filesystem::path(fileName).stem().string(), j};
             }
         }
     }
@@ -470,22 +464,29 @@ bool Live2DBackend::createRenderer(Live2DModel& model) {
     }
 #endif
 
-    model.userModel->CreateRenderer(model.renderWidth, model.renderHeight);
-#ifdef _WIN32
-    model.renderer = model.userModel->GetRenderer<CubismRenderer_D3D11>();
+#ifdef __APPLE__
+    model.renderer = static_cast<MetalNativeRenderPath*>(m_renderPath)->createModelRenderer(
+        *model.userModel, model.renderWidth, model.renderHeight);
+    constexpr auto outputFormat = bgfx::TextureFormat::BGRA8;
+#elif defined(__linux__) && !defined(__ANDROID__)
+    model.renderer = static_cast<OpenGLReadbackRenderPath*>(m_renderPath)->createModelRenderer(
+        *model.userModel, model.renderWidth, model.renderHeight);
+    constexpr auto outputFormat = bgfx::TextureFormat::RGBA8;
 #else
-    model.renderer = model.userModel->GetRenderer<CubismRenderer_OpenGLES2>();
+    model.userModel->CreateRenderer(model.renderWidth, model.renderHeight);
+    model.renderer = model.userModel->GetRenderer<CubismRenderer>();
+    constexpr auto outputFormat = bgfx::TextureFormat::RGBA8;
 #endif
 
     if (!model.renderer) {
-        DEBUG_ERR(SubSys::Live2D, ErrCode::Ok, "[Live2D] Failed to create OpenGL renderer");
+        DEBUG_ERR(SubSys::Live2D, ErrCode::Ok, "[Live2D] Failed to create Cubism renderer");
         return false;
     }
 
     // Create bgfx texture for output
     model.bgfxTex = bgfx::createTexture2D(
         model.renderWidth, model.renderHeight,
-        false, 1, bgfx::TextureFormat::RGBA8,
+        false, 1, outputFormat,
         BGFX_TEXTURE_BLIT_DST | BGFX_SAMPLER_POINT
     );
     model.bgfxTexValid = bgfx::isValid(model.bgfxTex);
@@ -519,9 +520,18 @@ void Live2DBackend::render(float dt) {
         // Apply pose after motions/expressions, before recomputing drawables.
         auto* userModel = static_cast<Live2DUserModel*>(model->userModel.get());
         userModel->motionManager()->UpdateMotion(cubismModel, dt);
-        userModel->expressionManager()->UpdateMotion(cubismModel, dt);
-        if (auto* pose = userModel->pose()) {
+        auto* pose = userModel->pose();
+        const bool hasExpression = !userModel->weightedExpression.IsFinished();
+        if (hasExpression) {
+            // Cubism pose initializes selection parameters on its first update.
+            // Capture that base before applying an expression on the first frame.
+            if (pose && !model->poseInitialized) pose->UpdateParameters(cubismModel, 0.0f);
+            cubismModel->SaveParameters();
+            userModel->weightedExpression.UpdateMotion(cubismModel, dt);
+        }
+        if (pose) {
             pose->UpdateParameters(cubismModel, dt);
+            model->poseInitialized = true;
         }
         if (model->voiceLipSync.enabled()) {
             auto* rawModel = cubismModel->GetModel();
@@ -537,8 +547,11 @@ void Live2DBackend::render(float dt) {
         cubismModel->Update();
 
         // Cubism render to bgfx (via pluggable render path)
-        m_renderPath->beginFrame(static_cast<CubismRenderer*>(model->renderer));
-        m_renderPath->endFrame(static_cast<CubismRenderer*>(model->renderer), model->bgfxTex);
+        m_renderPath->beginFrame(model->renderer);
+        m_renderPath->endFrame(model->renderer, model->bgfxTex);
+        // Keep the motion/manual pose as the base for the next frame. An
+        // additive expression must never accumulate on its own output.
+        if (hasExpression) cubismModel->LoadParameters();
 
         // Blit bgfx texture to screen
         if (m_renderDevice && model->bgfxTexValid) {
@@ -554,36 +567,54 @@ void Live2DBackend::render(float dt) {
 // ============================================================
 // Motion playback (Cubism 5 API)
 // ============================================================
-bool Live2DBackend::playMotion(int handle, const std::string& name) {
+bool Live2DBackend::playMotion(int handle, const std::string& name,
+                               float fadeInSeconds, float fadeOutSeconds) {
+    const auto validFade = [](float seconds) {
+        return seconds == -1 || (std::isfinite(seconds) && seconds >= 0 && seconds <= 10);
+    };
+    if (name.empty() || !validFade(fadeInSeconds) || !validFade(fadeOutSeconds)) return false;
     auto it = m_models.find(handle);
     if (it == m_models.end() || !it->second->userModel || !it->second->setting) return false;
 
     auto& model = *it->second;
 
-    auto mit = model.motionCache.find(name);
-    if (mit == model.motionCache.end()) {
-        // Fallback: substring match over cached keys (e.g. "wave" -> "wave/0").
-        for (auto it = model.motionCache.begin(); it != model.motionCache.end(); ++it) {
-            if (it->first.find(name) != std::string::npos) { mit = it; break; }
+    const CachedMotion* clip = nullptr;
+    if (const auto exact = model.motionCache.find(name); exact != model.motionCache.end()) {
+        clip = &exact->second;
+    } else if (name.find('/') == std::string::npos) {
+        // Prefer an exact file stem. A shorthand is allowed only for one clip.
+        for (const bool exactStem : {true, false}) {
+            for (const auto& [key, candidate] : model.motionCache) {
+                const bool matches = exactStem ? candidate.stem == name
+                    : candidate.stem.find(name) != std::string::npos || key.find(name) != std::string::npos;
+                if (!matches) continue;
+                if (clip) {
+                    DEBUG_WARN(SubSys::Live2D, ErrCode::Ok, "[Live2D] Ambiguous motion name: %s", name.c_str());
+                    return false;
+                }
+                clip = &candidate;
+            }
+            if (clip) break;
         }
     }
-    if (mit == model.motionCache.end()) {
+    if (!clip) {
         DEBUG_WARN(SubSys::Live2D, ErrCode::Ok, "[Live2D] Motion not found: %s", name.c_str());
         return false;
     }
 
-    auto& cachedMotion = mit->second;
     // Model-setting fade overrides require the clip's original group/index,
     // even when it was selected by a file-stem alias or substring match.
     auto* motion = model.userModel->LoadMotion(
-        reinterpret_cast<const csmByte*>(cachedMotion.data.data()),
-        static_cast<csmSizeInt>(cachedMotion.data.size()),
+        reinterpret_cast<const csmByte*>(clip->data.data()),
+        static_cast<csmSizeInt>(clip->data.size()),
         name.c_str(),
         nullptr, nullptr,
-        model.setting, cachedMotion.group.c_str(), cachedMotion.index
+        model.setting, clip->group.c_str(), clip->index, true
     );
     if (!motion) return false;
 
+    if (fadeInSeconds >= 0) motion->SetFadeInTime(fadeInSeconds);
+    if (fadeOutSeconds >= 0) motion->SetFadeOutTime(fadeOutSeconds);
     // Each load creates a fresh motion; the queue owns it through completion or unload.
     static_cast<Live2DUserModel*>(model.userModel.get())->motionManager()->StartMotion(motion, true);
     return true;
@@ -592,24 +623,30 @@ bool Live2DBackend::playMotion(int handle, const std::string& name) {
 // ============================================================
 // Expression
 // ============================================================
-void Live2DBackend::setExpression(int handle, const std::string& name) {
+bool Live2DBackend::setExpression(int handle, const std::string& name, float weight) {
+    if (!std::isfinite(weight) || weight < 0.0f || weight > 1.0f) return false;
     auto it = m_models.find(handle);
-    if (it == m_models.end() || !it->second->userModel) return;
+    if (it == m_models.end() || !it->second->userModel) return false;
 
     auto& model = *it->second;
     auto eit = model.expressionCache.find(name);
-    if (eit == model.expressionCache.end()) return;
+    if (eit == model.expressionCache.end()) return false;
 
     auto& data = eit->second;
-    auto* expression = model.userModel->LoadExpression(
-        reinterpret_cast<const csmByte*>(data.data()),
-        static_cast<csmSizeInt>(data.size()),
-        name.c_str()
-    );
-    if (!expression) return;
+    std::unique_ptr<CubismExpressionMotion, decltype(&ACubismMotion::Delete)> expression(
+        CubismExpressionMotion::Create(
+            reinterpret_cast<const csmByte*>(data.data()),
+            static_cast<csmSizeInt>(data.size())), &ACubismMotion::Delete);
+    if (!expression || expression->GetExpressionParameters().GetSize() == 0) return false;
 
-    // Each load creates a fresh expression; the queue owns it through replacement or unload.
-    static_cast<Live2DUserModel*>(model.userModel.get())->expressionManager()->StartMotion(expression, true);
+    auto& queue = static_cast<Live2DUserModel*>(model.userModel.get())->weightedExpression;
+    queue.StopAllMotions();
+    if (weight > 0.0f) {
+        expression->SetWeight(weight);
+        queue.StartMotion(expression.get(), true);
+        expression.release();
+    }
+    return true;
 }
 
 // ============================================================
@@ -685,9 +722,7 @@ int Live2DBackend::loadModel(const std::string& path, const std::string& name) {
     model->dir = confined;
     model->name = name;
     if (!loadModelInternal(*model)) {
-#ifdef _WIN32
         releaseModelTarget(*model);
-#endif
         return -1;
     }
     m_models[handle] = std::move(model);
@@ -697,29 +732,31 @@ int Live2DBackend::loadModel(const std::string& path, const std::string& name) {
 void Live2DBackend::unloadModel(int handle) {
     auto it = m_models.find(handle);
     if (it == m_models.end()) return;
-#ifdef _WIN32
     releaseModelTarget(*it->second);
-#endif
     m_models.erase(handle);
 }
 
-#ifdef _WIN32
 void Live2DBackend::releaseModelTarget(Live2DModel& model) {
     if (m_renderPath && model.renderer) {
-        static_cast<D3D11NativeRenderPath*>(m_renderPath)->releaseModelTarget(
-            static_cast<CubismRenderer*>(model.renderer));
+#if defined(__linux__) && !defined(__ANDROID__)
+        static_cast<OpenGLReadbackRenderPath*>(m_renderPath)->destroyModelRenderer(
+            model.userModel, model.renderer);
+        model.renderer = nullptr;
+#else
+        m_renderPath->releaseModelTarget(model.renderer);
+#endif
     }
 }
-#endif
 bool Live2DBackend::isLoaded(int handle) const { return m_models.count(handle) > 0; }
 
 std::size_t Live2DBackend::loadedModelCount() const {
     return m_models.size();
 }
 
-void Live2DBackend::clearModels() {
-    while (!m_models.empty()) {
-        unloadModel(m_models.begin()->first);
+void Live2DBackend::clearModels(std::span<const int> keep) {
+    for (auto it = m_models.begin(); it != m_models.end();) {
+        const int handle = (it++)->first;
+        if (std::find(keep.begin(), keep.end(), handle) == keep.end()) unloadModel(handle);
     }
 }
 
