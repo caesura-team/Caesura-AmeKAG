@@ -153,7 +153,7 @@ class AuthorCapabilityEntrypoints(unittest.TestCase):
     def setUp(self):
         self.scratch = tempfile.TemporaryDirectory(prefix="caesura-author-capability-")
         self.addCleanup(self.scratch.cleanup)
-        self.directory = Path(self.scratch.name)
+        self.directory = Path(self.scratch.name).resolve()
         self.project = self.directory / "作者 项目"
         self.project.mkdir()
         self.story = self.project / "story.ks"
